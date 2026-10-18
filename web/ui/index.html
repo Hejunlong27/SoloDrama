@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>我的短剧</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="user-app">
+
+<header class="topbar user-topbar">
+  <div class="brand">
+    <span class="logo">剧</span>
+    <div>
+      <div class="brand-title" id="helloTitle">我的短剧</div>
+      <div class="brand-sub" id="helloSub">一个人，一天时间，一台电脑，N 部短剧</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <label class="muted small" for="dramaSelect">我在做</label>
+    <select id="dramaSelect" class="select" title="选择要做的短剧"></select>
+    <button id="btnNewDrama" class="btn btn-ghost">＋ 新剧</button>
+    <button id="btnRefresh" class="btn btn-ghost" title="刷新">刷新</button>
+  </div>
+</header>
+
+<main class="user-main">
+
+  <!-- 没有短剧时的引导 -->
+  <section id="welcome" class="card hidden">
+    <div class="card-b welcome">
+      <h1>开始做你的第一部短剧</h1>
+      <p class="lead">你只需要决定三件事：讲什么故事、什么画风、要不要花钱。剩下的交给电脑和 AI 助手。</p>
+      <ol class="steps-intro">
+        <li><b>定下来</b>：选画风和用哪台机器（免费或付费，你说了算）</li>
+        <li><b>写出来</b>：AI 助手和你一起把故事写成每集剧本</li>
+        <li><b>做出来</b>：电脑把剧本变成角色形象、镜头和一集完整的剧</li>
+      </ol>
+      <div class="actions">
+        <button class="btn btn-primary btn-lg" data-task="start_drama">开始一部新短剧</button>
+        <button class="btn btn-ghost" id="btnFindDrama">我已经有短剧文件夹了</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="dramaBody" class="hidden">
+
+    <!-- 主行动卡 -->
+    <section class="card hero">
+      <div class="card-b">
+        <div class="hero-grid">
+          <div>
+            <div class="hero-line">
+              <span class="chip info" id="heroStage">—</span>
+              <span class="muted small" id="heroSetting"></span>
+            </div>
+            <h1 class="hero-title" id="heroTitle">—</h1>
+            <p class="hero-why" id="heroWhy"></p>
+            <p class="hero-how muted" id="heroHow"></p>
+            <div id="heroCost" class="cost-line"></div>
+            <div class="actions">
+              <button class="btn btn-primary btn-lg" id="btnDoTask">开始</button>
+              <span id="heroAfter" class="muted small"></span>
+            </div>
+          </div>
+          <aside class="hero-aside" id="heroAside"></aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- 进度 -->
+    <section class="card">
+      <div class="card-h">这部剧做到哪儿了 <span class="muted small" id="progressNote"></span></div>
+      <div class="card-b">
+        <div class="user-stages" id="userStages"></div>
+      </div>
+    </section>
+
+    <div class="grid grid-2">
+      <section class="card">
+        <div class="card-h">需要你做的事 <span class="badge" id="todoCount">0</span></div>
+        <div class="card-b" id="todoList"></div>
+      </section>
+      <section class="card">
+        <div class="card-h">花了多少钱</div>
+        <div class="card-b" id="spendBox"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-h">我的剧集</div>
+      <div class="card-b" id="episodeList"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-h">遇到问题？把问题交给 AI 助手</div>
+      <div class="card-b">
+        <p class="muted">用大白话写你遇到的问题（例如「第 3 集的画面有几个镜头一直失败」），我帮你整理成一段可以直接发给 AI 助手的话。</p>
+        <textarea id="helpTopic" class="textarea" rows="3" placeholder="说说你遇到的问题…"></textarea>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnHelp">生成给 AI 助手的话</button>
+          <button class="btn btn-ghost" id="btnCopyHelp" disabled>复制</button>
+          <span class="muted small" id="helpHint"></span>
+        </div>
+        <pre id="helpPrompt" class="prompt hidden"></pre>
+        <details class="glossary">
+          <summary>这些词是什么意思？（点开看）</summary>
+          <div id="glossaryBox"></div>
+        </details>
+      </div>
+    </section>
+
+    <p class="dev-link muted small">
+      维护者入口：<a href="advanced.html">高级工具（命令 / 作业 / 诊断）</a>
+      —— 日常做剧不需要打开它。
+    </p>
+  </div>
+</main>
+
+<!-- 任务执行弹窗：问用户 / 确认花钱 / 显示进度 -->
+<div id="taskModal" class="modal hidden">
+  <div class="modal-box modal-lg">
+    <div class="modal-h"><span id="tmTitle">正在进行</span><span class="spacer"></span>
+      <button class="btn btn-mini btn-ghost" id="tmClose">关闭</button></div>
+    <div class="modal-b" id="tmBody"></div>
+    <div class="modal-f" id="tmFoot"></div>
+  </div>
+</div>
+
+<script src="home.js"></script>
+</body>
+</html>

@@ -411,7 +411,13 @@ def build_image_node_list(prov: Dict[str, Any], *, prompt: str, ratio: Optional[
 
     n = nodes.get("ratio")
     if n and ratio:
-        pairs.append((n.get("nodeId"), n.get("fieldName"), ratio))
+        # 2026-10-17：与 H3 侧对齐，支持 value_map。
+        # 为什么需要：ResolutionSelector 类节点只认带人话后缀的枚举
+        # （"9:16 (Portrait Widescreen)"），而 shots.json 里写的是裸 "9:16"；
+        # 没有这层映射会把裸值直接送进去 → 比例节点取值非法。
+        _vm = n.get("value_map")
+        _val = _vm.get(str(ratio), ratio) if isinstance(_vm, dict) else ratio
+        pairs.append((n.get("nodeId"), n.get("fieldName"), _val))
 
     # 优先用分离的 char_ref / scene_ref 节点；没有则合并进单一 image 节点
     if nodes.get("char_ref") or nodes.get("scene_ref"):

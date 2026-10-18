@@ -48,6 +48,15 @@ config.upscale.json
 **/config.upscale.json
 guards.*.json
 
+# ---- 控制台（web/）运行时：作业库 / 日志 / 本地 venv，一律不入库 ----
+# ⚠ 注意：不得写成 `web/*` 之类通配去「整体放开」—— 控制台源码（web/core、web/ui、web/app.py）
+#   必须入库（可追溯、可回滚）；这里只排除运行时产物。
+web/var/
+web/.venv/
+web/**/jobs.db
+web/**/jobs.db-wal
+web/**/jobs.db-shm
+
 # ---- 系统/编辑器 ----
 Thumbs.db
 Desktop.ini

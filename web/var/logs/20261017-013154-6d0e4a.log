@@ -1,0 +1,8 @@
+# job 20261017-013154-6d0e4a
+# cmd C:\Users\15274\.workbuddy\binaries\python\envs\default\Scripts\python.exe D:\编程\SoloDrama\stages\production\scripts\drama.py style set live_action
+  $ D:\编程\SoloDrama\stages\production\scripts\style_gate.py --workspace D:\剧本\海外剧\1013新建 set live_action
+  日志: D:\剧本\海外剧\1013新建\video-pipeline\output\logs\style_20261017_013156.log
+  | [OK] 已确认画风 = 半解说真人短剧（live_action）
+  |      确认单：D:\剧本\海外剧\1013新建\style-plan.json
+  |      规格已锁：单镜 5-15 秒｜旁白上限 60/70/80 字｜资产 角色主卡｜场景主卡｜交付到 final_video
+  |      [强制] 分镜拓扑 = 1 视频片段 → 1 张三格时间分镜图

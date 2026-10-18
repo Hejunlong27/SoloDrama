@@ -97,6 +97,17 @@ MODEL_OPTIONS = {
             "optional": ["app_id"],
         },
         {
+            "id": "runninghub_workflow",
+            "label": "RunningHub 工作流（★计费）",
+            "cost": "按工作流节点计价（RH币，逐张）",
+            "desc": "把自建 ComfyUI 工作流（如「Qwen image 2.1 角色设定卡」）当作云端出图通道；"
+                    "需消费级 Key，单账号并发 ≤5。API 导出文件（*_api.json）不等于工作流 ID，"
+                    "必须先在工作流页面保存/运行一次才拿得到可调用的 workflowId。",
+            "engine_arg": "rh",
+            "requires": ["comfy_workflow"],
+            "optional": ["workflow_id"],
+        },
+        {
             "id": "closed_source",
             "label": "闭源模型（★计费）",
             "cost": "按各家订阅/点数计费（站外）",

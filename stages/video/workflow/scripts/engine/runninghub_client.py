@@ -7,7 +7,14 @@ runninghub_client.py —— RunningHub OpenAPI 协议层（async httpx）
 已由本机既有代码验证过的契约：
   上传    POST /openapi/v2/media/upload/binary   multipart 字段名 = file
           -> data.{fileName, download_url, type, size}
+  建任务  POST /openapi/v2/run/workflow/{workflowId}   ← 官方现行通道（Bearer）
+          body {addMetadata, nodeInfoList, instanceType, usePersonalQueue[, retainSeconds]}
+          -> {taskId, status, errorCode, errorMessage, clientId, promptTips}
+          ★ 注意：本通道错误字段是 errorCode/errorMessage，不是 code/msg。
+          ★ 前置条件：该 workflowId 必须先在 RunningHub 网页端「保存并运行过一次」，
+            否则返回 810 WORKFLOW_NOT_SAVED_OR_NOT_RUNNING；编号不存在返回 380。
   建任务  POST /task/openapi/create              {apiKey, workflowId, nodeInfoList} -> data.taskId
+          （legacy 通道，v2 路由不可用时才退回）
           POST /task/openapi/ai-app/run          {apiKey, webappId,  nodeInfoList} -> data.taskId
   查任务  POST /openapi/v2/query                 {taskId}
           -> { status, results:[{url, outputType, text, nodeId}], usage:{...} }
@@ -24,6 +31,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+from urllib.parse import urlparse
 
 import httpx
 
@@ -76,6 +84,16 @@ def _first_present(d: Dict[str, Any], keys: Iterable[str]) -> Any:
         if k in d and d[k] not in (None, "", [], {}):
             return d[k]
     return None
+
+
+def _v2_route_missing(err: "RunningHubError") -> bool:
+    """判断 v2 提交路由是否「压根不存在」（老网关/站点未上线）。
+
+    只有这种情况下才值得退回 legacy 通道；810/380 是业务结论，退回没有意义。
+    """
+    code = str(getattr(err, "code", "") or "")
+    txt = str(getattr(err, "message", "") or "").lower()
+    return code == "1001" or "invalid url" in txt
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +237,47 @@ class RunningHubClient:
             raise RunningHubError(f"提交成功但响应缺少 taskId: {truncate(payload, 300)}", response=payload)
         return str(task_id)
 
+    async def create_workflow_v2(self, workflow_id: str, node_info_list: List[Dict[str, Any]],
+                                 instance_type: Optional[str] = None,
+                                 use_personal_queue: bool = False,
+                                 add_metadata: bool = False,
+                                 retain_seconds: Optional[int] = None) -> str:
+        """官方现行通道：POST /openapi/v2/run/workflow/{workflowId}。
+
+        失败字段走 errorCode/errorMessage：
+          810 = 该工作流在平台侧没有「已保存并运行」的记录，取不到 API 快照；
+          380 = workflowId 不存在。
+        """
+        body: Dict[str, Any] = {
+            "addMetadata": bool(add_metadata),
+            "nodeInfoList": node_info_list,
+            "instanceType": instance_type or "default",
+            "usePersonalQueue": "true" if use_personal_queue else "false",
+        }
+        if retain_seconds:
+            body["retainSeconds"] = int(retain_seconds)
+        payload = await self._request(
+            "POST", f"/openapi/v2/run/workflow/{str(workflow_id).strip()}",
+            json_body=body, context="提交工作流任务(v2)",
+        )
+        err = str(payload.get("errorCode") or "").strip()
+        if err:
+            msg = str(payload.get("errorMessage") or "")
+            hint = ""
+            if err == "810":
+                hint = ("｜该工作流从未在 RunningHub 网页端保存并运行过，平台没有生成 API 快照。"
+                        "请登录后打开该工作流页面点一次「运行」；若它是别人的公开工作流，"
+                        "先「另存到我的工作流」，再用新编号调用。")
+            elif err == "380":
+                hint = "｜平台上不存在这个工作流编号，请核对 workflowId。"
+            raise RunningHubError(f"提交工作流任务(v2)失败: {msg} (errorCode={err}){hint}",
+                                  code=err, response=payload)
+        task_id = payload.get("taskId") or (payload.get("data") or {}).get("taskId")
+        if not task_id:
+            raise RunningHubError(
+                f"提交成功但响应缺少 taskId: {truncate(payload, 300)}", response=payload)
+        return str(task_id)
+
     async def create_ai_app(self, webapp_id: Any, node_info_list: List[Dict[str, Any]],
                             instance_type: Optional[str] = None) -> str:
         body: Dict[str, Any] = {"apiKey": self.api_key, "webappId": int(webapp_id),
@@ -237,7 +296,13 @@ class RunningHubClient:
                           instance_type: Optional[str] = None) -> str:
         k = (kind or "workflow").strip().lower()
         if k in ("workflow", "wf", "comfy"):
-            return await self.create_workflow(str(target_id), node_info_list, instance_type)
+            # 官方现行通道优先；只有该路由不存在时才退回 legacy，避免把 810/380 当兼容问题重试。
+            try:
+                return await self.create_workflow_v2(str(target_id), node_info_list, instance_type)
+            except RunningHubError as e:
+                if not _v2_route_missing(e):
+                    raise
+                return await self.create_workflow(str(target_id), node_info_list, instance_type)
         if k in ("ai-app", "ai_app", "app", "webapp"):
             return await self.create_ai_app(target_id, node_info_list, instance_type)
         raise RunningHubError(f"不支持的 kind='{kind}'（可选 workflow / ai-app）")
@@ -357,10 +422,19 @@ class RunningHubClient:
             await asyncio.sleep(interval)
 
     # ---------- 下载 ----------
+    _DOWNLOAD_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+
     async def download(self, url: str, dest_path: str) -> str:
         dest = Path(dest_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        # 2026-10-17：账号3（.cn）产物落在 volces.com/TOS，直链会拒绝带 Authorization
+        # 或非浏览器 UA 的请求（实测 HTTP 400，手动 curl 同一 URL 返回 200）。
+        # 因此直链下载默认只带浏览器 UA + Referer；仅 RunningHub 自家域名才附鉴权头。
+        host = (urlparse(url).netloc or "").lower()
+        headers = {"User-Agent": self._DOWNLOAD_UA, "Referer": self.base_url + "/"}
+        if "runninghub" in host:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         try:
             async with self.client.stream("GET", url, headers=headers,
                                           timeout=self.timeout * 3) as resp:

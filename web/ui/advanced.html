@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SoloDrama 开发者视图</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo logo-dev">DV</span>
+    <div>
+      <div class="brand-title">SoloDrama 开发者视图</div>
+      <div class="brand-sub">命令 / 作业 / 门禁 / 审计 —— 面向维护者，不是日常使用界面</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <select id="wsSelect" class="select" title="选择剧项目工作区"></select>
+    <button id="btnAddWs" class="btn btn-ghost">登记工作区</button>
+    <span id="locksBadge" class="badge" title="资源锁占用">GPU - / RH -</span>
+    <span id="roBadge" class="badge badge-warn hidden">只读模式</span>
+    <button id="btnRefresh" class="btn">刷新</button>
+    <a class="btn btn-ghost" href="index.html">← 回到使用界面</a>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="overview">总览</button>
+  <button class="tab" data-tab="pipeline">流水线</button>
+  <button class="tab" data-tab="jobs">作业</button>
+  <button class="tab" data-tab="panel">命令面板</button>
+  <button class="tab" data-tab="diag">诊断</button>
+</nav>
+
+<main>
+  <section id="tab-overview" class="tabpane active">
+    <div id="ovEmpty" class="empty">请先在右上角选择或登记一个剧项目工作区。</div>
+    <div id="ovBody" class="hidden">
+      <div class="grid grid-3">
+        <div class="card">
+          <div class="card-h">进度</div>
+          <div class="card-b">
+            <div class="progress"><div id="ovProgressBar" class="progress-inner"></div></div>
+            <div id="ovProgress" class="mono small"></div>
+            <div id="ovCurrent" class="muted small"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h">门禁</div>
+          <div class="card-b" id="ovGates"></div>
+        </div>
+        <div class="card">
+          <div class="card-h">关键指标</div>
+          <div class="card-b" id="ovStats"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h">下一步建议</div>
+        <div class="card-b" id="ovNext"></div>
+      </div>
+      <div class="card">
+        <div class="card-h">工作区布局</div>
+        <div class="card-b" id="ovLayout"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-pipeline" class="tabpane">
+    <div id="plBody" class="card"><div class="card-h">15 环节看板</div><div class="card-b" id="plTable"></div></div>
+    <div class="card" id="plCmdsCard">
+      <div class="card-h">该环节可用命令 <span id="plCmdsRound" class="muted"></span></div>
+      <div class="card-b" id="plCmds"></div>
+    </div>
+  </section>
+
+  <section id="tab-jobs" class="tabpane">
+    <div class="card">
+      <div class="card-h">作业队列 <button id="btnJobsRefresh" class="btn btn-mini">刷新</button></div>
+      <div class="card-b" id="jobList"></div>
+    </div>
+    <div class="card hidden" id="jobDetailCard">
+      <div class="card-h">
+        <span id="jobDetailTitle">作业详情</span>
+        <span class="spacer"></span>
+        <button id="btnJobCancel" class="btn btn-mini btn-danger">取消</button>
+      </div>
+      <div class="card-b">
+        <div id="jobDetailMeta" class="mono small"></div>
+        <pre id="jobLog" class="log"></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-panel" class="tabpane">
+    <div class="panel-wrap">
+      <div class="card panel-left">
+        <div class="card-h">命令目录</div>
+        <div class="card-b">
+          <input id="cmdSearch" class="input" placeholder="搜索命令 / 环节，如 出片、G5、资产">
+          <div id="cmdGroups" class="chips"></div>
+          <ul id="cmdList" class="cmdlist"></ul>
+        </div>
+      </div>
+      <div class="card panel-right">
+        <div class="card-h" id="cmdTitle">请选择一条命令</div>
+        <div class="card-b">
+          <div id="cmdMeta" class="meta-row"></div>
+          <form id="cmdForm" class="form"></form>
+          <div class="argv" id="cmdArgv"></div>
+          <div class="agentbox">
+            <div class="agentbox-h">Agent 提示词（可直接复制投喂给 AI 助手）
+              <button id="btnCopyPrompt" class="btn btn-mini">复制</button>
+            </div>
+            <pre id="cmdPrompt" class="prompt"></pre>
+          </div>
+          <div class="actions">
+            <button id="btnRun" class="btn btn-primary" disabled>执行</button>
+            <span id="cmdHint" class="muted small"></span>
+          </div>
+          <div id="cmdResult" class="result hidden"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-diag" class="tabpane">
+    <div class="card">
+      <div class="card-h">环境与锁</div>
+      <div class="card-b" id="diagEnv"></div>
+    </div>
+    <div class="card">
+      <div class="card-h">审计记录（最近 50 条）</div>
+      <div class="card-b" id="diagAudit"></div>
+    </div>
+    <div class="card">
+      <div class="card-h">输出</div>
+      <div class="card-b"><pre id="diagOut" class="log"></pre></div>
+    </div>
+  </section>
+</main>
+
+<div id="confirmModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-h" id="confirmTitle">确认执行</div>
+    <div class="modal-b" id="confirmBody"></div>
+    <div class="modal-f">
+      <button id="confirmCancel" class="btn btn-ghost">取消</button>
+      <button id="confirmOk" class="btn btn-danger">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

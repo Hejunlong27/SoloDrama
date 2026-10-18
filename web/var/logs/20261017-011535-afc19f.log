@@ -1,0 +1,3 @@
+# job 20261017-011535-afc19f
+# cmd C:\Users\15274\.workbuddy\binaries\python\envs\default\Scripts\python.exe D:\编程\SoloDrama\stages\production\scripts\prepare_refs.py --max-edge 2048 --quality 92
+[FAIL] 找不到工作区 data/：D:\编程\SoloDrama\stages\production\video-pipeline

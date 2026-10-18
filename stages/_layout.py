@@ -26,7 +26,7 @@
     ├── 06-提示词/                      H3 六段式提示词 + data/ 四文件 + refs_h3/
     ├── 07-成片/                        逐段成片 · 母版 · 2K · 字幕
     ├── 08-合规/                        发布前预检 · 整改记录
-    ├── 09-发行/                        封面 · 文案 · 发布清单
+    ├── 09-发行/                        封面 · 文案 · 发布清单 · 版权资料
     └── video-pipeline/                 引擎技术目录（config.*.json / ledger / logs）
 
 设计约束
@@ -74,7 +74,9 @@ STAGE_PURPOSE: dict = {
     "prompts": "提示词：H3 六段式提示词 md + data/ 四文件（出片引擎唯一输入契约）+ refs_h3/",
     "film": "成片：逐段 final.mp4、整集母版、2K、字幕成片、样张",
     "compliance": "合规：发布前预检报告、TikTok 条款映射、整改记录、申诉材料",
-    "release": "发行：封面（PNG/JPG/preview）、文案（六槽位 + 三档描述）、发布清单",
+    "release": "发行：封面（多尺寸成组，抓马构图 · 视觉冲击）、文案（六槽位 + 三档描述）、"
+               "发布清单、版权资料（4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」）。"
+               "真源 docs/distribution/发行资料清单.md；门禁 release_check.py",
 }
 
 DEFAULT_LAYOUT: dict = {

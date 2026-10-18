@@ -15,7 +15,10 @@
 3. `<Picture N>` 编号**从 1 连续、≤6、不留空号**（留空号会让后面全部错位）
 4. `<d>[lang] …</d>` 存在且非空（字幕真源）
 5. 镜头时间戳 `[Shot N] At MM:SS(.mmm)` **严格递增**，且总时长 == `duration`（±0.5s）
-6. 参考图槽位一致性：`len(character_refs) >= max(<Picture N>)`
+6. 参考图槽位一致性：`len(character_refs) + len(scene_refs) >= max(<Picture N>)`
+   （2026-10-17 修正：H3 的 6 个参考槽是「角色图 + 场景图」按顺序共用的，提示词里的
+     `<Picture N>` 指的是**合并后**的槽位序号；此前只数 character_refs，
+     会把「2 角色 + 1 场景」这种完全合法的引用误判为缺图。）
 7. 参考图文件存在（相对 `data/` 解析的本地路径）
 
 用法
@@ -123,6 +126,14 @@ def main() -> int:
         return 2
     shots = load(DATA / "shots.json", None)
     prompts = load(DATA / "h3_prompts.json", None)
+    # ★ 2026-10-17 修：data-schema 规定 character_refs / scene_refs 存的是**字典 key**
+    #   （char_01 / scene_01），旧实现直接把 key 当本地路径查文件 → 整集 18 条误杀。
+    #   这里先按 characters.json / scenes.json 反查真实路径；未登记的 key 保留原值以便报错。
+    REFS_MAP: dict = {}
+    for _name in ("characters.json", "scenes.json"):
+        _d = load(DATA / _name, {}) or {}
+        if isinstance(_d, dict):
+            REFS_MAP.update(_d)
     if shots is None or prompts is None:
         print("[FAIL] %s 下缺 shots.json 或 h3_prompts.json" % DATA)
         return 2
@@ -160,8 +171,11 @@ def main() -> int:
         if not isinstance(v, dict) or not v.get("prompt"):
             errs.append("%s: h3_prompts.json 里没有该段的 prompt（引擎会直接 FAILED，不猜）" % sid)
             continue
-        e, w = check_shot(sid, v["prompt"], v.get("duration"),
-                          s.get("character_refs") or [], DATA)
+        # ★ 槽位口径：H3 的 6 个参考槽 = 角色图在前、场景图在后，共用一套编号，
+        #   所以 <Picture N> 的 N 上限按「两张表合并后的张数」算（2026-10-17 修正）。
+        refs_all = list(s.get("character_refs") or []) + list(s.get("scene_refs") or [])
+        refs_all = [REFS_MAP.get(x, x) for x in refs_all]
+        e, w = check_shot(sid, v["prompt"], v.get("duration"), refs_all, DATA)
         errs += e
         warns += w
 

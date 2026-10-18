@@ -1,0 +1,7 @@
+# SoloDrama Web 控制台依赖（仅 Web 层使用，与引擎环境完全隔离）
+# 安装：<venv>/Scripts/python.exe -m pip install -r web/requirements-web.txt
+# 说明：引擎侧 requirements.txt 一字不动（httpx / Pillow 已足够跑全部 stage 脚本）。
+#      作业库 / 审计 / 事件流用 Python 标准库 sqlite3，不引第三方数据库。
+
+fastapi==0.143.3
+uvicorn[standard]==0.54.0

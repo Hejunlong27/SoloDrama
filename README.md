@@ -28,13 +28,14 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 
 | 类别 | 交付内容 | 状态 |
 |---|---|---|
-| **本地执行引擎集** | 5 个阶段模块（创作 / 出片 / 字幕 / 总控 / 资产），共 115 个受管文件 | ✅ 已交付 |
+| **本地执行引擎集** | 5 个阶段模块（创作 / 出片 / 字幕 / 总控 / 资产）+ Web 控制台 `web/`，共 **166 个受管文件** | ✅ 已交付 |
 | **统一 CLI 入口** | `stages/production/scripts/drama.py`，11 类子命令 | ✅ 已交付 |
 | **西语漫剧创作链路** | `stages/creation/`（四部分，49 例离线测试） | ✅ 已交付 |
 | **本地出图通道** | `stages/assets/comfyui/`（￥0 成本、零第三方依赖、不出网） | ✅ 已交付 |
 | **模型选择门禁** | `stages/production/scripts/model_gate.py`（19 例离线测试） | ✅ 已交付 |
-| **离线测试集合** | **131 例**离线用例（零网络零计费）+ 字幕安全区断言集，全部通过 | ✅ 全绿 |
-| **完整性指纹** | `manifest.sha256`（114 条，显式排除自身） | ✅ 逐文件 0 不符 |
+| **发行资料门禁** | `stages/production/scripts/release_check.py`（封面多尺寸 + 版权资料 4+4，11 例离线测试） | ✅ 已交付 |
+| **离线测试集合** | 各套离线用例（零网络零计费）+ 字幕安全区断言集，全部通过 | ✅ 全绿 |
+| **完整性指纹** | `manifest.sha256`（**166 条**，显式排除自身） | ✅ 逐文件 0 不符 |
 | **设计文档** | 可行性检查报告 + 技术文档 + 创作层方法论 5 篇 + 模块 references | ✅ 已交付 |
 | **依赖锁定** | `requirements.txt`（`httpx==0.28.1` / `Pillow==12.2.0`，实测 Python 3.13） | ✅ 已交付 |
 | **开源发布** | GitHub [`Hejunlong27/SoloDrama`](https://github.com/Hejunlong27/SoloDrama)，Apache-2.0 | ✅ 已发布 |
@@ -49,6 +50,7 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 | **出片** | `stages/video/workflow/` | RunningHub「工作流 + AI 应用」标准通道批量出片：`doctor` 体检 → 干跑计划 → 小样 → 全量；taskId 级断点续跑、并发上限 5（单账号，见下方说明）、计费预估与用量核对 |
 | **成片** | `stages/subtitle/` | CTC 强制对齐 → ASS 生成 → 无损拼接母版 → Topaz 2K 放大 → 字幕烧录 → 七道质量断言 |
 | **验收结账** | `stages/production/` | 字幕像素级验收、集级前置体检、成本台账（Excel 7 工作表 + markdown），口径只认平台返回的 `usage` |
+| **发行** | `stages/production/` + `docs/distribution/` | 发行资料齐全度门禁：封面多尺寸成组（抓马构图口径）+ 文案 + 发布清单 + **版权资料 4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」**；详见 `docs/distribution/发行资料清单.md` |
 | **总控** | `stages/production/scripts/drama.py` | `status / preflight / assets / refs / models / video(plan·run·status) / report / balance / cost / guide` |
 
 ### 1.3 视频通道并发上限（RunningHub）
@@ -203,13 +205,13 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 | **要不要写代码** | **完全不需要** —— 把两段提示词交给 AI 助手，它替你跑完 | 需要（新增模块以 Python 标准库为主） |
 | **入口** | **AI 助手 + 一句话提示词**（想自己敲命令，见 4.1 折叠区） | 各 `stages/*/scripts/` 源码 + `references/` 契约 |
 | **前置** | Windows 电脑 + 一个能执行命令的 AI 助手（独显 / 云端账号均可选） | 同上，且需读懂数据契约再动手 |
-| **交付物** | 成片 mp4 + 字幕 + 成本台账（xlsx / md） | 代码改动 + 离线测试全绿 + 重建后的指纹 |
+| **交付物** | 成片 mp4 + 字幕 + 成本台账（xlsx / md）+ 发行资料（封面 + 文案 + 发布清单 + 版权资料） | 代码改动 + 离线测试全绿 + 重建后的指纹 |
 
 ### 4.1 使用者路线：把仓库交给 AI 助手，你只说两句话
 
 **不需要写代码，也不需要敲命令。** 你只要把仓库地址和下面两段提示词发给你的 AI 助手（WorkBuddy 等能读写本地文件、能执行命令的 Agent），它会完成安装、配置和全部生产步骤；你只需在几个「要不要花钱」的节点上答一句「可以」。
 
-整条链路 Agent 会依次替你跑完：**选题 → 世界观与人物 → 剧本 → 分镜与视频提示词 → 资产出图 → 渲染出片 → 拼接与 2K → 字幕 → 验收结账**。
+整条链路 Agent 会依次替你跑完：**选题 → 世界观与人物 → 剧本 → 分镜与视频提示词 → 资产出图 → 渲染出片 → 拼接与 2K → 字幕 → 验收结账 → 发行资料（封面 / 文案 / 发布清单 / 版权资料）**。
 
 #### 你只需要准备这几样
 
@@ -260,6 +262,28 @@ https://github.com/Hejunlong27/SoloDrama
 - 每做完一步告诉我：现在到哪一步、这一集花了多少、下一步预计花多少
 ```
 
+#### 第 3 步：要发行时，让 Agent 备「发行资料」
+
+剧做完了准备上架时，把这段发给它：
+
+```text
+准备发行资料。
+
+要求：
+1. 封面要抓马、有视觉冲击感（不是我给你的剧照精选，是冲突海报）：
+   单主体大特写、强明暗对比、画面里有一个能一眼看懂冲突的物件、
+   大字标题（中文不超过 6 个字）、留一半悬念、高饱和撞色。
+2. 封面按多尺寸成组出：9:16 竖版主封面 + 3:4 卡片位封面（16:9 横版建议一起出）。
+3. 版权资料按 4 + 4 备齐：
+   - 4 张「AI 生成过程截图」：出图/出片平台任务页、提示词或工作流节点、
+     生成结果列表、用量计费记录；
+   - 4 张「原始文件或素材文件信息」：项目工作区目录树、剧本原稿文件信息、
+     分镜或提示词源文件信息、成片母版文件信息。
+   截图里任务 ID 与时间戳必须能看清（可以打码 API Key，但不要打码任务 ID）。
+4. 另附文案（标题 + 三档描述 + 关键词）和一份发布清单。
+5. 备齐后跑一次发行资料门禁，把结果告诉我。
+```
+
 #### Agent 会问你几个问题，照实答就行
 
 | Agent 问 | 你怎么答 |
@@ -269,6 +293,7 @@ https://github.com/Hejunlong27/SoloDrama
 | 这一集出片预计花 XX，确认执行吗？ | 确认；或者说「先只跑 1 段小样」 |
 | 2K 母版好了，这集要烧字幕吗？ | 要 / 不要（不要就给你无字幕的高清母版） |
 | 这集收工了，要结账吗？ | 要（生成成本台账 Excel） |
+| 准备发行资料了，封面走哪种风格？ | 说题材就行（逆袭 / 虐恋 / 商战 / 悬疑 / 甜宠），Agent 按对应情绪色板出抓马封面 |
 
 #### 只要记住三条，就不会多花钱
 
@@ -334,6 +359,12 @@ python stages/production/scripts/drama.py report
 python stages/production/scripts/drama.py cost --checkpoint                # 收工结账，记基线
 python stages/production/scripts/compliance_precheck.py --workspace <工作区> --ep ep01 --q1 no --q2 no --q3 no
 python stages/production/scripts/compliance_precheck.py --workspace <工作区> --all --aigc-label yes --restricted 0 --total 30
+
+# ⑥ 发行资料（零费用；用户说「准备发行资料」时执行）
+#    发行资料 = 封面（多尺寸成组，抓马构图）+ 文案 + 发布清单 + 版权资料（4 张 AI 生成
+#    过程截图 + 4 张原始文件/素材文件信息）；详见 docs/distribution/发行资料清单.md
+python stages/production/scripts/release_check.py --workspace <工作区>            # 齐全度门禁（退出码 2 = 不齐）
+python stages/production/scripts/release_check.py --workspace <工作区> --json     # 给控制台 / CI 解析
 ```
 
 > 出片缺图 / 提示词有缺陷时，`preflight` 与干跑会先拦下来 —— 把错误挡在计费之前。
@@ -352,8 +383,10 @@ python stages/assets/scripts/sanitize.py --selftest
 python stages/assets/scripts/tests/test_prompter.py
 python stages/assets/scripts/tests/test_asset_md.py
 python stages/production/scripts/tests/test_model_gate.py
+python stages/production/scripts/tests/test_style_gate.py
+python stages/production/scripts/tests/test_release_check.py
 python stages/creation/scripts/tests/test_creation_pipeline.py
-# → 131 例离线用例应全绿
+# → 各套离线用例应全绿（零网络、零计费）
 ```
 
 #### ② 先读契约，再读代码（改动前必看四份）
@@ -401,7 +434,8 @@ SoloDrama/
 │   └── assets/            资产出图：净化器 + 三类模板 + md→清单转换器 + 离线测试
 │       └── comfyui/       ★ 本地 ComfyUI 出图引擎（￥0、零第三方依赖、不出网）
 ├── tools/                 创作层确定性工具（初始化 / 锚点入库 / 剧本校验 / 格式转换）
-├── docs/                  设计文档（可行性报告、技术文档）与创作层方法论
+├── web/                   本地 Web 控制台（FastAPI + 原生 JS + SSE；引擎零改动，可选）
+├── docs/                  单一真源文档：流程总纲 / 画风三轨 / 发行资料 / 合规预检 / 创作方法论
 ├── configs/               配置模板（含 model-plan.example.json 模型确认单）
 ├── requirements.txt       锁定依赖
 ├── manifest.sha256        引擎文件指纹（防篡改 / 防漂移）
@@ -436,6 +470,10 @@ SoloDrama/
 | **画风三轨规范（资产 / 分镜 / H3 提示词）★ 单一真源** | `docs/styles/画风三轨规范.md` |
 | **技能映射、缺口台账与重叠裁决** | `docs/orchestration/技能映射与缺口.md` |
 | **发布前合规预检清单（TikTok 口径）** | `docs/compliance/发布前合规预检清单.md` |
+| **发行资料清单（封面抓马度 · 版权资料 4+4 · 发布清单）★ 单一真源** | `docs/distribution/发行资料清单.md` |
+| **产线对账关卡（26 个实跑坑 → 自动/人工对账项）** | `docs/patches/产线对账关卡_2026-10-18.md` |
+| 40 集实跑复盘（26 个坑，按严重度排序） | `docs/patches/SoloDrama_踩坑清单_2026-10-18.md` |
+| 产线补丁清单（逐条 patch 与代码片段） | `docs/patches/2026-10-18_短剧产线补丁清单.md` |
 | **台词时长审计口径（4.2 字/秒）** | `docs/creation/台词时长审计口径.md` |
 | **剧本强度工程（爽点结构 · 打脸五拍 · 质控标准）★** | `docs/creation/剧本强度工程.md` |
 | **题材公式库（女频逆袭，可扩展；命中即跳过选题）** | `stages/creation/references/genre-formulas/` |
@@ -458,3 +496,15 @@ SoloDrama/
 ## License
 
 本项目以 **Apache-2.0** 协议开源，详见 [LICENSE](LICENSE)。
+
+---
+
+## 版本记录
+
+> 纪律：**每次更新必须在本表追加一行**（版本号 + 日期 + 新增/变更/修复 + 基线提交 + 验证结论），并同步 `VERSIONS.md`。
+> 版本号口径：`V0.x` 新能力 / `V0.x.y` 修复与文档 / `V1.0` 留给正式发布。
+
+| 版本 | 日期 | 内容 | 基线提交 | 验证结论 |
+|---|---|---|---|---|
+| **V0.2** | 2026-10-18 | **新增「发行资料」全链路**：① 单一真源 `docs/distribution/发行资料清单.md`（封面「抓马度」六抓手 + 版权资料 **4 张 AI 生成过程截图 + 4 张原始文件/素材文件信息** + 文案六槽位 + 发布清单）；② 确定性门禁 `stages/production/scripts/release_check.py`（离线、零第三方依赖，退出码 2）+ 11 例离线测试；③ 总纲补环节 14 与 **G9 发行资料门禁**；④ 新增 `docs/patches/产线对账关卡_2026-10-18.md`（40 集实跑的 26 个坑 → 自动/人工对账项）；⑤ 回填产线补丁 P1–P6（`ingest_check.py` 两处逻辑修正、`pipeline.py` 画幅 `value_map`、`runninghub_client.py` v2 提交通道与直链下载鉴权、`model_gate.py` 新增「RH 工作流出图」通道、`.gitignore` 排除 `web/var/`）；⑥ Web 控制台 `web/` 首次入库 | `180cf7c` | `test_release_check.py` 11/11 通过；`manifest.sha256` 重建后自校验 0 不符；线上 tree 与本机逐 blob 一致 |
+| V0.1 | 2026-10-16 | 统一编排层基线：端到端链路（15 环节）、门禁 G-1–G8、画风三轨规范、分阶段目录规范 `layout.json`、留存率导向剧本结构、`09-发行/` 目录占位 | — | `manifest.sha256` 114 条 0 不符 |

@@ -1,0 +1,3 @@
+# job 20261017-011739-fa1eea
+# cmd C:\Users\15274\.workbuddy\binaries\python\envs\default\Scripts\python.exe D:\编程\SoloDrama\stages\production\scripts\prepare_refs.py --max-edge 2048 --quality 92 --workspace D:\剧本\海外剧\1013新建
+[FAIL] 找不到工作区 data/：D:\剧本\海外剧\1013新建

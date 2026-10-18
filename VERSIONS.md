@@ -6,6 +6,7 @@
 - **2026-10-10 更新**：新增**本地 ComfyUI 资产出图通道**（收编自 WorkBuddy Skill `comfyui-local-imagegen`），资产出图改为**默认本地（￥0）**、云端计费通道并存；同时修复两处收编遗留缺陷（`drama.py` 的脚本路径与工作区下传）
 - **2026-10-12 更新**：①新增**模型选择门禁**（前置条件）：首次生图/出片前必须确认模型（本地 ComfyUI / RunningHub / 闭源模型），确认单落 `<工作区>/model-plan.json`，未确认即拦（退出码 4）；②新增**西语 AI 漫剧创作链路** `stages/creation/`，按交付**四部分**组织：① 榜单调研与对比（多市场 + 西语重点）→ ② 爆款拆解（题材/套路/爆点/偏好/差异化趋势）→ ③ 选题定位（受众画像/题材方向/差异化卖点）→ ④ 剧本改写（源剧本 → N 集规划，默认 60 集，每集冲突/反转/钩子），并打通与 `tools/cli.py` 及 `drama.py` 的对接
 - **2026-10-13 更新**：**项目更名为 SoloDrama**（取自「一个人，就是一个剧组」，命名格式 `<前缀>+Drama`），GitHub 仓库同步更名为 `Hejunlong27/SoloDrama`（旧地址自动跳转）；README 首段补齐「创作层 + 执行层」双段式介绍与「一台家用笔记本（RTX 4060 8G + 16G 内存）即可跑通」的硬件门槛说明；**环境变量前缀由 `DRAMA_*` 迁至 `SOLODRAMA_*`**（新名优先、旧名回退，见第五节）
+- **2026-10-18 更新（V0.2）**：①**新增「发行资料」全链路** —— 单一真源 `docs/distribution/发行资料清单.md`（封面「抓马度 / 视觉冲击」六抓手与反例、**版权资料 = 4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」**、文案六槽位、发布清单）+ 确定性门禁 `stages/production/scripts/release_check.py`（离线、零第三方依赖、退出码 2）+ 11 例离线测试；总纲补**环节 14** 与 **G9 发行资料门禁**，`_layout.py` 的 `release` 用途同步。②**回填产线补丁 P1–P6**：`ingest_check.py` 两处合法输入误判修正、`pipeline.py` 出图画幅 `value_map`、`runninghub_client.py` v2 提交通道 + 直链下载鉴权、`model_gate.py` 新增「RunningHub 工作流出图」通道、`.gitignore`（`web/var/` 等，**禁止 `web/*` 通配**）、`manifest.sha256` 重算。③**新增实跑复盘文档**：`docs/patches/` 三篇（踩坑清单 26 条 / 产线补丁清单 / 产线对账关卡）。④**Web 控制台 `web/` 首次入库**（FastAPI + 原生 JS + SSE，引擎零改动）
 - 完整性校验：`manifest.sha256`（每文件 SHA-256，可用 `Get-FileHash` / `sha256sum -c` 核对）
 - 依赖锁定：`requirements.txt`（httpx==0.28.1 / Pillow==12.2.0，实测 Python 3.13）
 
@@ -22,6 +23,8 @@
 | `stages/assets/scripts/asset_md.py` | 新增（补断点：创作产物 → 引擎输入） | **v1.0.0（2026-10-10）** | 资产提示词 md → 本地 ComfyUI 清单（纯标准库）；配套 19 例离线测试 |
 | `stages/production/scripts/gen_assets_local.py` | 新增（薄桥） | **v1.0.0（2026-10-10）** | 生产总控侧本地出图桥：md → 清单 → 调本地引擎 → 产物清单 + 零成本台账 |
 | `stages/production/scripts/model_gate.py` | 新增（前置条件门禁） | **v1.0.0（2026-10-12）** | 首次生图/出片前的模型选择确认（本地 ComfyUI / RunningHub / 闭源模型）；配套 19 例离线测试 |
+| `stages/production/scripts/release_check.py` | 新增（发行资料门禁） | **v1.0.0（2026-10-18）** | 发行资料齐全度：封面多尺寸成组（比例校验）+ 文案 + 发布清单 + 版权资料 4+4（不缺号、长边 ≥1200）；纯标准库（自行解析 PNG/JPEG 文件头，不依赖 Pillow）；配套 11 例离线测试。真源 `docs/distribution/发行资料清单.md` |
+| `docs/distribution/发行资料清单.md` | 新增（发行资料单一真源） | **v1.0.0（2026-10-18）** | 封面「抓马度」六抓手与反例、色板表、硬约束（不得裁切/首帧亮度/色彩范围/四视图切分）、版权资料 4 张 AI 生成过程截图 + 4 张原始文件/素材文件信息、文案六槽位、发布清单、验收口径 |
 | `stages/creation/` | 新增（西语漫剧创作链路·四部分） | **v1.0.0（2026-10-12）** | ① 榜单调研与对比（`market_data.py`）→ ② 爆款拆解（`hit_breakdown.py`）→ ③ 选题定位（`topic_analysis.py` + `hit_selection.py`）→ ④ 剧本改写（`script_rewrite.py`）；纯标准库；配套 49 例离线测试 |
 | `tools/` | 项目工具链 `D:\AI-Drama\parallel-me\tools` | 2026-09 版 | 创作层确定性工具：init / import-bible / parse / check / convert / reindex / report / set-anchor / gen(stub) |
 | `docs/creation/` | WorkBuddy Skill `ai-drama-creator` references | 2026-09 版 | 创作层方法论：FFS 规范 / 转换规则 / QA 门 / STYLE LOCK 预设 / 流水线落盘规范 |
@@ -116,6 +119,8 @@ python stages/production/scripts/drama.py assets --engine local          # 干�
 
 # 5) 模型门禁 + 创作链路（零网络零计费）
 python stages/production/scripts/tests/test_model_gate.py
+python stages/production/scripts/tests/test_style_gate.py
+python stages/production/scripts/tests/test_release_check.py
 python stages/creation/scripts/tests/test_creation_pipeline.py
 python stages/creation/scripts/creation.py guide
 ```
