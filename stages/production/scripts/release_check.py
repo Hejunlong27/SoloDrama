@@ -8,9 +8,10 @@
   * **封面漏档**：只出了 9:16，上架时卡片位（3:4）要临时补做，风格对不上；
   * **版权资料缺失**：被平台质疑「搬运 / 非原创 / AIGC 未标注」时，**拿不出举证材料**。
 
-本脚本把「发行资料 = 封面 + 文案 + 发布清单 + 版权资料」固化为**可机器校验**的关卡：
-结构齐不齐、尺寸档对不对、版权资料是不是 4 张「AI 生成过程截图」+ 4 张
-「原始文件/素材文件信息」。**零网络、零第三方依赖（图片尺寸读文件头，不依赖 Pillow）**。
+本脚本把「发行资料 = 剧集 + 封面 + 文案 + 发布清单 + 版权资料」固化为**可机器校验**的关卡：
+结构齐不齐、尺寸档对不对、发布版成片是否严格 `EpisodeNN.mp4`（2026-10-19 用户要求）、
+版权资料是不是 4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」。
+**零网络、零第三方依赖（图片尺寸读文件头，不依赖 Pillow）**。
 
 唯一真源：`docs/distribution/发行资料清单.md`
 
@@ -197,6 +198,33 @@ def main() -> int:
        not any(release.glob("preview.*")):
         warns.append("未见 `preview.jpg` 预览拼图（供内部评审，非阻断）")
 
+    # ---- 1.5 发布版成片：严格 EpisodeNN.mp4（★ 2026-10-19 用户要求）----
+    ep_dir = L.release_episode_dir(ws)
+    ep_rx = re.compile(L.RELEASE_FILENAME_RE, re.I)
+    eps, bad_names = {}, []
+    if ep_dir.is_dir():
+        for f in sorted(ep_dir.iterdir()):
+            if not f.is_file():
+                continue
+            if f.suffix.lower() != ".mp4":
+                if f.name not in ("剧集清单.json",) and f.suffix.lower() not in (".json", ".md", ".txt"):
+                    bad_names.append(f.name)
+                continue
+            m = ep_rx.match(f.name)
+            (eps.__setitem__(int(m.group(1)), f) if m else bad_names.append(f.name))
+    if bad_names:
+        fails.append("发布版命名不符合规范（须 `Episode01.mp4` 形式）：%s ⇒ 用 "
+                     "`python stages/production/scripts/release_export.py --workspace \"<ws>\" --all --apply` 统一导出"
+                     % "、".join(bad_names[:8]))
+    if not eps:
+        fails.append("缺发布版成片：`09-发行/剧集/EpisodeNN.mp4`（一份都没有）⇒ 同上命令导出")
+    else:
+        nums = sorted(eps)
+        gap = [n for n in range(min(nums), max(nums) + 1) if n not in nums]
+        if gap:
+            warns.append("发布版集号不连续，缺 %s（连载中属正常；整季交付前须补齐）"
+                         % ", ".join(L.release_episode_name(g).replace(".mp4", "") for g in gap[:10]))
+
     # ---- 2. 版权资料：4 + 4 ----
     ai = scan_evidence(release, "ai-process", AI_PROCESS_IDS)
     src = scan_evidence(release, "source-file", SOURCE_FILE_IDS)
@@ -239,7 +267,8 @@ def main() -> int:
                  "③AIGC 标注已落在片头/片尾/文案位（整剧统一）")
 
     return _report(a, ws, release, fails, warns, notes,
-                   {"covers": sorted(covers), "ai_process": sorted(ai), "source_file": sorted(src)})
+                   {"covers": sorted(covers), "ai_process": sorted(ai), "source_file": sorted(src),
+                    "episodes": [f.name for _n, f in sorted(eps.items())]})
 
 
 def _report(a, ws, release, fails, warns, notes, summary) -> int:
@@ -257,6 +286,9 @@ def _report(a, ws, release, fails, warns, notes, summary) -> int:
         print("发行资料齐全度检查 · %s" % release)
         print("=" * 74)
         if summary:
+            print("  发布版成片  : %s 集%s" % (len(summary.get("episodes") or []),
+                                            "（%s … %s）" % (summary["episodes"][0], summary["episodes"][-1])
+                                            if summary.get("episodes") else ""))
             print("  封面档位    : %s" % (", ".join(summary["covers"]) or "（无）"))
             print("  AI 生成过程  : %s / 4" % len(summary["ai_process"]))
             print("  原始文件信息 : %s / 4" % len(summary["source_file"]))

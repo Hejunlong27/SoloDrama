@@ -61,11 +61,14 @@ def run(ws: pathlib.Path):
 
 # ---------------------------------------------------------------- 场景
 def build_full(ws: pathlib.Path) -> pathlib.Path:
-    """造一套齐备的发行资料。"""
+    """造一套齐备的发行资料（含发布版成片 EpisodeNN.mp4）。"""
     rel = ws / "09-发行"
     (rel / "封面").mkdir(parents=True, exist_ok=True)
     (rel / "文案").mkdir(parents=True, exist_ok=True)
     (rel / "版权资料").mkdir(parents=True, exist_ok=True)
+    (rel / "剧集").mkdir(parents=True, exist_ok=True)
+    for i in (1, 2, 3):                                   # 发布版：严格 EpisodeNN.mp4
+        (rel / "剧集" / ("Episode%02d.mp4" % i)).write_bytes(b"\x00" * 64)
     png(rel / "封面" / "cover_9x16.png", 1080, 1920)
     png(rel / "封面" / "cover_3x4.png", 900, 1200)
     jpeg(rel / "封面" / "cover_16x9.jpg", 1920, 1080)
@@ -156,6 +159,43 @@ def main() -> int:
 
         # ---- 8. manifest 落痕 ----
         check("落痕 release-manifest.json", (rel7 / "release-manifest.json").is_file())
+
+        # ---- 9. 发布版命名：杂名被拦 ----
+        ws9 = pathlib.Path(tmp) / "bad_name"
+        ws9.mkdir(parents=True)
+        rel9 = build_full(ws9)
+        for f in (rel9 / "剧集").iterdir():
+            f.unlink()
+        (rel9 / "剧集" / "EP01_1080p_ES.mp4").write_bytes(b"\x00" * 64)      # 即兴命名
+        (rel9 / "剧集" / "ep02_拼接_11段_672x1216.mp4").write_bytes(b"\x00" * 64)
+        rc, out = run(ws9)
+        check("发布版杂名被拦下", rc == 2 and any("命名不符合规范" in x for x in out.get("fails", [])),
+              str(out.get("fails"))[:200])
+
+        # ---- 10. 缺发布版成片被拦 ----
+        ws10 = pathlib.Path(tmp) / "no_episodes"
+        ws10.mkdir(parents=True)
+        rel10 = build_full(ws10)
+        for f in (rel10 / "剧集").iterdir():
+            f.unlink()
+        rc, out = run(ws10)
+        check("缺发布版成片被拦下", rc == 2 and any("缺发布版成片" in x for x in out.get("fails", [])),
+              str(out.get("fails"))[:200])
+
+        # ---- 11. 集号不连续 → 只告警不拦 ----
+        ws11 = pathlib.Path(tmp) / "gap"
+        ws11.mkdir(parents=True)
+        rel11 = build_full(ws11)
+        (rel11 / "剧集" / "Episode02.mp4").unlink()
+        rc, out = run(ws11)
+        check("集号不连续只告警",
+              rc == 0 and any("集号不连续" in x for x in out.get("warns", [])), str(out.get("warns"))[:200])
+
+        # ---- 12. EpisodeNN 命名被正确识别 ----
+        rc, out = run(ws2)
+        check("发布版 EpisodeNN 被识别",
+              out.get("found", {}).get("episodes") == ["Episode01.mp4", "Episode02.mp4", "Episode03.mp4"],
+              str(out.get("found")))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

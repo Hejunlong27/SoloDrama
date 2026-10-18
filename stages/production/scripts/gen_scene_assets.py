@@ -58,13 +58,13 @@ import config as C                                                    # noqa: E4
 from runninghub_client import RunningHubClient, RunningHubError       # noqa: E402
 from run_ledger import RunLedger                                      # noqa: E402
 
-from _ws import WS, DATA, OUT as OUT_ROOT                              # noqa: E402  ★ 分阶段目录真源
+from _ws import WS, DATA, ASSETS as ASSETS_ROOT                     # noqa: E402  ★ 分阶段目录真源
 VP = WS / 'video-pipeline'
 ASSET_MD = pathlib.Path((os.environ.get('SOLODRAMA_ASSET_MD') or os.environ.get('DRAMA_ASSET_MD')) or '')
 if not str(ASSET_MD):
     raise SystemExit('[FAIL] 未设置环境变量 SOLODRAMA_ASSET_MD（指向「资产提示词 md」：按项目组织的角色/场景提示词真源）')
 
-OUT_DIR = OUT_ROOT / 'assets' / 'scenes'
+OUT_DIR = ASSETS_ROOT / 'scenes'              # ★ 2026-10-19：落 04-资产/scenes（原 07-成片/assets）
 MANIFEST = DATA / 'scene_assets_manifest.json'
 PROMPTS_JSON = DATA / 'scene_prompts.json'
 # ★ 2026-09-20：批次 ID 加时间戳，让「每一次执行」在成本台账里各占一行。

@@ -26,7 +26,7 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402
-from _ws import WS, DATA, OUT as OUT_ROOT  # noqa: E402  ★ 工作区解析 + 分阶段目录真源
+from _ws import WS, DATA, ASSETS as ASSETS_ROOT  # noqa: E402  ★ 工作区解析 + 分阶段目录真源
 VP = WS / "video-pipeline"    # 引擎技术目录
 ASSET_MD = Path((os.environ.get("SOLODRAMA_ASSET_MD") or os.environ.get("DRAMA_ASSET_MD")) or "")   # 资产提示词 md（可选：缺省时跳过资产核对）
 
@@ -83,7 +83,7 @@ def parse_asset_md():
 def on_disk_assets():
     out = {}
     for sub, pat, pre in (("characters", "char_*.png", "char_"), ("scenes", "scene_*.png", "scene_")):
-        d = OUT_ROOT / "assets" / sub
+        d = ASSETS_ROOT / sub        # ★ 2026-10-19：资产在 04-资产/（原 07-成片/assets）
         if not d.is_dir():
             continue
         for f in d.glob(pat):

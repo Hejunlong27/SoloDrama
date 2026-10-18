@@ -94,7 +94,7 @@ ENGINE = pathlib.Path(os.environ.get('AI_VIDEO_PIPELINE_SKILL')
 sys.path.insert(0, str(ENGINE))
 sys.path.append(str(pathlib.Path(__file__).resolve().parent))
 
-from _ws import WS, DATA, OUT as OUT_ROOT                            # noqa: E402
+from _ws import WS, DATA, ASSETS as ASSETS_ROOT                      # noqa: E402
 
 VP = WS / 'video-pipeline'
 os.environ['VIDEO_PIPELINE_WORKSPACE'] = str(VP)
@@ -106,9 +106,10 @@ C.apply_overlay(VP / C.OVERLAY_FILENAME)
 
 from runninghub_client import RunningHubClient, RunningHubError      # noqa: E402
 from run_ledger import RunLedger                                     # noqa: E402
-OUT_DIRS = {'char': OUT_ROOT / 'assets' / 'characters',
-            'scene': OUT_ROOT / 'assets' / 'scenes',
-            'prop': OUT_ROOT / 'assets' / 'props'}
+# ★ 2026-10-19：资产落 04-资产/{characters,scenes,props}（原 07-成片/assets，用户找不到）
+OUT_DIRS = {'char': ASSETS_ROOT / 'characters',
+            'scene': ASSETS_ROOT / 'scenes',
+            'prop': ASSETS_ROOT / 'props'}
 MANIFESTS = {'char': DATA / 'char_assets_manifest.json',
              'scene': DATA / 'scene_assets_manifest.json',
              'prop': DATA / 'prop_assets_manifest.json'}

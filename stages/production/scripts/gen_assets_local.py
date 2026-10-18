@@ -51,7 +51,7 @@ os.environ.setdefault('PYTHONUTF8', '1')
 
 from run_ledger import RunLedger            # noqa: E402
 import asset_md as AM                       # noqa: E402
-from _ws import WS, DATA, OUT as OUT_ROOT    # noqa: E402  ★ 分阶段目录真源
+from _ws import WS, DATA, ASSETS as ASSETS_ROOT    # noqa: E402  ★ 分阶段目录真源
 
 try:                                        # Windows 控制台 GBK → UTF-8
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')    # type: ignore[union-attr]
@@ -68,7 +68,7 @@ ASSET_MD = pathlib.Path(_MD_ENV)
 
 MANIFEST = DATA / 'comfyui_manifest.json'
 PROD_MANIFEST = DATA / 'comfyui_assets_manifest.json'
-OUT_DIR = OUT_ROOT / 'assets'
+OUT_DIR = ASSETS_ROOT        # ★ 2026-10-19：落 04-资产/{characters,scenes,props}（原 07-成片/assets）
 BATCH_ID = 'local_assets_' + time.strftime('%Y%m%d_%H%M%S')
 
 SUBDIR = {'char': 'characters', 'scene': 'scenes', 'prop': 'props'}

@@ -21,7 +21,8 @@
     ├── 01-调研/                        市场数据 · 多市场对比 · 检索证据
     ├── 02-选题/                        候选池 · 七维评分 · 定位卡
     ├── 03-剧本/                        集数规划 · ep_XX.md · 台词时长审计
-    ├── 04-资产/                        资产卡（人/场/道）· 参考图原图
+    ├── 04-资产/                        资产卡（人/场/道）· refs.json ·
+    │                                   characters/ scenes/ props/（★出图产物）· refs/（参考图原图）
     ├── 05-分镜/                        分镜脚本（11 字段）
     ├── 06-提示词/                      H3 六段式提示词 + data/ 四文件 + refs_h3/
     ├── 07-成片/                        逐段成片 · 母版 · 2K · 字幕
@@ -64,6 +65,33 @@ STAGE_DIRS: dict = {
     "release": "09-发行",
 }
 
+# ★ 2026-10-19：资产的四类子目录（`04-资产/` 内，机器产物 + 参考图原图）
+ASSET_SUBDIRS: dict = {
+    "characters": "人物资产：出图产物 char_01_<名字>.png（主卡 + 三视图按画风）",
+    "scenes": "场景资产：出图产物 scene_01_<名字>.png（主卡 + 辅卡按画风）",
+    "props": "道具资产：出图产物 prop_01_<名字>.png（上限见画风三轨规范）",
+    "refs": "参考图原图（人/场/道各一张，未瘦身）；瘦身后落 `06-提示词/refs_h3/`",
+}
+
+# ── 发布版成片命名（★ 2026-10-19 用户明确要求，不可自行发挥）────────────────
+# 用户原话：「发布版剧集的命名，严格以 `Episode+**` 的格式，如 Episode01、Episode02」
+RELEASE_EPISODE_PREFIX = "Episode"       # 固定前缀（首字母大写）
+RELEASE_EPISODE_DIGITS = 2               # 编号位数（01…99；≥100 集自动加位）
+RELEASE_EPISODE_DIR = "剧集"             # 落点：09-发行/剧集/EpisodeNN.mp4
+RELEASE_FILENAME_RE = r"^Episode(\d{%d,})\.mp4$" % RELEASE_EPISODE_DIGITS
+
+
+def release_episode_name(ep_index: int, digits: int = RELEASE_EPISODE_DIGITS) -> str:
+    """集号（从 1 开始）→ 发布版文件名：1 → `Episode01.mp4`。"""
+    return "%s%0*d.mp4" % (RELEASE_EPISODE_PREFIX, digits, int(ep_index))
+
+
+def release_episode_dir(ws) -> Path:
+    """发布版成片目录：`09-发行/剧集/`。"""
+    ws = _norm_ws(ws)
+    lay = load(ws)
+    return ws / lay["stages"].get("release", STAGE_DIRS["release"]) / RELEASE_EPISODE_DIR
+
 # 各阶段目录的唯一用途（供脚手架写 README、供 layout 子命令展示）
 STAGE_PURPOSE: dict = {
     "research": "市场调研：market-data.json（多市场榜单/对标剧/趋势）、多市场对比表、检索证据",
@@ -72,9 +100,9 @@ STAGE_PURPOSE: dict = {
     "assets": "资产：资产卡（人物/场景/道具 md）、参考图原图（refs/）",
     "storyboard": "分镜：storyboard/epXX.md（11 字段分镜脚本，含 <Picture N> 与 [Shot N]）",
     "prompts": "提示词：H3 六段式提示词 md + data/ 四文件（出片引擎唯一输入契约）+ refs_h3/",
-    "film": "成片：逐段 final.mp4、整集母版、2K、字幕成片、样张",
+    "film": "成片：逐段 final.mp4、整集母版、2K、字幕成片、样张（**工作产物**；发布版另见 09-发行/剧集/）",
     "compliance": "合规：发布前预检报告、TikTok 条款映射、整改记录、申诉材料",
-    "release": "发行：封面（多尺寸成组，抓马构图 · 视觉冲击）、文案（六槽位 + 三档描述）、"
+    "release": "发行：剧集/（发布版 EpisodeNN.mp4）、封面（多尺寸成组，抓马构图）、文案（六槽位 + 三档描述）、"
                "发布清单、版权资料（4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」）。"
                "真源 docs/distribution/发行资料清单.md；门禁 release_check.py",
 }
@@ -88,6 +116,8 @@ DEFAULT_LAYOUT: dict = {
     #    **不是** "video-pipeline/data" —— 后者会拼成 video-pipeline/video-pipeline/data。
     "data_rel": "data",
     "out_rel": "output",
+    # ★ 2026-10-19：资产出图落点（相对 engine_root）。旧布局下为 None ⇒ 沿用 `<out_dir>/assets`。
+    "assets_rel": None,
 }
 
 
@@ -122,7 +152,7 @@ def load(ws) -> dict:
     out = dict(DEFAULT_LAYOUT)
     out["stages"] = dict(STAGE_DIRS)
     out.update({k: v for k, v in raw.items() if k in
-                ("layout_version", "engine_root", "data_rel", "out_rel")})
+                ("layout_version", "engine_root", "data_rel", "out_rel", "assets_rel")})
     st = raw.get("stages")
     if isinstance(st, dict):
         for k, v in st.items():
@@ -170,8 +200,86 @@ def data_dir(ws) -> Path:
 
 
 def out_dir(ws) -> Path:
-    """出片引擎的**输出根目录**（批次目录 / 资产图 / subs 都在它下面）。"""
+    """出片引擎的**输出根目录**（批次目录 `<批次>/`、`subs/` 在它下面）。
+
+    ⚠️ 2026-10-19 起**不再**在这里放资产图 —— 资产落 `04-资产/`，用 `assets_dir()`。
+    """
     return _resolve_rel(ws, "out_dir", "out_rel", LEGACY_OUT_REL)
+
+
+def legacy_assets_dir(ws) -> Path:
+    """**旧**资产落点 `<out_dir>/assets/`（2026-10-19 之前的行为：`07-成片/assets`
+    或 `video-pipeline/output/assets`）。只用于迁移与回退，新代码用 `assets_dir()`。"""
+    return out_dir(ws) / "assets"
+
+
+def _abs_against(base: Path, rel: str) -> Path:
+    p = Path(str(rel)).expanduser()
+    return p.resolve() if p.is_absolute() else (base / p).resolve()
+
+
+def _has_asset_images(p: Path) -> bool:
+    """目录里有没有真正的资产图（避免被 scaffold 建的 README / 空目录骗到）。"""
+    exts = (".png", ".jpg", ".jpeg", ".webp")
+    for d in [p / s for s in ("characters", "scenes", "props")] + [p]:
+        if d.is_dir() and any(f.is_file() and f.suffix.lower() in exts for f in d.iterdir()):
+            return True
+    return False
+
+
+def assets_dir(ws) -> Path:
+    """资产（人物 / 场景 / 道具）**出图产物与参考图原图**的落点。
+
+    判定顺序（高 → 低）
+    ------------------
+    ① `<engine_root>/config.local.json` 的 `assets_dir`（相对 engine_root，引擎同款覆盖语义）
+    ② `<ws>/layout.json` 的 `assets_rel`
+    ③ 阶段目录 `stages["assets"]`（= `04-资产`）
+    ④ 旧布局：`<out_dir>/assets`
+
+    ★ 零迁移兼容（2026-10-19）
+    --------------------------
+    新布局下若**声明位置还没有任何资产图**、而**旧位置 `<out_dir>/assets` 已有图**，
+    则沿用旧位置 —— 避免老项目被静默劈成「一半在 04-资产、一半在 07-成片/assets」。
+    迁移命令见 `stages/production/scripts/migrate_assets.py`；迁完自动切到新位置。
+    """
+    ws = _norm_ws(ws)
+    legacy = legacy_assets_dir(ws)
+    lay = load(ws)
+    er = engine_root(ws)
+
+    declared = None
+    local = er / "config.local.json"
+    if local.is_file():
+        try:
+            cfg = json.loads(local.read_text(encoding="utf-8-sig"))
+            if isinstance(cfg, dict) and isinstance(cfg.get("assets_dir"), str) and cfg["assets_dir"].strip():
+                declared = _abs_against(er, cfg["assets_dir"].strip())
+        except (OSError, json.JSONDecodeError, ValueError):
+            declared = None
+    if declared is None:
+        rel = lay.get("assets_rel")
+        if isinstance(rel, str) and rel.strip():
+            declared = _abs_against(er, rel.strip())
+    if declared is None:
+        if lay.get("_fallback"):
+            return legacy                                     # 真·旧布局：行为不变
+        declared = ws / lay["stages"].get("assets", STAGE_DIRS["assets"])
+
+    if not _has_asset_images(declared) and _has_asset_images(legacy):
+        return legacy                                         # 未迁移的老项目：先用旧位置
+    return declared
+
+
+def assets_dir_note(ws) -> str:
+    """`assets_dir()` 因「未迁移」而返回旧位置时给一句人话提示；否则空串。"""
+    ws = _norm_ws(ws)
+    if assets_dir(ws) != legacy_assets_dir(ws) or load(ws).get("_fallback"):
+        return ""
+    return ("[提示] 资产仍在旧位置 %s；跑 "
+            "`python stages/production/scripts/migrate_assets.py --workspace \"%s\" --apply` "
+            "迁到 %s。" % (legacy_assets_dir(ws), ws,
+                        ws / load(ws)["stages"].get("assets", STAGE_DIRS["assets"])))
 
 
 # 创作层/工具链的历史相对路径 → layout 阶段键（前缀匹配）
@@ -263,6 +371,19 @@ def scaffold(ws, *, engine_root_name: str = LEGACY_ENGINE_ROOT) -> dict:
                 "> 其他阶段不得在此写入同名文件。\n" % (STAGE_DIRS[key], STAGE_PURPOSE[key], key),
                 encoding="utf-8")
 
+    # 1.5) ★ 资产子目录：`04-资产/{characters,scenes,props,refs}`（2026-10-19 新增）
+    #      理由：出图产物原先落在 `<out_dir>/assets/`（= 07-成片/assets），
+    #      人物/场景资产跑到「成片」阶段目录里，用户找不到。
+    adir = ws / STAGE_DIRS["assets"]
+    for sub, desc in ASSET_SUBDIRS.items():
+        p = adir / sub
+        if not p.exists():
+            created.append(str(p))
+        p.mkdir(parents=True, exist_ok=True)
+        r = p / "README.md"
+        if not r.exists():
+            r.write_text("# %s/%s\n\n%s\n" % (STAGE_DIRS["assets"], sub, desc), encoding="utf-8")
+
     # 2) 引擎技术目录（config / ledger / logs）
     er = ws / engine_root_name
     for sub in ("", "ledger/runs", "logs"):
@@ -271,32 +392,36 @@ def scaffold(ws, *, engine_root_name: str = LEGACY_ENGINE_ROOT) -> dict:
             created.append(str(p))
         p.mkdir(parents=True, exist_ok=True)
 
-    # 3) layout.json（data_rel / out_rel 一律**相对 engine_root**）
+    # 3) layout.json（data_rel / out_rel / assets_rel 一律**相对 engine_root**）
     er_name = er.name
     data_rel = "../%s" % STAGE_DIRS["prompts"]
     out_rel = "../%s" % STAGE_DIRS["film"]
+    assets_rel = "../%s" % STAGE_DIRS["assets"]
     lay = {
         "layout_version": LAYOUT_VERSION,
         "engine_root": er_name,
         "stages": dict(STAGE_DIRS),
         "data_rel": data_rel,
         "out_rel": out_rel,
-        "_comment": ("阶段目录为各阶段唯一落点；data_rel / out_rel 是**相对 engine_root** 的"
-                     "输入/输出目录，会被回填进 <engine_root>/config.local.json 的 data_dir / out_dir。"),
+        "assets_rel": assets_rel,
+        "_comment": ("阶段目录为各阶段唯一落点；data_rel / out_rel / assets_rel 是**相对 engine_root** 的"
+                     "输入/输出/资产目录，会被回填进 <engine_root>/config.local.json 的 "
+                     "data_dir / out_dir / assets_dir。资产（人/场/道）落 04-资产，不进 07-成片。"),
     }
     lp = ws / LAYOUT_FILE
     lp.write_text(json.dumps(lay, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    # 4) config.local.json 回填 data_dir / out_dir（相对 engine_root）
+    # 4) config.local.json 回填 data_dir / out_dir / assets_dir（相对 engine_root）
     _patch_local_cfg(er, {
         "data_dir": "../%s" % STAGE_DIRS["prompts"],
         "out_dir": "../%s" % STAGE_DIRS["film"],
+        "assets_dir": "../%s" % STAGE_DIRS["assets"],
     })
     return {"created": created, "layout": lay, "engine_root": er, "layout_file": lp}
 
 
 def _patch_local_cfg(engine_root: Path, patch: dict) -> Path:
-    """把 data_dir / out_dir 等键合并进 `<engine_root>/config.local.json`（不覆盖其他键）。"""
+    """把 data_dir / out_dir / assets_dir 等键合并进 `<engine_root>/config.local.json`（不覆盖其他键）。"""
     engine_root.mkdir(parents=True, exist_ok=True)
     p = engine_root / "config.local.json"
     cfg = {}

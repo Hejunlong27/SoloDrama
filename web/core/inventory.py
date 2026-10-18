@@ -116,11 +116,17 @@ def _inventory(ws: Path) -> dict:
     except Exception:  # noqa: BLE001
         out_dir = ws / "video-pipeline" / "output"
 
-    images = {k: _count_images(out_dir / "assets" / k) for k in KINDS}
+    # ★ 2026-10-19：资产落点 = 04-资产（老项目未迁移时 assets_dir 会返回旧位置 <out>/assets）
+    try:
+        assets_dir = Path(L.assets_dir(str(ws))) if L else out_dir / "assets"
+    except Exception:  # noqa: BLE001
+        assets_dir = out_dir / "assets"
+
+    images = {k: _count_images(assets_dir / k) for k in KINDS}
     images["total"] = sum(images.values())
 
     refs = 0
-    for cand in (out_dir / "assets" / "refs", ws / "video-pipeline" / "data" / "refs",
+    for cand in (assets_dir / "refs", out_dir / "assets" / "refs", ws / "video-pipeline" / "data" / "refs",
                  ws / "video-pipeline" / "data" / "refs_h3", ws / "04-资产" / "refs"):
         refs = max(refs, _count_images(cand))
 

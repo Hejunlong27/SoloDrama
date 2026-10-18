@@ -121,6 +121,12 @@ VP: Path = (L.engine_root(WS) if L else WS / "video-pipeline")
 DATA: Path = (L.data_dir(WS) if L else VP / "data")
 OUT: Path = (L.out_dir(WS) if L else VP / "output")
 
+# ★ 2026-10-19：**资产**（人物/场景/道具）出图产物与参考图原图的落点 = `04-资产/`
+#   此前资产被打到 `<OUT>/assets/`（= 07-成片/assets），用户找不到。
+#   ⚠ 迁移期：老项目若旧位置已有图而新位置为空，`L.assets_dir()` 会返回旧位置（零迁移兼容）。
+ASSETS: Path = (L.assets_dir(WS) if L else VP / "output" / "assets")
+ASSETS_NOTE: str = (L.assets_dir_note(WS) if L else "")
+
 # 台账与日志仍在引擎目录下（不随阶段目录迁移）
 LEDGER: Path = VP / "ledger"
 LOGS: Path = VP / "logs"
@@ -152,3 +158,18 @@ def out_dir(ws=None) -> Path:
     """按指定工作区解析出片引擎输出根。"""
     w = Path(ws).expanduser().resolve() if ws else WS
     return L.out_dir(w) if L else (w / "video-pipeline" / "output")
+
+
+def assets_dir(ws=None) -> Path:
+    """按指定工作区解析**资产落点**（人物/场景/道具出图产物 + 参考图原图）。
+
+    新布局 = `<ws>/04-资产/`；旧项目未迁移时自动沿用 `<out>/assets/`（零迁移兼容）。
+    """
+    w = Path(ws).expanduser().resolve() if ws else WS
+    return L.assets_dir(w) if L else (w / "video-pipeline" / "output" / "assets")
+
+
+def release_dir(ws=None) -> Path:
+    """按指定工作区解析**发布版成片目录**（`09-发行/剧集/`，文件名为 `EpisodeNN.mp4`）。"""
+    w = Path(ws).expanduser().resolve() if ws else WS
+    return L.release_episode_dir(w) if L else (w / "09-发行" / "剧集")

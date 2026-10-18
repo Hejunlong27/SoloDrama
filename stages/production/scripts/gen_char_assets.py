@@ -57,7 +57,7 @@ import config as C                                                   # noqa: E40
 from runninghub_client import RunningHubClient, RunningHubError      # noqa: E402
 from run_ledger import RunLedger                                     # noqa: E402
 
-from _ws import WS, DATA, OUT as OUT_ROOT                             # noqa: E402  ★ 分阶段目录真源
+from _ws import WS, DATA, ASSETS as ASSETS_ROOT                    # noqa: E402  ★ 分阶段目录真源
 VP = WS / 'video-pipeline'
 ASSET_MD = pathlib.Path((os.environ.get('SOLODRAMA_ASSET_MD') or os.environ.get('DRAMA_ASSET_MD')) or '')
 if not str(ASSET_MD):
@@ -66,7 +66,7 @@ if not str(ASSET_MD):
 # 人物定妆图 AI 应用 ID：账号绑定资源，从环境变量注入（占位历史值见 VERSIONS.md 说明）
 CHAR_APP_ID = os.environ.get('RH_CHAR_APP_ID') or ''
 NODE_TEXT = '33'                             # 实测唯一可填节点（fieldName=text）
-OUT_DIR = OUT_ROOT / 'assets' / 'characters'
+OUT_DIR = ASSETS_ROOT / 'characters'          # ★ 2026-10-19：落 04-资产/characters（原 07-成片/assets）
 MANIFEST = DATA / 'char_assets_manifest.json'
 PROMPTS_JSON = DATA / 'char_prompts.json'
 # ★ 2026-09-20：批次 ID 加时间戳，让「每一次执行」在成本台账里各占一行。

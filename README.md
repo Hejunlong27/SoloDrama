@@ -28,14 +28,16 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 
 | 类别 | 交付内容 | 状态 |
 |---|---|---|
-| **本地执行引擎集** | 5 个阶段模块（创作 / 出片 / 字幕 / 总控 / 资产）+ Web 控制台 `web/`，共 **166 个受管文件** | ✅ 已交付 |
+| **本地执行引擎集** | 5 个阶段模块（创作 / 出片 / 字幕 / 总控 / 资产）+ Web 控制台 `web/`，共 **170 个受管文件** | ✅ 已交付 |
 | **统一 CLI 入口** | `stages/production/scripts/drama.py`，11 类子命令 | ✅ 已交付 |
 | **西语漫剧创作链路** | `stages/creation/`（四部分，49 例离线测试） | ✅ 已交付 |
 | **本地出图通道** | `stages/assets/comfyui/`（￥0 成本、零第三方依赖、不出网） | ✅ 已交付 |
 | **模型选择门禁** | `stages/production/scripts/model_gate.py`（19 例离线测试） | ✅ 已交付 |
-| **发行资料门禁** | `stages/production/scripts/release_check.py`（封面多尺寸 + 版权资料 4+4，11 例离线测试） | ✅ 已交付 |
+| **发行资料门禁** | `stages/production/scripts/release_check.py`（发布版命名 + 封面多尺寸 + 版权资料 4+4，15 例离线测试） | ✅ 已交付 |
+| **发布版导出** | `stages/production/scripts/release_export.py`（严格 `EpisodeNN.mp4` 命名，13 例离线测试） | ✅ 已交付 |
+| **资产落点迁移** | `stages/production/scripts/migrate_assets.py`（旧 `07-成片/assets` → `04-资产`，默认干跑+备份，16 例离线测试） | ✅ 已交付 |
 | **离线测试集合** | 各套离线用例（零网络零计费）+ 字幕安全区断言集，全部通过 | ✅ 全绿 |
-| **完整性指纹** | `manifest.sha256`（**166 条**，显式排除自身） | ✅ 逐文件 0 不符 |
+| **完整性指纹** | `manifest.sha256`（**170 条**，显式排除自身） | ✅ 逐文件 0 不符 |
 | **设计文档** | 可行性检查报告 + 技术文档 + 创作层方法论 5 篇 + 模块 references | ✅ 已交付 |
 | **依赖锁定** | `requirements.txt`（`httpx==0.28.1` / `Pillow==12.2.0`，实测 Python 3.13） | ✅ 已交付 |
 | **开源发布** | GitHub [`Hejunlong27/SoloDrama`](https://github.com/Hejunlong27/SoloDrama)，Apache-2.0 | ✅ 已发布 |
@@ -45,12 +47,12 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 | 阶段 | 模块 | 功能 |
 |---|---|---|
 | **创作** | `stages/creation/` | ① 榜单调研与对比（多市场横向比较 + 西语重点）→ ② 爆款拆解（题材分布 / 套路库 / 爆点 / 内容偏好 / 差异化趋势）→ ③ 选题定位（七维加权评分 + 定位卡）→ ④ 剧本改写（源剧本 → N 集规划，默认 **40 集 × 70 秒**，每集含开场钩子 / 核心冲突 / 反转 / 集尾钩子） |
-| **资产** | `stages/assets/` | 资产卡提示词净化（14 条纪律）+ 三类模板 + `md → 清单` 转换；出图双通路：**本地 ComfyUI（默认，￥0）** 与 RunningHub 云端（★计费） |
+| **资产** | `stages/assets/` | 资产卡提示词净化（14 条纪律）+ 三类模板 + `md → 清单` 转换；出图双通路：**本地 ComfyUI（默认，￥0）** 与 RunningHub 云端（★计费）；**产物统一落 `04-资产/{characters,scenes,props}`**（老项目用 `migrate_assets.py` 迁入） |
 | **接线** | `stages/production/` | 参考图落位接线（`<Picture N>` ↔ refs 顺序一致）、悬空图槽 / 超 6 槽体检、参考图瘦身 |
 | **出片** | `stages/video/workflow/` | RunningHub「工作流 + AI 应用」标准通道批量出片：`doctor` 体检 → 干跑计划 → 小样 → 全量；taskId 级断点续跑、并发上限 5（单账号，见下方说明）、计费预估与用量核对 |
 | **成片** | `stages/subtitle/` | CTC 强制对齐 → ASS 生成 → 无损拼接母版 → Topaz 2K 放大 → 字幕烧录 → 七道质量断言 |
 | **验收结账** | `stages/production/` | 字幕像素级验收、集级前置体检、成本台账（Excel 7 工作表 + markdown），口径只认平台返回的 `usage` |
-| **发行** | `stages/production/` + `docs/distribution/` | 发行资料齐全度门禁：封面多尺寸成组（抓马构图口径）+ 文案 + 发布清单 + **版权资料 4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」**；详见 `docs/distribution/发行资料清单.md` |
+| **发行** | `stages/production/` + `docs/distribution/` | 发布版成片统一导出为 **`09-发行/剧集/EpisodeNN.mp4`**（`release_export.py`，命名不许即兴发挥）+ 封面多尺寸成组（抓马构图口径）+ 文案 + 发布清单 + **版权资料 4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」**；齐全度门禁 `release_check.py` |
 | **总控** | `stages/production/scripts/drama.py` | `status / preflight / assets / refs / models / video(plan·run·status) / report / balance / cost / guide` |
 
 ### 1.3 视频通道并发上限（RunningHub）
@@ -257,6 +259,7 @@ https://github.com/Hejunlong27/SoloDrama
 
 硬性要求：
 - 所有要花钱的动作（云端出图、云端出片）先报价给我，我同意后再执行
+- 人物/场景/道具资产一律放在 04-资产（characters / scenes / props），**不要**放到 07-成片 里面
 - 出片先做 1 段小样给我看，我确认后再全量
 - 中途失败或中断就用 --resume 续跑，绝不重复提交、不重复花钱
 - 每做完一步告诉我：现在到哪一步、这一集花了多少、下一步预计花多少
@@ -270,17 +273,19 @@ https://github.com/Hejunlong27/SoloDrama
 准备发行资料。
 
 要求：
-1. 封面要抓马、有视觉冲击感（不是我给你的剧照精选，是冲突海报）：
+1. 发布版成片统一导出到 09-发行/剧集/，文件名严格 Episode01、Episode02、Episode03 …（Episode + 两位编号），
+   不要用 EP01_1080p_ES / ep01_拼接_11段 这类名字。导出用 release_export.py，不要手工改名。
+2. 封面要抓马、有视觉冲击感（不是我给你的剧照精选，是冲突海报）：
    单主体大特写、强明暗对比、画面里有一个能一眼看懂冲突的物件、
    大字标题（中文不超过 6 个字）、留一半悬念、高饱和撞色。
-2. 封面按多尺寸成组出：9:16 竖版主封面 + 3:4 卡片位封面（16:9 横版建议一起出）。
-3. 版权资料按 4 + 4 备齐：
+3. 封面按多尺寸成组出：9:16 竖版主封面 + 3:4 卡片位封面（16:9 横版建议一起出）。
+4. 版权资料按 4 + 4 备齐：
    - 4 张「AI 生成过程截图」：出图/出片平台任务页、提示词或工作流节点、
      生成结果列表、用量计费记录；
    - 4 张「原始文件或素材文件信息」：项目工作区目录树、剧本原稿文件信息、
      分镜或提示词源文件信息、成片母版文件信息。
    截图里任务 ID 与时间戳必须能看清（可以打码 API Key，但不要打码任务 ID）。
-4. 另附文案（标题 + 三档描述 + 关键词）和一份发布清单。
+5. 另附文案（标题 + 三档描述 + 关键词）和一份发布清单。
 5. 备齐后跑一次发行资料门禁，把结果告诉我。
 ```
 
@@ -361,10 +366,17 @@ python stages/production/scripts/compliance_precheck.py --workspace <工作区> 
 python stages/production/scripts/compliance_precheck.py --workspace <工作区> --all --aigc-label yes --restricted 0 --total 30
 
 # ⑥ 发行资料（零费用；用户说「准备发行资料」时执行）
-#    发行资料 = 封面（多尺寸成组，抓马构图）+ 文案 + 发布清单 + 版权资料（4 张 AI 生成
-#    过程截图 + 4 张原始文件/素材文件信息）；详见 docs/distribution/发行资料清单.md
-python stages/production/scripts/release_check.py --workspace <工作区>            # 齐全度门禁（退出码 2 = 不齐）
-python stages/production/scripts/release_check.py --workspace <工作区> --json     # 给控制台 / CI 解析
+#    ① 发布版成片：严格 Episode01.mp4 / Episode02.mp4 …，落 09-发行/剧集/（别手工改名）
+python stages/production/scripts/release_export.py --workspace <工作区> --all              # 干跑：看「哪个源 → 哪个目标」
+python stages/production/scripts/release_export.py --workspace <工作区> --all --apply      # 真写
+python stages/production/scripts/release_export.py --workspace <工作区> --from "<已编码发布版目录>" --all --apply
+#    ② 发行资料齐全度门禁（剧集命名 + 封面档位 + 版权资料 4+4 + 文案 + 发布清单；退出码 2 = 不齐）
+python stages/production/scripts/release_check.py --workspace <工作区>
+python stages/production/scripts/release_check.py --workspace <工作区> --json               # 给控制台 / CI 解析
+
+# ⑦ 只在需要时：把老项目里「跑到 07-成片 下」的资产迁回 04-资产（默认干跑，先备份）
+python stages/production/scripts/migrate_assets.py --workspace <工作区>                     # 打印搬迁清单
+python stages/production/scripts/migrate_assets.py --workspace <工作区> --apply             # 真搬
 ```
 
 > 出片缺图 / 提示词有缺陷时，`preflight` 与干跑会先拦下来 —— 把错误挡在计费之前。
@@ -385,6 +397,8 @@ python stages/assets/scripts/tests/test_asset_md.py
 python stages/production/scripts/tests/test_model_gate.py
 python stages/production/scripts/tests/test_style_gate.py
 python stages/production/scripts/tests/test_release_check.py
+python stages/production/scripts/tests/test_release_export.py
+python stages/production/scripts/tests/test_migrate_assets.py
 python stages/creation/scripts/tests/test_creation_pipeline.py
 # → 各套离线用例应全绿（零网络、零计费）
 ```
@@ -506,5 +520,6 @@ SoloDrama/
 
 | 版本 | 日期 | 内容 | 基线提交 | 验证结论 |
 |---|---|---|---|---|
-| **V0.2** | 2026-10-18 | **新增「发行资料」全链路**：① 单一真源 `docs/distribution/发行资料清单.md`（封面「抓马度」六抓手 + 版权资料 **4 张 AI 生成过程截图 + 4 张原始文件/素材文件信息** + 文案六槽位 + 发布清单）；② 确定性门禁 `stages/production/scripts/release_check.py`（离线、零第三方依赖，退出码 2）+ 11 例离线测试；③ 总纲补环节 14 与 **G9 发行资料门禁**；④ 新增 `docs/patches/产线对账关卡_2026-10-18.md`（40 集实跑的 26 个坑 → 自动/人工对账项）；⑤ 回填产线补丁 P1–P6（`ingest_check.py` 两处逻辑修正、`pipeline.py` 画幅 `value_map`、`runninghub_client.py` v2 提交通道与直链下载鉴权、`model_gate.py` 新增「RH 工作流出图」通道、`.gitignore` 排除 `web/var/`）；⑥ Web 控制台 `web/` 首次入库 | `180cf7c` | `test_release_check.py` 11/11 通过；`manifest.sha256` 重建后自校验 0 不符；线上 tree 与本机逐 blob 一致 |
+| **V0.3** | 2026-10-19 | **① 发布版剧集命名硬规则**：严格 `EpisodeNN.mp4`（`Episode01` … `Episode40`，≥100 集自动加位），落 `09-发行/剧集/`；新增 `stages/production/scripts/release_export.py`（默认干跑，自动探测来源，同集取「最接近可发布」的那份）+ 13 例离线测试；`release_check.py` 增「发布版命名与集号连续性」检查。**② 资产落点硬规则**：人物/场景/道具出图产物一律落 `04-资产/{characters,scenes,props}`，**不再进 `07-成片/assets`**；`_layout.py` 新增 `assets_dir()` / `assets_rel` / `release_episode_name()`，`scaffold` 自动建资产子目录并回填 `config.local.json` 的 `assets_dir`；4 个资产生成器 + 2 个消费侧改口（零迁移兼容：老项目未迁移前自动沿用旧位置并给出迁移提示）；新增 `stages/production/scripts/migrate_assets.py`（默认干跑、先备份、改写清单绝对路径）+ 16 例离线测试；控制台 `inventory.py` 同步。**③ 文档**：总纲新增 §3.7 落点与命名硬规则、环节链 6/7/14 更新；发行资料清单改为五类（剧集 + 封面 + 文案 + 发布清单 + 版权资料）并新增 §二 发布版命名 | `27ab7e3` | `test_release_export.py` 13/13、`test_migrate_assets.py` 16/16、`test_release_check.py` 15/15；既有 **53 + 41 + 29 + 23** 例全绿；`manifest.sha256` 重建后自校验 0 不符 |
+| V0.2 | 2026-10-18 | **新增「发行资料」全链路**：① 单一真源 `docs/distribution/发行资料清单.md`（封面「抓马度」六抓手 + 版权资料 **4 张 AI 生成过程截图 + 4 张原始文件/素材文件信息** + 文案六槽位 + 发布清单）；② 确定性门禁 `stages/production/scripts/release_check.py`（离线、零第三方依赖，退出码 2）+ 11 例离线测试；③ 总纲补环节 14 与 **G9 发行资料门禁**；④ 新增 `docs/patches/产线对账关卡_2026-10-18.md`（40 集实跑的 26 个坑 → 自动/人工对账项）；⑤ 回填产线补丁 P1–P6（`ingest_check.py` 两处逻辑修正、`pipeline.py` 画幅 `value_map`、`runninghub_client.py` v2 提交通道与直链下载鉴权、`model_gate.py` 新增「RH 工作流出图」通道、`.gitignore` 排除 `web/var/`）；⑥ Web 控制台 `web/` 首次入库 | `180cf7c` | `test_release_check.py` 11/11 通过；`manifest.sha256` 重建后自校验 0 不符；线上 tree 与本机逐 blob 一致 |
 | V0.1 | 2026-10-16 | 统一编排层基线：端到端链路（15 环节）、门禁 G-1–G8、画风三轨规范、分阶段目录规范 `layout.json`、留存率导向剧本结构、`09-发行/` 目录占位 | — | `manifest.sha256` 114 条 0 不符 |
