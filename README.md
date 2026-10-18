@@ -28,7 +28,7 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 
 | 类别 | 交付内容 | 状态 |
 |---|---|---|
-| **本地执行引擎集** | 5 个阶段模块（创作 / 出片 / 字幕 / 总控 / 资产）+ Web 控制台 `web/`，共 **170 个受管文件** | ✅ 已交付 |
+| **本地执行引擎集** | 5 个阶段模块（创作 / 出片 / 字幕 / 总控 / 资产）+ Web 控制台 `web/`，共 **171 个受管文件** | ✅ 已交付 |
 | **统一 CLI 入口** | `stages/production/scripts/drama.py`，11 类子命令 | ✅ 已交付 |
 | **西语漫剧创作链路** | `stages/creation/`（四部分，49 例离线测试） | ✅ 已交付 |
 | **本地出图通道** | `stages/assets/comfyui/`（￥0 成本、零第三方依赖、不出网） | ✅ 已交付 |
@@ -37,7 +37,7 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 | **发布版导出** | `stages/production/scripts/release_export.py`（严格 `EpisodeNN.mp4` 命名，13 例离线测试） | ✅ 已交付 |
 | **资产落点迁移** | `stages/production/scripts/migrate_assets.py`（旧 `07-成片/assets` → `04-资产`，默认干跑+备份，16 例离线测试） | ✅ 已交付 |
 | **离线测试集合** | 各套离线用例（零网络零计费）+ 字幕安全区断言集，全部通过 | ✅ 全绿 |
-| **完整性指纹** | `manifest.sha256`（**170 条**，显式排除自身） | ✅ 逐文件 0 不符 |
+| **完整性指纹** | `manifest.sha256`（**171 条**，显式排除自身） | ✅ 逐文件 0 不符 |
 | **设计文档** | 可行性检查报告 + 技术文档 + 创作层方法论 5 篇 + 模块 references | ✅ 已交付 |
 | **依赖锁定** | `requirements.txt`（`httpx==0.28.1` / `Pillow==12.2.0`，实测 Python 3.13） | ✅ 已交付 |
 | **开源发布** | GitHub [`Hejunlong27/SoloDrama`](https://github.com/Hejunlong27/SoloDrama)，Apache-2.0 | ✅ 已发布 |
@@ -213,7 +213,22 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 
 **不需要写代码，也不需要敲命令。** 你只要把仓库地址和下面两段提示词发给你的 AI 助手（WorkBuddy 等能读写本地文件、能执行命令的 Agent），它会完成安装、配置和全部生产步骤；你只需在几个「要不要花钱」的节点上答一句「可以」。
 
-整条链路 Agent 会依次替你跑完：**选题 → 世界观与人物 → 剧本 → 分镜与视频提示词 → 资产出图 → 渲染出片 → 拼接与 2K → 字幕 → 验收结账 → 发行资料（封面 / 文案 / 发布清单 / 版权资料）**。
+整条链路 Agent 会依次替你跑完：**选题 → 世界观与人物 → 剧本 → 分镜与视频提示词 → 资产出图 → 渲染出片 → 拼接与 2K → 字幕 → 验收结账 → 发行资料（剧集 / 封面 / 文案 / 发布清单 / 版权资料）**。
+
+> ### ⚠️ 给 AI 助手的三条红线（先把这段读完再动手）
+>
+> 这三条来自**真实的用户验收意见**（2026-10-19），违反一次就要返工一次：
+>
+> 1. **资产（人物/场景/道具）一律放 `04-资产/{characters,scenes,props}`**，**不许**出现在 `07-成片/` 下。
+>    新脚本用 `_ws.ASSETS` / `_ws.assets_dir(ws)`，**不要自己拼 `<out>/assets`**。
+> 2. **发布版成片一律命名 `EpisodeNN.mp4`**（`Episode01`…`Episode40`）并落 `09-发行/剧集/`，
+>    **只用 `release_export.py` 导出，不要手工改名**；`EP01_1080p_ES.mp4`、`ep01_拼接_11段_672x1216.mp4`
+>    这类带过程信息的名字**不许**当交付物。
+> 3. **不要临时起名、不要临时挑目录**。凡是要给用户看的交付物（成片 / 封面 / 版权资料），
+>    先查 `docs/orchestration/生产流程总纲.md` **§3.7 落点与命名硬规则**；该节没有的规定，
+>    **先把规则补进去**再动手。
+>
+> 完整事故复盘（现象 / 根因 / 修法 / 验收判据）：[`docs/patches/2026-10-19_落点与命名事故复盘.md`](docs/patches/2026-10-19_落点与命名事故复盘.md)
 
 #### 你只需要准备这几样
 
@@ -410,7 +425,7 @@ python stages/creation/scripts/tests/test_creation_pipeline.py
 | 出片数据契约 | `stages/video/workflow/references/data-schema.md` | `data/` 四文件的字段与校验规则（唯一输入契约） |
 | RunningHub 行为契约 | `stages/video/workflow/references/runninghub-contract.md` | 提交 / 轮询 / 计费字段 / 错误码语义 |
 | 创作层模块契约 | `stages/creation/references/module-contracts.md` | 四部分的输入输出、门禁与产物结构 |
-| 生产总控坑册 | `stages/production/references/pitfalls.md` | 已知坑与处置口径 |
+| 生产总控坑册（**§F 落点与命名** = AI 助手高频错误） | `stages/production/references/pitfalls.md` | 已知坑与处置口径 |
 
 #### ③ 常用扩展点（多数不需要改上游逻辑）
 
@@ -486,6 +501,7 @@ SoloDrama/
 | **发布前合规预检清单（TikTok 口径）** | `docs/compliance/发布前合规预检清单.md` |
 | **发行资料清单（封面抓马度 · 版权资料 4+4 · 发布清单）★ 单一真源** | `docs/distribution/发行资料清单.md` |
 | **产线对账关卡（26 个实跑坑 → 自动/人工对账项）** | `docs/patches/产线对账关卡_2026-10-18.md` |
+| **落点与命名事故复盘（2026-10-19 用户验收意见 · 必读）** | `docs/patches/2026-10-19_落点与命名事故复盘.md` |
 | 40 集实跑复盘（26 个坑，按严重度排序） | `docs/patches/SoloDrama_踩坑清单_2026-10-18.md` |
 | 产线补丁清单（逐条 patch 与代码片段） | `docs/patches/2026-10-18_短剧产线补丁清单.md` |
 | **台词时长审计口径（4.2 字/秒）** | `docs/creation/台词时长审计口径.md` |
@@ -501,7 +517,7 @@ SoloDrama/
 | 出片数据契约 | `stages/video/workflow/references/data-schema.md` |
 | RunningHub API 行为契约 | `stages/video/workflow/references/runninghub-contract.md` |
 | 字幕对齐 / 样式 / 放大 | `stages/subtitle/references/` |
-| 生产总控坑册 | `stages/production/references/pitfalls.md` |
+| 生产总控坑册（**§F 落点与命名** = AI 助手高频错误） | `stages/production/references/pitfalls.md` |
 | 本地 ComfyUI 出图（流程 / 清单格式 / 症状表） | `stages/assets/comfyui/references/本地ComfyUI出图.md` |
 | Qwen-Image 2.1 工作流节点表与换工作流适配 | `stages/assets/comfyui/references/workflow-qwen-image21.md` |
 | 资产卡净化纪律 | `stages/assets/references/踩坑全录-6个真缺陷.md` |
@@ -520,6 +536,7 @@ SoloDrama/
 
 | 版本 | 日期 | 内容 | 基线提交 | 验证结论 |
 |---|---|---|---|---|
+| **V0.3.1** | 2026-10-19 | **把「落点与命名」两次事故写进项目（文档修正，无代码变更）**：① 新增 `docs/patches/2026-10-19_落点与命名事故复盘.md`（保留用户原话 + 现象/根因/修法/三层防复发/交付前自检 5 问）；② `stages/production/references/pitfalls.md` 追加 **§F 落点与命名**（6 行现象-根因-修法，含「注释把 bug 固化成事实」「JSON 双反斜杠致改写恒为 0」「零迁移兼容」三条陷阱）；③ README §4.1 增「**给 AI 助手的三条红线**」提示块（资产落 04-资产 / 发布版 EpisodeNN / 不许临时起名挑目录），文档索引与契约表同步；④ 总纲、发行资料清单互链 | `f6eca47` | 纯文档改动；`manifest.sha256` 重建后自校验 0 不符 |
 | **V0.3** | 2026-10-19 | **① 发布版剧集命名硬规则**：严格 `EpisodeNN.mp4`（`Episode01` … `Episode40`，≥100 集自动加位），落 `09-发行/剧集/`；新增 `stages/production/scripts/release_export.py`（默认干跑，自动探测来源，同集取「最接近可发布」的那份）+ 13 例离线测试；`release_check.py` 增「发布版命名与集号连续性」检查。**② 资产落点硬规则**：人物/场景/道具出图产物一律落 `04-资产/{characters,scenes,props}`，**不再进 `07-成片/assets`**；`_layout.py` 新增 `assets_dir()` / `assets_rel` / `release_episode_name()`，`scaffold` 自动建资产子目录并回填 `config.local.json` 的 `assets_dir`；4 个资产生成器 + 2 个消费侧改口（零迁移兼容：老项目未迁移前自动沿用旧位置并给出迁移提示）；新增 `stages/production/scripts/migrate_assets.py`（默认干跑、先备份、改写清单绝对路径）+ 16 例离线测试；控制台 `inventory.py` 同步。**③ 文档**：总纲新增 §3.7 落点与命名硬规则、环节链 6/7/14 更新；发行资料清单改为五类（剧集 + 封面 + 文案 + 发布清单 + 版权资料）并新增 §二 发布版命名 | `27ab7e3` | `test_release_export.py` 13/13、`test_migrate_assets.py` 16/16、`test_release_check.py` 15/15；既有 **53 + 41 + 29 + 23** 例全绿；`manifest.sha256` 重建后自校验 0 不符 |
 | V0.2 | 2026-10-18 | **新增「发行资料」全链路**：① 单一真源 `docs/distribution/发行资料清单.md`（封面「抓马度」六抓手 + 版权资料 **4 张 AI 生成过程截图 + 4 张原始文件/素材文件信息** + 文案六槽位 + 发布清单）；② 确定性门禁 `stages/production/scripts/release_check.py`（离线、零第三方依赖，退出码 2）+ 11 例离线测试；③ 总纲补环节 14 与 **G9 发行资料门禁**；④ 新增 `docs/patches/产线对账关卡_2026-10-18.md`（40 集实跑的 26 个坑 → 自动/人工对账项）；⑤ 回填产线补丁 P1–P6（`ingest_check.py` 两处逻辑修正、`pipeline.py` 画幅 `value_map`、`runninghub_client.py` v2 提交通道与直链下载鉴权、`model_gate.py` 新增「RH 工作流出图」通道、`.gitignore` 排除 `web/var/`）；⑥ Web 控制台 `web/` 首次入库 | `180cf7c` | `test_release_check.py` 11/11 通过；`manifest.sha256` 重建后自校验 0 不符；线上 tree 与本机逐 blob 一致 |
 | V0.1 | 2026-10-16 | 统一编排层基线：端到端链路（15 环节）、门禁 G-1–G8、画风三轨规范、分阶段目录规范 `layout.json`、留存率导向剧本结构、`09-发行/` 目录占位 | — | `manifest.sha256` 114 条 0 不符 |
