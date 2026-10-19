@@ -59,6 +59,41 @@ try:                                        # Windows 控制台 GBK → UTF-8
 except Exception:                                                 # noqa: BLE001
     pass
 
+def _apply_model_plan_env() -> dict:
+    """★ 2026-10-19（用户选 A）：把 model-plan.json 里的执行依据回灌成 COMFYUI_* 环境变量。
+
+    为什么需要：`comfy_client.py` 只认环境变量（COMFYUI_WORKFLOW / COMFYUI_NODE_*），
+    而「用户确认的是哪个工作流」只记在 model-plan.json 里。两边不连线时，换工作流会**静默
+    回落仓库默认工作流**，随后报 `KeyError: '<节点id>'`（看起来像模型没装），排查成本极高。
+    这里把确认单当作唯一真源：工作流路径、服务地址、节点映射都从确认单读，读不到才回落环境变量。
+
+    detail 里可选 `comfy_nodes` 对象：{"prompt": "488", "prefix": "487", "aspect": "13", "latent": "474", "seed": "10"}
+    """
+    applied = {}
+    mp = WS / 'model-plan.json'
+    if not mp.is_file():
+        return applied
+    try:
+        d = json.loads(mp.read_text(encoding='utf-8'))
+    except Exception:                                            # noqa: BLE001
+        return applied
+    node = (((d.get('models') or {}).get('image') or {}))
+    det = node.get('detail') or {}
+    wf = det.get('comfy_workflow') or ''
+    if wf and pathlib.Path(wf).is_file():
+        os.environ.setdefault('COMFYUI_WORKFLOW', wf)
+        applied['COMFYUI_WORKFLOW'] = wf
+    url = det.get('comfy_url') or ''
+    if url:
+        os.environ.setdefault('COMFYUI_URL', url)
+        applied['COMFYUI_URL'] = url
+    for k, v in (det.get('comfy_nodes') or {}).items():
+        env = 'COMFYUI_NODE_' + str(k).upper()
+        os.environ.setdefault(env, str(v))
+        applied[env] = str(v)
+    return applied
+
+
 VP = WS / 'video-pipeline'   # 引擎技术目录
 _MD_ENV = ((os.environ.get('SOLODRAMA_ASSET_MD') or os.environ.get('DRAMA_ASSET_MD')) or '').strip()
 if not _MD_ENV:
@@ -152,6 +187,10 @@ def main() -> int:
     ap.add_argument('--force', action='store_true', help='已出图的重跑（默认跳过已有产物，断点续跑）')
     ap.add_argument('--check', action='store_true', help='只体检 ComfyUI 是否在线，然后退出')
     args = ap.parse_args()
+
+    applied = _apply_model_plan_env()
+    if applied:
+        print('[i] 执行依据取自 model-plan.json：%s' % '；'.join('%s=%s' % (k, v) for k, v in applied.items()))
 
     if args.check:
         return cmd_check()
