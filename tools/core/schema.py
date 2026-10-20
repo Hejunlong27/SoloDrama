@@ -19,10 +19,30 @@ ALL_SHOT_FIELDS = SHOT_FIELDS + EXT_FIELDS
 DEFAULT_SHOT_SEC = 8
 MIN_SHOT_SEC = 4
 MAX_SHOT_SEC = 15
-MIN_EP_SEC = 70      # ★ 2026-10-16：单集 70 秒口径（原 90-120）
-MAX_EP_SEC = 95
-MIN_EP_SHOTS = 5     # 70 秒口径（原 6-15 镜）
-MAX_EP_SHOTS = 12
+
+# ★ 2026-10-20（V0.5）：默认口径下调为 **30 集 × 60 秒**（原 40 集 × 70 秒）。
+#   ⚠️ 老项目（已建成 70 秒口径）不能被打死 ⇒ 一律按**项目自己的 `ep_seconds`** 选档，
+#   不要直接引用下面的 MIN_EP_* 常量做新逻辑（它们是「默认档」的别名）。
+DEFAULT_EP_SEC = 60
+DEFAULT_EP_TOTAL = 30
+# 单集秒数 → {镜头数区间, 总时长区间}
+SECONDS_PROFILES = {
+    60: {"shots": (5, 10), "total": (60, 80)},
+    70: {"shots": (5, 12), "total": (70, 95)},
+    90: {"shots": (6, 15), "total": (90, 120)},
+}
+
+
+def ep_bounds(ep_seconds=None) -> dict:
+    """按单集秒数取校验口径；未知秒数取最接近的档，完全没给则用默认档。"""
+    sec = int(ep_seconds or DEFAULT_EP_SEC)
+    key = min(SECONDS_PROFILES, key=lambda s: abs(s - sec))
+    return SECONDS_PROFILES[key]
+
+
+_DEFAULT_BOUNDS = SECONDS_PROFILES[DEFAULT_EP_SEC]
+MIN_EP_SEC, MAX_EP_SEC = _DEFAULT_BOUNDS["total"]      # 默认档别名（60 秒口径）
+MIN_EP_SHOTS, MAX_EP_SHOTS = _DEFAULT_BOUNDS["shots"]  # 默认档别名（60 秒口径）
 
 # E009：ACTION 抽象词黑名单
 ABSTRACT_WORDS = (

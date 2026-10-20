@@ -71,7 +71,14 @@ def _looks_like_workspace(p: Path) -> bool:
 
 
 def resolve(explicit=None) -> Path:
-    """按优先级解析工作区；解析不到直接退出并给出可照抄的修法。"""
+    """按优先级解析工作区；解析不到直接退出并给出可照抄的修法。
+
+    ★ 2026-10-20（反馈 P1-3 同类）：环境变量指向的目录**不存在**时不再直接退出，而是
+      在 stderr 警告后继续走后面的优先级。原因：`--workspace` 常由脚本在 import 之后
+      才解析，而 `WS = resolve()` 发生在 import 期 —— 一条过期的环境变量会让**显式**
+      `--workspace` 也一起失效（实测：test_migrate_assets 13 例全红）。
+      真的都解析不到时，仍然统一走 ④ 的提示退出（不会静默猜路径）。
+    """
     # ① 命令行显式指定
     if explicit:
         p = Path(explicit).expanduser()
@@ -84,7 +91,7 @@ def resolve(explicit=None) -> Path:
         p = Path(env).expanduser()
         if p.is_dir():
             return p.resolve()
-        sys.exit("[FAIL] 环境变量 %s 指向的目录不存在：%s" % (ENV_NAME, p))
+        print("[WARN] 环境变量 %s 指向的目录不存在，已忽略：%s" % (ENV_NAME, p), file=sys.stderr)
     # ③ 脚本位置推断：<项目>/scripts/xxx.py
     cand = Path(__file__).resolve().parent.parent
     if _looks_like_workspace(cand):
@@ -173,3 +180,33 @@ def release_dir(ws=None) -> Path:
     """按指定工作区解析**发布版成片目录**（`09-发行/剧集/`，文件名为 `EpisodeNN.mp4`）。"""
     w = Path(ws).expanduser().resolve() if ws else WS
     return L.release_episode_dir(w) if L else (w / "09-发行" / "剧集")
+
+
+# ★ 2026-10-20（反馈 P0-3）：剧名唯一真源。
+#   此前 cost_ledger.py 里写死 `DRAMA_DEFAULT = '七大姑催婚'`，于是**任何**项目跑
+#   `drama.py cost` 都会产出「成本台账_七大姑催婚.xlsx」——交付物里混进无关剧名。
+#   规则：brief.json（创作层契约）→ project.json（工作区元数据）→ 工作区目录名。
+#   不猜正文、不读 md，只认结构化字段。
+_NAME_KEYS = ("title", "剧名", "drama", "name", "slug")
+
+
+def drama_name(ws=None) -> str:
+    """从工作区推导剧名（取不到则用目录名，绝不返回空串）。"""
+    w = Path(ws).expanduser().resolve() if ws else WS
+    for fname in ("brief.json", "project.json"):
+        p = w / fname
+        if not p.is_file():
+            continue
+        try:
+            import json as _json
+            d = _json.loads(p.read_text(encoding="utf-8-sig"))
+        except Exception:                                          # noqa: BLE001
+            continue
+        if not isinstance(d, dict):
+            continue
+        for k in _NAME_KEYS:
+            v = str(d.get(k) or "").strip()
+            if v:
+                return v
+    return w.name or "未命名项目"
+

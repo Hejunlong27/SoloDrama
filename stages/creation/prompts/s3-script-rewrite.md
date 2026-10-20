@@ -1,17 +1,26 @@
 # 第四部分 · 剧本改写（LLM 提示词模板）
 
 > 用途：指导会话内 LLM 按 `03-剧本/blueprint.json`（④的结构规划，唯一指令来源）
-> 与 `script-brief.md`，把源剧本改写成 **N 集（默认 40 集 × 70 秒）** 的 FFS 正文。
+> 与 `script-brief.md`，把源剧本改写成 **N 集（默认 30 集 × 60 秒）** 的 FFS 正文。
 >
 > `script_rewrite.py` 已完成确定性部分：集数规划（每集的**开场钩子/核心冲突/反转/集尾钩子**）、
 > FFS 骨架、结构与格式自检。LLM 负责把每集写成可拍的正文。
 >
 > ★ **强度依据**：`docs/creation/剧本强度工程.md`（根本原因 / 改写策略 / 质控标准）。
 > 题材公式模式下，每集还带公式化要求（打脸/等级/见证者/压放/里程碑/金句）。
+>
+> ★ **流程依据**：`docs/creation/剧本改编四段法.md`。④ 已拆成四段，**本文件只负责第 ③ 段（写正文）**：
+>
+> | 段 | 做什么 | 文件/命令 | 门禁 |
+> |---|---|---|---|
+> | ① 诊断 | A 选题诊断 / B 改编策略 / C 故事主线 | `prompts/s3a-diagnosis.md` → `diagnose` | 未 `--confirm` 不许 `build --emit`（退出码 4） |
+> | ② 骨架 | D 分集大纲 + 第二轮结构审查 | `plan` → `review --write-fixes` | FAIL 不入正文（退出码 2） |
+> | ③ 正文 | 逐集 FFS 正文 | 本文件 | `lint --ep N` + `cli.py check` |
+> | ④ 验收 | 观众视角七问 | `prompts/s3c-audience-review.md` → `audience` | 退出码 2 |
 
 ## 任务
 
-> **四、剧本改写**：把源剧本改写成**完整 N 集规划**（默认 40 集，每集 70 秒），
+> **四、剧本改写**：把源剧本改写成**完整 N 集规划**（默认 30 集，每集 60 秒），
 > 每集须包含**开场钩子 + 核心冲突 + 一次反转 + 集尾钩子**；整体**节奏紧凑、钩子密集、爽点高频**。
 >
 > **要解决的问题**：此前两个试验项目「剧本过于简单、缺乏爽点引爆感」。
@@ -19,13 +28,18 @@
 
 ## 前置
 
+0. **诊断已确认**（新流程，缺这一步拿不到可写的骨架）：
+   `script_rewrite.py diagnose` → 填 A/B/C → `diagnose --check` → `diagnose --confirm`。
+   未确认时 `build --emit` 返回**退出码 4**。旧项目无 `diagnosis.json` 时只告警不拦截。
 1. 源剧本放到 `03-剧本/source-script.md`；
    **非目标语种先转译**（见 `prompts/s0b-script-translate.md`），转译质检通过后再进本环节。
 2. 定路线（二选一）：
-   - **常规**：③选题定位已就位 → `script_rewrite.py plan`（默认 40 集）。
+   - **常规**：③选题定位已就位 → `script_rewrite.py plan`（默认 30 集）。
    - **题材公式**：命中关键词（如「女主逆袭」）→ `genre_formula.py apply --genre female-comeback`
      → `script_rewrite.py plan --genre female-comeback`（**跳过选题**）。
-3. 单集骨架：`script_rewrite.py build --ep N --emit` → `03-剧本/ep_XX.md`。
+3. 大纲先过结构审查：`script_rewrite.py review --write-fixes` 无 FAIL 再写正文
+   （句库默认值会被判「句库残留」，用 `plan --from-outline 人工拆解.md` 覆盖）。
+4. 单集骨架：`script_rewrite.py build --ep N --emit` → `03-剧本/ep_XX.md`。
 
 ## 改写方式（源剧本 → 新规划）
 
@@ -36,7 +50,7 @@
    - **一次反转**（`reversal`）—— 必须改变力量对比或信息格局
    - **集尾钩子**（`hook`，7 型之一：身份悬念/危机逼近/关系反转/秘密揭露/选择困境/意外登场/代价预告）
 3. **加密**钩子与爆点：按 `boom_cadence` 植入中型爆点（每 4 集）与大型爆点（每 10 集）。
-4. **节奏**：单镜 4–15 秒、单集 5–12 镜、**单集总时长 70–95 秒（目标 70 秒）**；开场 1–2 镜短促抓人，集尾短收。
+4. **节奏**：单镜 4–15 秒、单集 5–10 镜、**单集总时长 60–80 秒（目标 60 秒）**；开场 1–2 镜短促抓人，集尾短收。
 
 ## ★ 爽感强化（本环节的硬要求）
 
@@ -108,12 +122,26 @@ EP1-3 钩子类型**互不相同**，且不得与前 2 集连续重复。
 ## 交付自检（顺序执行，全绿才算完成）
 
 ```bash
-python stages/creation/scripts/script_rewrite.py --workspace <工作区> lint --ep 1
+# 结构层（大纲阶段跑一次，正文写完不用重跑）
+python stages/creation/scripts/script_rewrite.py --workspace <工作区> review --write-fixes
 python stages/creation/scripts/genre_formula.py   --workspace <工作区> check --genre female-comeback  # 公式模式
+
+# 单集层（每集都跑）
+python stages/creation/scripts/script_rewrite.py --workspace <工作区> lint --ep 1
 python <工作区>/tools/cli.py check --ep 1          # E001–E011
 python <工作区>/tools/cli.py parse --ep 1
 python <工作区>/tools/cli.py convert --ep 1
+
+# 观众层（定稿前跑一次，七问都要有具体集号）
+python stages/creation/scripts/script_rewrite.py --workspace <工作区> audience
+python stages/creation/scripts/script_rewrite.py --workspace <工作区> audience --check
+
+# 下游层（分镜/提示词产出后跑，确认还是同一条内容）
+python stages/production/scripts/script_continuity.py --workspace <工作区> --all
 ```
+
+> `lint` 全绿只证明「能拍」，不证明「好看」；`audience --check` 过的才是验收；
+> `script_continuity` 过的才证明「分镜与提示词没有另写一套」。
 
 ## 进入制作
 

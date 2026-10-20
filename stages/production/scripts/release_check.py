@@ -125,7 +125,9 @@ def scan_covers(release: pathlib.Path):
     for p in release.rglob("*"):
         if not p.is_file() or p.suffix.lower() not in IMG_EXT:
             continue
-        m = re.match(r"^cover[_-]([0-9]+x[0-9]+)$", p.stem.lower())
+        # ★ 2026-10-20：允许 `cover_9x16_00.png` 这类**多候选**后缀（AI 直出会一档出 2–4 张，
+        #   选定后再改名为 cover_9x16.png）。后缀不参与档位判定，只放宽识别。
+        m = re.match(r"^cover[_-]([0-9]+x[0-9]+)(?:[_-].*)?$", p.stem.lower())
         if not m:
             continue
         tag = m.group(1)
@@ -159,6 +161,8 @@ def main() -> int:
     ap.add_argument("--min-side", type=int, default=MIN_LONG_SIDE,
                     help="版权资料长边下限，默认 %d px" % MIN_LONG_SIDE)
     ap.add_argument("--json", action="store_true", help="输出 JSON（给控制台/CI 用）")
+    ap.add_argument("--material-only", dest="material_only", action="store_true",
+                    help="只校验物料：连载/未杀青阶段把「成片未出」降为 WARN（反馈 P0-6）")
     a = ap.parse_args()
 
     # 先解析参数再导入工作区模块（见文件头的 ¶ 说明）；显式 --workspace 必须**覆盖**环境变量。
@@ -174,12 +178,16 @@ def main() -> int:
     except Exception:                                                          # noqa: BLE001
         release = ws / "09-发行"
 
-    fails, warns, notes = [], [], []
+    # ★ 2026-10-20（反馈 P0-6）：把「物料缺项」与「成片未出（下游依赖）」分开记。
+    #   此前五类产物被当作同一批次的并列项，任缺即整体不合格 —— 于是「封面/文案/版权全齐、
+    #   只是还没杀青」也被判成「发行资料不齐备」，已完成的工作在唯一的结构化输出里看不见，
+    #   连载阶段更是每次全红，红久了就没人看门禁了。
+    fails, warns, notes, downstream = [], [], [], []
 
     # ---- 0. 目录本身 ----
     if not release.is_dir():
         fails.append("发行目录不存在：%s ⇒ 先跑 `creation.py scaffold`，或手工建 `09-发行/`" % release)
-        return _report(a, ws, release, fails, warns, notes, {})
+        return _report(a, ws, release, fails, warns, notes, {}, downstream)
 
     # ---- 1. 封面 ----
     covers = scan_covers(release)
@@ -213,11 +221,11 @@ def main() -> int:
             m = ep_rx.match(f.name)
             (eps.__setitem__(int(m.group(1)), f) if m else bad_names.append(f.name))
     if bad_names:
-        fails.append("发布版命名不符合规范（须 `Episode01.mp4` 形式）：%s ⇒ 用 "
+        downstream.append("发布版命名不符合规范（须 `Episode01.mp4` 形式）：%s ⇒ 用 "
                      "`python stages/production/scripts/release_export.py --workspace \"<ws>\" --all --apply` 统一导出"
                      % "、".join(bad_names[:8]))
     if not eps:
-        fails.append("缺发布版成片：`09-发行/剧集/EpisodeNN.mp4`（一份都没有）⇒ 同上命令导出")
+        downstream.append("缺发布版成片：`09-发行/剧集/EpisodeNN.mp4`（一份都没有）⇒ 同上命令导出")
     else:
         nums = sorted(eps)
         gap = [n for n in range(min(nums), max(nums) + 1) if n not in nums]
@@ -268,34 +276,73 @@ def main() -> int:
 
     return _report(a, ws, release, fails, warns, notes,
                    {"covers": sorted(covers), "ai_process": sorted(ai), "source_file": sorted(src),
-                    "episodes": [f.name for _n, f in sorted(eps.items())]})
+                    "episodes": [f.name for _n, f in sorted(eps.items())]}, downstream)
 
 
-def _report(a, ws, release, fails, warns, notes, summary) -> int:
+def _verdict(material_fails: list, downstream: list) -> tuple:
+    """分层判定（反馈 P0-6）：返回 (code, 人话)。
+
+    * `ok`               —— 物料齐、成片也齐；
+    * `ready_for_export` —— 物料齐，只差下游的发布版成片（连载/未杀青阶段属正常）；
+    * `blocked`          —— 物料本身缺项，必须补。
+
+    「物料齐、只差成片」和「物料也没做」是**两种完全不同的状态**，
+    混成一句「不齐备」会让已完成的工作在唯一的结构化输出里消失。
+    """
+    if material_fails:
+        return "blocked", "物料缺项 %d 项（先补物料）" % len(material_fails)
+    if downstream:
+        return "ready_for_export", "物料已备，仅缺下游成片 %d 项（导出后即可发行）" % len(downstream)
+    return "ok", "发行资料齐备"
+
+
+def _report(a, ws, release, fails, warns, notes, summary, downstream=None) -> int:
     # --json 时 stdout **只放 JSON**（供控制台/CI 解析），人读内容一律走 stderr。
     human = sys.stderr if a.json else sys.stdout
+    downstream = list(downstream or [])
+
+    # --material-only：连载阶段做增量验收时不把「成片未出」当阻断（转成 WARN）。
+    if getattr(a, "material_only", False) and downstream:
+        warns = list(warns) + ["（--material-only）成片类缺项不计入阻断：%s"
+                               % "；".join(downstream)]
+        downstream = []
+
+    code, verdict_cn = _verdict(fails, downstream)
+    all_fails = list(fails) + list(downstream)
 
     if a.json:
         out = {"at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
                "workspace": str(ws), "release_dir": str(release),
-               "fails": fails, "warns": warns, "notes": notes, "found": summary,
-               "verdict": "blocked" if fails else "ok"}
+               "fails": all_fails, "material_fails": list(fails),
+               "downstream": list(downstream),
+               "warns": warns, "notes": notes, "found": summary,
+               "verdict": code, "verdict_cn": verdict_cn,
+               "material_only": bool(getattr(a, "material_only", False))}
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         print("=" * 74)
         print("发行资料齐全度检查 · %s" % release)
         print("=" * 74)
         if summary:
-            print("  发布版成片  : %s 集%s" % (len(summary.get("episodes") or []),
-                                            "（%s … %s）" % (summary["episodes"][0], summary["episodes"][-1])
-                                            if summary.get("episodes") else ""))
-            print("  封面档位    : %s" % (", ".join(summary["covers"]) or "（无）"))
-            print("  AI 生成过程  : %s / 4" % len(summary["ai_process"]))
-            print("  原始文件信息 : %s / 4" % len(summary["source_file"]))
+            # ★ 反馈 P0-6：五类拆成「已备 / 缺」，成片单独标为**下游依赖**。
+            def row(name, have, need):
+                miss = max(0, need - have)
+                print("  %-12s 已备 %-2s / 需 %-2s  %s"
+                      % (name, have, need, "缺 %d" % miss if miss else "齐"))
+
+            have_eps = len(summary.get("episodes") or [])
+            print("  %-12s %s%s"
+                  % ("发布版成片", ("已备 %d 集" % have_eps) if have_eps else "缺",
+                     "" if have_eps else "  ← 属下游依赖，不是物料缺项"))
+            print("  %-12s 已备 %s" % ("封面档位", ", ".join(summary["covers"]) or "（无）"))
+            row("AI 生成过程", len(summary["ai_process"]), 4)
+            row("原始文件信息", len(summary["source_file"]), 4)
         for w in warns:
             print("  [WARN] %s" % w)
         for b in fails:
             print("  [FAIL] %s" % b)
+        for b in downstream:
+            print("  [下游] %s" % b)
         print()
         for n in notes:
             print("  · %s" % n)
@@ -304,19 +351,26 @@ def _report(a, ws, release, fails, warns, notes, summary) -> int:
     try:
         release.mkdir(parents=True, exist_ok=True)
         rec = {"at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
-               "workspace": str(ws), "fails": fails, "warns": warns,
-               "found": summary, "min_side": a.min_side,
-               "verdict": "发行资料不齐备" if fails else "发行资料齐备（机器部分）"}
+               "workspace": str(ws), "fails": all_fails,
+               "material_fails": list(fails), "downstream": list(downstream),
+               "warns": warns, "found": summary, "min_side": a.min_side,
+               "verdict": code, "verdict_cn": verdict_cn}
         (release / "release-manifest.json").write_text(
             json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     except OSError:
         pass
 
-    if fails:
-        print("\n[BLOCK] 发行资料不齐备 —— 共 %d 项缺项，补齐后再发行。" % len(fails), file=human)
+    if code == "ok":
+        print("\n[OK] 发行资料机器校验通过（人工项见上）。", file=human)
+        return 0
+    if code == "ready_for_export":
+        print("\n[WAIT] %s" % verdict_cn, file=human)
+        print("       物料部分已通过；导出发布版后重跑本命令即可转 [OK]：", file=human)
+        print("       python stages/production/scripts/release_export.py --workspace \"%s\" --all --apply"
+              % ws, file=human)
         return 2
-    print("\n[OK] 发行资料机器校验通过（人工项见上）。", file=human)
-    return 0
+    print("\n[BLOCK] %s —— 补齐后再发行。" % verdict_cn, file=human)
+    return 2
 
 
 if __name__ == "__main__":

@@ -35,13 +35,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _ws import WS as _WS_DEFAULT, DATA as _DATA_DEFAULT                 # noqa: E402
+# `_layout.py` 在 `stages/` 下（不在本目录）；以前靠 `import _ws` 的副作用把它加进 sys.path，
+# 现在改成显式加入，避免「不导入 _ws 就找不到 _layout」。
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# ⚠ 不要在这里 `from _ws import WS`：`_ws.WS = resolve()` 是**导入期**求值，
+#   而 `--workspace` 要等 argparse 才拿到 —— 一条过期/不可用的环境变量就会让
+#   显式 `--workspace` 彻底失效（2026-10-20 实测：本脚本 13/16 条离线测试全红）。
+#   正确姿势：先解析参数 → 再 `_ws.resolve(a.workspace)`。
 import _layout as L                                                      # noqa: E402
 
 SUBS = ("characters", "scenes", "props", "refs")
@@ -121,7 +128,14 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
-    ws = Path(a.workspace).expanduser().resolve() if a.workspace else _WS_DEFAULT
+    # 显式 --workspace 必须**覆盖**环境变量；而 `import _ws` 会在导入期求值，
+    # 所以先把工作区写回环境变量，再导入（与 release_check.py 同一姿势）。
+    if a.workspace:
+        ws = Path(a.workspace).expanduser().resolve()
+        os.environ["SOLODRAMA_WORKSPACE"] = str(ws)
+        os.environ["DRAMA_WORKSPACE"] = str(ws)
+    import _ws as _W
+    ws = ws if a.workspace else _W.resolve()
     legacy = L.legacy_assets_dir(ws)
     dst_root = target_root(ws)
     data = L.data_dir(ws)

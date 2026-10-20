@@ -425,11 +425,11 @@ _add(_c("genre.check", "3.6 题材公式", "公式符合度校验", "genre",
         agent="列出不符合项，并对应到剧本具体位置。"))
 
 # ===== 环节 4 剧本 =========================================================
-_add(_c("script.plan", "4 剧本", "集数规划（默认 40 集）", "rewrite",
+_add(_c("script.plan", "4 剧本", "集数规划（默认 30 集 × 60 秒）", "rewrite",
         argv=["plan"], danger=WRITE,
         flags={"--ep": "ep", "--sec": "sec"},
-        params=[Param("ep", "集数", "int", default=40, placeholder="40"),
-                Param("sec", "单集秒数", "int", default=70, placeholder="70")],
+        params=[Param("ep", "集数", "int", default=30, placeholder="30"),
+                Param("sec", "单集秒数", "int", default=60, placeholder="60")],
         help="把定位卡（或公式）落成 N 集规划 blueprint。",
         agent="报告集数规划结果，并提示每集四件套（cold_open/core_conflict/reversal/hook）为硬校验项。"))
 _add(_c("script.build", "4 剧本", "生成某集 FFS 骨架", "rewrite",

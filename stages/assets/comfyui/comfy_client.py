@@ -161,6 +161,45 @@ def run_one(base, item, out_dir):
 KIND_DIR = {"char": "characters", "scene": "scenes", "prop": "props"}
 
 
+# ---------------------------------------------------------------------------
+# ★ 2026-10-20（反馈 P1-2）：提交前的「工作流自洽性」静态校验
+# ---------------------------------------------------------------------------
+# 事故：用户从 ComfyUI 导出的本地 H3 工作流有三处不自洽，但报错都长在「跑起来之后」：
+#   ① `VAEDecodeAudio` 缺 `vae` 输入（导出时未连线）→ required_input_missing；
+#   ② 第三方加速节点与 ComfyUI 0.38.2 不兼容（.pyd 内部签名变了）→ missing 3 required
+#      positional arguments（这是**节点自身**的问题，只能旁路，引擎不该假装能修）；
+#   ③ 手搓 multipart 被 aiohttp 判 400（本客户端用标准库/httpx 编码，不手写边界，故不受影响）。
+# 这里做两件**能提前发现**的事：悬空连线引用、模板里没填的输入（LoadImage 等）。
+# 发现的都是「提交前就能说清楚」的问题，避免白等一次排队。
+_SKIP_IF_EMPTY_INPUTS = ("image", "images", "image_url", "file", "video", "audio", "path")
+
+
+def validate_workflow(wf: dict) -> list:
+    """返回问题列表（空 = 通过）。只查确定性错误，不猜业务语义。"""
+    problems = []
+    if not isinstance(wf, dict) or not wf:
+        return ["工作流为空或不是 JSON 对象（应用 ComfyUI 的「导出（API）」得到 *_api.json）"]
+    ids = {str(k) for k in wf}
+    for nid, spec in wf.items():
+        if not isinstance(spec, dict):
+            continue
+        cls = spec.get("class_type") or spec.get("type") or "?"
+        inputs = spec.get("inputs") or {}
+        if not isinstance(inputs, dict):
+            continue
+        for field, val in inputs.items():
+            # 悬空引用：[ "<nodeId>", <outputIndex> ]
+            if isinstance(val, list) and len(val) == 2 and isinstance(val[0], (str, int)):
+                if str(val[0]) not in ids and not str(val[0]).startswith("$"):
+                    problems.append("节点 %s(%s).%s 连到了不存在的节点 %s"
+                                    "（导出时该端口没连线？）" % (nid, cls, field, val[0]))
+            # 模板没填的输入
+            elif field in _SKIP_IF_EMPTY_INPUTS and (val is None or val == ""):
+                problems.append("节点 %s(%s).%s 为空 —— 若这是模板占位，"
+                                "请先填成实际文件名再跑" % (nid, cls, field))
+    return problems
+
+
 def _has_output(d, prefix):
     """判断某资产是否已有产物，用于断点续跑（跳过已生成项）。"""
     if not os.path.isdir(d):
@@ -200,6 +239,16 @@ def main():
 
     with open(args.workflow, "r", encoding="utf-8") as f:
         base = json.load(f)
+
+    # ★ 反馈 P1-2：先做静态校验，别把时间花在排队上才发现连线错误。
+    _probs = validate_workflow(base)
+    if _probs:
+        print("[FAIL] 工作流自检未通过（%s）：" % args.workflow)
+        for _p in _probs[:12]:
+            print("   - %s" % _p)
+        print("   修法：在 ComfyUI 里补齐连线后重新「导出（API）」；"
+              "第三方加速节点与 ComfyUI 版本不兼容时只能旁路该节点。")
+        raise SystemExit(2)
 
     os.makedirs(args.out, exist_ok=True)
 

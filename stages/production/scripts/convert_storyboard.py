@@ -57,7 +57,40 @@ SHOT_ALIASES = {"duration": "duration", "时长": "duration", "秒": "duration",
                 "banana_prompt": "banana_prompt", "banana": "banana_prompt",
                 "九宫格": "banana_prompt",
                 "prompt": "prompt", "h3": "prompt", "提示词": "prompt",
+                "time": "time", "时间": "time", "时段": "time", "日夜": "time",
                 "crop": "crop"}
+
+
+# ★ 2026-10-20（反馈 P2-9）：TIME 字段必须落成**光位描述**，不能只是一个词。
+#   实测：SC08 剧本写「夜」，成片明显偏亮，像下午室内；根因是提示词里只有 `Time: night`
+#   一个词，模型对光位几乎没有约束。这里把常见时段映射成固定的英文光位短语，
+#   由模板统一注入，避免每个镜头各写一套、也不再让「夜」自由漂移成白天。
+TIME_LIGHT = (
+    (("夜", "晚上", "深夜", "night", "noche", "nocturn"),
+     "only a single warm practical lamp as the key light, deep shadows, no daylight"),
+    (("黄昏", "傍晚", "日落", "dusk", "sunset", "atardecer"),
+     "low warm side light from the window, long soft shadows"),
+    (("清晨", "晨", "早晨", "dawn", "morning", "amanecer"),
+     "cool morning light through the window, soft haze"),
+    (("日", "白天", "中午", "day", "día", "tarde", "daylight"),
+     "daylight from the window, soft fill"),
+)
+
+
+def light_phrase(time_text: str) -> str:
+    """把 TIME 字段映射成固定的光位短语；认不出返回空串（不猜）。"""
+    t = (time_text or "").strip().lower()
+    if not t:
+        return ""
+    for keys, phrase in TIME_LIGHT:
+        if any(k.lower() in t for k in keys):
+            return phrase
+    return ""
+
+
+# 提示词里已经有明确光位描述时不再注入（避免自相矛盾的两套光）
+_LIGHT_PRESENT = ("light", "lamp", "shadow", "daylight", "backlight",
+                  "光", "灯", "阳光", "阴影")
 
 
 def _norm_key(k: str) -> str:
@@ -115,10 +148,11 @@ def _crop(v: str | None):
     return {"rows": int(m.group(1)), "cols": int(m.group(2))} if m else {"rows": 3, "cols": 3}
 
 
-def build(shots: list, ws: pathlib.Path) -> tuple:
-    """→ (data 四文件 dict, 问题列表)"""
+def build(shots: list, ws: pathlib.Path, inject_light: bool = True) -> tuple:
+    """→ (data 四文件 dict, 问题列表, 统计)"""
     problems, out_shots, out_h3 = [], [], {}
     seen = set()
+    stats = {"light_injected": 0, "light_skipped_has_light": 0, "time_unmapped": []}
     for s in shots:
         sid, f = s["shot_id"], s["fields"]
         if sid in seen:
@@ -139,7 +173,19 @@ def build(shots: list, ws: pathlib.Path) -> tuple:
             "character_refs": refs,
         })
         dur = f.get("duration")
-        out_h3[sid] = {"prompt": s["prompt"].strip(),
+        prompt = s["prompt"].strip()
+        # ★ 反馈 P2-9：有 TIME 字段就把它落成光位短语（提示词自己已写光位则不插）。
+        phrase = light_phrase(f.get("time") or "")
+        t_raw = (f.get("time") or "").strip()
+        if phrase and prompt:
+            if any(k in prompt.lower() for k in _LIGHT_PRESENT):
+                stats["light_skipped_has_light"] += 1
+            elif inject_light:
+                prompt = prompt + "\n\nLight: " + phrase
+                stats["light_injected"] += 1
+        elif t_raw:
+            stats["time_unmapped"].append("%s(%s)" % (sid, t_raw))
+        out_h3[sid] = {"prompt": prompt,
                        **({"duration": float(re.sub(r"[^\d.]", "", dur))} if dur else {}),
                        "ratio": f.get("ratio") or "9:16"}
 
@@ -153,8 +199,8 @@ def build(shots: list, ws: pathlib.Path) -> tuple:
         refs = {}
     chars = refs.get("characters") or {}
     scenes = refs.get("scenes") or {}
-    return {"shots.json": out_shots, "h3_prompts.json": out_h3,
-            "characters.json": chars, "scenes.json": scenes}, problems
+    return ({"shots.json": out_shots, "h3_prompts.json": out_h3,
+             "characters.json": chars, "scenes.json": scenes}, problems, stats)
 
 
 def main() -> int:
@@ -163,6 +209,8 @@ def main() -> int:
     ap.add_argument("--ep", required=True, help="集号，如 ep01")
     ap.add_argument("--src", default=None, help="md 路径；默认自动在 05-分镜 / 06-提示词 里找")
     ap.add_argument("--apply", action="store_true", help="真写 data/（先备份原文件）")
+    ap.add_argument("--no-inject-light", dest="inject_light", action="store_false",
+                    help="不按 TIME 字段注入光位短语（默认会注入；反馈 P2-9）")
     a = ap.parse_args()
 
     ws = pathlib.Path(a.workspace).expanduser().resolve() if a.workspace else W.WS
@@ -185,7 +233,7 @@ def main() -> int:
     if not shots:
         print("[FAIL] %s 里没有解析到任何 `## <shot_id>` 段落" % src)
         return 2
-    files, problems = build(shots, ws)
+    files, problems, stats = build(shots, ws, inject_light=bool(a.inject_light))
 
     print("=" * 74)
     print("分镜/提示词 md → data/ 四文件")
@@ -195,6 +243,13 @@ def main() -> int:
     print("  解析到  : %d 段" % len(shots))
     for name, obj in files.items():
         print("    %-18s %d 条" % (name, len(obj)))
+    if stats.get("light_injected"):
+        print("  光位    : 按 TIME 注入 %d 段（提示词已含光位的 %d 段未动；"
+              "如需逐字保留请加 --no-inject-light）"
+              % (stats["light_injected"], stats["light_skipped_has_light"]))
+    if stats.get("time_unmapped"):
+        print("  [WARN] TIME 无法映射成光位（%d 段，未猜）：%s"
+              % (len(stats["time_unmapped"]), "、".join(stats["time_unmapped"][:8])))
     if problems:
         print("\n  [WARN] %d 个问题（不猜不编，请回上游补齐）：" % len(problems))
         for p in problems[:20]:

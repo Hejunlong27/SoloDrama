@@ -25,8 +25,9 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tupl
 from PIL import Image
 
 import config as C
+from inflight import Inflight, PendingDownloads
 from runninghub_client import (
-    RunningHubClient, RunningHubError, extract_usage, pick_output_url, truncate,
+    RunningHubClient, RunningHubError, extract_usage, is_oom_error, pick_output_url, truncate,
 )
 
 # 阶段状态
@@ -89,6 +90,11 @@ async def retry_async(fn: Callable[[], Any], *, max_retry: int = 3,
             if attempt > max_retry or not retriable:
                 raise
             wait = backoff[min(attempt - 1, len(backoff) - 1)]
+            # ★ 2026-10-20（反馈 P2-10）：队列满（421）需要更长的退避（30/60/120s）。
+            #   异常自带 retry_after 序列时优先用它，避免 5/15/45 连撞三次全失败。
+            hint = getattr(e, "retry_after", None)
+            if isinstance(hint, (list, tuple)) and hint:
+                wait = hint[min(attempt - 1, len(hint) - 1)]
             if logger:
                 await logger.log(f"    ↻ {label} 第 {attempt}/{max_retry} 次重试，{wait}s 后继续：{truncate(e, 120)}")
             await asyncio.sleep(wait)
@@ -292,6 +298,11 @@ class ShotContext:
     # 运行台账（run_ledger.RunLedger）：逐任务落盘，失败也记，带换算层
     ledger: Any = None
     batch_id: str = ""
+    # ★ 2026-10-20（反馈 P0-7 / P1-7）：在途任务与待补下载两份批次级台账
+    inflight: Any = None
+    pending: Any = None
+    # 本次运行归属的账号标识（多账号混跑时用于回溯；反馈 P0-4 第②条）
+    account: str = ""
 
     def log(self, msg: str) -> None:
         self.logger.log_sync(msg)
@@ -341,7 +352,8 @@ class ImageProvider(Protocol):
 async def run_task(ctx: ShotContext, *, kind: str, target_id: Any,
                    node_info_list: List[Dict[str, Any]], timeout_min: float,
                    tag: str, reuse_task_id: Optional[str] = None,
-                   on_created: Optional[Callable[[str], Any]] = None) -> Tuple[str, Dict[str, Any]]:
+                   on_created: Optional[Callable[[str], Any]] = None,
+                   instance_type: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     """提交（或复用）任务并轮询到终态。返回 (task_id, 归一化查询结果)。
 
     ★ 信号量包住的是整段「提交 + 轮询直到终态」，而不仅是提交请求。
@@ -351,6 +363,9 @@ async def run_task(ctx: ShotContext, *, kind: str, target_id: Any,
     ★ 断点续跑关键：若 reuse_task_id 存在，直接跳过提交、复用原 taskId 轮询，
       绝不重复提交（不重复扣费）。on_created 在提交成功后立刻回调，用于把
       task_id 落盘，这样进程崩溃后重跑也能复用。
+
+    ★ 2026-10-20（反馈 P1-13）：`instance_type` 此前在 config.py 里配了却**从未传给平台**
+      （`H3.instance_type` 是死配置）。现在透传，OOM 升级实例才可能生效。
     """
     if reuse_task_id:
         ctx.log(f"    ↺ 复用已提交的 taskId {reuse_task_id}，跳过重复提交")
@@ -359,7 +374,7 @@ async def run_task(ctx: ShotContext, *, kind: str, target_id: Any,
         async with ctx.sem:      # 槽位从「提交」开始占用，直到轮询到终态才释放
             ctx.log(f"    → {tag} 提交任务 …")
             task_id = await retry_async(
-                lambda: ctx.client.create_task(kind, target_id, node_info_list),
+                lambda: ctx.client.create_task(kind, target_id, node_info_list, instance_type),
                 max_retry=C.RETRY_MAX, backoff=C.RETRY_BACKOFF,
                 label=f"{tag} 提交", logger=ctx.logger,
             )
@@ -471,6 +486,7 @@ class RunningHubImageProvider:
             tag=f"分镜图({self.prov.get('label') or self.provider_key})",
             reuse_task_id=req.reuse_task_id,
             on_created=req.on_task_created,
+            instance_type=self.prov.get("instance_type"),
         )
         url = pick_output_url(result, "image")
         if not url:
@@ -632,6 +648,7 @@ def _record_run(ctx: "ShotContext", *, shot_id: str, status: str, stage: str = "
     """
     if ctx.ledger is None:
         return
+    extra = {"account": ctx.account} if ctx.account else None
     try:
         ctx.ledger.record(
             batch_id=ctx.batch_id or "unknown", shot_id=shot_id, stage=stage, status=status,
@@ -639,13 +656,53 @@ def _record_run(ctx: "ShotContext", *, shot_id: str, status: str, stage: str = "
             target_id=str(C.H3.get("id") or ""), task_id=task_id, duration_s=duration_s,
             usage=usage, wall_elapsed_s=wall_elapsed_s, out_bytes=out_bytes,
             artifact=artifact, output_url=output_url, error=error,
-            attempt_key=task_id,
+            attempt_key=task_id, extra=extra,
         )
     except Exception as e:  # noqa: BLE001 - 台账是旁路，不许影响出片
         try:
             ctx.log(f"[{shot_id}] [WARN] 台账写入失败（不影响主流程）: {truncate(e, 120)}")
         except Exception:  # noqa: BLE001
             pass
+
+
+def _oom_retry_plan() -> List[Tuple[str, float]]:
+    """OOM 降级重试计划：[(instanceType, 时长增量秒), ...]。
+
+    默认三级（反馈 P1-13 建议的「升实例 → 降时长」）：
+      ① 配置里的实例类型，原时长；
+      ② 升到 plus（更大显存），原时长；
+      ③ plus + 时长 -2 s（参考图越多越吃显存，缩短是最有效的降载手段）。
+
+    OOM 任务平台返回 usage=null（不计费），所以重试不产生额外费用。
+    可用 config.local.json 关掉：`oom_retry: false`。
+    """
+    base = str(C.H3.get("instance_type") or "default")
+    if not bool(getattr(C, "OOM_RETRY", True)):
+        return [(base, 0.0)]
+    up = str(getattr(C, "OOM_ESCALATE_INSTANCE", "plus") or "plus")
+    shorten = float(getattr(C, "OOM_SHORTEN_SECONDS", 2) or 0)
+    raw = [(base, 0.0), (up, 0.0)]
+    if shorten > 0:
+        raw.append((up, -shorten))
+    seen, plan = set(), []
+    for inst, delta in raw:
+        key = (inst, round(delta, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        plan.append(key)
+    return plan
+
+
+def _shift_duration(duration: Any, delta: float) -> Any:
+    """把时长下移 delta 秒（不小于 2 秒）；非数值原样返回。"""
+    if not delta:
+        return duration
+    try:
+        d = float(duration)
+    except (TypeError, ValueError):
+        return duration
+    return max(2.0, d + float(delta))
 
 
 async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[str, Any],
@@ -796,12 +853,14 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
                 frame_url = await ctx.uploads.get_or_upload(ctx.client, frame_local)
                 grid_url = await ctx.uploads.get_or_upload(ctx.client, raw_path)
 
-        node_list = build_h3_node_list(
-            prompt=str(h3.get("prompt")), frame_url=frame_url,
-            char_values=char_values, scene_values=scene_values, grid_url=grid_url,
-            duration=h3.get("duration"), ratio=h3.get("ratio") or shot.get("ratio"))
+        def _nodes_for(duration: Any) -> List[Dict[str, Any]]:
+            return build_h3_node_list(
+                prompt=str(h3.get("prompt")), frame_url=frame_url,
+                char_values=char_values, scene_values=scene_values, grid_url=grid_url,
+                duration=duration, ratio=h3.get("ratio") or shot.get("ratio"))
 
         if ctx.dry_run:
+            node_list = _nodes_for(h3.get("duration"))
             ctx.log(f"[{shot_id}] ⑤ [DRY-RUN] H3 nodeInfoList = "
                     f"{json.dumps(node_list, ensure_ascii=False)}")
             await ctx.state.update(shot_id, video_status=ST_PENDING)
@@ -810,22 +869,63 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
         async def _on_video_created(tid: str) -> None:
             await ctx.state.update(shot_id, video_task_id=tid, video_status=ST_RUNNING,
                                    frame_url=frame_url, grid_url=grid_url)
+            # ★ 反馈 P0-7：提交成功**立刻**落 inflight（此时 taskId 已知）。
+            #   进程若在轮询中被杀，下一轮 --resume 能据此查到结果，而不是静默漏镜。
+            if ctx.inflight is not None:
+                await ctx.inflight.add(shot_id, tid, kind="video", duration_s=h3.get("duration"))
             _record_run(ctx, shot_id=shot_id, status="RUNNING", task_id=tid,
                         duration_s=h3.get("duration"))
 
+        # ★ 反馈 P1-13：显存不足（OOM）在 24G 实例上是常态（12 s + 6 参考图必现），
+        #   平台不计费但整镜白等。这里按「升实例 → 升实例+降时长」分级重试，
+        #   而不是把 OOM 当普通失败扔掉。
+        plan = _oom_retry_plan()
         _t_video = time.time()
-        task_id, result = await run_task(
-            ctx, kind=C.H3.get("kind", "workflow"), target_id=C.H3.get("id"),
-            node_info_list=node_list, timeout_min=C.VIDEO_TIMEOUT_MIN, tag="H3 视频",
-            reuse_task_id=reuse_task_id, on_created=_on_video_created,
-        )
+        task_id = ""
+        result: Dict[str, Any] = {}
+        for i, (inst, delta) in enumerate(plan):
+            dur = _shift_duration(h3.get("duration"), delta)
+            node_list = _nodes_for(dur)
+            if delta or i:
+                ctx.log(f"[{shot_id}] ↻ OOM 降级重试 {i + 1}/{len(plan)}："
+                        f"instanceType={inst}，时长 {h3.get('duration')} -> {dur}")
+            try:
+                task_id, result = await run_task(
+                    ctx, kind=C.H3.get("kind", "workflow"), target_id=C.H3.get("id"),
+                    node_info_list=node_list, timeout_min=C.VIDEO_TIMEOUT_MIN, tag="H3 视频",
+                    reuse_task_id=reuse_task_id, on_created=_on_video_created,
+                    instance_type=inst,
+                )
+                break
+            except RunningHubError as e:
+                if is_oom_error(e) and i < len(plan) - 1:
+                    ctx.log(f"[{shot_id}] ⚠ 显存不足（{truncate(e, 90)}）；"
+                            f"平台不计费，换更稳的配置再来一次")
+                    continue
+                raise
         vurl = pick_output_url(result, "video")
         if not vurl:
             raise RunningHubError(
                 f"H3 任务成功但没找到视频产物（results={truncate(result.get('results'), 200)}）",
                 retriable=False)
 
-        await ctx.client.download(vurl, str(final_mp4))
+        # ★ 反馈 P1-7：任务已成功（钱已扣）时，下载失败不能直接丢产物。
+        #   download() 内部已重试 3 次；仍失败则把 taskId + 直链写进 pending_download.json，
+        #   由 `drama.py video resume-download` 只重下、不重新提交（不重复扣费）。
+        try:
+            await ctx.client.download(vurl, str(final_mp4))
+        except RunningHubError as e:
+            if ctx.pending is not None:
+                await ctx.pending.add(shot_id=shot_id, task_id=task_id, url=vurl,
+                                      dest=str(final_mp4), error=truncate(e, 200))
+            await ctx.logger.log(
+                f"[{shot_id}] ✗ 产物下载失败（任务已成功，别再重跑）："
+                f"{truncate(e, 120)} -> 见 pending_download.json")
+            raise
+        if ctx.pending is not None:
+            await ctx.pending.remove(shot_id)
+        if ctx.inflight is not None:
+            await ctx.inflight.remove(shot_id)
         (sdir / "video_task.json").write_text(json.dumps({
             "task_id": task_id, "video_url": vurl, "channel": result.get("_channel"),
             "usage": extract_usage(result), "node_info_list": node_list,

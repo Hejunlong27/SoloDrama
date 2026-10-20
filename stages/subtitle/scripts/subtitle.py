@@ -167,6 +167,40 @@ def load_config(ws):
     return load_json(p)
 
 
+# ---------------------------------------------------------------------------
+# ★ 2026-10-20（反馈 P2-13）：字幕必须只有**一套**纵向坐标
+# ---------------------------------------------------------------------------
+# 事故：第一版把旁白放顶部 42pt、对白放底部 54pt，用户两次反馈「位置忽高忽低 / 字号不统一」，
+# 最终拆成两套坐标是主因；40 集要全量重渲染一次（25 集 × 约 3 分钟本地 GPU）。
+# 本引擎的模板本来就是单套（一个 `Style: Default` + 按语言百分比的字号/边距），
+# 这里加一条硬校验：**配置里出现「按角色区分的纵向坐标」就直接拦下**，
+# 防止后人再把两套坐标加回来。旁白与对白只允许用斜体区分，不允许换位置。
+_ROLE_STYLE_KEYS = ("narrator", "narration", "dialogue", "dialog", "subtitle_top",
+                    "subtitle_bottom", "top", "bottom")
+_VERTICAL_FIELDS = ("margin_v_pct", "margin_v", "margin_bottom_pct", "font_size_pct",
+                    "font_size", "alignment")
+
+
+def check_single_template(cfg) -> tuple:
+    """返回 (错误列表, 告警列表)。错误 = 阻断（两套纵向坐标）；告警 = 可疑但不阻断。"""
+    errors, warns = [], []
+    for key in _ROLE_STYLE_KEYS:
+        v = cfg.get(key)
+        if isinstance(v, dict) and any(f in v for f in _VERTICAL_FIELDS):
+            errors.append("config.subtitle.json 出现了按角色区分的样式段 `%s`"
+                          "（含 %s）⇒ 只允许一套模板：同一 Alignment / MarginV / Fontsize，"
+                          "旁白与对白仅用斜体区分。请删掉这段，改用 languages.*（按语言、不按角色）。"
+                          % (key, "/".join(f for f in _VERTICAL_FIELDS if f in v)))
+    for lang, lc in (cfg.get("languages") or {}).items():
+        if not isinstance(lc, dict):
+            continue
+        same = [f for f in ("margin_v_pct", "margin_v") if f in lc]
+        if len(same) > 1 and len({str(lc[f]) for f in same}) > 1:
+            warns.append("语言 %s 同时给了 %s 且取值不同 ⇒ 以 margin_v_pct 为准，"
+                         "建议删掉另一个（避免两套纵向坐标）" % (lang, "/".join(same)))
+    return errors, warns
+
+
 def load_upscale(ws):
     """载入高清放大配置（同目录的 upscale.py + config.upscale.json）。
 
@@ -1165,13 +1199,81 @@ def write_ass(cues, cfg, out_path, lang=None, canvas=None):
 
 # ---------------------------------------------------------------- 阶段 4/5：拼接与烧录
 
+DEFAULT_EDGE_FADE_MS = 120     # ★ 2026-10-20（反馈 P2-11）：切点音频淡入淡出默认值
+
+
+def _seg_probe(tools, path):
+    """探测一段的 (时长秒, 是否有音轨)；读不出来返回 (0, False)。"""
+    try:
+        _, out = run([tools["ffprobe"], "-v", "error",
+                      "-show_entries", "stream=codec_type,duration:format=duration",
+                      "-of", "json", path])
+        data = json.loads(out or "{}")
+        streams = data.get("streams") or []
+        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+        dur = 0.0
+        for s in streams:
+            try:
+                dur = max(dur, float(s.get("duration") or 0))
+            except (TypeError, ValueError):
+                pass
+        if not dur:
+            try:
+                dur = float((data.get("format") or {}).get("duration") or 0)
+            except (TypeError, ValueError):
+                dur = 0.0
+        return dur, has_audio
+    except BaseException:                                         # noqa: BLE001
+        return 0.0, False
+
+
+def _fade_segment(tools, src, dst, fade_ms):
+    """把一段的首尾各做 fade_ms 的音频淡入/淡出（视频流 copy，不重编码画面）。
+
+    为什么需要（反馈 P2-11 实测）：每段由模型独立生成，**段尾自带淡出**；
+    硬切拼接时电平从「近静音」跳到「满环境声」，于是每个切点都有「噗」声/音量台阶。
+    实测：sc01 尾 0.15s 均值 -43.5 dB → sc02 头 0.15s 均值 -33.1 dB（约 10 dB 台阶）；
+    逐段淡入淡出后切点 peak 从 -23.0 dB 降到 -37.2 dB，爆点消除。
+    """
+    dur, has_audio = _seg_probe(tools, src)
+    d = max(0.0, float(fade_ms) / 1000.0)
+    if not has_audio or dur <= 0 or d <= 0:
+        return None
+    out_at = max(0.0, dur - d)
+    af = "afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f" % (d, out_at, d)
+    run([tools["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y", "-i", src,
+         "-c:v", "copy", "-af", af,
+         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+         dst])
+    return dst
+
+
 def stage_master(ws, ep, cfg, segs, subs_dir):
-    """无损拼接（实测 0.35s / 集）。concat demuxer 的 list 必须 UTF-8 无 BOM 写。"""
+    """拼接母版。默认**逐段做音频首尾淡入淡出**（反馈 P2-11），再无损拼接。
+
+    `audio.edge_fade_ms`：淡入淡出毫秒数（默认 %d；设 0 关闭）。
+    设 0 时行为与旧版完全一致（纯 `-c copy` 拼接，0.35s/集）。
+    """
     out = os.path.join(subs_dir, "%s_master.mp4" % ep)
     lst = os.path.join(subs_dir, "_concat.txt")
+    tools = cfg["tools"]
+    fade_ms = int((cfg.get("audio") or {}).get("edge_fade_ms", DEFAULT_EDGE_FADE_MS) or 0)
+
+    files = [s["file"] for s in segs]
+    if fade_ms > 0 and len(files) > 1:
+        prepped, changed = [], 0
+        for i, src in enumerate(files):
+            dst = os.path.join(subs_dir, "_fade_%02d.mp4" % (i + 1))
+            got = _fade_segment(tools, src, dst, fade_ms)
+            prepped.append(got or src)
+            changed += 1 if got else 0
+        files = prepped
+        sys.stderr.write("[i] 切点音频淡入淡出：%d ms，已处理 %d/%d 段（反馈 P2-11）\n"
+                         % (fade_ms, changed, len(files)))
+
     lines = []
-    for s in segs:
-        lines.append("file '%s'" % s["file"].replace("\\", "/").replace("'", "'\\''"))
+    for f in files:
+        lines.append("file '%s'" % f.replace("\\", "/").replace("'", "'\\''"))
     with open(lst, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     run([cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
@@ -1282,6 +1384,15 @@ def main():
             "工作区的标志物是 <项目根>/layout.json（新布局）或 <项目根>/video-pipeline/（旧布局）。")
     ws = os.path.abspath(args.workspace)
     cfg = load_config(ws)
+    # ★ 反馈 P2-13：单一模板硬校验（两套纵向坐标 = 40 集返工的根因）
+    _tpl_errs, _tpl_warns = check_single_template(cfg)
+    for _w in _tpl_warns:
+        sys.stderr.write("[WARN] %s\n" % _w)
+    if _tpl_errs:
+        for _e in _tpl_errs:
+            sys.stderr.write("[FAIL] %s\n" % _e)
+        sys.stderr.write("       修好后再跑；否则 40 集要全量重渲染一次（本项目实测 75 分钟本地 GPU）。\n")
+        return 2
     if args.lang:
         cfg["default_language"] = args.lang
     subs_dir = os.path.join(out_dir_of(ws), "subs", args.ep)

@@ -44,7 +44,36 @@ STATUS_NON_TERMINAL = {"CREATE", "CREATED", "QUEUED", "QUEUE", "RUNNING", "PENDI
 TERMINAL = {STATUS_OK} | STATUS_FAIL
 
 # 限流类关键词（出现在业务 msg 里 -> 判定为可重试）
-_RETRY_HINT_WORDS = ("too many", "rate limit", "限流", "频率", "繁忙", "busy", "try again", "稍后")
+# ★ 2026-10-20（反馈 P2-10）：补上「单账号并发上限」。实测三线程并行、两条链落到同一账号时，
+#   第二次提交返回 `errorCode 421 / api queue limit reached`，此前被当**确定性失败**直接放弃，
+#   整链中断（本项目 SC03 因此漏跑）。这类错误本质是「排队满了」，属瞬时错误，应当退避重试。
+_RETRY_HINT_WORDS = ("too many", "rate limit", "限流", "频率", "繁忙", "busy", "try again",
+                     "稍后", "queue limit", "queue is full", "并发上限", "队列已满")
+
+# 队列满时的退避（秒）。平台排队一般 1–3 分钟，5/15/45 太短会连撞三次全失败。
+QUEUE_FULL_BACKOFF = (30, 60, 120)
+
+# OOM（显存不足）识别关键词（反馈 P1-13）
+_OOM_WORDS = ("outofmemory", "out of memory", "vram grow failed", "显存不足",
+              "cudamalloc", "allocation on device", "memory allocation")
+
+
+def is_oom_error(value: Any) -> bool:
+    """判断一个异常或错误文本是否属于「显存不足」（可降级重试，且平台不计费）。
+
+    实测（2026-10-19）：12 秒 + 6 参考图在 default(24G) 实例上，
+    `errorCode 805` + `failedReason: VRAM grow failed: 658215936 bytes` 或
+    `torch.OutOfMemoryError【显存不足告警】`。usage=null，不计费，但整镜白等。
+    """
+    if isinstance(value, BaseException):
+        text = " ".join([str(getattr(value, "message", "") or ""), str(value)])
+        code = str(getattr(value, "code", "") or "")
+    else:
+        text, code = str(value or ""), ""
+    low = text.lower()
+    if code in ("805",):
+        return True
+    return any(w in low for w in _OOM_WORDS)
 
 
 def truncate(text: Any, limit: int = 200) -> str:
@@ -178,9 +207,14 @@ class RunningHubClient:
         if code in (0, None, "", "0"):
             return
         msg = payload.get("msg") or payload.get("message") or payload.get("error") or ""
-        retriable = any(w in str(msg).lower() for w in _RETRY_HINT_WORDS)
-        raise RunningHubError(f"{context}失败: {msg} (code={code})", code=code,
+        low = str(msg).lower()
+        retriable = any(w in low for w in _RETRY_HINT_WORDS)
+        err = RunningHubError(f"{context}失败: {msg} (code={code})", code=code,
                               retriable=retriable, response=payload)
+        if retriable and any(w in low for w in ("queue limit", "queue is full", "并发上限", "队列已满")):
+            # 提示上层用更长的退避（见 retry_async）
+            err.retry_after = QUEUE_FULL_BACKOFF          # type: ignore[attr-defined]
+        raise err
 
     # ---------- 上传 ----------
     async def upload_bytes(self, data: bytes, filename: str,
@@ -270,8 +304,16 @@ class RunningHubClient:
                         "先「另存到我的工作流」，再用新编号调用。")
             elif err == "380":
                 hint = "｜平台上不存在这个工作流编号，请核对 workflowId。"
-            raise RunningHubError(f"提交工作流任务(v2)失败: {msg} (errorCode={err}){hint}",
-                                  code=err, response=payload)
+            elif err == "421":
+                hint = ("｜同一账号的并发队列已满（单账号 ≤5 / 或账号被多链共用）。"
+                        "引擎会按 30/60/120 秒退避重试；要根治请把账号分给不同 worker。")
+            low_msg = msg.lower()
+            retriable = err in ("421", "429") or any(w in low_msg for w in _RETRY_HINT_WORDS)
+            exc = RunningHubError(f"提交工作流任务(v2)失败: {msg} (errorCode={err}){hint}",
+                                  code=err, retriable=retriable, response=payload)
+            if retriable and err == "421":
+                exc.retry_after = QUEUE_FULL_BACKOFF      # type: ignore[attr-defined]
+            raise exc
         task_id = payload.get("taskId") or (payload.get("data") or {}).get("taskId")
         if not task_id:
             raise RunningHubError(
@@ -425,7 +467,17 @@ class RunningHubClient:
     _DOWNLOAD_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
 
-    async def download(self, url: str, dest_path: str) -> str:
+    async def download(self, url: str, dest_path: str, retries: int = 3,
+                       backoff: Sequence[float] = (3, 8, 20)) -> str:
+        """下载产物（★ 2026-10-20 反馈 P1-7：带重试 + 原子落盘）。
+
+        实测故障：AI 站 8 秒任务 SUCCESS（36 币已扣），下载阶段
+        `ConnectionResetError [WinError 10054]`，脚本直接抛异常退出，**产物未落盘**。
+        钱已花、文件没了 —— 批量跑就是几十段白跑。这里做三件事：
+          ① 重试 `retries` 次（退避 backoff），只对网络类错误重试；
+          ② 先写 `*.part` 再 `os.replace`，避免留下半截 mp4 被当成可用产物；
+          ③ 全部失败时抛 retriable=True，由上层写 `pending_download.json` 供补下载。
+        """
         dest = Path(dest_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
         # 2026-10-17：账号3（.cn）产物落在 volces.com/TOS，直链会拒绝带 Authorization
@@ -435,23 +487,45 @@ class RunningHubClient:
         headers = {"User-Agent": self._DOWNLOAD_UA, "Referer": self.base_url + "/"}
         if "runninghub" in host:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        try:
-            async with self.client.stream("GET", url, headers=headers,
-                                          timeout=self.timeout * 3) as resp:
-                if resp.status_code >= 400:
-                    raise RunningHubError(
-                        f"下载失败 HTTP {resp.status_code}: {truncate(url, 120)}",
-                        http_status=resp.status_code, retriable=resp.status_code >= 500,
-                    )
-                with open(dest, "wb") as f:
-                    async for chunk in resp.aiter_bytes(1 << 16):
-                        if chunk:
-                            f.write(chunk)
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError) as e:
-            raise RunningHubError(f"下载网络异常: {type(e).__name__}: {e}", retriable=True) from e
-        if dest.stat().st_size == 0:
-            raise RunningHubError(f"下载得到空文件: {dest}", retriable=True)
-        return str(dest)
+
+        tmp = dest.with_name(dest.name + ".part")
+        last: Optional[Exception] = None
+        for attempt in range(max(0, int(retries)) + 1):
+            try:
+                async with self.client.stream("GET", url, headers=headers,
+                                              timeout=self.timeout * 3) as resp:
+                    if resp.status_code >= 400:
+                        raise RunningHubError(
+                            f"下载失败 HTTP {resp.status_code}: {truncate(url, 120)}",
+                            http_status=resp.status_code,
+                            retriable=resp.status_code >= 500 or resp.status_code == 429,
+                        )
+                    with open(tmp, "wb") as f:
+                        async for chunk in resp.aiter_bytes(1 << 16):
+                            if chunk:
+                                f.write(chunk)
+                if tmp.stat().st_size == 0:
+                    raise RunningHubError(f"下载得到空文件: {dest}", retriable=True)
+                os.replace(tmp, dest)
+                return str(dest)
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError) as e:
+                last = RunningHubError(f"下载网络异常: {type(e).__name__}: {e}", retriable=True)
+            except RunningHubError as e:
+                last = e
+            except OSError as e:                       # 磁盘/句柄问题：重试无益
+                raise RunningHubError(f"下载写盘失败: {type(e).__name__}: {e}",
+                                      retriable=False) from e
+            if last is not None and not getattr(last, "retriable", False):
+                raise last
+            try:
+                tmp.unlink(missing_ok=True)            # type: ignore[call-arg]
+            except (OSError, TypeError):
+                pass
+            if attempt < int(retries):
+                await asyncio.sleep(backoff[min(attempt, len(backoff) - 1)])
+        raise RunningHubError(
+            f"下载连续 {int(retries) + 1} 次失败，产物未落盘（任务本身可能已成功计费）：{last}",
+            retriable=True) from last
 
     # ---------- 节点发现（给 --probe 用） ----------
     async def get_webapp_nodes(self, webapp_id: Any) -> List[Dict[str, Any]]:

@@ -38,7 +38,7 @@ from datetime import datetime
 # 常量
 # --------------------------------------------------------------------------
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))   # noqa: E402
-from _ws import WS, DATA, OUT as OUT_ROOT  # noqa: E402  ★ 工作区解析 + 分阶段目录真源
+from _ws import WS, DATA, OUT as OUT_ROOT, drama_name  # noqa: E402  ★ 工作区解析 + 分阶段目录真源
 VP = WS / 'video-pipeline'
 AUTO_RUNS = VP / 'ledger' / 'runs'
 DSH_HOME = pathlib.Path(os.environ.get('DSH_HOME') or (pathlib.Path.home() / '.dsh'))
@@ -595,7 +595,11 @@ def batches_in_scope(rows, cp) -> list[str]:
 # Excel（.xlsx）台账
 # --------------------------------------------------------------------------
 XLSX_STATE = WS / 'docs' / '.cost-xlsx-state.json'
-DRAMA_DEFAULT = '七大姑催婚'
+# ★ 2026-10-20（反馈 P0-3）：剧名不再硬编码。
+#   原来写死 `DRAMA_DEFAULT = '七大姑催婚'`（上一部剧的名字），于是**任何项目**跑
+#   `drama.py cost` 都会产出「成本台账_七大姑催婚.xlsx」，交付物里混进无关剧名。
+#   现在默认从工作区推导（brief.json → project.json → 目录名），见 `_ws.drama_name()`。
+DRAMA_DEFAULT = drama_name(WS)
 
 
 def big_class(kind: str) -> str:

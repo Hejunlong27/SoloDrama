@@ -19,7 +19,7 @@ script_translate.py        market_data     hit_breakdown   topic_analysis / genr
 | **三 选题定位** | 明确目标受众画像、题材方向与差异化卖点 | S2：候选 → 七维评分 → **定位卡**（受众画像/题材方向/差异化卖点） |
 | **〇 剧本转译**（可选） | 用户给小说/剧本并指定语种时，先转译并质检合规，再进下游 | S0b：语种判定 → 术语表 → 分段转译 → 语言质检（残留/翻译腔/术语/预算） |
 | **二·五 题材公式**（可选） | 固定题材反复生产时不必重跑选题 | S2.5：关键词路由 → 公式套用（`genre-plan.json`）→ **跳过 ③选题** |
-| **四 剧本改写** | 把「很颠」的源剧本改写为 **40 集 × 70 秒**规划，每集含开场钩子/核心冲突/反转/集尾钩子 | S3：源剧本登记 → 逐集规划（冲突+反转+钩子+爆点节拍）→ FFS 骨架 → 自检 |
+| **四 剧本改写** | 把「很颠」的源剧本改写为 **30 集 × 60 秒**规划，每集含开场钩子/核心冲突/反转/集尾钩子 | S3：源剧本登记 → 逐集规划（冲突+反转+钩子+爆点节拍）→ FFS 骨架 → 自检 |
 
 > 设计原则：**思考交给 LLM，加工与校验交给脚本**。脚本只做搬运/打分/校验/规划，不替你想选题、不写正文。
 
@@ -31,7 +31,10 @@ script_translate.py        market_data     hit_breakdown   topic_analysis / genr
 | ② 爆款拆解 | `hit_breakdown.py` | `creation/01-breakdown/breakdown.json` + `.md` | `breakdown analyze` |
 | ③ 选题定位·A | `topic_analysis.py` | `creation/02-positioning/candidates.json` + `.md` | `topic scaffold` / `topic score` |
 | ③ 选题定位·B | `hit_selection.py` | `creation/02-positioning/positioning.json` + `.md` | `hit select --top 3` |
-| ④ 剧本改写 | `script_rewrite.py` | `creation/03-script/blueprint.json` + `.md` / `script-brief.md` / `skeleton_ep_XX.md` | `script plan [--genre <id>]` / `script build --ep N --emit` / `script lint --ep N` |
+| ④ 剧本改写·A 诊断 | `script_rewrite.py` | `creation/03-script/diagnosis.json` + `.md` | `script diagnose` / `--check` / `--confirm` |
+| ④ 剧本改写·B 规划 | `script_rewrite.py` | `creation/03-script/blueprint.json` + `.md` / `script-brief.md` / `skeleton_ep_XX.md` | `script plan [--genre <id>] [--from-outline 拆解.md]` |
+| ④ 剧本改写·C 审查 | `script_rewrite.py` | `creation/03-script/structure-review.md` / `blueprint-fixes.md` / `audience-review.md` | `script review --write-fixes` / `script audience --check` |
+|   正文与自检 | `script_rewrite.py` | `script/ep_XX.md`（FFS 正文） | `script build --ep N --emit` / `script lint --ep N` |
 | 〇 剧本转译（可选） | `script_translate.py` | `creation/03-script/source-script.<lang>.md` / `glossary.json` / `translate-plan.json` | `langs` / `detect` / `plan --to es --write` / `check --to es` / `glossary` |
 | 二·五 题材公式（可选） | `genre_formula.py` | `creation/03-script/genre-plan.json` | `list` / `match "女主逆袭"` / `apply --genre female-comeback` / `check` / `doc --write` |
 
@@ -73,19 +76,33 @@ $PY stages/creation/scripts/script_translate.py --workspace $WS check --to es
 $PY stages/creation/scripts/genre_formula.py --workspace $WS match "女主逆袭"
 $PY stages/creation/scripts/genre_formula.py --workspace $WS apply --genre female-comeback
 
-# 5) ④ 剧本改写：源剧本 → 40 集规划 → 单集骨架 → 自检
-#    把「很颠」的源剧本放到 $WS/creation/03-script/source-script.md
-$PY stages/creation/scripts/creation.py --workspace $WS script plan            # 或 script plan --genre female-comeback
+# 5) ④ 剧本改写（四段法，见 docs/creation/剧本改编四段法.md）
+# 5.1) 诊断：A 选题诊断 / B 改编策略 / C 故事主线（不确认不许写正文）
+$PY stages/creation/scripts/creation.py --workspace $WS script diagnose
+#    （按 prompts/s3a-diagnosis.md 填 03-剧本/diagnosis.json）
+$PY stages/creation/scripts/creation.py --workspace $WS script diagnose --check
+$PY stages/creation/scripts/creation.py --workspace $WS script diagnose --confirm
+
+# 5.2) 骨架：逐集规划（句库默认值只做占位，正式大纲用人工拆解表覆盖）
+$PY stages/creation/scripts/creation.py --workspace $WS script plan --from-outline 03-剧本/人工拆解.md
+$PY stages/creation/scripts/creation.py --workspace $WS script review --write-fixes   # 第二轮结构审查
 $PY stages/creation/scripts/genre_formula.py --workspace $WS check --genre female-comeback   # 公式模式的结构 QC
+
+# 5.3) 正文：骨架 → 填 FFS → 自检
 $PY stages/creation/scripts/creation.py --workspace $WS script build --ep 1 --emit
 #    （按 prompts/s3-script-rewrite.md 填 $WS/script/ep_01.md）
 $PY stages/creation/scripts/creation.py --workspace $WS script lint --ep 1
+
+# 5.4) 验收：观众视角七问（定稿前跑）
+$PY stages/creation/scripts/creation.py --workspace $WS script audience
+$PY stages/creation/scripts/creation.py --workspace $WS script audience --check
 ```
 
 ## 三、离线自检（零网络、零计费）
 
 ```powershell
 $PY stages/creation/scripts/tests/test_creation_pipeline.py    # ①-④ 全链路 53 例
+$PY stages/creation/scripts/tests/test_script_design.py        # 四段法（诊断/结构审查/观众审稿）47 例
 $PY stages/creation/scripts/tests/test_genre_formula.py        # 题材公式 41 例
 $PY stages/creation/scripts/tests/test_script_translate.py     # 剧本转译 46 例
 ```
@@ -97,7 +114,11 @@ $PY stages/creation/scripts/tests/test_script_translate.py     # 剧本转译 46
 | `prompts/s0-market-research.md` | ① 榜单调研与对比的检索与回填口径 |
 | `prompts/s1-hit-breakdown.md` | ② 爆款拆解的写法（复盘脚本结论） |
 | `prompts/s2-topic-positioning.md` | ③ 候选生成口径（七维依据必填 → 定位三要素） |
-| `prompts/s3-script-rewrite.md` | ④ 正文改写口径（FFS + 40 集四件套 + **爽感强化/五拍打脸/台词大胆** + 红线） |
+| `prompts/s3-script-rewrite.md` | ④ 正文改写口径（FFS + 30 集四件套 + **爽感强化/五拍打脸/台词大胆** + 红线） |
+| `prompts/s3a-diagnosis.md` | ④-A 诊断口径（选题七问 / 改动四类 / 主线五要素）；**写正文前必须确认** |
+| `prompts/s3c-audience-review.md` | ④ 观众视角审稿（七问 + 三条优先修改，必须引用具体集号） |
+| `docs/creation/剧本改编四段法.md` | ④ 的**流程真源**（诊断 → 骨架 → 正文 → 验收 四段与门禁） |
+| `references/genre-profiles.json` | 题材结构侧重表（复仇逆袭/甜宠/悬疑/家庭伦理），`review` 按 `must_check` 升级必检项 |
 | `prompts/s0b-script-translate.md` | 〇 剧本转译口径（多语种规范 + 质检 + 红线） |
 | `references/genre-formulas/` | 题材公式库（`female-comeback` 女频逆袭；JSON 真源 + 生成 md） |
 | `references/translation-languages.json` | 转译语种注册表（9 语种：语速/口语规范/翻译腔黑名单/质检阈值） |

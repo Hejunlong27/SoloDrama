@@ -40,9 +40,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 import config as C
-from runninghub_client import RunningHubClient, RunningHubError, truncate
+from inflight import Inflight, PendingDownloads
+from runninghub_client import (
+    STATUS_FAIL, RunningHubClient, RunningHubError, extract_usage, normalize_status,
+    pick_output_url, truncate,
+)
 from pipeline import (
-    ImageRequest, Logger, ShotContext, UploadCache,
+    ImageRequest, Logger, ShotContext, UploadCache, _record_run,
     ST_FAILED, ST_PENDING, ST_SKIPPED, ST_SUCCESS,
     get_image_provider, process_shot,
 )
@@ -297,6 +301,143 @@ async def run_probe() -> int:
 # ===========================================================================
 # 主流程
 # ===========================================================================
+# ===========================================================================
+# 续跑对账：inflight（已提交未回收）+ pending_download（成功未落盘）
+# ===========================================================================
+async def reconcile_inflight(ctx: ShotContext, shots: List[Dict[str, Any]]) -> Dict[str, int]:
+    """启动时核对 `inflight.json`：把「已提交、结果未回收」的段接回来（反馈 P0-7）。
+
+    为什么需要：此前续跑只看「本地有没有 final.mp4」。任务已提交（钱已花）、
+    进程在轮询中被杀 → 本地无产物、无记录 → 既不算完成也不算失败，**静默漏镜**。
+    现在提交成功即落 inflight，这里逐条 `query` 一次：
+
+      * SUCCESS 且拿得到 URL -> 直接补下载、标成功、清账（**不重新提交、不重复扣费**）
+      * FAILED/CANCEL        -> 清账并标失败（本轮会重新提交，因为非 RUNNING）
+      * 非终态               -> 把状态恢复成 RUNNING + video_task_id，
+                                让 process_shot 走「复用 taskId 只轮询」的分支
+      * 查询失败             -> 保留记录（不猜），本轮照常跑别的段
+    """
+    stats = {"checked": 0, "recovered": 0, "failed": 0, "waiting": 0, "kept": 0, "skipped": 0}
+    if ctx.inflight is None:
+        return stats
+    items = ctx.inflight.load()
+    if not items:
+        return stats
+    await ctx.logger.log(f"在途对账：inflight.json 有 {len(items)} 条已提交未回收的任务")
+    known = {str(s.get("shot_id") or "") for s in shots}
+
+    for shot_id, rec in sorted(items.items()):
+        task_id = str(rec.get("task_id") or "")
+        if not shot_id or not task_id:
+            await ctx.inflight.remove(shot_id)
+            stats["skipped"] += 1
+            continue
+        if shot_id not in known:            # 本轮没选中这条（--only / --limit），原样留着
+            stats["skipped"] += 1
+            continue
+
+        final_mp4 = ctx.output_root / shot_id / "final.mp4"
+        if final_mp4.is_file():
+            await ctx.state.update(shot_id, video_status=ST_SUCCESS, video_task_id=task_id)
+            await ctx.inflight.remove(shot_id)
+            stats["recovered"] += 1
+            await ctx.logger.log(f"[{shot_id}] ↺ 产物已在位，仅补记账（不重新提交）")
+            continue
+
+        stats["checked"] += 1
+        try:
+            result = await ctx.client.query_once(task_id)
+        except RunningHubError as e:
+            stats["kept"] += 1
+            await ctx.logger.log(f"[{shot_id}] ? 在途任务 {task_id} 查询失败，保留记录稍后再查："
+                                 f"{truncate(e, 100)}")
+            continue
+
+        status = result.get("status")
+        if status == ST_SUCCESS:
+            url = pick_output_url(result, "video")
+            if not url:
+                stats["kept"] += 1
+                await ctx.logger.log(f"[{shot_id}] ? 任务 {task_id} 成功但无视频 URL，保留记录")
+                continue
+            try:
+                await ctx.client.download(url, str(final_mp4))
+            except RunningHubError as e:
+                if ctx.pending is not None:
+                    await ctx.pending.add(shot_id=shot_id, task_id=task_id, url=url,
+                                          dest=str(final_mp4), error=truncate(e, 200))
+                stats["failed"] += 1
+                await ctx.logger.log(f"[{shot_id}] ✗ 已成功但补下载失败：{truncate(e, 100)}"
+                                     f"（见 pending_download.json）")
+                continue
+            usage = extract_usage(result)
+            await ctx.state.update(shot_id, video_status=ST_SUCCESS, video_url=url,
+                                   video_task_id=task_id, video_usage=usage)
+            _record_run(ctx, shot_id=shot_id, status="SUCCESS", task_id=task_id,
+                        usage=usage, artifact=str(final_mp4), output_url=url,
+                        duration_s=(rec or {}).get("duration_s"))
+            await ctx.inflight.remove(shot_id)
+            if ctx.pending is not None:
+                await ctx.pending.remove(shot_id)
+            stats["recovered"] += 1
+            await ctx.logger.log(f"[{shot_id}] ↺ 在途任务已成功，补下载完成（未重新提交、未重复扣费）")
+        elif status in STATUS_FAIL:
+            await ctx.inflight.remove(shot_id)
+            await ctx.state.update(shot_id, video_status=ST_FAILED,
+                                   error=f"在途任务 {task_id} 终态 {status}（见上轮日志）")
+            stats["failed"] += 1
+            await ctx.logger.log(f"[{shot_id}] ↺ 在途任务 {task_id} 已是 {status}，本轮重新提交")
+        else:
+            await ctx.state.update(shot_id, video_status=ST_RUNNING, video_task_id=task_id)
+            stats["waiting"] += 1
+            await ctx.logger.log(f"[{shot_id}] ↺ 在途任务 {task_id} 仍在 {status}，"
+                                 f"本轮复用 taskId 继续轮询（不重复提交）")
+    return stats
+
+
+async def run_resume_download(workspace: Path, out_root: Path,
+                              batch: Optional[str] = None) -> int:
+    """补下载：读各批次的 `pending_download.json`，只重下、不重提（反馈 P1-7）。"""
+    if not C.RUNNINGHUB_API_KEY:
+        print("! 未设置 RUNNINGHUB_API_KEY，无法补下载。")
+        return 2
+    if batch:
+        dirs = [out_root / batch]
+    else:
+        dirs = sorted([d for d in out_root.iterdir()
+                       if d.is_dir() and (d / "pending_download.json").is_file()]) \
+            if out_root.is_dir() else []
+    if not dirs:
+        print("没有待补下载记录（pending_download.json 不存在）。")
+        return 0
+    ok = bad = 0
+    async with RunningHubClient(C.RUNNINGHUB_API_KEY, C.RH_BASE_URL, C.HTTP_TIMEOUT,
+                                channel=C.POLL_CHANNEL) as client:
+        for d in dirs:
+            pend = PendingDownloads(d)
+            items = pend.load()
+            if not items:
+                continue
+            print(f"批次 {d.name}：{len(items)} 条待补下载")
+            for it in items:
+                shot_id, url, dest = it.get("shot_id"), it.get("url"), it.get("dest")
+                if not url or not dest:
+                    print(f"  [SKIP] {shot_id}：记录缺少 url/dest（无法补）")
+                    bad += 1
+                    continue
+                try:
+                    await client.download(url, dest)
+                except RunningHubError as e:
+                    print(f"  [NG]   {shot_id}：{truncate(e, 120)}")
+                    bad += 1
+                    continue
+                await pend.remove(shot_id)
+                print(f"  [OK]   {shot_id} -> {dest}")
+                ok += 1
+    print(f"\n补下载完成：成功 {ok} / 失败 {bad}")
+    return 0 if bad == 0 else 1
+
+
 async def run_pipeline(args: argparse.Namespace) -> int:
     workspace = args._workspace
     data_dir = _resolve_against(workspace, args.data_dir)
@@ -369,7 +510,20 @@ async def run_pipeline(args: argparse.Namespace) -> int:
             ledger=RunLedger(args._workspace, cny_per_rh_coin=C.RH_CNY_PER_COIN,
                              enabled=not args.dry_run),
             batch_id=batch_id,
+            # ★ 2026-10-20（反馈 P0-7 / P1-7）：在途任务 + 待补下载两份台账
+            inflight=Inflight(batch_dir),
+            pending=PendingDownloads(batch_dir),
+            account=str(getattr(C, "ACCOUNT", "") or ""),
         )
+
+        if not args.dry_run:
+            stats = await reconcile_inflight(ctx, shots)
+            if any(stats[k] for k in ("checked", "recovered", "failed", "waiting", "kept")):
+                await logger.log(
+                    "在途对账结果：检查 %d | 补回 %d | 已失败 %d | 继续等 %d | 保留 %d"
+                    % (stats["checked"], stats["recovered"], stats["failed"],
+                       stats["waiting"], stats["kept"]))
+                await state.flush()
 
         for bi, batch in enumerate(_chunks(shots, args.batch_size), start=1):
             if fuse.blown():
@@ -400,7 +554,8 @@ async def run_pipeline(args: argparse.Namespace) -> int:
     elapsed = time.time() - started
     await state.flush()
     summary = _write_summary(batch_dir, batch_id, state, fuse, elapsed, args,
-                             inputs, statuses=_collect_statuses(state))
+                             inputs, statuses=_collect_statuses(state),
+                             selected={str(s.get("shot_id") or "") for s in shots})
     logger.dump(batch_dir / "run.log")
 
     print("\n" + "=" * 78)
@@ -415,6 +570,22 @@ async def run_pipeline(args: argparse.Namespace) -> int:
     print(f"  输出目录：{batch_dir}")
     print(f"  汇总文件：{batch_dir / 'summary.json'}")
     print("=" * 78)
+
+    # ★ 反馈 P0-7：收尾做一次「剧本镜数 vs 产物」硬校验，不一致就显式失败，
+    #   而不是让缺口混在 pending 里静默通过（这正是 EP39/SC02 漏镜的逃逸路径）。
+    gaps = summary.get("gaps") or {}
+    ms, sa = gaps.get("missing_state") or [], gaps.get("success_without_artifact") or []
+    if ms or sa:
+        print("\n★ 缺口校验未通过（这些段既不是成功、也不算失败，续跑会漏掉）：")
+        if ms:
+            print("  状态表里没有记录（进程可能在写状态前被杀）：%s" % "、".join(ms[:12]))
+        if sa:
+            print("  状态为成功但产物不在：%s" % "、".join(sa[:12]))
+        print("  处理：先用 `--resume` 续跑（inflight.json 会把这些任务接回来）；"
+              "确认无在途任务后再决定是否重提。")
+        if not getattr(args, "allow_gaps", False):
+            print("  （如确属预期缺口，加 --allow-gaps 可放行）")
+            return 3
     return 0
 
 
@@ -439,8 +610,11 @@ def _collect_statuses(state: StateStore) -> Dict[str, Dict[str, Any]]:
 
 def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fusebox,
                    elapsed: float, args: argparse.Namespace, inputs: Inputs,
-                   statuses: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    totals = {"total": len(inputs.shots), "success": 0, "failed": 0, "skipped": 0, "pending": 0}
+                   statuses: Dict[str, Dict[str, Any]],
+                   selected: Optional[set] = None) -> Dict[str, Any]:
+    totals = {"total": len(inputs.shots), "success": 0, "failed": 0, "skipped": 0, "pending": 0,
+              "missing_state": 0, "success_without_artifact": 0}
+    gaps: Dict[str, List[str]] = {"missing_state": [], "success_without_artifact": []}
     money = coins = 0.0
     shot_rows: List[Dict[str, Any]] = []
 
@@ -449,6 +623,15 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
         st = statuses.get(sid) or {}
         v = st.get("video_status", ST_PENDING)
         final_ok = v == ST_SUCCESS and (batch_dir / sid / "final.mp4").is_file()
+        # ★ 2026-10-20（反馈 P0-7）：缺口必须**显式**列出来，不能混进 pending 静默通过。
+        #   missing_state       = 剧本里有、状态表里压根没有（进程被杀在写状态之前）
+        #   success_without_artifact = 状态说成功、产物却不在（被清理/写坏）
+        #   只对本轮**选中**的段判定：--limit / --only 时未选中的段不该算缺口。
+        if not selected or sid in selected:
+            if sid not in statuses:
+                gaps["missing_state"].append(sid)
+            elif v == ST_SUCCESS and not final_ok:
+                gaps["success_without_artifact"].append(sid)
         if final_ok:
             totals["success"] += 1
         elif v == ST_SKIPPED:
@@ -481,6 +664,9 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
             "error": st.get("error"),
         })
 
+    totals["missing_state"] = len(gaps["missing_state"])
+    totals["success_without_artifact"] = len(gaps["success_without_artifact"])
+
     summary = {
         "batch_id": batch_id,
         "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -488,6 +674,7 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
         "dry_run": bool(args.dry_run),
         "video_only": bool(getattr(args, "video_only", False)),
         "resumed": bool(args.resume),
+        "account": str(getattr(C, "ACCOUNT", "") or ""),
         "config": {
             "image_provider": C.ACTIVE_IMAGE_PROVIDER,
             "image_workflow_id": C.IMAGE_PROVIDERS.get(C.ACTIVE_IMAGE_PROVIDER, {}).get("id"),
@@ -497,6 +684,7 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
             "poll_channel": C.POLL_CHANNEL,
         },
         "totals": totals,
+        "gaps": gaps,
         "fuse": fuse.status(),
         "usage": {"consumeMoney": round(money, 4), "consumeCoins": round(coins, 2)},
         "shots": shot_rows,
@@ -524,6 +712,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-id", default=None, help="指定批次 ID（默认用时间戳）")
     p.add_argument("--resume", default=None, metavar="BATCH_ID",
                    help="断点续跑：载入该批次目录下的 state.json，已完成的阶段直接跳过")
+    p.add_argument("--resume-download", nargs="?", const="", default=None, metavar="BATCH_ID",
+                   help="补下载：只重下 pending_download.json 里的产物，不重新提交（不重复计费）")
+    p.add_argument("--allow-gaps", action="store_true",
+                   help="收尾缺口校验不通过时仍返回 0（默认返回 3，防止漏镜静默通过）")
     p.add_argument("--dry-run", action="store_true",
                    help="预演：不联网、不提交，只校验数据并打印将要提交的 nodeInfoList")
     p.add_argument("--video-only", action="store_true",
@@ -584,6 +776,11 @@ def main() -> int:
 
     if args.check:
         return _print_check(args)
+
+    if args.resume_download is not None:
+        out_root = _resolve_against(args._workspace, args.out_dir)
+        return asyncio.run(run_resume_download(args._workspace, out_root,
+                                              args.resume_download or None))
 
     if args.probe:
         return asyncio.run(run_probe())

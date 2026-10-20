@@ -9,11 +9,19 @@ from __future__ import annotations
 import re
 
 from .schema import (ABSTRACT_WORDS, CODE_TOKEN_WHITELIST, HEADER_FIELDS,
-                     LEVEL_ERROR, LEVEL_WARN, MAX_EP_SEC, MAX_EP_SHOTS,
-                     MAX_SHOT_SEC, MIN_EP_SEC, MIN_EP_SHOTS, MIN_SHOT_SEC,
-                     ALL_SHOT_FIELDS, Issue, sha1)
+                     LEVEL_ERROR, LEVEL_WARN, MAX_SHOT_SEC, MIN_SHOT_SEC,
+                     ALL_SHOT_FIELDS, Issue, ep_bounds, sha1)
 
 FIELD_LINE_RE = re.compile(r"^([A-Z]+)\s*:", re.M)
+# ★ 2026-10-20（反馈 P2-4）：字段行的**唯一**写法 —— 允许行首缩进、允许中英文冒号。
+#   以前各处各写一套（`^DUR:` 在带缩进的文件上匹配 0 条），排查成本极高。
+#   需要解析 DUR/SHOT 等字段时，一律用这个常量，不要再手写正则。
+FIELD_LINE_LOOSE_RE = re.compile(r"^\s*([A-Z]+)\s*[:：]\s*(.*)$")
+# 镜头块内「长得像字段、但其实不是合法字段」的行（反馈 P2-5）。
+# 例：`镜头说明：xxx`、`MOOD: 紧张`、`CAMERA: 低角度` —— 这些字段引擎不认，
+# 写进块里会被当成上一字段的续行，静默污染 ACTION/DIALOG。
+STRAY_FIELD_RE = re.compile(r"^([^\s:：][^:：]{0,12})\s*[:：]\s*\S")
+SC_LINE_RE = re.compile(r"^\s*SC[-_ ]?\d+", re.I)
 CODE_TOKEN_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})\b")
 QUOTED_RE = re.compile(r"[“\"]([^”\"]+)[”\"]")
 SENT_SPLIT_RE = re.compile(r"[。！？!?…]+")
@@ -36,8 +44,9 @@ def validate_script(conn, project: str, ep, raw_md: str) -> list:
     issues += _check_char_anchor(conn, project, ep)
     issues += _check_codes(ep, known_chars, known_scenes)
     issues += _check_custom_fields(raw_md)
+    issues += _check_stray_field_lines(raw_md)
     issues += _check_sc_seq(ep)
-    issues += _check_duration(ep)
+    issues += _check_duration(ep, _proj_bounds(conn, project))
     issues += _check_dialog(ep)
     issues += _check_vo(ep)
     issues += _check_action(ep, recognizable)
@@ -120,6 +129,44 @@ def _check_custom_fields(raw_md: str) -> list:
     return out
 
 
+def _check_stray_field_lines(raw_md: str) -> list:
+    """镜头块内「字段形状但不合法」的行 → WARN（反馈 P2-5）。
+
+    为什么只 WARN、且要求行首不缩进：
+      * 合法的字段续行通常是缩进写的（ACTION 折行），不该被打扰；
+      * 写在行首的 `MOOD: 紧张` / `镜头说明：xxx` 才是真正的误写 ——
+        它们会被解析器当成上一字段的续行，**静默污染** ACTION/DIALOG，
+        而此前 lint 完全不报（E004 只认全大写 ASCII 键名）。
+    用 WARN 而不是 ERROR：中文正文里「他说：…」这类行如果写在行首也确实存在，
+    需要人判断；但至少不再静默。
+    """
+    out = []
+    in_shot = False
+    for i, raw in enumerate(raw_md.splitlines(), 1):
+        line = raw.rstrip()
+        st = line.strip()
+        if SC_LINE_RE.match(st):
+            in_shot = True
+            continue
+        if st.startswith("#") or st.startswith("```"):
+            in_shot = False if st.startswith("##") else in_shot
+            continue
+        if not in_shot or not st or st == "---" or st.startswith("<!--"):
+            continue
+        if raw[:1] in (" ", "\t"):      # 缩进 = 续行，放过
+            continue
+        m = STRAY_FIELD_RE.match(st)
+        if not m:
+            continue
+        key = m.group(1).strip()
+        if key.upper() in ALL_SHOT_FIELDS:
+            continue
+        out.append(Issue("E012", LEVEL_WARN, f"L{i}",
+                         f"镜头块内的非法字段行「{key}:」可能被当作续行拼进上一字段；"
+                         f"合法字段只有 {'/'.join(ALL_SHOT_FIELDS)}"))
+    return out
+
+
 def _check_sc_seq(ep) -> list:
     out = []
     seqs = [s.seq for s in ep.shots]
@@ -129,16 +176,31 @@ def _check_sc_seq(ep) -> list:
     return out
 
 
-def _check_duration(ep) -> list:
+def _proj_bounds(conn, project: str) -> dict:
+    """按项目自身的 `ep_seconds` 取时长口径（老项目 70 秒、新项目 60 秒各按各的）。"""
+    sec = None
+    try:
+        row = conn.execute("SELECT ep_seconds FROM projects WHERE slug=?", (project,)).fetchone()
+        if row is not None:
+            sec = row["ep_seconds"] if hasattr(row, "keys") else row[0]
+    except Exception:                                            # noqa: BLE001
+        sec = None
+    return ep_bounds(sec)
+
+
+def _check_duration(ep, bounds: dict | None = None) -> list:
     out = []
+    b = bounds or ep_bounds(None)
+    lo_s, hi_s = b["shots"]
+    lo_t, hi_t = b["total"]
     n = len(ep.shots)
     total = ep.total_sec
-    if not (MIN_EP_SHOTS <= n <= MAX_EP_SHOTS):
+    if not (lo_s <= n <= hi_s):
         out.append(Issue("E006", LEVEL_ERROR, "全篇",
-                         f"镜头数 {n} 超出 {MIN_EP_SHOTS}-{MAX_EP_SHOTS} 镜区间"))
-    if not (MIN_EP_SEC <= total <= MAX_EP_SEC):
+                         f"镜头数 {n} 超出 {lo_s}-{hi_s} 镜区间"))
+    if not (lo_t <= total <= hi_t):
         out.append(Issue("E006", LEVEL_ERROR, "全篇",
-                         f"总时长 {total} 秒超出 {MIN_EP_SEC}-{MAX_EP_SEC} 秒区间"))
+                         f"总时长 {total} 秒超出 {lo_t}-{hi_t} 秒区间"))
     for s in ep.shots:
         if not (MIN_SHOT_SEC <= s.est_sec <= MAX_SHOT_SEC):
             out.append(Issue("E006", LEVEL_ERROR, s.sc_id,
@@ -216,9 +278,10 @@ def validate_storyboard(conn, project: str, ep, sb: dict) -> list:
         if d not in sb_dialogs:
             issues.append(Issue("E010", LEVEL_ERROR, "分镜", f"台词缺失或被改写：{d}"))
     total = sum(p.est_sec for p in sb.get("shots", []))
-    if sb.get("shots") and not (MIN_EP_SEC <= total <= MAX_EP_SEC):
+    _lo, _hi = _proj_bounds(conn, project)["total"]
+    if sb.get("shots") and not (_lo <= total <= _hi):
         issues.append(Issue("E006", LEVEL_ERROR, "分镜",
-                            f"分镜总时长 {total} 秒超出 {MIN_EP_SEC}-{MAX_EP_SEC} 秒"))
+                            f"分镜总时长 {total} 秒超出 {_lo}-{_hi} 秒"))
     for p in sb.get("shots", []):
         if not (MIN_SHOT_SEC <= p.est_sec <= MAX_SHOT_SEC):
             issues.append(Issue("E006", LEVEL_ERROR, p.no,

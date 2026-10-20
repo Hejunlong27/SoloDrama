@@ -27,6 +27,11 @@
 * **只拦「首次」**：一旦某类模型确认过，后续运行不再拦截（换模型需显式 `--reset` 后重确认）。
 * **不一致就拦**：确认了本地 ComfyUI，却跑 `--engine rh` —— 拦下并要求先改确认单，
   防止「确认一套、跑另一套」的账实不符。
+* **没有执行器就拦**（2026-10-20 反馈 P1-1）：菜单里标「★ 暂无执行器」的选项
+  （如 `video=local_comfyui`）不允许确认 —— 声明了却跑不通，比不提供更误导。
+* **确认单即执行依据**（2026-10-20 反馈 P0-1）：`detail.comfy_workflow` / `comfy_url` /
+  `comfy_nodes` 会被 `gen_assets_local.py` 回灌成 `COMFYUI_*` 环境变量，
+  使「用户确认的工作流」与「实际执行的工作流」强制一致。
 * **中文 Windows 控制台纪律**：正文不使用 GBK 装不下的符号；UTF-8 无 BOM 写盘。
 
 命令（也可由 `drama.py models` 转发）
@@ -75,6 +80,7 @@ MODEL_OPTIONS = {
             "cost": "￥0（占本机 GPU/电费）",
             "desc": "本机 ComfyUI 出图；数据不出局域网、零计费。未给工作流文件时用仓库默认 Qwen-Image 2.1 工作流。",
             "engine_arg": "local",
+            "executor": "gen_assets_local.py",
             "requires": [],
             "optional": ["comfy_workflow"],
         },
@@ -84,6 +90,7 @@ MODEL_OPTIONS = {
             "cost": "按云主机/平台计费（自建或租用）",
             "desc": "把工作流提交到**云端** ComfyUI 服务（自建 GPU 主机或云 ComfyUI 平台）。",
             "engine_arg": "cloud",
+            "executor": "gen_assets_local.py（同一客户端，COMFYUI_URL 指向云端）",
             "requires": ["comfy_url", "comfy_workflow"],
             "optional": [],
         },
@@ -93,6 +100,7 @@ MODEL_OPTIONS = {
             "cost": "人物约 17-27 RH币/张；场景约 $0.01/张",
             "desc": "调用 RunningHub 上的 AI 应用出定妆板/场景空镜；需消费级 Key，云端计费。",
             "engine_arg": "rh",
+            "executor": "gen_char_assets.py / gen_scene_assets.py",
             "requires": ["app_url"],
             "optional": ["app_id"],
         },
@@ -104,6 +112,7 @@ MODEL_OPTIONS = {
                     "需消费级 Key，单账号并发 ≤5。API 导出文件（*_api.json）不等于工作流 ID，"
                     "必须先在工作流页面保存/运行一次才拿得到可调用的 workflowId。",
             "engine_arg": "rh",
+            "executor": "gen_assets_rh_workflow.py",
             "requires": ["comfy_workflow"],
             "optional": ["workflow_id"],
         },
@@ -114,6 +123,8 @@ MODEL_OPTIONS = {
             "desc": "可灵/即梦/Midjourney/Nano Banana(Gemini) 等；本仓库不直连，"
                     "由人工在各平台出图后落盘到工作区，引擎按本地文件接管。",
             "engine_arg": None,
+            "executor": None,
+            "manual": True,
             "requires": [],
             "optional": [],
         },
@@ -123,8 +134,11 @@ MODEL_OPTIONS = {
             "id": "local_comfyui",
             "label": "本地 ComfyUI（￥0）",
             "cost": "￥0（占本机 GPU/电费）",
-            "desc": "本机 ComfyUI 跑视频工作流（如 Wan / Hunyuan 等本地视频模型）；零计费、数据不出网。",
+            "desc": "本机 ComfyUI 跑视频工作流（如 Wan / Hunyuan 等本地视频模型）；零计费、数据不出网。"
+                    "★ 引擎**暂无本地视频执行器**（只有 runninghub_client），确认了也跑不了 —— "
+                    "详见 feedback P1-1。",
             "engine_arg": None,
+            "executor": None,
             "requires": ["comfy_workflow"],
             "optional": ["comfy_url"],
         },
@@ -132,8 +146,10 @@ MODEL_OPTIONS = {
             "id": "cloud_comfyui",
             "label": "云端 ComfyUI（★计费/自建）",
             "cost": "按云主机/平台计费（自建或租用）",
-            "desc": "把视频工作流提交到云端 ComfyUI 服务；适合本机显存不够或散热吃紧。",
+            "desc": "把视频工作流提交到云端 ComfyUI 服务；适合本机显存不够或散热吃紧。"
+                    "★ 引擎**暂无云端 ComfyUI 视频执行器**（同 P1-1）。",
             "engine_arg": None,
+            "executor": None,
             "requires": ["comfy_url", "comfy_workflow"],
             "optional": [],
         },
@@ -143,6 +159,7 @@ MODEL_OPTIONS = {
             "cost": "约 78-209 RH币/段（按帧数）",
             "desc": "RunningHub 标准通道工作流出片（九宫格→裁剪→H3 视频）；云端计费，单账号并发 ≤5。",
             "engine_arg": "workflow",
+            "executor": "stages/video/workflow/scripts/run.py",
             "requires": ["workflow_id"],
             "optional": [],
         },
@@ -152,6 +169,7 @@ MODEL_OPTIONS = {
             "cost": "按应用定价（通常与工作流同档）",
             "desc": "把我方提供的提示词/参考图提交到 RunningHub 上的 **AI 应用** 出片（无需自建工作流）。",
             "engine_arg": "workflow",
+            "executor": "stages/video/workflow/scripts/run.py",
             "requires": ["app_url"],
             "optional": ["app_id"],
         },
@@ -161,6 +179,8 @@ MODEL_OPTIONS = {
             "cost": "按各家订阅/点数计费（站外）",
             "desc": "可灵/Veo/Sora/即梦/Runway 等；本仓库不直连，人工在各平台出片后落盘，引擎按本地文件接管。",
             "engine_arg": None,
+            "executor": None,
+            "manual": True,
             "requires": [],
             "optional": [],
         },
@@ -309,6 +329,14 @@ def require(ws: pathlib.Path, kind: str, expected_engine: str | None = None) -> 
         lines.append("        补齐后重跑同一条确认命令即可（附 --comfy-workflow / --comfy-url / --app-url 等参数）。")
         return False, "\n".join(lines)
 
+    # ★ 反馈 P1-1：确认了一个**没有执行器**的选项，等于确认了一条跑不通的路 —— 必须拦。
+    if not opt.get("executor") and not opt.get("manual"):
+        return False, (
+            "本项目确认的%s模型是「%s」，但引擎**暂无该通道的执行器**，无法开工。\n"
+            "        这不是配置问题，是能力缺口：本地/云端 ComfyUI 的视频执行器尚未实现。\n"
+            "        请改选有执行器的通道：drama models set %s=runninghub（或 runninghub_ai_app）。"
+            % (KINDS[kind], opt.get("label", choice), kind))
+
     # 通道一致性校验：仅当本次调用能确定「实际用的通道」时才比对
     if expected_engine is not None and opt.get("engine_arg") is not None:
         if expected_engine != opt["engine_arg"]:
@@ -324,11 +352,26 @@ def require(ws: pathlib.Path, kind: str, expected_engine: str | None = None) -> 
 # ---------------------------------------------------------------------------
 # 菜单渲染
 # ---------------------------------------------------------------------------
+def _executor_note(opt: dict) -> str:
+    """返回「这个选项到底能不能跑」的一句话（反馈 P1-1）。
+
+    此前 `video=local_comfyui` 在菜单里写着「￥0」，用户以为本地可出片，
+    但引擎只有 `runninghub_client.py`，本地 H3 根本没有执行路径 ——
+    「声明了但跑不了」比不提供更糟。现在菜单与门禁都显式标注。
+    """
+    if opt.get("executor"):
+        return "执行器：%s" % opt["executor"]
+    if opt.get("manual"):
+        return "执行方式：人工产出后落盘（本仓库不直连）"
+    return "★ 暂无执行器：本选项只作登记，引擎无法直接执行"
+
+
 def render_menu(kind: str, indent: str = "    ") -> str:
     lines = []
     for i, o in enumerate(MODEL_OPTIONS[kind], 1):
         lines.append("%s%d) %-26s %s" % (indent, i, o["label"], o["cost"]))
         lines.append("%s    %s" % (indent, o["desc"]))
+        lines.append("%s    %s" % (indent, _executor_note(o)))
         req = o.get("requires") or []
         if req:
             need = "；".join((REQUIRES.get(k) or {}).get("label", k) for k in req)
@@ -402,6 +445,15 @@ def _do_set(ws: pathlib.Path, kind: str, choice: str, detail: dict | None,
         valid = "|".join(o["id"] for o in MODEL_OPTIONS[kind])
         print("[FAIL] 未知选项：%s（应为 %s）" % (choice, valid))
         return 2
+    # ★ 反馈 P1-1：没有执行器、也不是「人工落盘」的选项，确认了也跑不通 —— 直接拦住，
+    #   否则用户会在 `video run` 走到一半才发现「本地 H3 无路径」。
+    if not opt.get("executor") and not opt.get("manual"):
+        print("[BLOCK] 「%s」在本仓库**暂无执行器**，确认它也跑不起来（退出码 %d）。"
+              % (opt.get("label", choice), EXIT_WAIT_CONFIRM))
+        print("        %s" % _executor_note(opt))
+        others = [o["id"] for o in MODEL_OPTIONS[kind] if o.get("executor") or o.get("manual")]
+        print("        可选：%s" % " / ".join(others))
+        return EXIT_WAIT_CONFIRM
     detail = dict(detail or {})
 
     # ★ 把 detail 里的相对路径按「工作区」解析，落盘时统一存绝对路径（避免换机器/换 cwd 漂移）
@@ -570,7 +622,11 @@ def main() -> int:
 
     p = sub.add_parser("set", help="记录确认：set image=local_comfyui [video=runninghub]")
     p.add_argument("pairs", nargs="+", metavar="kind=choice")
-    p.add_argument("--detail", default=None, help="附加说明（k=v,k2=v2 或 JSON）")
+    p.add_argument("--detail", default=None,
+                   help='附加说明（k=v,k2=v2 或整段 JSON）。本地/云端 ComfyUI 可在这里写'
+                        '节点映射：--detail \'{"comfy_nodes":{"prompt":488,"prefix":487,'
+                        '"aspect":13,"latent":474}}\'；gen_assets_local.py 会把它回灌成 COMFYUI_NODE_*，'
+                        '避免「确认单说用新工作流、实际跑仓库默认工作流」')
     # ★ 执行依据（2026-10-16）：选了通道就必须给出「跑得起来」的依据
     p.add_argument("--comfy-url", dest="comfy_url", default=None,
                    help="ComfyUI 服务地址（本地/云端）")

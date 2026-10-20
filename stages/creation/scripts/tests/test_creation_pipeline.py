@@ -117,7 +117,7 @@ def main() -> int:
 
         C.write_json(ws / C.BRIEF, {"slug": "t", "title": "测试剧", "platform": "ReelShort",
                                     "market": "es-LATAM", "audience": "拉美女性 18-40",
-                                    "ep_total": 40, "ep_seconds": 70, "form": "AI漫剧"})   # ★ 2026-10-16 默认口径：40 集 × 70 秒
+                                    "ep_total": 40, "ep_seconds": 70, "form": "AI漫剧"})   # 显式老口径：验证 70 秒档仍按 5-12 镜 / 70-95 秒校验
 
         # ================= ① 榜单调研与对比 =================
         C.write_json(ws / C.MARKET_FILE, _mk_market(today))
@@ -208,7 +208,7 @@ def main() -> int:
         bp = C.read_json(ws / C.BLUEPRINT) or {}
         check("④ 落盘集数规划", bool(bp))
         # ★ 2026-10-16：默认集数 40（30→40）；节拍 中型每 4 / 大型每 10（与 60 集口径密度一致）
-        check("④ 规划 40 集（默认口径）", bp.get("total_ep") == 40 and len(bp.get("episodes", [])) == 40,
+        check("④ 按 brief 的 40 集规划（老口径兼容）", bp.get("total_ep") == 40 and len(bp.get("episodes", [])) == 40,
               "n=%s" % bp.get("total_ep"))
         ep1 = (bp.get("episodes") or [{}])[0]
         check("④ 每集含 冲突/反转/钩子/钩子类型",
@@ -232,9 +232,12 @@ def main() -> int:
               and bp["retention_plan"].get("ep1_golden_3s"))
         check("④ 源剧本已登记", (bp.get("source_script") or {}).get("present") is True)
         _bc = bp["boom_cadence"]
-        _mid = 40 // 4 - len([i for i in range(1, 41) if i % 4 == 0 and i % 10 == 0])
-        check("④ 爆点节拍（40 集：中型 %d / 大型 %d）" % (_mid, 40 // 10),
-              _bc["mid_count"] == _mid and _bc["big_count"] == 40 // 10,
+        # ★ 2026-10-20（V0.5）：节拍按模块常量算，不再硬编码 4/10（默认 30 集口径为 3/7）
+        _me, _be, _tot = SR.MID_BOOM_EVERY, SR.BIG_BOOM_EVERY, 40
+        _big = _tot // _be
+        _mid = _tot // _me - len([i for i in range(1, _tot + 1) if i % _me == 0 and i % _be == 0])
+        check("④ 爆点节拍（40 集：中型 %d / 大型 %d）" % (_mid, _big),
+              _bc["mid_count"] == _mid and _bc["big_count"] == _big,
               json.dumps(_bc, ensure_ascii=False))
         check("④ 钩子链前 3 集", [h["type"] for h in bp["hook_chain"]] == ["身份悬念", "危机逼近", "秘密揭露"])
         check("④ 幕结构 4 幕", len(bp.get("act_structure", [])) == 4)
@@ -248,6 +251,19 @@ def main() -> int:
         check("④ 骨架 HEADER 六字段齐备",
               all(("# %s:" % f) in sk_text for f in ["TITLE", "EP", "PLATFORM", "STYLE LOCK", "CHAR", "SCENE"]))
         check("④ --emit 就位到 script/", emitted.is_file())
+
+        # ★ 2026-10-20（V0.5）：默认口径 30 集 × 60 秒（brief 未写 ep_total/ep_seconds 时）
+        check("④ 默认集数 30 / 单集 60 秒", SR.DEFAULT_EPISODES == 30 and SR.DEFAULT_EP_SECONDS == 60,
+              "%s x %s" % (SR.DEFAULT_EPISODES, SR.DEFAULT_EP_SECONDS))
+        _bp_keep = C.read_json(ws / C.BRIEF) or {}
+        _bp_tmp = {k: v for k, v in _bp_keep.items() if k not in ("ep_total", "ep_seconds")}
+        C.write_json(ws / C.BRIEF, _bp_tmp)
+        _rc, _o = _quiet(SR.plan, ws, 1, None, True)          # dry：不覆盖已验收的 blueprint
+        check("④ 无 brief 集数时按 30 集规划", _rc == 0 and "30 集" in _o, _o[:160])
+        C.write_json(ws / C.BRIEF, _bp_keep)
+        # 时长档位按 ep_seconds 选（老项目 70 秒不被 60 秒口径判死）
+        check("④ 60 秒档：5-10 镜 / 60-80 秒", SR.bounds_for(60) == (5, 10, 60, 80))
+        check("④ 70 秒档：5-12 镜 / 70-95 秒（老项目兼容）", SR.bounds_for(70) == (5, 12, 70, 95))
 
         # lint：好 / 坏剧本
         def _ffs(blocks: int, drop_field: str | None = None) -> str:

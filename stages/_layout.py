@@ -104,8 +104,31 @@ STAGE_PURPOSE: dict = {
     "compliance": "合规：发布前预检报告、TikTok 条款映射、整改记录、申诉材料",
     "release": "发行：剧集/（发布版 EpisodeNN.mp4）、封面（多尺寸成组，抓马构图）、文案（六槽位 + 三档描述）、"
                "发布清单、版权资料（4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」）。"
-               "真源 docs/distribution/发行资料清单.md；门禁 release_check.py",
+               "真源：<引擎仓库根>/docs/distribution/发行资料清单.md；门禁：<引擎仓库根>/stages/"
+               "production/scripts/release_check.py（均在引擎仓库内，不在本工作区）",
 }
+
+# ★ 2026-10-20（反馈 P0-5）：README 里的路径参考系必须写清楚。
+#   事故：工作区 `09-发行/README.md` 写「真源 docs/distribution/发行资料清单.md；门禁 release_check.py」，
+#   这段文字是从**引擎仓库根**的相对路径抄来的；README 一旦落进工作区，参考系就变成了工作区根，
+#   于是 `ls <ws>/docs/distribution/` 不存在、`tools/release_check.py` 也不存在 ——
+#   任何只拿工作区上下文开工的会话（新会话 / 交接 / 跨机）都会先扑空一次。
+#   规范不可达 = 规范不会被遵守。这里把引擎仓库根写成**绝对路径**并显式声明参考系。
+ENGINE_REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+README_MARK = "引擎仓库根（绝对路径）"
+
+
+def _stage_readme_text(key: str, purpose: str) -> str:
+    return (
+        "# %s\n\n%s\n\n"
+        "> 本目录由 `<引擎仓库根>/stages/_layout.py` 定义为「%s」阶段的**唯一**落点；\n"
+        "> 其他阶段不得在此写入同名文件。\n\n"
+        "## 参考系说明（请勿删）\n\n"
+        "%s：`%s`\n\n"
+        "本 README 中出现的 `docs/...`、`stages/...`、`*.py` 路径一律相对于**上面这个引擎仓库根**，\n"
+        "**不是**相对于本工作区。工作区只放数据与产物；规范文档与门禁脚本都在引擎仓库里。\n"
+        % (STAGE_DIRS[key], purpose, key, README_MARK, ENGINE_REPO_ROOT)
+    )
 
 DEFAULT_LAYOUT: dict = {
     "layout_version": LAYOUT_VERSION,
@@ -365,11 +388,13 @@ def scaffold(ws, *, engine_root_name: str = LEGACY_ENGINE_ROOT) -> dict:
             created.append(str(d))
         d.mkdir(parents=True, exist_ok=True)
         readme = d / "README.md"
-        if not readme.exists():
-            readme.write_text(
-                "# %s\n\n%s\n\n> 本目录由 `stages/_layout.py` 定义为「%s」阶段的**唯一**落点；\n"
-                "> 其他阶段不得在此写入同名文件。\n" % (STAGE_DIRS[key], STAGE_PURPOSE[key], key),
-                encoding="utf-8")
+        text = _stage_readme_text(key, STAGE_PURPOSE[key])
+        # ★ 反馈 P0-5：老工作区的 README 里路径参考系是错的（抄自引擎仓库），
+        #   这里做一次**幂等修复** —— 缺「引擎仓库根」标记就重写（不覆盖用户额外追加的段落之外的东西：
+        #   README 由脚手架生成、非用户内容，整篇重写是安全的）。
+        if (not readme.exists()) or (README_MARK not in readme.read_text(
+                encoding="utf-8", errors="replace")):
+            readme.write_text(text, encoding="utf-8")
 
     # 1.5) ★ 资产子目录：`04-资产/{characters,scenes,props,refs}`（2026-10-19 新增）
     #      理由：出图产物原先落在 `<out_dir>/assets/`（= 07-成片/assets），

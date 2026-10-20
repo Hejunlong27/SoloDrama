@@ -183,6 +183,21 @@ ERROR_TEXT_LIMIT: int = 200             # 错误信息截断长度
 
 
 # ==============================================================================
+# 显存不足（OOM）降级重试  ★ 2026-10-20 新增（反馈 P1-13）
+# ==============================================================================
+# 实测：12 秒镜头 + 6 路参考图 + 0.8MP，在 default(24G) 实例上采样阶段必挂
+#   （errorCode 805 / VRAM grow failed / torch.OutOfMemoryError）。
+# 平台对 OOM 任务返回 usage=null（**不计费**），所以「换更大实例 / 缩短时长」重试
+# 不会多花钱，只会多花时间；而直接判失败会让整镜白等并卡住整集。
+OOM_RETRY: bool = True                     # 关掉就退回「OOM 即失败」的旧行为
+OOM_ESCALATE_INSTANCE: str = "plus"        # 升到哪个实例类型（平台支持 default/plus）
+OOM_SHORTEN_SECONDS: float = 2.0           # 第二级重试时把时长下移几秒（0 = 不降时长）
+
+# 本次运行归属的账号标识（多账号混跑时写进台账，便于按账号回溯重跑；反馈 P0-4）
+ACCOUNT: str = os.getenv("SOLODRAMA_ACCOUNT", "")
+
+
+# ==============================================================================
 # 熔断（整批级）
 # ==============================================================================
 FUSE_CONSECUTIVE_FAILS: int = 5     # 连续失败达到该值 -> 熔断
@@ -284,6 +299,10 @@ _KEY_ALIASES = {
     "retry_max": "RETRY_MAX",
     "retry_backoff": "RETRY_BACKOFF",
     "error_text_limit": "ERROR_TEXT_LIMIT",
+    "oom_retry": "OOM_RETRY",
+    "oom_escalate_instance": "OOM_ESCALATE_INSTANCE",
+    "oom_shorten_seconds": "OOM_SHORTEN_SECONDS",
+    "account": "ACCOUNT",
     "fuse_consecutive_fails": "FUSE_CONSECUTIVE_FAILS",
     "fuse_fail_rate": "FUSE_FAIL_RATE",
     "fuse_min_samples": "FUSE_MIN_SAMPLES",
@@ -368,7 +387,7 @@ def _coerce(key: str, value: Any) -> Any:
             return _INVALID
         return value
     if key in ("HTTP_TIMEOUT", "POLL_INTERVAL", "IMAGE_TIMEOUT_MIN", "VIDEO_TIMEOUT_MIN",
-               "UPLOAD_CACHE_TTL_HOURS"):
+               "UPLOAD_CACHE_TTL_HOURS", "OOM_SHORTEN_SECONDS"):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return _INVALID
         return float(value)
@@ -376,12 +395,12 @@ def _coerce(key: str, value: Any) -> Any:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return _INVALID
         return float(value)
-    if key in ("KEEP_RAW_ZIP",):
+    if key in ("KEEP_RAW_ZIP", "OOM_RETRY"):
         if not isinstance(value, bool):
             return _INVALID
         return value
     if key in ("RUNNINGHUB_API_KEY", "RH_BASE_URL", "ACTIVE_IMAGE_PROVIDER",
-               "POLL_CHANNEL", "DATA_DIR", "OUTPUT_DIR"):
+               "POLL_CHANNEL", "DATA_DIR", "OUTPUT_DIR", "OOM_ESCALATE_INSTANCE", "ACCOUNT"):
         if not isinstance(value, str):
             return _INVALID
         return value
@@ -482,6 +501,8 @@ _TYPE_HINT = {
     "IMAGE_TIMEOUT_MIN": "数字", "VIDEO_TIMEOUT_MIN": "数字",
     "UPLOAD_CACHE_TTL_HOURS": "数字", "FUSE_FAIL_RATE": "0~1 之间的小数",
     "RETRY_BACKOFF": "数字数组，如 [5, 15, 45]", "KEEP_RAW_ZIP": "true/false",
+    "OOM_RETRY": "true/false", "OOM_ESCALATE_INSTANCE": "字符串（如 plus）",
+    "OOM_SHORTEN_SECONDS": "数字（秒）", "ACCOUNT": "字符串（账号标识）",
     "RUNNINGHUB_API_KEY": "字符串", "RH_BASE_URL": "字符串",
     "RH_CNY_PER_COIN": "数字（1 RH币 = ? 人民币，默认 0.0025）",
     "ACTIVE_IMAGE_PROVIDER": "字符串", "POLL_CHANNEL": "v2 | status | auto",

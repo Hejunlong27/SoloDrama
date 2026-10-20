@@ -8,7 +8,7 @@
     ② 爆款拆解        hit_breakdown.py  题材类型/剧情套路/爆点元素/内容偏好/差异化趋势
     ③ 选题定位        topic_analysis.py 候选 + 七维评分 + 三维交叉（A）
                       hit_selection.py  多样性排期 + 对标匹配 → 定位卡（B）
-    ④ 剧本改写        script_rewrite.py 源剧本 → N 集规划（默认 40）+ FFS 骨架 + 自检
+    ④ 剧本改写        script_rewrite.py 诊断(A/B/C) → N 集规划（默认 30 集 × 60 秒）→ 结构审查 → FFS 骨架/自检 → 观众审稿
     ── 交付 ──        tools/cli.py      init / import-bible / check / convert
     ── 执行 ──        stages/production/drama.py  模型门禁 → 资产 → 出片 → 字幕
 
@@ -27,7 +27,11 @@
     python creation.py breakdown analyze
     python creation.py topic scaffold | topic score
     python creation.py hit select --top 3
-    python creation.py script plan --episodes 40 | script build --ep 1 --emit | script lint --ep 1
+    python creation.py script diagnose [--check|--confirm]        # ④-A 诊断（写正文前门禁）
+    python creation.py script plan --episodes 40 [--from-outline 拆解.md]
+    python creation.py script review --write-fixes                # ④ 第二轮 结构审查
+    python creation.py script build --ep 1 --emit | script lint --ep 1
+    python creation.py script audience [--check]                  # ④ 第四轮 观众审稿
 """
 from __future__ import annotations
 
@@ -49,8 +53,8 @@ except Exception:                             # noqa: BLE001
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]   # .../SoloDrama
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 
-DEFAULT_EPISODES = 40      # ★ 2026-10-16 用户拍板：默认集数 40（由 30 上调）
-DEFAULT_EP_SECONDS = 70    # ★ 2026-10-16 用户拍板：默认单集 70 秒（由 90 下调）
+DEFAULT_EPISODES = 30      # ★ 2026-10-20（V0.5）用户拍板：默认集数 30（由 40 下调）
+DEFAULT_EP_SECONDS = 60    # ★ 2026-10-20（V0.5）用户拍板：默认单集 60 秒（由 70 下调）
 
 BRIEF_TEMPLATE = {
     "slug": "<英文短名>", "title": "<中文剧名>",
@@ -155,13 +159,18 @@ def cmd_scaffold(a) -> int:
 
     print("\n" + "-" * 74)
     print("四部分流程（顺序执行）：")
+    print("  -1) 环境自检（**开工前**）：python tools/env_check.py --fix")
+    print("       必需项 Python 3.10+ / Pillow / ffmpeg / ffprobe 缺一即停；")
+    print("       报「依赖装在另一个解释器」时优先用它的 A 方案（零安装）")
     print("  0) 确认通道（前置条件，**每次任务开始前必须先确认**）：")
     print("       本地/云端 ComfyUI 还是 RH AI 应用 → python stages/production/scripts/drama.py models --ask")
     print("  ① 榜单调研与对比：creation.py market queries → 检索 → 回填 → market check / market compare")
     print("  ② 爆款拆解      ：creation.py breakdown analyze")
     print("  ③ 选题定位      ：creation.py topic scaffold（填 brief 与候选）→ topic score → hit select --top 3")
     print("  ④ 剧本改写      ：把源剧本放到 %s" % _rel_disp(ws, C.SOURCE_SCRIPT))
-    print("                    → creation.py script plan --episodes %d → build --ep 1 --emit → lint --ep 1" % DEFAULT_EPISODES)
+    print("                    → creation.py script diagnose（填 A/B/C → --check → --confirm）")
+    print("                    → script plan --episodes %d [--from-outline 拆解.md] → script review --write-fixes" % DEFAULT_EPISODES)
+    print("                    → build --ep 1 --emit → lint --ep 1 → script audience --check")
     return 0
 
 
@@ -205,6 +214,15 @@ def cmd_status(a) -> int:
     if bp:
         print("  ④ 集数规划：%d 集（源剧本 %s）"
               % (bp.get("total_ep", 0), "已登记" if (bp.get("source_script") or {}).get("present") else "未提供"))
+    # ★ 四段法：诊断 → 结构审查 → 观众审稿（缺环一目了然）
+    dg = C.read_json(C.pdir(ws, C.DIAGNOSIS))
+    print("  ④ 诊断卡  ：%s  %s"
+          % ("已确认" if isinstance(dg, dict) and dg.get("structure_confirmed")
+             else ("待确认" if isinstance(dg, dict) else "未生成"), _rel_disp(ws, C.DIAGNOSIS)))
+    sr = C.pdir(ws, C.STRUCTURE_REVIEW)
+    print("  ④ 结构审查：%s  %s" % ("已出报告" if sr.is_file() else "未跑", _rel_disp(ws, C.STRUCTURE_REVIEW)))
+    ar = C.pdir(ws, C.AUDIENCE_REVIEW)
+    print("  ④ 观众审稿：%s  %s" % ("已填" if ar.is_file() else "未跑", _rel_disp(ws, C.AUDIENCE_REVIEW)))
     print("-" * 74)
     missing = [rel for _, rel in STEPS if not (ws / rel).is_file()]
     if not missing:

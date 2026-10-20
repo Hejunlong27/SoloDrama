@@ -23,6 +23,17 @@ GUI 导出时内部就是在调它。本脚本复刻 GUI 的命令行，因此**
       TVAI_MODEL_DATA_DIR -> 模型权重目录（*.tz3，本机在 D:\\ProgramData\\Topaz Labs LLC\\Topaz Video\\models）
   本脚本会自动探测这两个目录，也可在 config.upscale.json 里写死。
 
+★ 放大链路 checklist（2026-10-20 反馈 P1-14，三条坑合并；文档缺失曾导致三次返工）
+  ① **模型双目录**：`Model not found: prob-4`
+     → 必须同时设 `TVAI_MODEL_DIR`（定义 *.json）与 `TVAI_MODEL_DATA_DIR`（权重 *.tz3）。
+     本脚本已自动探测；手工调 ffmpeg 时也要设这两个环境变量。
+  ② **滤镜里的路径冒号**：`Unable to parse "original_size"`
+     → `subtitles=D:/xxx.ass` 中的冒号被当成参数分隔符。
+     解法：`cwd` 切到 .ass 所在目录，`subtitles=` 只传文件名。
+  ③ **Topaz 的 ffmpeg 不含 libass**：`subtitles=ep01.ass` 直接失败。
+     → 必须拆两遍：本脚本只放大（tvai_up），再用**系统 ffmpeg** 烧字幕。
+     本脚本启动时会探测 `-filters` 里的 subtitles 滤镜，缺失即打印两遍法提示。
+
 用法
 ----
     python scripts/upscale.py --ep ep03                 # 放大 ep03 母版到 2K
@@ -364,14 +375,43 @@ def model_weight_files(tools, model_name):
     return len(hits), sorted(hits)[:5]
 
 
-def probe_filter(tools):
-    """确认这个 ffmpeg 真的带 tvai_up 滤镜（否则一切白说）。"""
+def probe_filters(tools):
+    """一次性探测这个 ffmpeg 支持的滤镜（2026-10-20 反馈 P1-14）。
+
+    - `tvai_up`   ：放大必需（只有 Topaz 自带 ffmpeg 有）
+    - `subtitles`  ：烧字幕必需（依赖 libass）—— **Topaz 自带 ffmpeg 不含 libass**，
+                     所以「放大 + 烧字幕」必须拆成两遍：Topaz 只放大，系统 ffmpeg 烧字幕。
+                     这条以前只写在文档里，脚本启动时不提示，实测踩了三次才被发现。
+    """
+    out = {"tvai_up": False, "subtitles": False}
     try:
         p = subprocess.run([tools["ffmpeg"], "-hide_banner", "-filters"],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
-        return b"tvai_up" in p.stdout
-    except Exception:
-        return False
+        text = (p.stdout or b"").decode("utf-8", "replace")
+        out["tvai_up"] = "tvai_up" in text
+        out["subtitles"] = bool(re.search(r"^\s*\S+\s+subtitles\s", text, re.M)) or " ass " in text
+    except Exception:                                                 # noqa: BLE001
+        pass
+    return out
+
+
+def probe_filter(tools):
+    """兼容旧调用：只问「有没有 tvai_up」。"""
+    return bool(probe_filters(tools).get("tvai_up"))
+
+
+def burn_subtitle_note(tools):
+    """返回「烧字幕该怎么做」的一句提示（无 libass 时明确给出两遍法）。"""
+    f = probe_filters(tools)
+    if not tools.get("ffmpeg"):
+        return ""
+    if f.get("subtitles"):
+        return ""
+    return ("★ 本机 Topaz 的 ffmpeg **不含 libass**（无 subtitles 滤镜）——"
+            "不要在同一遍里放大+烧字幕。正确姿势是两遍法：\n"
+            "    ① 本脚本只放大（Topaz ffmpeg，tvai_up）；\n"
+            "    ② 另用系统 ffmpeg 的 subtitles= 烧字幕，且 cwd 切到 .ass 所在目录、只传文件名\n"
+            "       （绝对路径里的冒号会被当成参数分隔符，报 Unable to parse original_size）。")
 
 
 # ---------------------------------------------------------------- 尺寸与命令
@@ -763,6 +803,10 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
                                             tools.get("model_data_dir") or "?")]
     result["topaz_available"] = tvai_ok
     result["problems"] = problems
+    # ★ 反馈 P1-14：把「Topaz ffmpeg 无 libass」这条主动探出来，而不是等人踩坑。
+    _burn_note = burn_subtitle_note(tools)
+    if _burn_note:
+        result["subtitle_note"] = _burn_note
 
     if verify_only:
         if not os.path.exists(dst):
@@ -959,6 +1003,8 @@ def main():
 def _print_human(r):
     say("=" * 78)
     say("高清放大 · %s" % r["episode"])
+    if r.get("subtitle_note"):
+        say(r["subtitle_note"])          # 反馈 P1-14：无 libass 时的两遍法提示
     if r.get("error"):
         say("[FAIL] %s" % r["error"])
         if r.get("hint"):

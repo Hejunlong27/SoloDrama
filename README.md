@@ -8,6 +8,25 @@
 >
 > **一台家用笔记本就够**：本项目全程在一台 **RTX 4060（8G 显存）+ 16G 内存的笔记本**上开发并验证 —— 本地出图、拼接、2K 放大都在本机完成，不需要工作站、服务器或云主机。
 
+---
+
+> ## ⚙️ 开工第一件事：先自检环境
+>
+> ```bash
+> python tools/env_check.py          # 人读报告；加 --fix 打印逐条修复命令；加 --json 给 Agent 用
+> ```
+>
+> **必需项（Python 3.10+ / Pillow / ffmpeg / ffprobe）不全就不要往下走。**
+> 缺依赖的报错通常出现在中途（封面排版、字幕烧录、出片），而且错误信息往往指向错误的方向。
+>
+> 本项目实测最常见的坑是**依赖装给了另一个解释器**：`pip install` 装进了 A 环境，跑脚本用的是 B，
+> 于是 `ModuleNotFoundError` 看着像代码坏了，其实是环境错配。自检会直接指出「哪个解释器装了、当前用的是哪个」，
+> 并给出两条命令：**用已装好的解释器跑**（零安装），或**给当前解释器补装**。
+>
+> 详细口径见 [§零、环境自检](#零环境自检开工前第一件事)。
+
+---
+
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B%20(tested%203.13)-3776AB.svg)](requirements.txt)
 
@@ -19,6 +38,74 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
   **资产出图 → 逐段成片 → 整集母版 → 2K 高清 → 烧录字幕 → 像素验收 → 成本台账**，全本地 CLI，支持断点续跑、成本可控。
 
 两层之间只有一份**只读数据契约**（`data/` 四文件）：换模型、换通道、换创作方式，另一侧零感知。
+
+---
+
+## 零、环境自检（开工前第一件事）
+
+```bash
+python tools/env_check.py            # 人读报告
+python tools/env_check.py --fix      # 打印逐条修复命令（只打印，不执行任何安装）
+python tools/env_check.py --json     # 机器读（CI / Agent）
+python tools/env_check.py --quiet    # 只看未通过的项
+```
+
+退出码：`0` 必需项齐备｜`2` 有必需项缺失 —— **返回 2 的时候不要往下走**。
+
+### 检查项
+
+| 层 | 项 | 必需 | 缺失后果 |
+|---|---|---|---|
+| 运行时 | Python ≥3.10（实测 3.13） | ✅ | 语法/标准库不兼容 |
+| 运行时 | 独立 venv（建议） | ⭕ | 依赖互相污染 |
+| 依赖 | Pillow | ✅ | 封面排版/叠字兜底、图像体检全挂 |
+| 依赖 | httpx | ⭕ | 云端（RunningHub）通道不可用 |
+| 外部程序 | ffmpeg / ffprobe | ✅ | 拼接、2K、字幕烧录、像素验收全挂 |
+| 外部程序 | whisper-cli | ⭕ | 字幕识别（可用平台字幕替代） |
+| 配置 | `RUNNINGHUB_API_KEY` / `RUNNINGHUB_BASE_URL` | ⭕ | 只能走本地 ComfyUI |
+| 配置 | ComfyUI `127.0.0.1:8188` | ⭕ | 本地出图需先手动启动 ComfyUI |
+| 完整性 | `manifest.sha256` 自校验 | ⭕ | 仓库文件被改动过，或清单过期 |
+
+### 三种典型失败与处理
+
+**① 依赖装了，但装给了另一个解释器（最高频）**
+
+自检会直接打印类似：
+
+```
+★ 依赖装在别的解释器里（这是最常踩的坑）
+  C:\...\envs\default\Scripts\python.exe
+     已装：Pillow 12.2.0
+
+两种修法（推荐 A，不装任何东西）：
+  A) 用这个解释器跑本项目： "C:\...\default\Scripts\python.exe" tools/env_check.py
+  B) 给当前解释器补装：     "C:\...\versions\3.13.12\python.exe" -m pip install -r requirements.txt
+```
+
+选 A 零安装；选 B 之前先确认 `python -c "import sys; print(sys.executable)"` 打印的就是你要装的那个解释器。
+
+**② 确实没有 Pillow / httpx**
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+**③ 没有 ffmpeg / ffprobe**
+
+```bash
+winget install Gyan.FFmpeg      # Windows；装完重开终端让 PATH 生效
+brew install ffmpeg             # macOS
+```
+
+### 给 AI 助手的用法
+
+让 Agent 先跑 `python tools/env_check.py --json`，读 `ok` 字段：
+
+- `ok: false` → **不要开始干活**，把 `items` 里 `required && !ok` 的项连同 `alt_interpreters` 一起报给用户，让用户在 A/B 之间选；
+- `ok: true` → 正常进入下面的流程。
+
+> 这条前置检查是硬要求：缺依赖导致的报错通常出现在中途（封面、字幕、出片），而且信息往往指向错误方向，
+> 事后排查的成本远高于开工前 5 秒的自检。
 
 ---
 
@@ -35,6 +122,7 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 | **模型选择门禁** | `stages/production/scripts/model_gate.py`（19 例离线测试） | ✅ 已交付 |
 | **发行资料门禁** | `stages/production/scripts/release_check.py`（发布版命名 + 封面多尺寸 + 版权资料 4+4，15 例离线测试） | ✅ 已交付 |
 | **发布版导出** | `stages/production/scripts/release_export.py`（严格 `EpisodeNN.mp4` 命名，13 例离线测试） | ✅ 已交付 |
+| **封面（AI 直出带字）** | `stages/production/scripts/cover_prompt.py`：五段式提示词 + 标题断行（≤3 行 / 西语 ≤18 字符）+ 出图前体检，清单可直接喂**本地 ComfyUI** 或 **RunningHub 工作流**；规范 `references/cover/prompt-guide.md`；PIL 排版引擎 `cover_forge.py` 降级为兜底（38 例离线测试） | ✅ 主路径已切换（2026-10-20） |
 | **资产落点迁移** | `stages/production/scripts/migrate_assets.py`（旧 `07-成片/assets` → `04-资产`，默认干跑+备份，16 例离线测试） | ✅ 已交付 |
 | **离线测试集合** | 各套离线用例（零网络零计费）+ 字幕安全区断言集，全部通过 | ✅ 全绿 |
 | **完整性指纹** | `manifest.sha256`（**172 条**，显式排除自身） | ✅ 逐文件 0 不符 |
@@ -46,7 +134,7 @@ AI 短剧批量生产的**本地全链路工具集**：**创作**与**成片**�
 
 | 阶段 | 模块 | 功能 |
 |---|---|---|
-| **创作** | `stages/creation/` | ① 榜单调研与对比（多市场横向比较 + 西语重点）→ ② 爆款拆解（题材分布 / 套路库 / 爆点 / 内容偏好 / 差异化趋势）→ ③ 选题定位（七维加权评分 + 定位卡）→ ④ 剧本改写（源剧本 → N 集规划，默认 **40 集 × 70 秒**，每集含开场钩子 / 核心冲突 / 反转 / 集尾钩子） |
+| **创作** | `stages/creation/` | ① 榜单调研与对比（多市场横向比较 + 西语重点）→ ② 爆款拆解（题材分布 / 套路库 / 爆点 / 内容偏好 / 差异化趋势）→ ③ 选题定位（七维加权评分 + 定位卡）→ ④ 剧本改写（源剧本 → N 集规划，默认 **30 集 × 60 秒**，每集含开场钩子 / 核心冲突 / 反转 / 集尾钩子） |
 | **资产** | `stages/assets/` | 资产卡提示词净化（14 条纪律）+ 三类模板 + `md → 清单` 转换；出图双通路：**本地 ComfyUI（默认，￥0）** 与 RunningHub 云端（★计费）；**产物统一落 `04-资产/{characters,scenes,props}`**（老项目用 `migrate_assets.py` 迁入） |
 | **接线** | `stages/production/` | 参考图落位接线（`<Picture N>` ↔ refs 顺序一致）、悬空图槽 / 超 6 槽体检、参考图瘦身 |
 | **出片** | `stages/video/workflow/` | RunningHub「工作流 + AI 应用」标准通道批量出片：`doctor` 体检 → 干跑计划 → 小样 → 全量；taskId 级断点续跑、并发上限 5（单账号，见下方说明）、计费预估与用量核对 |
@@ -271,7 +359,7 @@ https://github.com/Hejunlong27/SoloDrama
 
 【故事】<把你的故事或小说粘在这里>
 【平台】竖屏（TikTok / 红果风格）
-【规格】40 集，每集约 70 秒（默认口径）
+【规格】30 集，每集约 60 秒（默认口径）
 
 请走完整流程：选题 → 世界观与人物 → 剧本 → 分镜与视频提示词 →
 资产出图 → 渲染出片 → 拼接 2K → 字幕 → 成本台账。
@@ -407,8 +495,10 @@ python stages/production/scripts/migrate_assets.py --workspace <工作区> --app
 #### ① 环境与离线自检（零网络、零计费）
 
 ```powershell
+python tools/env_check.py              # ★ 先确认解释器与依赖（见 §零）
 pip install -r requirements.txt        # 只装 httpx + Pillow，无其他第三方依赖
 
+python tools/tests/test_env_check.py
 python stages/video/workflow/scripts/run.py doctor --json
 python stages/assets/scripts/sanitize.py --selftest
 python stages/assets/scripts/tests/test_prompter.py
@@ -542,9 +632,64 @@ SoloDrama/
 
 | 版本 | 日期 | 内容 | 基线提交 | 验证结论 |
 |---|---|---|---|---|
+| **V0.5** | 2026-10-20 | **本次发布合集（6 部分）**：① 实跑反馈单 26 项修复 ② 封面引擎收编进仓库 ③ 封面改为 AI 直出带字 ④ 剧本改写「四段法」（诊断 → 骨架 → 正文 → 观众验收）⑤ 默认口径下调 **30 集 × 60 秒** ⑥ 开工前环境自检（`tools/env_check.py`）。逐项明细见本表下方的「V0.5 明细」。 | （待回填） | 17 个离线测试文件 0 失败（creation 层 215 例）；`manifest.sha256` 198 条 0 不符；远端由 V0.4 快进至 V0.5 |
 | **V0.4** | 2026-10-20 | **新增「角色差异化」能力（解决同剧组人物撞脸）**：① 新规范 `docs/assets/角色差异化设计规范.md` —— 五根因（含两部在跑项目的实测证据：10 人剧仅 2 人写脸型、7 人「浓眉」、3 人无识别锚；5 人剧 0 人写脸型）+ 六维签名（骨相/发型/眉眼/色签名/材质/识别锚）+ 六条硬规则 R1–R6 + 提示词三件套（识别锚前置 / 反默认 / 差异对照）；② 新增 `stages/assets/scripts/character_design.py`（纯标准库、确定性、零计费）：`plan` 按人群桶 + 最大最小距离贪心分配六维签名，产出 `character-bible.json` / `角色差异化矩阵.md` / `资产提示词_角色段.md`（可直接喂 `gen_char_assets.py`、`asset_md.py`）/ 三件套逐角色提示词（设定板 · 主卡 · 定妆照）；`check` 六条硬规则门禁（退出码 2）；`audit` 体检老项目同质化（含维度覆盖率）；③ `prompt_templates.build_char(it, design=None)` 支持差异化注入（识别锚/差异对照/色签名/反默认/可配置 `world`），**design=None 时行为与旧版逐字一致**；④ 词库按人群桶收敛体态与面料、按性别收敛下装鞋履、按族裔改口骨相措辞，避免「野性转校生穿真丝缎」「男角色穿高跟鞋」这类身份与材质打架；⑤ 总纲新增 §3.8 与环节 6／文档索引更新；⑥ 新增 28 例离线测试 | `55381a4` | `test_character_design.py` 28/28、`test_prompter.py` 28/28、`test_asset_md.py` 19/19；生成提示词过净化器三项自检 0/0/0；产物全 LF |
 | **V0.3.2** | 2026-10-19 | **新增「怎么跟 AI 助手说」的交付物**：① `docs/新项目启动提示词.md` —— 最短版一句话 / 完整版开工提示词 / **让助手用上新版本的三条机制** / 老项目「资产归位 + 发布版改名」两条命令 / 「想确认本地是否最新」的判据 / 常见追问模板；② README §4.1 置顶指向该文件，文档索引同步（README + 总纲）；③ 两个不引用仓库的驱动型技能正文补「规则真源在 SoloDrama 仓库，冲突以仓库为准」指针：`short-drama-production`（生产执行端）、`drama-cover-forge`（封面/发行端）——**技能 description 未改动**（不影响路由） | `aac8e98` | 纯文档改动；`manifest.sha256` 重建后自校验 0 不符 |
 | **V0.3.1** | 2026-10-19 | **把「落点与命名」两次事故写进项目（文档修正，无代码变更）**：① 新增 `docs/patches/2026-10-19_落点与命名事故复盘.md`（保留用户原话 + 现象/根因/修法/三层防复发/交付前自检 5 问）；② `stages/production/references/pitfalls.md` 追加 **§F 落点与命名**（6 行现象-根因-修法，含「注释把 bug 固化成事实」「JSON 双反斜杠致改写恒为 0」「零迁移兼容」三条陷阱）；③ README §4.1 增「**给 AI 助手的三条红线**」提示块（资产落 04-资产 / 发布版 EpisodeNN / 不许临时起名挑目录），文档索引与契约表同步；④ 总纲、发行资料清单互链 | `f6eca47` | 纯文档改动；`manifest.sha256` 重建后自校验 0 不符 |
 | **V0.3** | 2026-10-19 | **① 发布版剧集命名硬规则**：严格 `EpisodeNN.mp4`（`Episode01` … `Episode40`，≥100 集自动加位），落 `09-发行/剧集/`；新增 `stages/production/scripts/release_export.py`（默认干跑，自动探测来源，同集取「最接近可发布」的那份）+ 13 例离线测试；`release_check.py` 增「发布版命名与集号连续性」检查。**② 资产落点硬规则**：人物/场景/道具出图产物一律落 `04-资产/{characters,scenes,props}`，**不再进 `07-成片/assets`**；`_layout.py` 新增 `assets_dir()` / `assets_rel` / `release_episode_name()`，`scaffold` 自动建资产子目录并回填 `config.local.json` 的 `assets_dir`；4 个资产生成器 + 2 个消费侧改口（零迁移兼容：老项目未迁移前自动沿用旧位置并给出迁移提示）；新增 `stages/production/scripts/migrate_assets.py`（默认干跑、先备份、改写清单绝对路径）+ 16 例离线测试；控制台 `inventory.py` 同步。**③ 文档**：总纲新增 §3.7 落点与命名硬规则、环节链 6/7/14 更新；发行资料清单改为五类（剧集 + 封面 + 文案 + 发布清单 + 版权资料）并新增 §二 发布版命名 | `27ab7e3` | `test_release_export.py` 13/13、`test_migrate_assets.py` 16/16、`test_release_check.py` 15/15；既有 **53 + 41 + 29 + 23** 例全绿；`manifest.sha256` 重建后自校验 0 不符 |
 | V0.2 | 2026-10-18 | **新增「发行资料」全链路**：① 单一真源 `docs/distribution/发行资料清单.md`（封面「抓马度」六抓手 + 版权资料 **4 张 AI 生成过程截图 + 4 张原始文件/素材文件信息** + 文案六槽位 + 发布清单）；② 确定性门禁 `stages/production/scripts/release_check.py`（离线、零第三方依赖，退出码 2）+ 11 例离线测试；③ 总纲补环节 14 与 **G9 发行资料门禁**；④ 新增 `docs/patches/产线对账关卡_2026-10-18.md`（40 集实跑的 26 个坑 → 自动/人工对账项）；⑤ 回填产线补丁 P1–P6（`ingest_check.py` 两处逻辑修正、`pipeline.py` 画幅 `value_map`、`runninghub_client.py` v2 提交通道与直链下载鉴权、`model_gate.py` 新增「RH 工作流出图」通道、`.gitignore` 排除 `web/var/`）；⑥ Web 控制台 `web/` 首次入库 | `180cf7c` | `test_release_check.py` 11/11 通过；`manifest.sha256` 重建后自校验 0 不符；线上 tree 与本机逐 blob 一致 |
 | V0.1 | 2026-10-16 | 统一编排层基线：端到端链路（15 环节）、门禁 G-1–G8、画风三轨规范、分阶段目录规范 `layout.json`、留存率导向剧本结构、`09-发行/` 目录占位 | — | `manifest.sha256` 114 条 0 不符 |
+
+<details>
+<summary><b>V0.5 明细（V0.5-1 → V0.5-6，按时间顺序）</b>　　原 V0.5 / V0.5.1 / V0.6 / V0.7 / V0.8 / V0.8.1 均已合并为本版组成部分，不再单独占版本号。</summary>
+
+<br>
+
+**V0.5-1 · 实跑反馈单修复（26 项）**（原 `V0.5`，2026-10-20）
+
+**按实跑反馈单逐条处理（10-19/10-20；24 修 / 3 部分 / 2 未修 / 5 属技能侧）**：P0 —— 只读探针（禁 `/run` 探测）、剧名去硬编码、`inflight.json` + 收尾缺口校验（退出码 3）、阶段 README 写绝对路径；P1 —— 全局 `--workspace`、依赖自检、`status` 场景计数、无执行器通道禁止确认、`instanceType` 接线 + OOM 三级降级、下载重试 + `resume-download`、`421` 退避重试、放大链路 libass 探测；P2 —— `cost_model.py`（固定+变动/分 tier/GPU 秒/自校准）、workflowId 反查、`plan --from-outline`、`TIME`→光位、E012 非法字段行、字幕单一模板硬校验、切点音频淡入淡出、单例锁、工作流静态自检。未修 3 项（尾帧接力 / 多角度参考 / 水印自动识别）已在记录里写明设计与所需信息
+
+> 验证：离线 311 例全绿（含新增 50 例；`test_migrate_assets` 3/16 → 16/16）
+
+<br>
+
+**V0.5-2 · 封面引擎收编进仓库**（原 `V0.5.1`，2026-10-20）
+
+**封面引擎收编 + 修 P1-9/10/11**：`cover_forge.py` 与三份封面规范从 WorkBuddy 技能 `drama-cover-forge` 收编进仓库（`stages/production/scripts/` + `references/cover/`），技能侧改为转发壳；① 色条改用 `textbbox` 真实字形底边（旧 `1.12em` 经验值比逗号底边还高 1px，实测压字）；② 副标走 `fit_font` 自动收缩（9:16 长副标曾右侧裁字），`--check` 报出需缩到多少 px；③ `--check` 对「窄源图→宽幅」主动告警，`size-specs.md` 新增 §3.3 竖/横底图分开生成；④ 新增 `--workspace`（spec 未写 out_dir 时落 `<发行目录>/封面/`）与 `--out-dir`；⑤ 新增 16 例离线测试
+
+> 验证：`test_cover_forge.py` 16/16；9:16 / 3:4 / 16:9 三档真图复出，逗号完整
+
+<br>
+
+**V0.5-3 · 封面改为 AI 直出带字**（原 `V0.6`，2026-10-20）
+
+**封面改为 AI 直出带字（否决程序叠字）**：新增 `stages/production/scripts/cover_prompt.py`（五段式提示词编译 + 标题自动断行 + 出图前体检；`--emit comfy` 出本地 ComfyUI 清单、`--emit rh` 出 RunningHub 计划）；新增规范 `references/cover/prompt-guide.md`（五段式结构、排版指令词典、抓马六抓手→提示词映射、文字拼错五级处置、12 条验收）；`style-presets.md` 从「暗罩参数」改写为「风格锚 + 光位 + 文字处理」，六套预设映射到 `--style`；`cover_forge.py`（PIL 叠字）**降级为兜底**；`release_check` 放宽封面多候选命名（`cover_9x16_00.png`）；技能 `drama-cover-forge` 的工作目标/流程/交付标准整体重写
+
+> 验证：`test_cover_prompt.py` 38/38；全量离线回归全绿
+
+<br>
+
+**V0.5-4 · 剧本改写「四段法」**（原 `V0.7`，2026-10-20）
+
+**剧本改写改为「四段法」（诊断 → 骨架 → 正文 → 观众验收）**。起因：`plan` 产出的 40 集四件套格式齐全但内容同质（句库拼装），且写完只验格式不验观看体验。① 新流程真源 `docs/creation/剧本改编四段法.md`（四段产物 / 门禁 / 情绪承诺表 / 题材分轨 / 四条最易犯的错）；② `script_rewrite.py` 新增三子命令：`diagnose`（A 选题诊断七问 + B 改编策略四类改动 + C 故事主线，`--check` 校验必填、`--confirm` 落确认位，**未确认禁止 `build --emit`，退出码 4**；预填只带事实型上下文，判断型字段留空）、`review`（第二轮结构审查 10 项确定性体检：主角主动率 / 反转是否改格局 / 冲突推进与重复 / 钩子因果 / 情绪是否设计过 / 爆点间隔 / 句库残留 / 前三集 + `--write-fixes` 出待改清单；**句库残留会把表面 OK 降级为待人工复核**，避免「40 集套话 + 报告全绿」）、`audience`（第四轮观众七问，校验答满 / 引用具体集号 / Q7 恰好 3 条带改法）；③ 新增 `stages/creation/references/genre-profiles.json` —— 复仇逆袭 / 甜宠 / 悬疑 / 家庭伦理四类**结构侧重表**（受众承诺 / 情绪序列 / 主动与格局信号词 / 必检项 / 题材红线 / 改法提示），`review` 按 `must_check` 把 WARN 升级为 FAIL；④ 新增提示词 `prompts/s3a-diagnosis.md`、`prompts/s3c-audience-review.md`，`s3-script-rewrite.md` 改为只负责第 ③ 段并加四段路由表；⑤ `plan --from-outline` 支持第 5 列情绪，`plan` 落 `structure_profile`；⑥ `status` 增加诊断卡 / 结构审查 / 观众审稿三行状态；⑦ 新增 47 例离线测试；⑧ **下游联动（防「剧本一个内容、提示词另一个内容」）**：`plan` 每集输出 `plot_points`（`EPnn-P1..P4`，供分镜声明服务哪个节点）；新增 `stages/production/scripts/script_continuity.py` —— 剧本 ↔ 分镜 ↔ H3 提示词连续性门禁（镜数丢镜/拆镜、台词逐字指纹、人物代号映射〔重音归一〕、时长合计 ±10%、首镜落 `cold_open` 与末镜落 `hook`；退出码 2，缺产物不空转通过；跨语种与句库元指令降级为告警而非假装通过），实测在 40 集在跑项目上 40/40 通过；总纲新增环节 **5.5** 与「往下游交什么」锚点表；`lint` 新增「CHAR 代号未在 HEADER 登记」告警；`script_continuity` 新增 24 例离线测试
+
+> 验证：`test_script_design.py` 47/47、`test_script_continuity.py` 24/24；creation 层回归 187 例全绿（53+41+46+47）
+
+<br>
+
+**V0.5-5 · 默认口径 30 集 × 60 秒**（原 `V0.8`，2026-10-20）
+
+**默认口径下调为 30 集 × 60 秒**（原 40 集 × 70 秒）。① 全局默认值：`script_rewrite.py` / `creation.py` 的 `DEFAULT_EPISODES=30`、`DEFAULT_EP_SECONDS=60`，`creation-brief.template.json`、`tools/cli.py init`（`--ep 30 --sec 60`）、`tools/core/storage.py` 建表默认、Web 控制台 `script.plan` 参数同步；② **时长改成分档校验**：`tools/core/schema.py::SECONDS_PROFILES` 与 `script_rewrite.py` 各一份同口径表（60 秒 → 5–10 镜 / 60–80 秒；70 秒 → 5–12 镜 / 70–95 秒；90 秒 → 6–15 镜 / 90–120 秒），`lint` 与 `cli.py check`（E006）**按项目自身 `ep_seconds` 选档** —— 已建成的 40 集 × 70 秒项目不被判死；③ 节拍随集数下调：中型爆点每 **3** 集（30 集 = 9 次）、大型每 **7** 集（4 次），留存三段改为 **EP1-3 / EP4-8 / EP9+**（与原 17% 留存活口占比一致）；④ 修 `build` 骨架的 DUR 按目标秒数均分（60 秒 8 镜由 58 秒 → 62 秒，不再一出骨架就判越界），骨架占位符不再被当成「未登记 CHAR 代号」；⑤ 文档口径统一：总纲 §3.2、`ffs-spec.md`、`剧本强度工程.md`、`qa-gates.md`、`s3-script-rewrite.md`、`剧本改编四段法.md`、`新项目启动提示词.md`、`Agent项目技术文档.md`、README
+
+> 验证：`test_creation_pipeline.py` 57/57（新增 4 例：默认 30 集、60/70 秒分档）；`test_script_design` 47/47、`test_script_continuity` 24/24、`test_genre_formula` 41/41 全绿；30 集实测 plan 输出幕结构 EP1-4/5-13/14-22/23-30、爆点 9+4
+
+<br>
+
+**V0.5-6 · 开工前环境自检**（原 `V0.8.1`，2026-10-20）
+
+**新增开工前环境自检入口**。起因：用户已装 Pillow 12.2.0，但装在 WorkBuddy 托管 venv `~/.workbuddy/binaries/python/envs/default/`，而 `python` 命令指向 `~/.workbuddy/binaries/python/versions/3.13.12/`（base）—— 于是 `test_cover_forge` 6/6 全红、`test_feedback_20261020` 的 `t_oom_plan` 报 `ModuleNotFoundError: PIL`，**代码没坏、环境错配**，但报错信息完全指向错误方向。① 新增 `tools/env_check.py`（纯标准库、零网络）：必需项 Python ≥3.10 / Pillow / ffmpeg / ffprobe，可选项 httpx、whisper-cli、RUNNINGHUB Key、ComfyUI 8188，另加 `manifest.sha256` 自校验；**核心能力是解释器错配检测** —— 扫描同机 `envs/*`、`versions/*`、`C:/Python3*`、conda，逐个探测依赖，命中就打印「哪个解释器装了哪个版本」并给出两条修法（A 用已装好的解释器 / B 给当前解释器补装），`envs/default` 优先推荐；支持 `--json`（给 Agent）、`--quiet`、`--fix`（只打印命令不执行），退出码 0/2；② README 顶部加「开工第一件事」醒目块 + 新增 §零 环境自检（检查项表 / 三种典型失败 / 给 AI 助手的用法）；③ `docs/新项目启动提示词.md` 增「第 -1 步 · 环境自检（不做完不许开工）」，要求 Agent 报 `ok` 并让用户在 A/B 之间选；④ 总纲链路表增环节 **-2**；⑤ `creation.py scaffold` 结尾提示加 -1 步；⑥ 新增 21 例离线测试
+
+> 验证：`test_env_check.py` 21/21；实测在本机正确报出「当前解释器无 Pillow、`envs/default` 有 12.2.0」；用该 venv 解释器跑 `test_cover_forge` 16/16、`test_feedback_20261020` 50/50 —— 两个"既有失败"确认是环境问题而非代码回归
+
+</details>
+

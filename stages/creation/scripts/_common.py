@@ -14,7 +14,7 @@ script_rewrite / creation）都从这里取公共件，避免各写一份。
                         hit_selection.py   S2b 挑选 + 定位卡（受众画像/题材方向/差异化卖点）
     〇 剧本转译         script_translate.py S0b 小说/剧本 → 目标语种（多语种）+ 语言质检
     二·五 题材公式       genre_formula.py    S2.5 关键词→固定题材框架（可跳过选题）
-    四 剧本改写         script_rewrite.py  S3  源剧本 → N 集规划（默认 40）+ FFS 骨架 + 自检
+    四 剧本改写         script_rewrite.py  S3  源剧本 → N 集规划（默认 30 集 × 60 秒）+ FFS 骨架 + 自检
 """
 from __future__ import annotations
 
@@ -54,6 +54,12 @@ REFERENCE_STRUCTURE = SCRIPT_DIR + "/reference-structure.json"
 SOURCE_SCRIPT = SCRIPT_DIR + "/source-script.md"
 BLUEPRINT = SCRIPT_DIR + "/blueprint.json"
 SCRIPT_BRIEF = SCRIPT_DIR + "/script-brief.json"
+# ★ 2026-10-20（S3 四段法）：诊断卡（A/B/C）、结构审查（第二轮）、观众审稿（第四轮）
+DIAGNOSIS = SCRIPT_DIR + "/diagnosis.json"
+DIAGNOSIS_MD = SCRIPT_DIR + "/diagnosis.md"
+STRUCTURE_REVIEW = SCRIPT_DIR + "/structure-review.md"
+BLUEPRINT_FIXES = SCRIPT_DIR + "/blueprint-fixes.md"
+AUDIENCE_REVIEW = SCRIPT_DIR + "/audience-review.md"
 # ★ 2026-10-16 新增：转译（S0b）与题材公式（S2.5）的产物
 SOURCE_SCRIPT_TRANSLATED = SCRIPT_DIR + "/source-script.%s.md"   # % 目标语短码（es/en/ja/…）
 TRANSLATE_PLAN = SCRIPT_DIR + "/translate-plan.json"
