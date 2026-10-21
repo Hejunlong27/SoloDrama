@@ -169,17 +169,20 @@ STAGES: list = [
         "note": "源比例 ≠ 目标比例时先按高度放大再上下对称裁，别直接拉伸（会横向变形）。",
     },
     {
-        "id": "S10", "name": "字幕烧录", "dir": "film", "kind": "auto",
-        "what": "字幕时间必须走 ASR 校时（H3 语音位置由模型自决，剧本时间窗没有约束力）",
+        "id": "S10", "name": "音频与字幕", "dir": "film", "kind": "auto",
+        "what": "BGM 混音（有铺排计划时）→ 字幕烧录；字幕时间必须走 ASR 校时",
         "probes": [
             {"label": "字幕成片", "glob": "**/*_subbed.mp4", "min": "episodes",
              "alt": ["**/*_sub.mp4", "**/*softsub*.mp4"]},
         ],
         "commands": [
+            "drama.py bgm plan --ep epNN --apply（情绪→增益/淡入淡出→ducking）",
+            "drama.py bgm check --ep epNN（版权/覆盖/增益门禁）",
             "subtitle.py --workspace <ws> --ep epNN --stage ass --sync-from asr（若可用）",
-            "subtitle.py --workspace <ws> --ep epNN --stage render",
+            "subtitle.py --workspace <ws> --ep epNN --stage render（会自动混 BGM）",
         ],
-        "note": "烧录必须显式 -map 0:v -map 0:a?；输出体积 < 源 10% 视为失败。",
+        "note": "分工写死：画面与同期声归 H3（提示词里显式禁配乐），BGM 归后期。"
+                "烧录必须显式 -map 0:v -map 0:a?；输出体积 < 源 10% 视为失败。",
     },
     {
         "id": "S11", "name": "定稿输出", "dir": "release", "kind": "auto",

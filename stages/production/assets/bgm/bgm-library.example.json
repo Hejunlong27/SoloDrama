@@ -1,0 +1,42 @@
+{
+  "_note": "BGM 清单模板。复制为 bgm-library.json 后改成你自己的曲目；file 只写文件名（音频放同目录）。字段说明见 README.md。",
+  "version": 1,
+  "tracks": [
+    {
+      "id": "tension_low_01",
+      "file": "tension_low_01.mp3",
+      "moods": ["tension", "suspense"],
+      "bpm": 88,
+      "duration": null,
+      "loop": true,
+      "license": "licensed",
+      "source": "示例：Artlist 订阅（凭证 orders/2026-03-11.pdf）",
+      "license_note": "可商用，禁止转售原曲或再分发分轨",
+      "gain_db": -22
+    },
+    {
+      "id": "revenge_build_01",
+      "file": "revenge_build_01.mp3",
+      "moods": ["revenge", "epic"],
+      "bpm": 104,
+      "duration": null,
+      "loop": true,
+      "license": "generated",
+      "source": "示例：Suno v5，账号 <你的账号>，2026-09 生成",
+      "license_note": "示例：付费档允许商用；需在平台保留生成记录以应对 Content ID 申诉",
+      "gain_db": -20
+    },
+    {
+      "id": "warm_family_01",
+      "file": "warm_family_01.mp3",
+      "moods": ["warm", "sad"],
+      "bpm": 72,
+      "duration": null,
+      "loop": true,
+      "license": "cc0",
+      "source": "示例：Free Music Archive，CC0 1.0",
+      "license_note": "公有领域，可商用无需署名",
+      "gain_db": -21
+    }
+  ]
+}

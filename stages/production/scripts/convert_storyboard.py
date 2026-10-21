@@ -178,6 +178,27 @@ def _split_refs(refs: list, char_keys: set, scene_keys: set, sid: str, stats: di
     return refs, []
 
 
+# ★ 2026-10-21（BGM 分工）：H3 是 video+audio 双模态，**必须显式禁止它自造配乐**。
+#   否则会出现「模型自己垫了一层含糊的音乐」+「后期又铺一层 BGM」= 双重铺底、
+#   相位抵消、音量台阶，而且模型那层没法调音量、没法换曲、没法证明版权。
+#   分工写死：**画面 + 同期声归模型，BGM 归后期**（bgm.py）。
+AUDIO_DIRECTION = (
+    "[AUDIO] Diegetic sound only: room tone, footsteps, fabric rustle, doors, "
+    "object handling, muffled street noise through glass. "
+    "NO background music, NO score, NO melody, NO drum loop, NO stingers, "
+    "NO musical bed of any kind — all music is added in post-production."
+)
+_AUDIO_MARKERS = ("[AUDIO]", "no background music", "no musical bed")
+
+
+def audio_block(prompt: str) -> str:
+    """返回要追加的音频约束段；提示词里已有则返回空串（不重复追加）。"""
+    low = (prompt or "").lower()
+    if any(m in low for m in _AUDIO_MARKERS):
+        return ""
+    return AUDIO_DIRECTION
+
+
 def _default_voice(ws: pathlib.Path) -> str:
     """声音归属：读开工确认单（`project-setup.json` 的 `video_options.voice`），缺省 h3。
 
@@ -194,7 +215,8 @@ def _default_voice(ws: pathlib.Path) -> str:
         return "h3"
 
 
-def build(shots: list, ws: pathlib.Path, inject_light: bool = True) -> tuple:
+def build(shots: list, ws: pathlib.Path, inject_light: bool = True,
+          inject_audio: bool = True) -> tuple:
     """→ (data 四文件 dict, 问题列表, 统计)"""
     problems, out_shots, out_h3 = [], [], {}
     seen = set()
@@ -246,7 +268,8 @@ def build(shots: list, ws: pathlib.Path, inject_light: bool = True) -> tuple:
                 stats["light_injected"] += 1
         elif t_raw:
             stats["time_unmapped"].append("%s(%s)" % (sid, t_raw))
-        out_h3[sid] = {"prompt": prompt,
+        ab = audio_block(prompt) if inject_audio else ""
+        out_h3[sid] = {"prompt": (prompt + "\n\n" + ab) if ab else prompt,
                        **({"duration": float(re.sub(r"[^\d.]", "", dur))} if dur else {}),
                        "ratio": f.get("ratio") or "9:16",
                        # 声音归属（反馈 10.1）：h3 自带音轨 / external 另配 TTS / mute 全后配
@@ -263,6 +286,8 @@ def main() -> int:
     ap.add_argument("--ep", required=True, help="集号，如 ep01")
     ap.add_argument("--src", default=None, help="md 路径；默认自动在 05-分镜 / 06-提示词 里找")
     ap.add_argument("--apply", action="store_true", help="真写 data/（先备份原文件）")
+    ap.add_argument("--no-audio-direction", dest="inject_audio", action="store_false",
+                    help="不追加 [AUDIO] 段（默认追加：禁止模型自造配乐，BGM 归后期）")
     ap.add_argument("--no-inject-light", dest="inject_light", action="store_false",
                     help="不按 TIME 字段注入光位短语（默认会注入；反馈 P2-9）")
     a = ap.parse_args()
@@ -287,7 +312,8 @@ def main() -> int:
     if not shots:
         print("[FAIL] %s 里没有解析到任何 `## <shot_id>` 段落" % src)
         return 2
-    files, problems, stats = build(shots, ws, inject_light=bool(a.inject_light))
+    files, problems, stats = build(shots, ws, inject_light=bool(a.inject_light),
+                                   inject_audio=bool(a.inject_audio))
 
     print("=" * 74)
     print("分镜/提示词 md → data/ 四文件")

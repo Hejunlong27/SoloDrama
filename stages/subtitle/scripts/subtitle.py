@@ -1305,6 +1305,55 @@ def stage_master(ws, ep, cfg, segs, subs_dir):
     return out
 
 
+def _try_bgm(ws, ep, base_video, disabled=False):
+    """BGM 混音（★ 2026-10-21）：有铺排计划就混一条 `<ep>_mix.mp4`，并用它当烧字幕的底片。
+
+    为什么放在这里：母版/放大之后、烧字幕之前 —— 只重编码音频（视频 `-c:v copy`），
+    与烧字幕合并成一次交付，用户不需要多跑一条命令。
+
+    依赖方向是**单向可选**的：本脚本可能被拷进 Skill 包单独运行，那时仓库的
+    `stages/production/scripts/bgm.py` 不在 sys.path 上。所以：
+      ① 已有 `<ep>_mix.mp4` 且不比底片旧 → 直接复用（零依赖）；
+      ② 否则尝试 import bgm，有计划就现混；
+      ③ import 不到 → 打印手动命令，**不阻塞出片**（没有 BGM 也要能交片）。
+    """
+    if disabled:
+        return base_video, ""
+    subs = os.path.join(out_dir_of(ws), "subs", ep)
+    mix = os.path.join(subs, "%s_mix.mp4" % ep)
+    plan = os.path.join(subs, "%s_bgm-plan.json" % ep)
+    if os.path.isfile(mix):
+        try:
+            if not base_video or os.path.getmtime(mix) >= os.path.getmtime(base_video):
+                return mix, "⑤.6 BGM：复用已有混音版 %s" % os.path.basename(mix)
+        except OSError:
+            pass
+    if not os.path.isfile(plan):
+        return base_video, ""
+    if not base_video:
+        return base_video, ""
+    repo_scripts = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), "production", "scripts")
+    if repo_scripts not in sys.path:
+        sys.path.insert(0, repo_scripts)
+    try:
+        import bgm as _bgm                                                  # noqa: WPS433
+    except Exception:                                                       # noqa: BLE001
+        return base_video, ("⑤.6 BGM：检测到 %s，但当前环境没有 bgm.py，已跳过混音\n"
+                            "     手动：python stages/production/scripts/bgm.py "
+                            "--workspace \"%s\" --ep %s mix --apply"
+                            % (os.path.basename(plan), ws, ep))
+    try:
+        _plan = json.load(open(plan, encoding="utf-8-sig"))
+        res = _bgm.mix_episode(ws, _plan, base=base_video, apply=True)
+    except Exception as e:                                                  # noqa: BLE001
+        return base_video, "⑤.6 BGM：混音异常，按无 BGM 继续 —— %s: %s" % (type(e).__name__, e)
+    if not res.get("ok"):
+        return base_video, "⑤.6 BGM：混音失败，按无 BGM 继续 —— %s" % res.get("error")
+    return res["out"], "⑤.6 BGM：已混音 %s（%ss，视频直通只重编码音频）" % (
+        os.path.basename(res["out"]), res.get("duration"))
+
+
 def stage_render(cfg, master, ass, out, soft=False):
     r = cfg["render"]
     if soft:
@@ -1397,6 +1446,9 @@ def main():
     ap.add_argument("--no-upscale", action="store_true",
                     help="关掉高清放大：仍是旧行为（1440p 母版直接烧字幕）")
     ap.add_argument("--lang", default=None)
+    ap.add_argument("--no-bgm", dest="no_bgm", action="store_true",
+                    help="不混 BGM（默认检测到 <ep>_bgm-plan.json 就自动混音；2026-10-21）")
+
     args = ap.parse_args()
 
     if not args.workspace:
@@ -1568,6 +1620,15 @@ def main():
     base_video = master
     if up_on and os.path.exists(two_k) and args.stage in ("upscale", "all", "render"):
         base_video = two_k
+
+    # ---- ⑤.6 BGM 混音（★ 2026-10-21；有 bgm-plan.json 时自动做）------------
+    if args.stage in ("all", "render"):
+        base_video, _bgm_msg = _try_bgm(ws, args.ep, base_video,
+                                        disabled=bool(getattr(args, "no_bgm", False)))
+        if _bgm_msg:
+            print(_bgm_msg)
+            report["bgm"] = {"base_after": os.path.basename(base_video or ""),
+                             "note": _bgm_msg}
 
     # --stage all 的收尾语义：
     #   * 开了放大 → 跑到 2K 母版就【停】，等用户回答要不要字幕（这是用户明确要求的停点）
