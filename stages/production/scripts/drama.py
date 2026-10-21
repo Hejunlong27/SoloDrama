@@ -11,9 +11,9 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
 
 命令一览（`python scripts/drama.py guide` 也会打印同样内容）
 -----------------------------------------------------------
-    setup      show|ask|set|require       ★开工前置 7 项：画风 / 集数 / 每集时长 / 生图模型 /
-                                          视频模型与功能选项 / 分辨率 / 是否流水线（落
-                                          project-setup.json；未齐退出码 4）
+    setup      show|ask|set|require|accounts  ★开工前置 9 项：画风 / 集数 / 每集时长 / 生图模型 /
+                                          视频模型与功能选项 / **工作流 API** / **账号 API Key** /
+                                          分辨率 / 是否流水线（落 project-setup.json；未齐退出码 4）
     workflow   list|status|next|check|done|skip  ★标准作业 11 环节（产物判据 + 顺序门禁）
     pipeline   plan|run --yes|mark|status  ★流水线模式：一次确认 → 预算上限 → 跑完整部剧
     status     [--json]                  全盘状态面板：数据/参考图/资产缺口/批次/台账（零网络）
@@ -952,9 +952,11 @@ GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
 ════════════════════════════════════════════════════════════════════════
 ★开工     setup               前置 7 项：画风/集数/每集时长/生图模型/视频模型+功能选项/分辨率/流水线
          setup set --style live_action --episodes 30 --ep-seconds 60 \\
-             --image-model local_comfyui --video-model runninghub --workflow-id <id> \\
+             --image-model local_comfyui --video-model runninghub \\
+             --workflow-id <id> --site https://www.runninghub.ai --account "主账号A" \\
              --resolution 1080x1920 --pipeline on --budget-coins 9000
-         setup require       七项不齐 → 退出码 4（不许开工）
+         setup accounts      列出可用账号（只显示指纹，Key 本体不落盘）
+         setup require       九项不齐 → 退出码 4（不许开工）
 ★流程     workflow            11 环节表：调研→剧本→资产设计→资产生成→视频提示词→视频生成
                              →发行资料→拼接→放大→字幕→定稿（顺序不可调）
          workflow status     进度 + 当前应做哪一环
@@ -1234,8 +1236,8 @@ def main() -> int:
 
     # ★ 2026-10-21：开工前置条件 · 标准流程 · 流水线模式（薄转发，参数全透传）
     for name, script, title, brief in (
-        ('setup', 'project_setup.py', '开工前置条件（7 项）',
-         'show / ask / set / require'),
+        ('setup', 'project_setup.py', '开工前置条件（9 项）',
+         'show / ask / set / require / accounts'),
         ('workflow', 'workflow.py', '标准作业流程（11 环节）',
          'list / status / next / check / done / skip'),
         ('pipeline', 'pipeline.py', '流水线模式（一次确认跑完整部剧）',
