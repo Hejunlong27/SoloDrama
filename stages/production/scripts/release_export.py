@@ -69,8 +69,26 @@ def _rank(stem: str) -> int:
     return len(SOURCE_PREFERENCE)          # 无后缀（如 EP01_1080p_ES 已由 encoded 命中）
 
 
+def _better(cur, r: int, f: Path) -> bool:
+    """候选是否优于当前：先比 rank，**同 rank 取 mtime 最新**（反馈 10.8）。
+
+    此前是 `r < found[n][0]`（严格小于），所以**先扫到的**胜出：`_final/` 里同时有
+    `ep01_1080p_sub.mp4`（旧，字幕错位）与 `ep01_final.mp4`（新，ASR 校时）时，
+    导出脚本会静默选旧的那份 —— 静默交付错版本比直接报错危险得多。
+    """
+    if cur is None:
+        return True
+    r0, f0 = cur
+    if r != r0:
+        return r < r0
+    try:
+        return f.stat().st_mtime > f0.stat().st_mtime
+    except OSError:
+        return False
+
+
 def _scan(dir_: Path, rec: bool = True) -> dict:
-    """{集号: (rank, path)}，同集号取 rank 最小（最接近可发布）。"""
+    """{集号: (rank, path)}，同集号取 rank 最小；同 rank 取 mtime 最新。"""
     found: dict = {}
     it = dir_.rglob("*") if rec else dir_.glob("*")
     for f in it:
@@ -82,7 +100,7 @@ def _scan(dir_: Path, rec: bool = True) -> dict:
         if not m:
             continue
         n, r = int(m.group(1)), _rank(f.stem)
-        if n not in found or r < found[n][0]:
+        if _better(found.get(n), r, f):
             found[n] = (r, f)
     return found
 
@@ -102,11 +120,11 @@ def _auto_dirs(film: Path, out_dir: Path) -> list[Path]:
 
 
 def _merge_scan(dirs: list[Path]) -> dict:
-    """跨多个来源目录合并：同一集号取 rank 最小（最接近可发布）的那份。"""
+    """跨多个来源目录合并：先比 rank，同 rank 取 mtime 最新（口径与 _scan 一致）。"""
     found: dict = {}
     for d in dirs:
         for n, (r, f) in _scan(d).items():
-            if n not in found or r < found[n][0]:
+            if _better(found.get(n), r, f):
                 found[n] = (r, f)
     return found
 

@@ -166,8 +166,16 @@ def _registered_chars(header: dict) -> set:
 
 
 def _num(v):
-    m = re.search(r"\d+(?:\.\d+)?", str(v or ""))
-    return float(m.group(0)) if m else 0.0
+    """取**最后一个**数字组。
+
+    ★ 2026-10-21（反馈 9.4 / 10.3）：原实现取第一个数字组，于是 `shot_ep01_02` 被认成第
+      1 镜 —— 八个镜头的编号全部 = 1，同时报「丢镜 7 个」，逼着大家把 shot_id 改成不带集号
+      的 `shot_01`；而 `subtitle.py` 又要求带集号（`epNN_` 前缀），两边**正好相反**，形成死锁。
+      取最后一个数字组后：`shot_ep01_02` → 2、`shot_02` → 2、`SC-07` → 7、`8.5s` → 8.5，
+      两种命名都能正确编号，死锁解开（subtitle.py 同步兼容两种 id）。
+    """
+    found = re.findall(r"\d+(?:\.\d+)?", str(v or ""))
+    return float(found[-1]) if found else 0.0
 
 
 # ---------------------------------------------------------------------------

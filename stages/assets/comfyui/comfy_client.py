@@ -36,6 +36,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -124,13 +125,67 @@ def fetch_image(meta, out_path):
     return len(raw)
 
 
+_NEG_RE = re.compile(r"(?i)\b(no|not|without|never|avoid|exclude)\b|禁止|不要|无[A-Za-z\u4e00-\u9fff]|不得")
+_CFG_WARNED = set()
+
+
+def _min_cfg(wf: dict):
+    """工作流里最小的 cfg（没有 cfg 输入则返回 None）。"""
+    vals = []
+    for _, node in (wf or {}).items():
+        ins = (node or {}).get("inputs") or {}
+        for k in ("cfg", "guidance"):
+            v = ins.get(k)
+            if isinstance(v, (int, float)):
+                vals.append(float(v))
+    return min(vals) if vals else None
+
+
+def _warn_negation(prompt: str, wf: dict) -> None:
+    """cfg < 2（turbo）时负向词完全无效 —— 主动告警，别让人在文字上死磕（反馈 1.1）。
+
+    机制：`SamplerCustom` 的 cfg 固定为 1 时，负向条件**不参与引导**，`negative_prompt`
+    形同虚设。实测「禁止东亚面孔 / NOT East Asian」出图毫无变化，两轮返工都花在这上面。
+    这里只告警、不改提示词（改写是作者的决定，引擎不替他动内容）。
+    """
+    cfg = _min_cfg(wf)
+    if cfg is None or cfg >= 2:
+        return
+    if not _NEG_RE.search(prompt or ""):
+        return
+    key = "cfg1-neg"
+    if key in _CFG_WARNED:
+        return
+    _CFG_WARNED.add(key)
+    print("[WARN] 本工作流 cfg=%g < 2（turbo 加速）：**负向条件不参与引导**，"
+          "提示词里的 no / not / without / 禁止 / 不要 一律无效。"
+          "请把否定改写成**正向具体特征**（例：不写 'not East Asian'，"
+          "改写 'deep-set eyes, high nasal bridge, olive-brown skin, mestizo bone structure'）。"
+          % cfg, file=sys.stderr)
+
+
+# 种子字段名：主流采样器节点用 noise_seed，KSampler 用 seed。
+# 写错键会**静默写进一个无效键** —— 看起来「设了种子但没生效」，极难排查（反馈 1.3）。
+_SEED_KEYS = ("noise_seed", "seed", "random_seed")
+
+
 def build(base, prompt, prefix, seed=None, aspect=None, count=1):
     """把「提示词 / 文件名前缀 / 种子 / 画幅 / 张数」写进工作流副本（不改原文件）。"""
     wf = json.loads(json.dumps(base))
     wf[PROMPT_NODE]["inputs"]["value"] = prompt
     wf[PREFIX_NODE]["inputs"]["filename_prefix"] = prefix
+    _warn_negation(prompt, wf)
     if seed is not None:
-        wf[SEED_NODE]["inputs"]["seed"] = int(seed)
+        ins = wf.setdefault(SEED_NODE, {}).setdefault("inputs", {})
+        for k in _SEED_KEYS:
+            if k in ins:
+                ins[k] = int(seed)
+                break
+        else:
+            # ★ 不静默：字段名对不上就喊出来（附上该节点真实有哪些输入键）
+            raise KeyError("节点 %s 没有可写的种子字段（现有输入：%s）；"
+                           "请用 COMFYUI_NODE_SEED 指到真正的种子节点"
+                           % (SEED_NODE, ", ".join(sorted(ins)) or "无"))
     if aspect:
         wf[ASPECT_NODE]["inputs"]["aspect_ratio"] = aspect
     if count and int(count) > 1:

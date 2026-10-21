@@ -161,7 +161,12 @@ OUTPUT_DIR: str = "output"        # 批次输出根目录（相对「工作区�
 # 该信号量包住「提交 + 轮询直到终态 + 下载」的完整生命周期。
 # ==============================================================================
 CONCURRENCY_MAX: int = 5          # ★ 硬上限，全局唯一来源（并发不得高于此值）
-CONCURRENCY: int = CONCURRENCY_MAX  # 默认与上限相同，调高会被收敛
+# ★ 2026-10-21（反馈 10.14 / 11.3）：默认并发从 5 降到 2。
+#   实测：标称 ≤5，但真按 5 提交会被拒 —— `errorCode=421 api queue limit reached`
+#   （shot_04/06/07 直接失败，失败未计费但要白等一轮）。改 2 后 8/8 零失败，
+#   且 `--resume` 不会重复提交已完成的段。要更高并发请显式 `--concurrency 4`，
+#   并且记住：421 不是失败，是排队，必须走 `--resume`。
+CONCURRENCY: int = 2              # 默认值（上限仍是 CONCURRENCY_MAX）
 BATCH_SIZE: int = 20              # 每批处理多少个 shot，批末检查熔断
 POLL_INTERVAL: float = 5.0        # 轮询间隔（秒）
 
@@ -280,6 +285,10 @@ def missing_configs(video_only: bool = False) -> list:
 # 配置分层：<工作区>/config.local.json 覆盖层
 # ##############################################################################
 OVERLAY_FILENAME = "config.local.json"
+
+# 分阶段布局键：由 `stages/_layout.py` 读取（data_dir / out_dir / assets_dir / layout_version），
+# 引擎本身不消费 —— 出现在覆盖层里属**正常**，不报「未知配置项」（反馈 4.2）。
+_LAYOUT_KEYS = {"data_dir", "out_dir", "assets_dir", "layout_version", "stages"}
 
 # 允许覆盖的顶层键白名单（含别名映射）
 _KEY_ALIASES = {
@@ -438,6 +447,11 @@ def apply_overlay(path) -> list:
 
     for key, value in raw.items():
         if key.startswith("_"):
+            continue
+        # ★ 2026-10-21（反馈 4.2）：布局键由 `stages/_layout.py` 解析，引擎不消费 ——
+        #   此前每跑一次 preflight 都报 `[WARN] 未知配置项 'assets_dir'，已忽略`，
+        #   而总纲 §3.7 明确说解析链包含它。文档说有、代码说不认识，接手者会以为配置没生效。
+        if key in _LAYOUT_KEYS:
             continue
         target = _KEY_ALIASES.get(key)
         if target is None:

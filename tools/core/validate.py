@@ -24,7 +24,23 @@ STRAY_FIELD_RE = re.compile(r"^([^\s:：][^:：]{0,12})\s*[:：]\s*\S")
 SC_LINE_RE = re.compile(r"^\s*SC[-_ ]?\d+", re.I)
 CODE_TOKEN_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})\b")
 QUOTED_RE = re.compile(r"[“\"]([^”\"]+)[”\"]")
-SENT_SPLIT_RE = re.compile(r"[。！？!?…]+")
+SENT_SPLIT_RE = re.compile(r"[。！？!?…；;]+|\.(?=\s|$)")
+
+# ★ 2026-10-21（反馈 2.1 / 4.y）：断句符此前只有中文标点，于是西语 `Es prueba. Está firmada.`
+#   被当成**一整句 24 字**判超限。西语/英语的 `.` 必须参与断句。
+#   用「点后跟空白或行尾」判定，避免把小数（3.5）与版本号切开。
+# ★ 2026-10-21（反馈 2.2）：20 字上限对拉丁语系过严（20 字符西语 ≈ 3–4 个词，
+#   等于把台词压到主谓宾都不全）。按内容分档：含中日韩字符 → 20；拉丁/西里尔 → 55 字符。
+CJK_SENT_MAX = 20
+LATIN_SENT_MAX = 55
+DUR_TOLERANCE_SEC = 2      # 总时长边界容差（反馈 4.x：设定 60 秒，成片 59 秒就判死太硬）
+
+
+def _sent_limit(text: str) -> tuple:
+    """→ (上限, 单位说明)。按字符集分档，不按项目语种猜（混排剧本也稳）。"""
+    if any("\u4e00" <= ch <= "\u9fff" for ch in text):
+        return CJK_SENT_MAX, "字"
+    return LATIN_SENT_MAX, "字符"
 
 
 # ---------------------------------------------------------------- 剧本校验
@@ -198,9 +214,10 @@ def _check_duration(ep, bounds: dict | None = None) -> list:
     if not (lo_s <= n <= hi_s):
         out.append(Issue("E006", LEVEL_ERROR, "全篇",
                          f"镜头数 {n} 超出 {lo_s}-{hi_s} 镜区间"))
-    if not (lo_t <= total <= hi_t):
+    if not (lo_t - DUR_TOLERANCE_SEC <= total <= hi_t + DUR_TOLERANCE_SEC):
         out.append(Issue("E006", LEVEL_ERROR, "全篇",
-                         f"总时长 {total} 秒超出 {lo_t}-{hi_t} 秒区间"))
+                         f"总时长 {total} 秒超出 {lo_t - DUR_TOLERANCE_SEC}-{hi_t + DUR_TOLERANCE_SEC} 秒区间"
+                         f"（含 ±{DUR_TOLERANCE_SEC}s 容差）"))
     for s in ep.shots:
         if not (MIN_SHOT_SEC <= s.est_sec <= MAX_SHOT_SEC):
             out.append(Issue("E006", LEVEL_ERROR, s.sc_id,
@@ -220,9 +237,10 @@ def _check_dialog(ep) -> list:
             out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
                              f"对白 {len(sents)} 句，超过 2 句上限"))
         for x in sents:
-            if len(x.strip()) > 20:
+            lim, unit = _sent_limit(x.strip())
+            if len(x.strip()) > lim:
                 out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
-                                 f"单句 {len(x.strip())} 字超过 20 字：{x.strip()}"))
+                                 f"单句 {len(x.strip())} {unit}超过 {lim} {unit}：{x.strip()}"))
     return out
 
 
@@ -245,7 +263,10 @@ def _check_action(ep, known: set) -> list:
             continue
         if not any(c in s.action for c in known if c):
             out.append(Issue("E009", LEVEL_ERROR, s.sc_id,
-                             "ACTION 未包含任何已登记代号或角色名（无法定位主体）"))
+                             "ACTION 未包含任何已登记代号（无法定位主体）。"
+                             "★ 校验器只认 HEADER `# CHAR:` 里登记过的**大写代号**，"
+                             "中文名（外婆/律师）不参与匹配；省略主语的句子必然不过 —— "
+                             "请让 ACTION 以 ABUELA / ANA 这类代号开头；一次性群演请登记为 EXTRA"))
         for w in ABSTRACT_WORDS:
             if w in s.action:
                 out.append(Issue("E009", LEVEL_ERROR, s.sc_id,

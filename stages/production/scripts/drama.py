@@ -11,6 +11,11 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
 
 命令一览（`python scripts/drama.py guide` 也会打印同样内容）
 -----------------------------------------------------------
+    setup      show|ask|set|require       ★开工前置 7 项：画风 / 集数 / 每集时长 / 生图模型 /
+                                          视频模型与功能选项 / 分辨率 / 是否流水线（落
+                                          project-setup.json；未齐退出码 4）
+    workflow   list|status|next|check|done|skip  ★标准作业 11 环节（产物判据 + 顺序门禁）
+    pipeline   plan|run --yes|mark|status  ★流水线模式：一次确认 → 预算上限 → 跑完整部剧
     status     [--json]                  全盘状态面板：数据/参考图/资产缺口/批次/台账（零网络）
     models     [list|status|set|reset|ask]  ★前置条件：首次生图/出片前确认模型
                                           （本地 ComfyUI / RunningHub / 闭源模型 三选一，写 model-plan.json）
@@ -94,8 +99,10 @@ except SystemExit as _e:
         print('短剧生产线的零思考入口（默认不花钱）\n')
         print('用法: drama.py <命令> [...]  （下面这些命令都需要先指定工作区）')
         print('  全局参数: --workspace <DIR>   也可设环境变量 SOLODRAMA_WORKSPACE\n')
-        print('命令: status / preflight / assets / refs / models / style / halfcheck /')
-        print('      video {plan|run|resume-download|status} / report / balance / cost / guide')
+        print('命令: setup {show|ask|set|require} / workflow {list|status|check} /')
+        print('      pipeline {plan|run|mark|status} / status / preflight / assets / refs /')
+        print('      models / style / halfcheck / video {plan|run|resume-download|status} /')
+        print('      report / balance / cost / guide')
         print('\n例：drama.py --workspace "D:/剧/某剧" status')
         raise SystemExit(0)
     raise
@@ -405,7 +412,16 @@ def estimate_video(limit=None, only=None, tier='consumer', calibrate=False) -> d
     if calibrate:
         calib = CM.calibrate(CM.iter_ledger_records(WS), params)
         params = calib['params']
-    est = CM.estimate(_durations(shots), tier=tier, params=params)
+    # ★ 2026-10-21（反馈 11.1）：把开工确认单里的「步数 / 像素」喂进成本模型 ——
+    #   段价不再写死一个数，才能回答「提分辨率还是提步数更贵」。
+    steps = mp = None
+    try:
+        import project_setup as _PS
+        _vo = (_PS.collect(WS)["items"].get("video_options") or {})
+        steps, mp = _vo.get("steps"), _vo.get("megapixels")
+    except Exception:                                          # noqa: BLE001
+        pass
+    est = CM.estimate(_durations(shots), tier=tier, params=params, steps=steps, megapixels=mp)
     est['_calibrate'] = calib
     est['_params_source'] = ('%s' % (WS / 'cost-model.json')
                              if (WS / 'cost-model.json').is_file() else '内置实测默认值')
@@ -750,6 +766,10 @@ def cmd_video_plan(args) -> int:
     print('  GPU 秒口径  : %.0f 运行秒 × 0.205 ≈ %d RH币'
           % (est['gpu_seconds'], round(est['gpu_model_coins'])))
     print('  参数来源    : %s' % est['_params_source'])
+    _a = est.get('assumptions') or {}
+    if _a:
+        print('  计算量口径  : %s 步 / %s MP（相对基准 ×%.2f；沿用开工确认单）'
+              % (_a['steps'], _a['megapixels'], _a['work_scale']))
     cal = est.get('_calibrate')
     if cal:
         ev = cal.get('evidence') or {}
@@ -930,6 +950,18 @@ def cmd_refs(args) -> int:
 
 GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
 ════════════════════════════════════════════════════════════════════════
+★开工     setup               前置 7 项：画风/集数/每集时长/生图模型/视频模型+功能选项/分辨率/流水线
+         setup set --style live_action --episodes 30 --ep-seconds 60 \\
+             --image-model local_comfyui --video-model runninghub --workflow-id <id> \\
+             --resolution 1080x1920 --pipeline on --budget-coins 9000
+         setup require       七项不齐 → 退出码 4（不许开工）
+★流程     workflow            11 环节表：调研→剧本→资产设计→资产生成→视频提示词→视频生成
+                             →发行资料→拼接→放大→字幕→定稿（顺序不可调）
+         workflow status     进度 + 当前应做哪一环
+         workflow check --stage S6   前置环节未完成 → 退出码 4
+★流水线   pipeline plan       开工预告：预计完工时间 + 预计花费 + 预算余量（不花钱）
+         pipeline run --yes  一次跑到底（预算熔断 → 退出码 3；等 Agent 产出 → 4）
+         pipeline mark S3    登记内容环节完成
 看状态   status              全盘面板：数据/参考图/资产缺口/批次/台账（零网络，先跑这个）
 模型     models              ★前置条件：首次生图/出片前必须确认模型（本地/云端/闭源三选一）
          models --ask        交互式引导确认（生图；换 video 传 models ask video）
@@ -991,6 +1023,38 @@ def cmd_cost(args) -> int:
 def cmd_guide(args) -> int:
     print(GUIDE)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# setup / workflow / pipeline（★ 2026-10-21：开工前置条件 · 标准流程 · 流水线模式）
+#   三者都是**独立脚本**（各自是单一真源），这里只做薄转发：
+#     * project_setup.py —— 开工前置 7 项（画风/集数/时长/生图/视频/分辨率/流水线）
+#     * workflow.py      —— 11 环节标准流程（产物判据 + 顺序门禁）
+#     * pipeline.py      —— 流水线模式（预算上限 + 预计完工 + 一次跑完）
+#   透传用 REMAINDER：以后给这些脚本加参数，不必回来改 drama.py。
+# ---------------------------------------------------------------------------
+def _strip_ws(tokens) -> list:
+    """去掉透传参数里混进来的 `--workspace X`（工作区由顶层统一解析）。"""
+    out, skip = [], False
+    for t in tokens:
+        if skip:
+            skip = False
+            continue
+        if t == '--workspace':
+            skip = True
+            continue
+        if t.startswith('--workspace='):
+            continue
+        out.append(t)
+    return out
+
+
+def cmd_forward(args) -> int:
+    script = args._forward_script
+    rest = _strip_ws([str(x) for x in (getattr(args, 'rest', None) or [])])
+    cmd = [sys.executable, SCRIPTS / script, '--workspace', str(WS)] + rest
+    print('【%s】' % args._forward_title)
+    return run_cmd(cmd, script.split('.')[0], quiet_ok=False)[0]
 
 
 def _add_ws_arg(p) -> None:
@@ -1167,6 +1231,21 @@ def main() -> int:
     p = sub.add_parser('guide', help='打印速查')
     _add_ws_arg(p)
     p.set_defaults(fn=cmd_guide)
+
+    # ★ 2026-10-21：开工前置条件 · 标准流程 · 流水线模式（薄转发，参数全透传）
+    for name, script, title, brief in (
+        ('setup', 'project_setup.py', '开工前置条件（7 项）',
+         'show / ask / set / require'),
+        ('workflow', 'workflow.py', '标准作业流程（11 环节）',
+         'list / status / next / check / done / skip'),
+        ('pipeline', 'pipeline.py', '流水线模式（一次确认跑完整部剧）',
+         'plan / run --yes / mark / status'),
+    ):
+        p = sub.add_parser(name, help='%s —— %s' % (title, brief))
+        _add_ws_arg(p)
+        p.add_argument('rest', nargs=argparse.REMAINDER,
+                       help='透传给 %s（例：%s）' % (script, brief))
+        p.set_defaults(fn=cmd_forward, _forward_script=script, _forward_title=title)
 
     args = ap.parse_args()
     if not getattr(args, 'fn', None):

@@ -308,7 +308,7 @@ def plan(ws: pathlib.Path, rank: int = 1, episodes: int | None = None, dry: bool
         print("[FAIL] 集数过少（%d）：短剧规划至少 6 集" % n)
         return 2
 
-    style = _pick_style_lock(str(card.get("genre_direction")))
+    style = _pick_style_lock(str(card.get("genre_direction")), ws)
     platform = (card.get("audience_profile") or {}).get("platform") or brief.get("platform") or "TikTok"
 
     # ★ 反馈 P2-3：人工拆解表（可选）。给了就以它为准，覆盖句库。
@@ -507,11 +507,57 @@ def plan(ws: pathlib.Path, rank: int = 1, episodes: int | None = None, dry: bool
     return 0
 
 
-def _pick_style_lock(track: str) -> str:
+def _style_lock_from_plan(ws) -> str:
+    """读 `<ws>/style-plan.json` 的画风锁（画风门禁的唯一真源）。取不到返回空串。"""
+    if not ws:
+        return ""
+    try:
+        p = pathlib.Path(ws) / "style-plan.json"
+        d = json.loads(p.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return ""
+    st = ((d or {}).get("style") or {})
+    if not st.get("confirmed"):
+        return ""
+    return str(st.get("visual_style_lock") or "")
+
+
+# ★ 2026-10-21（反馈 2.4）：按画风**轨**的锁串（竖屏；不再出现 2.39:1 宽银幕）。
+#   题材常量表 `STYLE_LOCKS` 只作 fallback —— 项目确认过画风就以画风为准。
+STYLE_LOCK_BY_TRACK = {
+    "3D-manhua-cel": "3D animated cel-shaded manhua style, clean outlines, saturated palette, "
+                     "vertical 9:16 framing",
+    "2D-cel-webtoon": "2D cel animation webtoon style, flat colour blocking, bold line work, "
+                      "vertical 9:16 framing",
+    "live-action-photographic": "photorealistic live-action cinematography, natural skin texture, "
+                               "practical motivated lighting, shallow depth of field, "
+                               "vertical 9:16 framing",
+}
+
+
+def _pick_style_lock(track: str, ws=None) -> str:
+    """STYLE LOCK 取值：画风门禁 → 题材常量表 → `_default`（★ 反馈 2.4）。
+
+    此前这里**只按题材键查常量表**，与画风门禁完全脱钩：门禁锁了 `3D-manhua-cel`，
+    blueprint 却写 `webtoon-adapted live-action style, 2.39:1 widescreen` →
+    下游提示词拿到「真人写实 + 宽银幕」，与竖屏 3D 漫剧完全相反，而且很难被发现。
+
+    现在：项目已确认画风 → 一律用它的锁串（扩展成可用的竖屏风格串）；两者冲突时**告警**，
+    仍然以画风为准（画风是上游确认单，不能被题材覆盖）。
+    """
+    gate = _style_lock_from_plan(ws)
+    topic = ""
     for k, v in STYLE_LOCKS.items():
         if k != "_default" and k in str(track):
-            return v
-    return STYLE_LOCKS["_default"]
+            topic = v
+            break
+    if gate:
+        if topic and topic != gate:
+            print("[WARN] STYLE LOCK 冲突：style-plan.json 锁 `%s`，题材预设给 `%s…`"
+                  " —— 以画风门禁为准（画风不可被题材覆盖）"
+                  % (gate, topic[:36]))
+        return STYLE_LOCK_BY_TRACK.get(gate, gate)
+    return topic or STYLE_LOCKS["_default"]
 
 
 def render_blueprint_md(o: dict) -> str:

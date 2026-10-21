@@ -235,6 +235,29 @@ def ffprobe_frames(ffprobe, path):
     return int(out.strip().splitlines()[0])
 
 
+def _belongs_to_ep(sid, ep):
+    """段 id 是否属于该集（兼容**带集号**与**不带集号**两种命名）。
+
+    ★ 2026-10-21（反馈 10.3）：此前只认 `ep01_shot_01` 前缀；而 `script_continuity._num()`
+      取第一个数字组，会把 `shot_ep01_02` 判成第 1 镜并报「丢镜 7 个」，于是项目侧只能把
+      shot_id 改成不带集号的 `shot_01` —— 两边要求**正好相反**，字幕管线整体不可用。
+      `_num()` 已改为取最后一个数字组（`shot_ep01_02` → 2），这里同步放宽：
+        * 带集号（`ep01_shot_01` / `shot_ep01_01`）→ 只收本集的；
+        * 不带集号（`shot_01`）→ 全收（集号由 `--ep` 与批次/文件区分）。
+    """
+    s = str(sid or "")
+    if not s:
+        return False
+    m = re.search(r"(?:^|[_-])ep0*(\d+)(?:[_-]|$)", s, re.I)
+    if m:
+        try:
+            want = int(re.sub(r"[^\d]", "", str(ep)) or 0)
+        except (TypeError, ValueError):
+            want = 0
+        return int(m.group(1)) == want
+    return True
+
+
 def episode_segments(ws, ep):
     """返回该集的段列表（含成片路径与帧数），顺序 = shots.json 顺序。
 
@@ -244,7 +267,7 @@ def episode_segments(ws, ep):
     同一段在多处存在时取 **mtime 最新**（错脸返工重出后必须用新版本）。
     """
     shots = load_json(os.path.join(data_dir_of(ws), "shots.json"))
-    ids = [s["shot_id"] for s in shots if s["shot_id"].startswith(ep + "_")]
+    ids = [s["shot_id"] for s in shots if _belongs_to_ep(s.get("shot_id"), ep)]
     outdir = out_dir_of(ws)
     segs, missing = [], []
     for sid in ids:
@@ -268,7 +291,7 @@ def dialogue_lines(ws, ep):
     pat = re.compile(r"<d>\[[^\]]*\]\s*([^<]*)</d>")
     out = {}
     for sid, v in prompts.items():
-        if not sid.startswith(ep + "_"):
+        if not _belongs_to_ep(sid, ep):
             continue
         out[sid] = [m.group(1).strip() for m in pat.finditer(v.get("prompt", ""))]
     return out

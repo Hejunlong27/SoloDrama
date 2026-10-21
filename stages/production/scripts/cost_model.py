@@ -60,6 +60,11 @@ DEFAULT_PARAMS = {
     "fx": {
         "cny_per_rh_coin": 0.0025,       # 1 RH币 ≈ ¥0.0025
     },
+    # ★ 2026-10-21（反馈 11.1）：计算量基准 —— 变动成本按「步数 × 像素」相对它线性缩放。
+    "work": {
+        "base_steps": 4,          # 4 步 turbo LoRA（实测基准）
+        "base_megapixels": 0.8,   # 0.8MP ≈ 672×1216（实测 31–34 RH币/段）
+    },
 }
 
 TIERS = ("consumer", "ent_shared")
@@ -91,28 +96,49 @@ def _f(v, default=0.0) -> float:
         return default
 
 
-def estimate(durations, tier: str = "consumer", params: dict | None = None) -> dict:
+def estimate(durations, tier: str = "consumer", params: dict | None = None,
+             steps=None, megapixels=None) -> dict:
     """对一组「视频时长（秒）」估算成本，返回两套口径 + 明细。
 
     参数
     ----
-    durations : 可迭代的秒数（None / 非法值按 12 s 计，与引擎默认一致）
-    tier      : consumer / ent_shared；非法值回落 consumer
+    durations  : 可迭代的秒数（None / 非法值按 12 s 计，与引擎默认一致）
+    tier       : consumer / ent_shared；非法值回落 consumer
+    steps      : 采样步数（None = 用 params.work.base_steps）。4 步 turbo 与 20 步全量差 5 倍。
+    megapixels : 源像素（None = base_megapixels）。0.8MP ≈ 672×1216，1.0MP ≈ 750×1334。
+
+    ★ 2026-10-21（反馈 11.1）：此前段价被写死成「一个数」，于是无法回答两个必然会问的问题：
+      「提分辨率划算还是提步数划算」「换 4 步 turbo 能省多少」。
+      现在把**变动部分**按「步数 × 像素」的相对计算量线性缩放，固定部分不变：
+
+          scale = (steps / 基准步数) × (megapixels / 基准像素)
+          variable = per_second × 秒 × scale
+
+      线性是物理直觉（采样步数与像素都近似线性作用于计算量），**未做多档实测标定** ——
+      所以它只用于「A 方案比 B 方案贵多少」的闸门判断，真实消耗一律以平台 usage 为准。
     """
     p = params or DEFAULT_PARAMS
     tier = tier if tier in TIERS else "consumer"
     cfg = p.get(tier) or p["consumer"]
     gpu = p.get("gpu") or {}
+    work = p.get("work") or {}
     cny_per_coin = _f((p.get("fx") or {}).get("cny_per_rh_coin"), 0.0025)
+
+    base_steps = _f(work.get("base_steps"), 4.0) or 4.0
+    base_mp = _f(work.get("base_megapixels"), 0.8) or 0.8
+    st = _f(steps, base_steps) or base_steps
+    mp = _f(megapixels, base_mp) or base_mp
+    scale = (st / base_steps) * (mp / base_mp)
 
     rows = []
     tot_fixed = tot_var = tot_gpu_coins = 0.0
     for i, d in enumerate(durations or []):
         dur = _f(d, 0.0) or 12.0
         fixed = _f(cfg.get("fixed"))
-        var = _f(cfg.get("per_second")) * dur
+        var = _f(cfg.get("per_second")) * dur * scale
         amount = fixed + var
-        gpu_s = _f(gpu.get("cold_start_s"), 120.0) + _f(gpu.get("seconds_per_video_second"), 7.2) * dur
+        gpu_s = _f(gpu.get("cold_start_s"), 120.0) + \
+            _f(gpu.get("seconds_per_video_second"), 7.2) * dur * scale
         gpu_coins = _f(gpu.get("coins_per_gpu_second"), 0.205) * gpu_s
         tot_fixed += fixed
         tot_var += var
@@ -141,6 +167,10 @@ def estimate(durations, tier: str = "consumer", params: dict | None = None) -> d
         "cny": round(cny, 2),
         "gpu_model_coins": round(tot_gpu_coins, 1),
         "gpu_seconds": round(sum(r["gpu_seconds"] for r in rows), 1),
+        "assumptions": {"steps": st, "megapixels": mp,
+                        "base_steps": base_steps, "base_megapixels": base_mp,
+                        "work_scale": round(scale, 3),
+                        "note": "变动部分按步数×像素线性缩放（近似，未多档实测）；只作闸门"},
         "rows": rows,
     }
 

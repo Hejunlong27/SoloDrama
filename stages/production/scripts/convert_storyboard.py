@@ -148,11 +148,69 @@ def _crop(v: str | None):
     return {"rows": int(m.group(1)), "cols": int(m.group(2))} if m else {"rows": 3, "cols": 3}
 
 
+def _split_refs(refs: list, char_keys: set, scene_keys: set, sid: str, stats: dict) -> tuple:
+    """把混合 `refs` 拆成 (character_refs, scene_refs)（反馈 9.3）。
+
+    背景：此前所有 refs 一律塞进 `character_refs`，引擎于是拿场景 key 去 characters.json
+    里查，报「引用了不存在的 key」（8 段 × 1 条），项目侧只能把场景也登记进 characters，
+    语义不干净。
+
+    ★ 但**不能无脑拆**：引擎喂槽顺序是「先 character_refs，再 scene_refs」，
+      一旦原顺序是 `[角色, 场景, 角色]` 这种交错，拆完就会与 `<Picture N>` 错位 ——
+      错位是硬错且很难看出来。所以只在「拆分后顺序不变」时才真拆：
+      所有角色/未登记 key 都排在所有场景 key 之前。
+    未登记 key（例如分镜图 `sb_ep01_sc01`）继续走 characters 槽，并单独记录（供上游登记）。
+    """
+    kind = []
+    for r in refs:
+        kind.append("s" if (r in scene_keys and r not in char_keys) else "c")
+    unknown = [r for r in refs if r not in char_keys and r not in scene_keys]
+    if unknown:
+        stats.setdefault("refs_unknown", []).append("%s(%s)" % (sid, ",".join(unknown)))
+    if "s" not in kind:
+        return refs, []
+    last_c = max((i for i, k in enumerate(kind) if k == "c"), default=-1)
+    first_s = min((i for i, k in enumerate(kind) if k == "s"), default=10 ** 6)
+    if last_c < first_s:
+        return ([r for r, k in zip(refs, kind) if k == "c"],
+                [r for r, k in zip(refs, kind) if k == "s"])
+    stats.setdefault("refs_interleaved", []).append(sid)
+    return refs, []
+
+
+def _default_voice(ws: pathlib.Path) -> str:
+    """声音归属：读开工确认单（`project-setup.json` 的 `video_options.voice`），缺省 h3。
+
+    ★ 2026-10-21（反馈 10.1）：H3 是 video+audio 双模态，**语音时间由模型自决**，
+      `<d>` 的位置只是建议（实测偏差 −6.3s）。所以「这一段的声音由谁负责」必须是显式约定，
+      否则字幕会按剧本时间窗烧、实际发声却在另一镜。三选一：h3 / external / mute。
+    """
+    try:
+        p = pathlib.Path(ws) / "project-setup.json"
+        d = json.loads(p.read_text(encoding="utf-8-sig"))
+        v = str(((d.get("video_options") or {}).get("voice")) or "").strip()
+        return v if v in ("h3", "external", "mute") else "h3"
+    except (OSError, json.JSONDecodeError, ValueError):
+        return "h3"
+
+
 def build(shots: list, ws: pathlib.Path, inject_light: bool = True) -> tuple:
     """→ (data 四文件 dict, 问题列表, 统计)"""
     problems, out_shots, out_h3 = [], [], {}
     seen = set()
     stats = {"light_injected": 0, "light_skipped_has_light": 0, "time_unmapped": []}
+
+    # 先读 04-资产/refs.json：分流 character_refs / scene_refs 要看 key 的归属
+    try:
+        rp = L.stage_dir(ws, "assets") / "refs.json"
+        _rj = json.loads(rp.read_text(encoding="utf-8-sig")) if rp.is_file() else {}
+    except Exception:                                                          # noqa: BLE001
+        _rj = {}
+    chars = (_rj or {}).get("characters") or {}
+    scenes = (_rj or {}).get("scenes") or {}
+    char_keys, scene_keys = set(chars), set(scenes)
+    voice = _default_voice(ws)
+
     for s in shots:
         sid, f = s["shot_id"], s["fields"]
         if sid in seen:
@@ -164,13 +222,16 @@ def build(shots: list, ws: pathlib.Path, inject_light: bool = True) -> tuple:
         if not f.get("banana_prompt"):
             problems.append("%s 缺 banana_prompt（九宫格图生图提示词）" % sid)
         refs = [x.strip() for x in re.split(r"[,，、\s]+", f.get("refs") or "") if x.strip()]
+        c_refs, s_refs = _split_refs(refs, char_keys, scene_keys, sid, stats)
         out_shots.append({
             "shot_id": sid,
             "banana_prompt": f.get("banana_prompt") or "",
             "ratio": f.get("ratio") or "9:16",
             "crop": _crop(f.get("crop")),
-            # ★ 约定：`refs` 顺序 = 提示词 `<Picture N>` 顺序（引擎按顺序喂槽，缺一号后面全错位）
-            "character_refs": refs,
+            # ★ 约定：`character_refs` + `scene_refs` 的拼接顺序 = 提示词 `<Picture N>` 顺序
+            #   （引擎按顺序喂槽，缺一号后面全错位）。
+            "character_refs": c_refs,
+            **({"scene_refs": s_refs} if s_refs else {}),
         })
         dur = f.get("duration")
         prompt = s["prompt"].strip()
@@ -187,18 +248,11 @@ def build(shots: list, ws: pathlib.Path, inject_light: bool = True) -> tuple:
             stats["time_unmapped"].append("%s(%s)" % (sid, t_raw))
         out_h3[sid] = {"prompt": prompt,
                        **({"duration": float(re.sub(r"[^\d.]", "", dur))} if dur else {}),
-                       "ratio": f.get("ratio") or "9:16"}
+                       "ratio": f.get("ratio") or "9:16",
+                       # 声音归属（反馈 10.1）：h3 自带音轨 / external 另配 TTS / mute 全后配
+                       "voice": voice}
 
-    # characters/scenes：从 04-资产/refs.json 合并（存在才合）
-    refs = {}
-    try:
-        rp = L.stage_dir(ws, "assets") / "refs.json"
-        if rp.is_file():
-            refs = json.loads(rp.read_text(encoding="utf-8-sig")) or {}
-    except Exception:                                                          # noqa: BLE001
-        refs = {}
-    chars = refs.get("characters") or {}
-    scenes = refs.get("scenes") or {}
+    # characters/scenes 已在函数开头读过（分流要用），这里直接落盘
     return ({"shots.json": out_shots, "h3_prompts.json": out_h3,
              "characters.json": chars, "scenes.json": scenes}, problems, stats)
 
@@ -243,6 +297,13 @@ def main() -> int:
     print("  解析到  : %d 段" % len(shots))
     for name, obj in files.items():
         print("    %-18s %d 条" % (name, len(obj)))
+    _h3 = files.get("h3_prompts.json") or {}
+    if _h3:
+        _v = next(iter(_h3.values())).get("voice") or "h3"
+        print("  声音归属: %s%s" % (_v, {
+            "h3": "（H3 自带音轨；语音位置由模型自决，字幕必须走 ASR 校时）",
+            "external": "（H3 只出画面，另配 TTS/配音）",
+            "mute": "（音轨整体后配）"}.get(_v, "")))
     if stats.get("light_injected"):
         print("  光位    : 按 TIME 注入 %d 段（提示词已含光位的 %d 段未动；"
               "如需逐字保留请加 --no-inject-light）"
@@ -250,6 +311,14 @@ def main() -> int:
     if stats.get("time_unmapped"):
         print("  [WARN] TIME 无法映射成光位（%d 段，未猜）：%s"
               % (len(stats["time_unmapped"]), "、".join(stats["time_unmapped"][:8])))
+    if stats.get("refs_unknown"):
+        print("  [WARN] 以下参考图 key 没在 04-资产/refs.json 登记（仍走 characters 槽，"
+              "ingest_check 可能判「引用了不存在的 key」）：%s"
+              % "、".join(stats["refs_unknown"][:8]))
+    if stats.get("refs_interleaved"):
+        print("  [WARN] %d 段 refs 角色/场景交错，为防 <Picture N> 错位**未分流**；"
+              "把场景 key 排到所有角色之后即可自动分流：%s"
+              % (len(stats["refs_interleaved"]), "、".join(stats["refs_interleaved"][:8])))
     if problems:
         print("\n  [WARN] %d 个问题（不猜不编，请回上游补齐）：" % len(problems))
         for p in problems[:20]:

@@ -663,6 +663,7 @@ def design(roster: dict) -> dict:
     # ---- 服装文本 ----
     for i, d in enumerate(designs):
         d["garment"] = _garment_text(d, i)
+        d["garment_en"] = _garment_en(d, i)      # ★ 反馈 7.1：英文服装段，供英文提示词直接取用
         d["expression"] = PERSONA[d["persona_bucket"]]["expr"]
 
     # ---- 差异对照（与最像的那位显式拉开） ----
@@ -738,11 +739,135 @@ def _garment_text(d: dict, idx: int) -> str:
                d["color"]["accent_place"], d["fabric"]["name"], d["fabric"]["behavior"], top, acc))
 
 
+# ---------------------------------------------------------------------------
+# 服装英译（反馈 7.1，P0）
+# ---------------------------------------------------------------------------
+# 现象：`garment` 是中文长句，拼进**英文**提示词后模型基本忽略 —— 实测法官穿成土黄罩衫、
+#       带回律师的富父亲穿成亮面油绿衬衫；而 `[FACE]` 段是英文，遵循度正常。
+# 结论：中英混排时，模型对**后段中文服饰描述**几乎不执行。服装必须给一条英文。
+# 处理：词表与中文侧一一对应（同一批枚举值），下游英文提示词的 `<WARDROBE>` 段直接取用，
+#       不必再逐角色手写英文（2026-10-20 实跑时是手写 10 个角色的英文才修好的）。
+_EN_COLOR = {
+    "朱砂": "cinnabar red", "姜黄": "turmeric yellow", "苔绿": "moss green",
+    "松柏墨绿": "deep pine green", "松石青": "turquoise teal", "靛青": "indigo",
+    "紫檀": "rosewood", "绛紫": "deep plum", "烟灰": "smoke grey", "米白": "off-white",
+}
+_EN_FABRIC = {
+    "精纺羊毛": "worsted wool", "粗针织": "chunky knit", "真丝缎": "silk satin",
+    "水洗棉": "washed cotton", "硬挺府绸": "stiff poplin", "牛仔布": "denim",
+    "绒面麂皮": "suede", "亚麻": "linen", "运动涤纶": "technical polyester",
+    "羊绒": "cashmere", "皮革": "leather", "纱布棉麻": "gauze cotton-linen",
+}
+_EN_FABRIC_FEEL = {
+    "T01": "crisp drape, matte surface, sharp creases",
+    "T02": "heavy, lightly pilled, slouchy cuffs",
+    "T03": "liquid sheen, fine folds, close to the skin",
+    "T04": "soft, sun-faded, creased seams",
+    "T05": "sharp edges, crisp folds, even sheen",
+    "T06": "visible twill, worn pale at knees and elbows, stiff hand",
+    "T07": "light-absorbing, matte nap, brushed edges",
+    "T08": "natural wrinkles, slightly translucent, loose drape",
+    "T09": "slight sheen, structured, taped seams",
+    "T10": "lightweight, softly fuzzy edges, smooth body",
+    "T11": "stiff shell, glossy at the creases, fixed shoulder line",
+    "T12": "semi-sheer, layered, raw hem",
+}
+_EN_DOWN = {
+    "直筒西裤": "straight-leg tailored trousers", "工装长裤": "utility trousers",
+    "水洗牛仔裤": "washed jeans", "百褶中长裙": "pleated midi skirt",
+    "包臀半身裙": "pencil skirt", "束脚运动裤": "tapered joggers",
+    "阔腿长裤": "wide-leg trousers", "深色及膝裙": "dark knee-length skirt",
+    "灯芯绒长裤": "corduroy trousers",
+}
+_EN_SHOES = {
+    "白色板鞋": "white sneakers", "黑色乐福鞋": "black loafers", "短靴": "ankle boots",
+    "黑色布鞋": "black cloth shoes", "尖头低跟鞋": "pointed low heels",
+    "旧运动鞋": "worn trainers", "平底单鞋": "flat pumps",
+    "系带皮鞋": "lace-up leather shoes", "工装靴": "work boots",
+}
+_EN_ACC = {
+    "细金属腰带": "a thin metal belt", "单只耳环": "one single earring",
+    "帆布托特包": "a canvas tote bag", "皮质公文包": "a leather briefcase",
+    "针织围巾": "a knitted scarf", "无任何配饰": "no accessories at all",
+    "细链项链": "a thin chain necklace", "墨镜挂在领口": "sunglasses hooked at the collar",
+    "双肩包": "a backpack", "耳机挂在颈间": "earphones around the neck",
+}
+_EN_ACCENT_PLACE = {
+    "领口滚边": "collar trim", "袖口": "cuffs", "内搭": "inner layer", "包": "bag",
+    "鞋": "shoes", "发带": "hairband", "围巾": "scarf", "腰封": "waist belt",
+}
+
+
+def _en(table: dict, key) -> str:
+    k = str(key or "").strip()
+    return table.get(k, k)
+
+
+def _garment_en(d: dict, idx: int) -> str:
+    """英文服装段（与 `_garment_text` 同一套选择逻辑，保证中英不打架）。
+
+    刻意与中文函数**不共用**返回值：中文那份含大量中文修饰，混进英文句只会稀释权重；
+    这里输出一条干净的结构化英文（主色 / 撞色位置 / 面料手感 / 上装 / 下装 / 鞋 / 配饰）。
+    """
+    age = d["age"]
+    g = "f" if d["gender"] == "f" else "m"
+    formal = _formal(d) or age >= 55
+    fid = d["fabric"]["id"]
+    if g == "f":
+        downs = tuple(x for x in DOWN_F
+                      if not (x == "包臀半身裙" and (age <= 20 or age >= 50)))
+        shoes_pool = SHOES_F
+    else:
+        downs, shoes_pool = DOWN_M, SHOES_M
+    down = downs[(idx + _h(d["name"])) % len(downs)]
+    shoes = shoes_pool[(idx * 3 + _h(d["name"] + "s")) % len(shoes_pool)]
+    acc_pool = ACCESSORY_YOUNG if age <= 22 else (ACCESSORY_FORMAL if formal else ACCESSORY)
+    acc = acc_pool[(idx + _h(d["name"] + "a")) % len(acc_pool)]
+
+    if age >= 60:
+        top = "a mandarin-collar cardigan buttoned to the second button"
+        bottom = "dark %s" % _en(_EN_DOWN, down)
+        shoes_en = "soft-soled %s" % _en(_EN_SHOES, shoes)
+    elif fid in ("T06", "T09"):
+        top = ("a cropped utility jacket over a plain tee" if g == "m"
+               else "an oversized denim jacket over a plain tee")
+        bottom, shoes_en = _en(_EN_DOWN, down), _en(_EN_SHOES, shoes)
+    elif fid == "T11":
+        top = "a cropped leather jacket with the collar turned up"
+        bottom, shoes_en = _en(_EN_DOWN, down), _en(_EN_SHOES, shoes)
+    elif fid == "T02":
+        top = "a chunky knit sweater with a slouchy neckline"
+        bottom, shoes_en = _en(_EN_DOWN, down), _en(_EN_SHOES, shoes)
+    elif fid == "T10":
+        top = "a cashmere sweater with relaxed cuffs"
+        bottom, shoes_en = _en(_EN_DOWN, down), _en(_EN_SHOES, shoes)
+    elif fid in ("T04", "T08", "T12"):
+        top = "a cotton-linen shirt with sleeves rolled to the forearm"
+        bottom, shoes_en = _en(_EN_DOWN, down), _en(_EN_SHOES, shoes)
+    elif formal:
+        top = ("a single-breasted two-button suit over a plain shirt" if g == "m"
+               else "a fitted blazer over a narrow-collar shirt")
+        bottom = "matching tailored trousers"
+        shoes_en = "oxford shoes" if g == "m" else "pointed low heels"
+    else:
+        top = "a poplin shirt with the top button open"
+        bottom, shoes_en = _en(_EN_DOWN, down), _en(_EN_SHOES, shoes)
+
+    c = d["color"]
+    return ("main colour %s (%s); accent %s only on the %s; fabric %s (%s); "
+            "top: %s; bottom: %s; shoes: %s; accessories: %s."
+            % (_en(_EN_COLOR, c["name"]), c["hex"], c["accent_hex"],
+               _en(_EN_ACCENT_PLACE, c["accent_place"]),
+               _en(_EN_FABRIC, d["fabric"]["name"]), _EN_FABRIC_FEEL.get(fid, ""),
+               top, bottom, shoes_en, _en(_EN_ACC, acc)))
+
+
 def _public(d: dict) -> dict:
     """导出到 bible 的字段（不带内部临时键）。"""
     keep = ("name", "tier", "gender", "age", "identity", "faction", "persona_bucket",
             "hair", "fabric", "anchor", "posture", "skin", "region", "region_cn",
-            "region_line", "region_forbid", "color", "garment", "expression", "contrast", "face_short")
+            "region_line", "region_forbid", "color", "garment", "garment_en",
+            "expression", "contrast", "face_short")
     out = {k: d[k] for k in keep if k in d}
     out["face"] = {k: d["face"][k] for k in ("id", "name", "slots", "detail", "forbid", "gender", "age")}
     out["persona"] = PERSONA[d["persona_bucket"]]["name"]
@@ -771,6 +896,7 @@ def to_fields(c: dict, style_anchor: str = "") -> dict:
                      % (c["region_line"], face["detail"], _end(hair["detail"]), _end(c["skin"]))),
         "表情": c["expression"] + "。",
         "服装细节": c["garment"],
+        "服装细节EN": c.get("garment_en") or "",
         "识别锚": "%s。" % anchor["text"],
         "差异对照": c["contrast"],
         "反默认": ("排除标准网红脸（削尖下颌＋放大眼裂＋垫高鼻梁＋无毛孔磨皮）、韩式平眉、"
@@ -802,6 +928,7 @@ def maincard_prompt(c: dict, fields: dict, world: str = "", style_style: str = "
         "【面部特征】%s" % f["面部特征"],
         "【表情】%s" % f["表情"],
         "【服装与配饰】%s" % f["服装细节"],
+        "【WARDROBE - 英文段，按此执行】%s" % (c.get("garment_en") or f.get("服装细节EN") or ""),
         "【差异化】%s" % f["差异对照"],
         "【镜头与站位】3/4 侧身面向镜头、正面偏向画面左侧约 30°；85mm 焦段、平视略低机位；"
         "全身入画、正常人体比例；大面积纯色干净底、无道具、无环境；柔光主光 + 极弱轮廓光。",
@@ -820,6 +947,7 @@ def headshot_prompt(c: dict, fields: dict, world: str = "") -> str:
         "【面部特征】%s" % f["面部特征"],
         "【表情】%s" % f["表情"],
         "【服装领口】%s" % f["服装细节"],
+        "【WARDROBE - 英文段，按此执行】%s" % (c.get("garment_en") or f.get("服装细节EN") or ""),
         "【镜头】正面偏 3/4、85mm、平视；中灰色干净背景、柔光打面；重点刻画面部结构与皮肤纹理。",
         "【禁止项】不出现第二个人、不出现文字、不出现排版与色卡；%s" % f["反默认"],
     ] if x)
