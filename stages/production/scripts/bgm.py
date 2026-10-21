@@ -68,6 +68,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -322,6 +323,35 @@ def guess_mood(ws: pathlib.Path, ep: str) -> str:
 # ---------------------------------------------------------------------------
 # 计划
 # ---------------------------------------------------------------------------
+def _recent_usage(ws: pathlib.Path) -> dict:
+    """{track_id: 最近使用它的集号}（扫已有 `<ep>_bgm-plan.json`）。
+
+    用途：整剧几十集，同一首曲连续出现会被平台判"相似内容"降流（库 README 的纪律）。
+    这里给"最久没用过的优先"——不需要维护额外状态，计划文件本身就是记录。
+    """
+    out = {}
+    base = L.out_dir(ws) / "subs"
+    if not base.is_dir():
+        return out
+    for d in base.iterdir():
+        m = re.match(r"ep0*(\d+)$", d.name, re.I)
+        if not m or not d.is_dir():
+            continue
+        n = int(m.group(1))
+        pp = d / ("%s%s" % (d.name, PLAN_SUFFIX))
+        if not pp.is_file():
+            continue
+        try:
+            pl = json.loads(pp.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        for seg in (pl.get("segments") or []):
+            tid = str(seg.get("track") or "")
+            if tid:
+                out[tid] = max(out.get(tid, 0), n)
+    return out
+
+
 def make_plan(ws: pathlib.Path, ep: str, mood: str = None, track_id: str = None,
               gain_db: float = None, segments: int = 1) -> dict:
     """生成铺排计划：默认整集一首、淡入淡出、开 ducking。
@@ -341,6 +371,9 @@ def make_plan(ws: pathlib.Path, ep: str, mood: str = None, track_id: str = None,
         return {"ep": ep, "total_s": total, "voice": ep_voice(ws), "mood": mood,
                 "segments": [], "_error": "库里没有可用曲目（先放素材并写 bgm-library.json，"
                                           "或跑 bgm.py library --scan）"}
+    usage = _recent_usage(ws)
+    # 选曲优先"最久没用过"：从未用过的排最前（-1），其次是上次用得很早的
+    pool.sort(key=lambda t: (usage.get(str(t.get("id")), -1), str(t.get("id"))))
     track = pool[0]
     # 增益优先级：命令行 > 曲目建议值（license 授权时按曲目登记的最稳）> 情绪默认
     try:
@@ -706,6 +739,52 @@ def cmd_mix(a) -> int:
     return 0
 
 
+def cmd_credits(a) -> int:
+    """输出本集用到的 BGM 署名段（CC BY 必须署名，直接粘进发布文案或片尾）。"""
+    ws = _ws(a.workspace)
+    p = plan_path(ws, a.ep)
+    if not p.is_file():
+        print("[FAIL] 没有铺排计划：%s（先跑 bgm.py plan --ep %s --apply）" % (p, a.ep))
+        return EXIT_NOT_READY
+    plan = json.loads(p.read_text(encoding="utf-8-sig"))
+    lib = {str(t.get("id")): t for t in load_library(ws)["tracks"]}
+    seen, lines = set(), []
+    for seg in (plan.get("segments") or []):
+        tid = str(seg.get("track") or "")
+        t = lib.get(tid)
+        if not t or tid in seen:
+            continue
+        seen.add(tid)
+        attr = str(t.get("attribution") or "").strip()
+        if not attr:
+            attr = "%s — “%s”（%s，via Wikimedia Commons）" % (
+                t.get("artist") or "Unknown", t.get("title") or tid,
+                t.get("license_name") or t.get("license") or "见清单")
+        lines.append({"id": tid, "license": t.get("license"),
+                      "need_credit": t.get("license") != "cc0",
+                      "text": attr})
+    if a.json:
+        print(json.dumps({"ep": a.ep, "credits": lines}, ensure_ascii=False, indent=2))
+        return 0
+    need = [x for x in lines if x["need_credit"]]
+    print("=" * 78)
+    print("BGM 署名：%s（%d 首，其中 %d 首要求署名）" % (a.ep, len(lines), len(need)))
+    print("=" * 78)
+    if not lines:
+        print("（这一集没有铺 BGM）")
+        return 0
+    for x in lines:
+        print("%s %s" % ("[需署名]" if x["need_credit"] else "[可免]  ", x["text"]))
+    if need:
+        print("-" * 78)
+        print("可直接粘进发布文案：")
+        print("Music: " + "; ".join(x["text"] for x in need))
+    else:
+        print("-" * 78)
+        print("全部为 CC0 / 公有领域，无需署名（仍建议保留来源备查）。")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="BGM 库 · 铺排计划 · 混音")
     ap.add_argument("--workspace", default=None)
@@ -735,8 +814,14 @@ def main() -> int:
     q.add_argument("--ep", required=True)
     q.add_argument("--apply", action="store_true")
 
+    q = sub.add_parser("credits", help="输出本集 BGM 署名段（CC BY 必须署名）")
+    q.add_argument("--workspace", default=argparse.SUPPRESS)
+    q.add_argument("--ep", required=True)
+    q.add_argument("--json", action="store_true")
+
     a = ap.parse_args()
-    fn = {"library": cmd_library, "plan": cmd_plan, "check": cmd_check, "mix": cmd_mix}.get(a.cmd)
+    fn = {"library": cmd_library, "plan": cmd_plan, "check": cmd_check,
+          "mix": cmd_mix, "credits": cmd_credits}.get(a.cmd)
     if not fn:
         print(render_library(load_library(_ws(a.workspace)), _ws(a.workspace)))
         return 0

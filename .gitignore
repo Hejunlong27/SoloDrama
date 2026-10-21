@@ -62,3 +62,12 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .idea/
+
+# ---- BGM 音频（★ 2026-10-21）----
+# 只提交清单与说明：单曲 2–8MB 会把仓库撑爆，且商用授权凭证通常不允许随开源仓库再分发。
+# 音频由使用者自己放进这个目录（库里只记元数据：文件/情绪/时长/授权/来源）。
+# 注意 `.gitignore` 的取反只放开**文件本身**，不能只写目录 —— 否则规则仍会命中里面的文件。
+stages/production/assets/bgm/**
+!stages/production/assets/bgm/README.md
+!stages/production/assets/bgm/bgm-library.json
+!stages/production/assets/bgm/bgm-library.example.json

@@ -9,6 +9,9 @@
 """
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import json
 import pathlib
 import shutil
@@ -25,6 +28,13 @@ import bgm as B          # noqa: E402
 HAS_FFMPEG = bool(shutil.which("ffmpeg"))
 
 
+def quiet(fn, *a, **kw):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        r = fn(*a, **kw)
+    return r, buf.getvalue()
+
+
 def write(p: pathlib.Path, obj) -> pathlib.Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -39,6 +49,14 @@ class Base(unittest.TestCase):
         self.libdir.mkdir(parents=True, exist_ok=True)
         self.subs = self.ws / "video-pipeline" / "output" / "subs" / "ep01"
         self.subs.mkdir(parents=True, exist_ok=True)
+        # ★ 测试必须与仓库里的**真共享库**隔离：仓库自带 12 首预置曲目（CC BY），
+        #   否则每个用例都会读到它们，断言全乱。这里是"库为空"的干净世界。
+        self._shared_orig = B.shared_lib_dir
+        B.shared_lib_dir = lambda: self.ws / "_shared_bgm_absent"
+        self.addCleanup(self._restore_shared)
+
+    def _restore_shared(self):
+        B.shared_lib_dir = self._shared_orig
 
     def tearDown(self):
         self._td.cleanup()
@@ -288,6 +306,41 @@ class TestMixReal(Base):
                                capture_output=True, text=True)
         self.assertIn("audio", probe.stdout)
         self.assertIn("video", probe.stdout)
+
+
+class TestSelectionAndCredits(Base):
+    def test_60_lru_avoids_repeating_last_track(self):
+        """相邻集不重复：ep01 用过 A 之后，ep02 应优先选从未用过的 B。"""
+        self.lib([self.track("tension_a"), self.track("tension_b")])
+        self.touch_audio("tension_a.mp3")
+        self.touch_audio("tension_b.mp3")
+        self.touch_master(30.0)
+        p1 = B.make_plan(self.ws, "ep01", mood="tension")
+        self.assertEqual(p1["segments"][0]["track"], "tension_a")
+        # 把 ep01 的计划落盘（LRU 靠计划文件记录使用情况）
+        write(self.subs / "ep01_bgm-plan.json", p1)
+        p2 = B.make_plan(self.ws, "ep02", mood="tension")
+        self.assertEqual(p2["segments"][0]["track"], "tension_b")
+
+    def test_61_credits_lists_attribution(self):
+        self.lib([dict(self.track("tension_a"), artist="Kevin MacLeod",
+                       title="Impending Boom", license_name="CC BY 3.0",
+                       attribution="Kevin MacLeod — “Impending Boom”（CC BY 3.0，via Wikimedia Commons）")])
+        self.touch_audio("tension_a.mp3")
+        self.touch_master(30.0)
+        write(self.subs / "ep01_bgm-plan.json", B.make_plan(self.ws, "ep01", mood="tension"))
+        rc, out = quiet(B.cmd_credits, argparse.Namespace(
+            workspace=str(self.ws), ep="ep01", json=False))
+        txt = "".join(out)
+        self.assertEqual(rc, 0)
+        self.assertIn("需署名", txt)
+        self.assertIn("Impending Boom", txt)
+        self.assertIn("Music:", txt)
+
+    def test_62_credits_without_plan(self):
+        rc, _ = quiet(B.cmd_credits, argparse.Namespace(
+            workspace=str(self.ws), ep="ep99", json=False))
+        self.assertEqual(rc, B.EXIT_NOT_READY)
 
 
 class TestSubtitleHook(Base):

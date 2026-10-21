@@ -57,6 +57,10 @@ NO stingers, NO musical bed of any kind — all music is added in post-productio
 清单 `bgm-library.json` 的字段、情绪标签表、版权纪律见
 `stages/production/assets/bgm/README.md`（含 `bgm-library.example.json` 模板）。
 
+**库里已预置 12 首**（2026-10-21）：来自 Wikimedia Commons，全部 CC BY 3.0/4.0，
+按 6 类情绪各 2 首。**音频文件不在仓库里**（见 `.gitignore`），换台机器用
+`python stages/production/scripts/fetch_bgm.py --apply` 重新抓一遍即可（同一套检索与过滤口径）。
+
 ### 2.2 铺排层：情绪 → 计划
 
 ```powershell
@@ -145,6 +149,15 @@ S9 视频放大 → S10 音频与字幕（BGM 混音 + 字幕烧录）→ S11 �
    「版权资料」四张截图，BGM 授权凭证要一并留档。
 4. **曲目一旦进成片，换曲要重混**（`bgm.py mix --apply`），不要手工剪音频 ——
    手工剪会让字幕与音频时长脱节。
+5. **CC BY 必须署名**（库里预置的 12 首都是 CC BY）：
+
+   ```powershell
+   python stages/production/scripts/drama.py --workspace "<ws>" bgm credits --ep ep01
+   ```
+
+   输出可直接粘进发布文案：`Music: Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）`。
+   **发行资料的文案槽位必须带上这段**；`bgm.py check` 只校验授权字段齐全，
+   署名有没有真的写进文案仍是人工项（`release_check` 目前不查这一条）。
 
 ---
 

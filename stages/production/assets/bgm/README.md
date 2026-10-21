@@ -5,6 +5,59 @@
 这个目录放**可以跨剧复用**的配乐素材。项目专用素材放 `<工作区>/04-资产/bgm/`（项目库）。
 解析顺序：**项目库优先**，同名 `id` 覆盖共享库。
 
+## 当前库里有什么（2026-10-21 预置 12 首）
+
+全部来自 **Wikimedia Commons**，授权均为 **CC BY 3.0 / 4.0**：可商用，**但必须署名**。
+按情绪各 2 首，覆盖 6 类：
+
+| id | 情绪 | 曲目 | 作者 | 时长 | 授权 |
+|---|---|---|---|---|---|
+| `tension_01_ossuary_6_air` | tension | Ossuary 6 - Air | Kevin MacLeod | 250s | CC BY 3.0 |
+| `tension_02_impending_boom` | tension | Impending Boom | Kevin MacLeod | 157s | CC BY 3.0 |
+| `suspense_01_passing_action` | suspense | Passing Action | Kevin MacLeod | 50s | CC BY 3.0 |
+| `suspense_02_rafael_krux_lights_creep` | suspense | Lights - Creepy Ambient Suspense | Rafael Krux | 132s | CC BY 4.0 |
+| `revenge_01_scott_buckley_crusader` | revenge | Crusader | Scott Buckley | 77s | CC BY 4.0 |
+| `revenge_02_ghost_dance_macleod_kevi` | revenge | Ghost Dance | Kevin MacLeod | 73s | CC BY 3.0 |
+| `warm_01_scott_buckley_sleep_pian` | warm | Sleep (piano-only mix) | Scott Buckley | 184s | CC BY 4.0 |
+| `warm_02_scott_buckley_interventi` | warm | Intervention | Scott Buckley | 258s | CC BY 4.0 |
+| `sad_01_touching_moments_two_hig` | sad | Touching Moments Two - Higher | Kevin MacLeod | 174s | CC BY 3.0 |
+| `sad_02_touching_moments_four_me` | sad | Touching Moments Four - Melody | Kevin MacLeod | 109s | CC BY 3.0 |
+| `epic_01_dramatic_trailer_by_rafa` | epic | Dramatic Trailer | Rafael Krux | 98s | CC BY 4.0 |
+| `epic_02_rafael_krux_uplifting_bl` | epic | Uplifting Blockbuster | Rafael Krux | 136s | CC BY 4.0 |
+
+**`bpm` 全部为空**——必须人工听着填（剪接点对齐要用），工具不猜。
+
+### 换台机器怎么把音频拿回来
+
+清单在仓库里、音频不在，所以 clone 下来库是「有目录无曲目」。两种办法：
+
+```powershell
+# A. 按清单重新抓一遍（同一批曲子，脚本已内置检索与过滤规则）
+python stages/production/scripts/fetch_bgm.py --apply
+
+# B. 自己准备素材：把音频放进本目录，再 library --scan 补时长
+python stages/production/scripts/bgm.py --workspace "<ws>" library --scan
+```
+
+`fetch_bgm.py` 就是你手上这套选曲口径的可执行版本：只要 `CC0/PD/CC BY`（排除 `BY-SA` 传染性、
+`NC` 不可商用、`ND` 不能混音改编）、排除访谈/讲座录音、排除西部/凯尔特/中世纪/爵士等
+「会把观众拉出剧情」的风格、时长卡 40–300 秒。
+
+### 署名怎么做（CC BY 的硬要求）
+
+```powershell
+python stages/production/scripts/bgm.py --workspace "<ws>" credits --ep ep01
+```
+
+输出可直接粘进发布文案：
+
+```
+Music: Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）
+```
+
+**发行资料里的文案槽位必须带上这段**，否则 CC BY 的署名义务没履行 —— 这是可被追溯的合规问题。
+`bgm.py check` 只校验「授权字段齐全」，署名是否真的出现在文案里仍是**人工审核项**。
+
 ## 为什么音频文件不进 git
 
 - 单个 mp3 通常 2–8 MB，30 首就上百 MB，会把仓库撑爆（`--max-mb` 默认 90 MB 直接拒推）。

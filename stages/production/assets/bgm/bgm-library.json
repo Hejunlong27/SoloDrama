@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "_note": "由 tools 脚本从 Wikimedia Commons 抓取（全部 CC BY 4.0 / 3.0，可商用需署名）。音频文件不进 git（见 .gitignore）；bpm 留空需人工填。`bgm.py credits --ep epNN` 可直接生成署名段。",
+  "tracks": [
+    {
+      "id": "epic_01_dramatic_trailer_by_rafa",
+      "file": "epic_01_dramatic_trailer_by_rafa.mp3",
+      "moods": [
+        "epic"
+      ],
+      "bpm": null,
+      "duration": 97.96,
+      "loop": true,
+      "license": "licensed",
+      "source": "Dramatic Trailer by Rafael Krux.ogg",
+      "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Rafael Krux — “Dramatic Trailer by Rafael Krux”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Dramatic_Trailer_by_Rafael_Krux.ogg",
+      "gain_db": -19,
+      "artist": "Rafael Krux",
+      "title": "Dramatic Trailer by Rafael Krux",
+      "license_name": "CC BY 4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Dramatic_Trailer_by_Rafael_Krux.ogg",
+      "attribution": "Rafael Krux — “Dramatic Trailer by Rafael Krux”（CC BY 4.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "epic_02_rafael_krux_uplifting_bl",
+      "file": "epic_02_rafael_krux_uplifting_bl.mp3",
+      "moods": [
+        "epic"
+      ],
+      "bpm": null,
+      "duration": 136.21,
+      "loop": true,
+      "license": "licensed",
+      "source": "Rafael Krux - Uplifting Blockbuster (cc-by) (filmmusic).mp3",
+      "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Rafael Krux — “Uplifting Blockbuster (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Uplifting_Blockbuster_(cc-by)_(filmmusic).mp3",
+      "gain_db": -19,
+      "artist": "Rafael Krux",
+      "title": "Uplifting Blockbuster (cc-by) (filmmusic)",
+      "license_name": "CC BY 4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Uplifting_Blockbuster_(cc-by)_(filmmusic).mp3",
+      "attribution": "Rafael Krux — “Uplifting Blockbuster (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "revenge_01_scott_buckley_crusader",
+      "file": "revenge_01_scott_buckley_crusader.mp3",
+      "moods": [
+        "revenge"
+      ],
+      "bpm": null,
+      "duration": 76.8,
+      "loop": true,
+      "license": "licensed",
+      "source": "Scott Buckley - Crusader.oga",
+      "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Scott Buckley — “Crusader”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Crusader.oga",
+      "gain_db": -20,
+      "artist": "Scott Buckley",
+      "title": "Crusader",
+      "license_name": "CC BY 4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Crusader.oga",
+      "attribution": "Scott Buckley — “Crusader”（CC BY 4.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "revenge_02_ghost_dance_macleod_kevi",
+      "file": "revenge_02_ghost_dance_macleod_kevi.mp3",
+      "moods": [
+        "revenge"
+      ],
+      "bpm": null,
+      "duration": 73.33,
+      "loop": true,
+      "license": "licensed",
+      "source": "Ghost Dance (MacLeod, Kevin) (ISRC USUAN1100573).oga",
+      "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Ghost Dance (MacLeod, Kevin)”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Ghost_Dance_(MacLeod,_Kevin)_(ISRC_USUAN1100573).oga",
+      "gain_db": -20,
+      "artist": "Kevin MacLeod",
+      "title": "Ghost Dance (MacLeod, Kevin)",
+      "license_name": "CC BY 3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Ghost_Dance_(MacLeod,_Kevin)_(ISRC_USUAN1100573).oga",
+      "attribution": "Kevin MacLeod — “Ghost Dance (MacLeod, Kevin)”（CC BY 3.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "sad_01_touching_moments_two_hig",
+      "file": "sad_01_touching_moments_two_hig.mp3",
+      "moods": [
+        "sad"
+      ],
+      "bpm": null,
+      "duration": 174.24,
+      "loop": true,
+      "license": "licensed",
+      "source": "Touching Moments Two - Higher (ISRC USUAN1100037).mp3",
+      "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Touching Moments Two - Higher”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Touching_Moments_Two_-_Higher_(ISRC_USUAN1100037).mp3",
+      "gain_db": -24,
+      "artist": "Kevin MacLeod",
+      "title": "Touching Moments Two - Higher",
+      "license_name": "CC BY 3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Touching_Moments_Two_-_Higher_(ISRC_USUAN1100037).mp3",
+      "attribution": "Kevin MacLeod — “Touching Moments Two - Higher”（CC BY 3.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "sad_02_touching_moments_four_me",
+      "file": "sad_02_touching_moments_four_me.mp3",
+      "moods": [
+        "sad"
+      ],
+      "bpm": null,
+      "duration": 109.24,
+      "loop": true,
+      "license": "licensed",
+      "source": "Touching Moments Four - Melody (ISRC USUAN1100040).mp3",
+      "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Touching Moments Four - Melody”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Touching_Moments_Four_-_Melody_(ISRC_USUAN1100040).mp3",
+      "gain_db": -24,
+      "artist": "Kevin MacLeod",
+      "title": "Touching Moments Four - Melody",
+      "license_name": "CC BY 3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Touching_Moments_Four_-_Melody_(ISRC_USUAN1100040).mp3",
+      "attribution": "Kevin MacLeod — “Touching Moments Four - Melody”（CC BY 3.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "suspense_01_passing_action",
+      "file": "suspense_01_passing_action.mp3",
+      "moods": [
+        "suspense"
+      ],
+      "bpm": null,
+      "duration": 50.23,
+      "loop": true,
+      "license": "licensed",
+      "source": "Passing Action (ISRC USUAN1100117).mp3",
+      "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Passing Action”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Passing_Action_(ISRC_USUAN1100117).mp3",
+      "gain_db": -23,
+      "artist": "Kevin MacLeod",
+      "title": "Passing Action",
+      "license_name": "CC BY 3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Passing_Action_(ISRC_USUAN1100117).mp3",
+      "attribution": "Kevin MacLeod — “Passing Action”（CC BY 3.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "suspense_02_rafael_krux_lights_creep",
+      "file": "suspense_02_rafael_krux_lights_creep.mp3",
+      "moods": [
+        "suspense"
+      ],
+      "bpm": null,
+      "duration": 131.64,
+      "loop": true,
+      "license": "licensed",
+      "source": "Rafael Krux - Lights - Creepy Ambient Suspense (cc-by) (filmmusic).mp3",
+      "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Rafael Krux — “Lights - Creepy Ambient Suspense (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Lights_-_Creepy_Ambient_Suspense_(cc-by)_(filmmusic).mp3",
+      "gain_db": -23,
+      "artist": "Rafael Krux",
+      "title": "Lights - Creepy Ambient Suspense (cc-by) (filmmusic)",
+      "license_name": "CC BY 4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Lights_-_Creepy_Ambient_Suspense_(cc-by)_(filmmusic).mp3",
+      "attribution": "Rafael Krux — “Lights - Creepy Ambient Suspense (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "tension_01_ossuary_6_air",
+      "file": "tension_01_ossuary_6_air.mp3",
+      "moods": [
+        "tension"
+      ],
+      "bpm": null,
+      "duration": 250.07,
+      "loop": true,
+      "license": "licensed",
+      "source": "Ossuary 6 - Air (ISRC USUAN1500048).mp3",
+      "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Ossuary_6_-_Air_(ISRC_USUAN1500048).mp3",
+      "gain_db": -22,
+      "artist": "Kevin MacLeod",
+      "title": "Ossuary 6 - Air",
+      "license_name": "CC BY 3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Ossuary_6_-_Air_(ISRC_USUAN1500048).mp3",
+      "attribution": "Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "tension_02_impending_boom",
+      "file": "tension_02_impending_boom.mp3",
+      "moods": [
+        "tension"
+      ],
+      "bpm": null,
+      "duration": 156.97,
+      "loop": true,
+      "license": "licensed",
+      "source": "Impending Boom (ISRC USUAN1100198).mp3",
+      "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Impending Boom”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Impending_Boom_(ISRC_USUAN1100198).mp3",
+      "gain_db": -22,
+      "artist": "Kevin MacLeod",
+      "title": "Impending Boom",
+      "license_name": "CC BY 3.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Impending_Boom_(ISRC_USUAN1100198).mp3",
+      "attribution": "Kevin MacLeod — “Impending Boom”（CC BY 3.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "warm_01_scott_buckley_sleep_pian",
+      "file": "warm_01_scott_buckley_sleep_pian.mp3",
+      "moods": [
+        "warm"
+      ],
+      "bpm": null,
+      "duration": 184.36,
+      "loop": true,
+      "license": "licensed",
+      "source": "Scott Buckley - Sleep (piano-only mix).oga",
+      "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Scott Buckley — “Sleep (piano-only mix)”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Sleep_(piano-only_mix).oga",
+      "gain_db": -21,
+      "artist": "Scott Buckley",
+      "title": "Sleep (piano-only mix)",
+      "license_name": "CC BY 4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Sleep_(piano-only_mix).oga",
+      "attribution": "Scott Buckley — “Sleep (piano-only mix)”（CC BY 4.0，via Wikimedia Commons）"
+    },
+    {
+      "id": "warm_02_scott_buckley_interventi",
+      "file": "warm_02_scott_buckley_interventi.mp3",
+      "moods": [
+        "warm"
+      ],
+      "bpm": null,
+      "duration": 258.28,
+      "loop": true,
+      "license": "licensed",
+      "source": "Scott Buckley - Intervention.oga",
+      "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Scott Buckley — “Intervention”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Intervention.oga",
+      "gain_db": -21,
+      "artist": "Scott Buckley",
+      "title": "Intervention",
+      "license_name": "CC BY 4.0",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Intervention.oga",
+      "attribution": "Scott Buckley — “Intervention”（CC BY 4.0，via Wikimedia Commons）"
+    }
+  ]
+}

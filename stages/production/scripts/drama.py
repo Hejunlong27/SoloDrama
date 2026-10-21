@@ -965,9 +965,10 @@ GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
 ★流水线   pipeline plan       开工预告：预计完工时间 + 预计花费 + 预算余量（不花钱）
          pipeline run --yes  一次跑到底（预算熔断 → 退出码 3；等 Agent 产出 → 4）
          pipeline mark S3    登记内容环节完成
-★配乐     bgm library         看库（--scan 用 ffprobe 补时长）
-         bgm plan --ep ep01 --apply    生成铺盖计划（情绪→增益/淡入淡出→ducking）
+★配乐     bgm library         看库（--scan 用 ffprobe 补时长；共享库已预置 12 首 CC BY）
+         bgm plan --ep ep01 --apply    生成铺排计划（情绪→增益/淡入淡出→ducking；相邻集自动不重复）
          bgm mix --ep ep01 --apply     混音（视频直通只重编码音频；S10 会自动接）
+         bgm credits --ep ep01         出署名段（CC BY 必须署名，粘进发布文案）
 看状态   status              全盘面板：数据/参考图/资产缺口/批次/台账（零网络，先跑这个）
 模型     models              ★前置条件：首次生图/出片前必须确认模型（本地/云端/闭源三选一）
          models --ask        交互式引导确认（生图；换 video 传 models ask video）
@@ -1247,7 +1248,7 @@ def main() -> int:
         ('pipeline', 'pipeline.py', '流水线模式（一次确认跑完整部剧）',
          'plan / run --yes / mark / status'),
         ('bgm', 'bgm.py', 'BGM 库与混音（配乐）',
-         'library / plan --ep epNN --apply / check / mix --apply'),
+         'library / plan --ep epNN --apply / check / mix / credits'),
     ):
         p = sub.add_parser(name, help='%s —— %s' % (title, brief))
         _add_ws_arg(p)
