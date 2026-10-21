@@ -25,9 +25,12 @@
 | `epic_01_dramatic_trailer_by_rafa` | epic | Dramatic Trailer | Rafael Krux | 98s | CC BY 4.0 |
 | `epic_02_rafael_krux_uplifting_bl` | epic | Uplifting Blockbuster | Rafael Krux | 136s | CC BY 4.0 |
 
-**`bpm` 全部为空**——必须人工听着填（剪接点对齐要用），工具不猜。
+**`bpm` 全部为空**——不是缺陷：短剧铺底不跟 BPM 走，只有「卡点剪辑」（预告片/混剪）才需要，届时人工填上即可。工具不猜。
 
-### 另有 6 首 AI 生成（2026-10-21 由用户用 AI 音乐平台生成）
+### 另有 6 首「自有版权（AI 生成）」
+
+2026-10-21 由项目所有者用 AI 音乐平台生成，**版权归其本人**（`license: owned`，
+另有 `origin: ai_generated` 保留"AI 生成"这一事实，便于发行披露）。
 
 | id | 情绪 | 曲目 | 时长 | 实测响度 | 增益 | 可循环 |
 |---|---|---|---|---|---|---|
@@ -38,13 +41,16 @@
 | `warm_11_tender_reunion` | warm | Tender Reunion | 176s | -17.4 LUFS | -14.6 dB | 否（尾部淡出） |
 | `sad_11_no_words` | sad | No Words | 138s | -13.7 LUFS | -21.3 dB | 否（尾部淡出） |
 
-⚠️ **待补**：这 6 首的 `license_note` 目前只写「AI 生成，平台与商用条款待补」——
-发行前必须补上 **平台名 + 授权截图**（`license=generated` 的合规要求）。
-另外它们的 `bpm` 也还没填。
+**自有版权不需对外署名**：`bgm.py credits` 对这 6 首会标 `[自有]` 而不是 `[需署名]`。
+两点提醒：
 
-> 注意这 6 首的响度跨了 13.5 dB（-13.7 ~ -27.2）。所以清单里记 `loudness_lufs`、
-> 增益按实测反推 —— **不要给所有曲子套同一个 -22 dB**，否则有的震耳朵、有的听不见。
-> 详见 `docs/production/BGM与音频设计.md` §2.3。
+1. 仍建议把**生成平台与账号的授权条款截图归档**，发行方或平台抽查时可举证（不占仓库空间）。
+2. 若发行平台要求**披露 AI 生成**（部分市场已在做），用 `origin=ai_generated` 说明即可，
+   不要写成"原创配乐"。
+
+注意这 6 首的响度跨了 13.5 dB（-13.7 ~ -27.2）。所以清单里记 `loudness_lufs`、
+增益按实测反推 —— **不要给所有曲子套同一个 -22 dB**，否则有的震耳朵、有的听不见。
+详见 `docs/production/BGM与音频设计.md` §2.3。
 
 ### 换台机器怎么把音频拿回来
 
@@ -104,10 +110,10 @@ python stages/production/scripts/bgm.py --workspace "<ws>" library --scan
 | `id` | 唯一标识，建议 `情绪_序号`，如 `tension_low_01` |
 | `file` | 文件名（相对本目录或项目库根） |
 | `moods` | 情绪标签数组，见下表；留空 = 任何情绪都可选 |
-| `bpm` | 节拍数。**必须人工填**（剪接点对齐用），工具不猜 |
+| `bpm` | 节拍数。**可选**：只有「卡点剪辑」（预告片/混剪）才需要卡 BPM；短剧铺底不跟 BPM 走，留空完全可用。工具不猜 |
 | `duration` | 秒；可留空后由 `library --scan` 补 |
 | `loop` | 是否可无缝循环（决定混音时是否 `-stream_loop -1`） |
-| `license` | `owned`（自有）/ `licensed`（已购买授权）/ `cc0`（公有领域）/ `generated`（AI 生成） |
+| `license` | `owned`（**版权自有，无需署名**）/ `licensed`（已购买授权，按条款署名）/ `cc0`（公有领域）/ `generated`（AI 生成但商用条款未确认，**必须写 `license_note`**） |
 | `source` | 出处与凭证位置。发行时平台可能抽查，必须可追溯 |
 | `license_note` | 商用条款摘要。**`generated` 必填**（平台审核与 Content ID 争议都要用） |
 | `gain_db` | 建议铺底增益（-30 ~ -6）。短剧常用 -22。**写了就以它为准**（不同曲目母带响度差很多，-14 LUFS 的曲子要压得比 -20 LUFS 的多），留空才走情绪默认表 |

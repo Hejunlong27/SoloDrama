@@ -883,33 +883,42 @@ def cmd_credits(a) -> int:
         if not t or tid in seen:
             continue
         seen.add(tid)
+        lic = str(t.get("license") or "")
         attr = str(t.get("attribution") or "").strip()
         if not attr:
-            attr = "%s — “%s”（%s，via Wikimedia Commons）" % (
-                t.get("artist") or "Unknown", t.get("title") or tid,
-                t.get("license_name") or t.get("license") or "见清单")
-        lines.append({"id": tid, "license": t.get("license"),
-                      "need_credit": t.get("license") != "cc0",
+            # 自有 / CC0 不需要对外署名：只报「哪首曲子」，不要编造出处
+            attr = "%s：%s" % (t.get("license_name") or lic or "版权见清单",
+                              t.get("title") or tid)
+        lines.append({"id": tid, "license": lic, "origin": t.get("origin"),
+                      # ★ 2026-10-21 修：`owned`（自有版权）不需要对外署名，
+                      #   原来只排除 cc0，会把自有版权曲目也标成「需署名」。
+                      "need_credit": lic not in ("cc0", "owned"),
                       "text": attr})
     if a.json:
         print(json.dumps({"ep": a.ep, "credits": lines}, ensure_ascii=False, indent=2))
         return 0
     need = [x for x in lines if x["need_credit"]]
+    own = [x for x in lines if x["license"] == "owned"]
     print("=" * 78)
-    print("BGM 署名：%s（%d 首，其中 %d 首要求署名）" % (a.ep, len(lines), len(need)))
+    print("BGM 署名：%s（%d 首，其中 %d 首要求署名、%d 首自有版权）"
+          % (a.ep, len(lines), len(need), len(own)))
     print("=" * 78)
     if not lines:
         print("（这一集没有铺 BGM）")
         return 0
     for x in lines:
-        print("%s %s" % ("[需署名]" if x["need_credit"] else "[可免]  ", x["text"]))
+        tag = "[需署名]" if x["need_credit"] else ("[自有]  " if x["license"] == "owned"
+                                                  else "[可免]  ")
+        print("%s %s" % (tag, x["text"]))
     if need:
         print("-" * 78)
         print("可直接粘进发布文案：")
         print("Music: " + "; ".join(x["text"] for x in need))
     else:
         print("-" * 78)
-        print("全部为 CC0 / 公有领域，无需署名（仍建议保留来源备查）。")
+        print("全部为自有版权 / CC0，**无需对外署名**（仍建议保留来源备查）。")
+        if own:
+            print("提示：若发行平台要求披露 AI 生成，可用清单里的 origin=ai_generated 字段说明。")
     return 0
 
 

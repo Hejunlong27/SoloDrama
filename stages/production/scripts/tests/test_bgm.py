@@ -401,6 +401,23 @@ class TestSelectionAndCredits(Base):
             workspace=str(self.ws), ep="ep99", json=False))
         self.assertEqual(rc, B.EXIT_NOT_READY)
 
+    def test_63_owned_needs_no_credit(self):
+        """自有版权（owned）不需要对外署名 —— 不能被误标成「需署名」。"""
+        self.lib([dict(self.track("t_own"), license="owned", origin="ai_generated",
+                       artist="自有版权（AI 生成）", license_name="自有版权（AI 生成）",
+                       attribution="")])
+        self.touch_audio("t_own.mp3")
+        self.touch_master(30.0)
+        write(self.subs / "ep01_bgm-plan.json", B.make_plan(self.ws, "ep01", mood="tension"))
+        rc, out = quiet(B.cmd_credits, argparse.Namespace(
+            workspace=str(self.ws), ep="ep01", json=False))
+        txt = "".join(out)
+        self.assertEqual(rc, 0)
+        self.assertIn("[自有]", txt)
+        self.assertIn("无需对外署名", txt)
+        self.assertNotIn("[需署名]", txt)
+        self.assertNotIn("Music:", txt)
+
 
 class TestSubtitleHook(Base):
     """subtitle.py 的 `_try_bgm()`：无计划/禁用时**必须原样返回底片**，不能阻塞出片。"""

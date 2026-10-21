@@ -172,15 +172,18 @@ S9 视频放大 → S10 音频与字幕（BGM 混音 + 字幕烧录）→ S11 �
 
 ## 四、版权与发行（这块会被平台抽查）
 
-1. **清单里必须有 `license`**：`owned` / `licensed` / `cc0` / `generated`。
+1. **清单里必须有 `license`**：`owned`（版权自有，**无需署名**）/ `licensed`（已购授权，按条款署名）/
+   `cc0`（公有领域）/ `generated`（AI 生成但商用条款未确认，**必须写 `license_note`**）。
    缺了或非法 → `bgm.py check` **退出码 2**，不许混。
+   > AI 生成但**版权已归己**的曲目记 `owned`，另加 `origin: ai_generated` 保留事实 ——
+   > 这样既不会被 `credits` 误标成「需署名」，发行时又能按要求披露 AI 生成。
 2. **`generated`（AI 生成）必须写 `license_note`**：多数平台对"生成物可商用"有附加条件
    （能否再分发、是否需署名）。这条是 `release_check` 之前的人工审核项，别用"反正是我生成的"糊过去。
 3. **`source` 要能对上凭证**：订单号 / 授权书文件名 / 生成平台账号。发行资料里的
    「版权资料」四张截图，BGM 授权凭证要一并留档。
 4. **曲目一旦进成片，换曲要重混**（`bgm.py mix --apply`），不要手工剪音频 ——
    手工剪会让字幕与音频时长脱节。
-5. **CC BY 必须署名**（库里预置的 12 首都是 CC BY）：
+5. **CC BY 必须署名**（库里预置的 12 首都是 CC BY；**自有版权与 CC0 不需要**）：
 
    ```powershell
    python stages/production/scripts/drama.py --workspace "<ws>" bgm credits --ep ep01
