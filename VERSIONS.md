@@ -1,6 +1,7 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-10-21 基线（V0.6 回填）**：内容提交 `649a77f`（远端 `f9d1e31` → `649a77f`，快进，未重写历史）；本条为回填提交，仅改 `README.md` / `VERSIONS.md` / `manifest.sha256`。
 - **2026-10-21 更新（V0.6 · 标准作业流程 + 前置条件 + 流水线模式）**：把「顺序」做成可执行的一层。① 新增 `stages/production/scripts/workflow.py` —— 11 环节机器真源（S1 调研 → S2 剧本 → S3 资产设计 → S4 资产生成 → S5 视频提示词 → S6 视频生成 → S7 发行资料〔可选〕→ S8 拼接 → S9 放大 → S10 字幕 → S11 定稿），每环节给出 `kind`（内容/自动）、产物判据（含动态 `min`=集数/镜数）、标准命令；`status` 报当前应做环节，`check --stage` 前置未完成即退出码 4，`skip` 必须 `--reason` 并写 `workflow-state.json` 留痕；真源文档 `docs/orchestration/标准作业流程.md`（含与总纲 16 环节的映射表）。② 新增 `stages/production/scripts/project_setup.py` —— 开工前置 **7 项**（画风 / 集数 / 每集时长 / 生图模型 / 视频模型+功能选项 / 画面分辨率 / 是否流水线）收成一张 `<ws>/project-setup.json`，`require()` 单一门禁（未齐退出码 4）；**不另立真源**：画风转发 `style_gate._do_set`、通道转发 `model_gate._do_set`，本单只做汇总与门禁并留改动历史；视频功能选项默认值 4 步 / 0.8MP / voice=h3 / 并发 2（全部来自实测）。③ 新增 `stages/production/scripts/pipeline.py` —— 流水线模式：`plan` 打印**预计完工时间（机时 + 内容制作拆分）、预计花费、预算余量**（不花钱不改产物）；`run --yes` 按 11 环节无人值守推进，`auto` 环节调既有脚本、`agent` 环节打印作业单并停（退出码 4），每个计费环节**之前**核对 `ledger/runs` 的 `usage.consumeCoins`（只累加 SUCCESS），超上限退出码 3。④ `drama.py` 新增 `setup / workflow / pipeline` 三个薄转发子命令（REMAINDER 透传，后续加参数不必改 drama.py）。⑤ 同批修复实跑优化建议单 19 条 + 剪影分镜规范 11 条固化为文档，逐条对照见 `docs/patches/2026-10-21_实跑优化建议修复记录.md`。
 - 收编方式：**拷贝固化**（副本为唯一运行真源，原 Skill 包不再承担引擎职责）
 - 2026-10-08 更新：按新宗旨（让所有人都可以做AI短剧，每个人都可以把自己的故事拍出来！！！）决策移除免费通道（rh-free-h3-video），出片仅保留「AI 应用 + 工作流」标准通道
