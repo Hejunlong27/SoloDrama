@@ -61,6 +61,10 @@ NO stingers, NO musical bed of any kind — all music is added in post-productio
 按 6 类情绪各 2 首。**音频文件不在仓库里**（见 `.gitignore`），换台机器用
 `python stages/production/scripts/fetch_bgm.py --apply` 重新抓一遍即可（同一套检索与过滤口径）。
 
+**想自己用 AI 生成配乐**（MiniMax / Suno / Udio）：直接抄 `docs/production/BGM生成提示词.md` 里的
+12 条提示词（6 情绪 × 主用/变体）。那里写清了六条硬约束（无人声、无旋律主线、无突袭音效、
+无前奏无 drop、可无缝循环、中低音量铺底）——**不按这六条生成的作品混不进对白**。
+
 ### 2.2 铺排层：情绪 → 计划
 
 ```powershell

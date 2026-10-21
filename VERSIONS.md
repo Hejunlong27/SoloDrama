@@ -1,6 +1,7 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-10-21 更新（V0.7.2 · BGM 生成提示词）**：新增 `docs/production/BGM生成提示词.md`。先定「什么样的 BGM 才混得进去」六条硬约束（无人声/无旋律主线/无突袭音效/无前奏无 drop/可无缝循环/中低音量铺底），再给 6 情绪 × 主用·变体共 12 条可直接粘贴的提示词（曲风+情绪+乐器+BPM+调性+结构），附 negative 词表、参数建议与交付要求。纯文档改动。
 - **2026-10-21 回填（V0.7.1）**：内容提交 `85d8a1a`（远端 `ae03b32` → `85d8a1a`，快进）；本条仅改 `README.md` / `VERSIONS.md` / `manifest.sha256`。
 - **2026-10-21 更新（V0.7.1 · BGM 库落地）**：① 先证伪一条路：**Pexels 无法提供 BGM** —— 实测其 API 只有 `photos`/`videos`，`/v1/audio`、`/v1/music`、`/v2/audio` 全部 404，视频不带音轨；改用 **Wikimedia Commons**（授权字段结构化，能机器判定可商用）。② 预置 **12 首**（6 类情绪 × 2），全部 **CC BY 3.0/4.0**（可商用须署名），清单含 `artist/license_name/source_url/attribution/license_note` 可审计；音频不进 git（补了 `.gitignore` 规则并用探针验证）。③ 新增 `stages/production/scripts/fetch_bgm.py`：**库可再生**，换机器跑 `--apply` 按同一检索与过滤口径抓回；排除 BY-SA/NC/ND、访谈讲座录音、地域时代风格。④ 新增 `bgm.py credits --ep epNN` 输出署名段（CC BY 署名义务，粘进发布文案）。⑤ 选曲加 **LRU**（扫计划文件，优先最久没用过的），整剧不重复同一首。验证：`test_bgm.py` **31/31**，全量 **557 例**。
 - **2026-10-21 回填（V0.7）**：内容提交 `269352e`（远端 `57d628e` → `269352e`，快进）；本条仅改 `README.md` / `VERSIONS.md` / `manifest.sha256`。
