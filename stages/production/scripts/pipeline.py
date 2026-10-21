@@ -186,6 +186,10 @@ def forecast(ws: pathlib.Path) -> dict:
         "budget_headroom_coins": (cap - sp["coins"]) if cap else None,
         "episodes": eps,
         "shots": ev["ctx"]["shots"],
+        "workflow_ref": (setup["items"]["workflow_api"] or {}).get("ref"),
+        "workflow_site": (setup["items"]["workflow_api"] or {}).get("site"),
+        "account_alias": (setup["items"]["account"] or {}).get("alias"),
+        "account_fingerprint": (setup["items"]["account"] or {}).get("fingerprint"),
         "coins_per_shot": dv.get("coins_per_shot"),
         "eta_minutes": round(total_minutes) or None,
         "machine_minutes": round(minutes_video + minutes_post + minutes_assets) or None,
@@ -209,6 +213,11 @@ def render_plan(f: dict, ws: pathlib.Path) -> str:
     L.append("流水线模式  : %s" % ("开（确认后不再逐步问）" if pipe else
                                    ("关（逐环节确认）" if pipe is False else "未确认")))
     L.append("规模        : %s 集 × 约 %s 镜/集" % (f["episodes"] or "?", f["shots"] or "?"))
+    L.append("工作流 API  : %s%s" % (f.get("workflow_ref") or "无需",
+                                    "（%s）" % f["workflow_site"] if f.get("workflow_site") else ""))
+    L.append("账号        : %s%s" % (f.get("account_alias") or "无需",
+                                    "（%s）" % f["account_fingerprint"]
+                                    if f.get("account_fingerprint") else ""))
     L.append("-" * 74)
     L.append("剩余环节    : 自动 %d 个 %s" % (len(f["auto_steps"]),
                                              "、".join(s.split()[0] for s in f["auto_steps"]) or "—"))
@@ -412,6 +421,19 @@ def cmd_run(a) -> int:
                                   "ended": _iso()})
             save_state(ws, state)
             return EXIT_NEED_AGENT
+
+        # 账号一致性闸门（★ 2026-10-21）：流水线一跑几小时，中途被人换了 Key
+        #   就会「前半段算 A 账号、后半段算 B 账号」。每个计费环节前比对指纹，不一致立刻停。
+        if st.get("billing") or sid in ("S4", "S6", "S7", "S11"):
+            _acct = PS.collect(ws)["items"].get("account") or {}
+            if _acct.get("required") and not _acct.get("ok"):
+                print("\n[BLOCK] 账号 API Key 校验未过（退出码 %d）：%s"
+                      % (EXIT_NEED_AGENT, "；".join(str(x) for x in _acct.get("missing") or [])))
+                print("        重新确认：drama.py setup set --account \"<别名>\"")
+                state["runs"].append({"at": started, "stage": sid,
+                                      "result": "account_mismatch", "ended": _iso()})
+                save_state(ws, state)
+                return EXIT_NEED_AGENT
 
         # 预算闸门（计费环节前）
         sp = spent_coins(ws)["coins"]

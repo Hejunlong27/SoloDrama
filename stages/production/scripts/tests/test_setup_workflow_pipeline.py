@@ -52,7 +52,10 @@ def ns(**kw):
              video_workflow=None, video_workflow_id=None, video_comfy_url=None,
              video_app_url=None, video_app_id=None, resolution=None, steps=None,
              megapixels=None, voice=None, concurrency=None, pipeline=None,
-             budget_coins=None)
+             budget_coins=None,
+             # ★ 2026-10-21：工作流 API 与账号 Key
+             workflow_api=None, workflow_id=None, app_url=None, comfy_url=None,
+             comfy_workflow=None, site=None, account=None, account_source=None)
     d.update(kw)
     return argparse.Namespace(**d)
 
@@ -97,7 +100,7 @@ class TestProjectSetup(Base):
         self.assertEqual(self.full_setup(), 0)
         ok, msg = PS.require(self.ws)
         self.assertTrue(ok, msg)
-        self.assertIn("7/7", msg)
+        self.assertIn("9/9", msg)
 
     def test_03_bad_ep_seconds(self):
         self.assertEqual(self.set_rc(ep_seconds=45), 2)
@@ -140,7 +143,8 @@ class TestProjectSetup(Base):
     def test_11_require_json_shape(self):
         st = PS.collect(self.ws)
         self.assertEqual(set(st["items"]), {"style", "episodes", "image_model",
-                                            "video_model", "resolution",
+                                            "video_model", "workflow_api",
+                                            "account", "resolution",
                                             "video_options", "pipeline"})
 
     def test_12_reset(self):
@@ -368,6 +372,118 @@ class TestFfsRules(unittest.TestCase):
         ep = types.SimpleNamespace(shots=shots, total_sec=59)
         self.assertEqual([i.code for i in V._check_duration(ep)], [],
                          "59 秒在 60 秒档的 ±2s 容差内")
+
+
+class TestWorkflowApiAndAccount(Base):
+    """★ 2026-10-21 用户补充：必须向用户确认「用哪条工作流 API」与「哪个账号的 Key」。"""
+
+    FAKE_KEY = "rh_test_key_0123456789abcdef"
+
+    def setUp(self):
+        super().setUp()
+        self._saved = {k: os.environ.get(k) for k in
+                       ("RUNNINGHUB_API_KEY", "RH_API_KEY",
+                        "RUNNINGHUB_BASE_URL", "RH_BASE_URL")}
+        os.environ["RUNNINGHUB_API_KEY"] = self.FAKE_KEY
+        os.environ["RUNNINGHUB_BASE_URL"] = "https://www.runninghub.ai"
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        super().tearDown()
+
+    def _rh_video(self):
+        self.touch("project-setup.json", json.dumps({"video_options": {}, "pipeline": {}}))
+        quiet(PS.apply_set, self.ws, ns(video_model="runninghub",
+                                        video_workflow_id="wf_test_001"))
+
+    def test_80_not_required_without_cloud(self):
+        self.full_setup(video_model="closed_source")
+        it = PS.collect(self.ws)["items"]
+        self.assertFalse(it["workflow_api"]["required"])
+        self.assertTrue(it["workflow_api"]["ok"])
+        self.assertFalse(it["account"]["required"])
+        self.assertTrue(it["account"]["ok"])
+
+    def test_81_rh_without_workflow_missing(self):
+        quiet(PS.apply_set, self.ws, ns(video_model="runninghub",
+                                        video_workflow_id="wf_test_001"))
+        it = PS.collect(self.ws)["items"]
+        # 工作流 ID 能从 model-plan 的「执行依据」推断出来（不必抄两遍）
+        self.assertEqual(it["workflow_api"]["ref"], "wf_test_001")
+        self.assertTrue(it["workflow_api"]["ok"], it["workflow_api"])
+        # 但账号还没确认
+        self.assertTrue(it["account"]["required"])
+        self.assertFalse(it["account"]["ok"])
+
+    def test_82_explicit_workflow_fields(self):
+        quiet(PS.apply_set, self.ws, ns(video_model="runninghub",
+                                        workflow_id="wf_abc", site="https://www.runninghub.ai"))
+        wa = PS.collect(self.ws)["items"]["workflow_api"]
+        self.assertTrue(wa["ok"], wa)
+        self.assertEqual(wa["ref"], "wf_abc")
+        self.assertEqual(wa["site"], "https://www.runninghub.ai")
+
+    def test_83_bad_site_rejected(self):
+        self.assertEqual(self.set_rc(video_model="runninghub", workflow_id="wf_abc",
+                                     site="https://runninghub.example.com"), 2)
+
+    def test_84_account_written_with_fingerprint(self):
+        rc = self.full_setup(video_model="runninghub", workflow_id="wf_abc",
+                             site="https://www.runninghub.ai", account="主账号 A")
+        self.assertEqual(rc, 0)
+        ac = PS.collect(self.ws)["items"]["account"]
+        self.assertTrue(ac["ok"], ac)
+        self.assertEqual(ac["alias"], "主账号 A")
+        self.assertIn("…", ac["fingerprint"])
+
+    def test_85_key_body_never_persisted(self):
+        self.full_setup(video_model="runninghub", workflow_id="wf_abc",
+                        site="https://www.runninghub.ai", account="主账号 A")
+        raw = PS.setup_path(self.ws).read_text(encoding="utf-8")
+        self.assertNotIn(self.FAKE_KEY, raw, "Key 本体不得落盘")
+        self.assertIn("key_fingerprint", raw)
+
+    def test_86_account_without_key_blocked(self):
+        rc, out = quiet(PS.apply_set, self.ws, ns(
+            video_model="runninghub", workflow_id="wf_abc",
+            account="空环境账号", account_source="SOLODRAMA_TEST_NO_SUCH_KEY"))
+        self.assertEqual(rc[0], 4)
+        self.assertIn("没读到 API Key", "".join(rc[1]))
+
+    def test_87_drift_detected(self):
+        self.full_setup(video_model="runninghub", workflow_id="wf_abc",
+                        site="https://www.runninghub.ai", account="主账号 A")
+        d = PS.load(self.ws)
+        d["account"]["key_fingerprint"] = "deadbeef…0000"
+        PS.setup_path(self.ws).write_text(json.dumps(d, ensure_ascii=False),
+                                          encoding="utf-8")
+        ok, msg = PS.require(self.ws)
+        self.assertFalse(ok)
+        self.assertIn("不一致", msg)
+        self.assertIn("账号", msg)
+
+    def test_88_accounts_lists_candidates(self):
+        rc, out = quiet(PS.cmd_accounts, argparse.Namespace(
+            workspace=str(self.ws), json=False))
+        self.assertEqual(rc, 0)
+        txt = "".join(out)
+        self.assertIn("可用账号", txt)
+        self.assertIn("RUNNINGHUB_API_KEY", txt)
+        self.assertNotIn(self.FAKE_KEY, txt)
+
+    def test_89_pipeline_forecast_shows_both(self):
+        self.full_setup(video_model="runninghub", workflow_id="wf_abc",
+                        site="https://www.runninghub.ai", account="主账号 A")
+        f = PL.forecast(self.ws)
+        self.assertEqual(f["workflow_ref"], "wf_abc")
+        self.assertEqual(f["account_alias"], "主账号 A")
+        txt = PL.render_plan(f, self.ws)
+        self.assertIn("工作流 API", txt)
+        self.assertIn("账号 ", txt)
 
 
 class TestReleasePickLatest(unittest.TestCase):

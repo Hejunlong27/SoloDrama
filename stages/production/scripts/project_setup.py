@@ -87,6 +87,31 @@ DEFAULT_MINUTES = {"assets": 6.0, "video_per_ep": 11.0, "post_per_ep": 4.0}
 
 
 # ---------------------------------------------------------------------------
+# 工作流 API 与账号 API Key（★ 2026-10-21 用户补充：这两项必须显式确认）
+# ---------------------------------------------------------------------------
+# 为什么必须问：
+#   * **工作流 API** 决定「用哪条工作流出片」。同一个 workflowname 在平台上可以存在多份，
+#     换错 workflowId = 换了一个模型/分辨率/步数，成片风格会整体漂移，而且**不会报错**。
+#   * **账号 API Key** 决定「花谁的钱、出图带谁的水印」。实测事故：确认时用的是 A 账号，
+#     跑的时候环境变量被改成 B 账号 —— 钱花了、产物带 B 的水印，事后极难追溯。
+#     所以这里登记的不是 Key 本身，而是**可核对的指纹**：真跑之前比对，不一致就停。
+WORKFLOW_KINDS = {
+    "runninghub_workflow": "RunningHub 工作流（workflowId + 站点）",
+    "runninghub_ai_app": "RunningHub AI 应用（应用地址 + 站点）",
+    "cloud_comfyui": "云端 ComfyUI（服务地址 + 工作流 API 文件）",
+    "local_comfyui": "本地 ComfyUI（工作流 API 文件，￥0，无需账号）",
+    "closed_source": "闭源模型（人工出图后落盘，无 API）",
+}
+RH_KINDS = ("runninghub", "runninghub_workflow", "runninghub_ai_app")
+COMFY_KINDS = ("local_comfyui", "cloud_comfyui")
+
+# Key / 站点的读取来源（顺序即优先级）。**只登记来源与指纹，Key 本体永不落盘。**
+KEY_ENV_NAMES = ("RUNNINGHUB_API_KEY", "RH_API_KEY")
+SITE_ENV_NAMES = ("RUNNINGHUB_BASE_URL", "RH_BASE_URL")
+KNOWN_SITES = ("https://www.runninghub.ai", "https://www.runninghub.cn")
+
+
+# ---------------------------------------------------------------------------
 # 文件读写
 # ---------------------------------------------------------------------------
 def _now() -> str:
@@ -95,6 +120,134 @@ def _now() -> str:
 
 def setup_path(ws: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(ws) / SETUP_NAME
+
+
+# ---------------------------------------------------------------------------
+# Key / 站点探测（只读；不落盘 Key 本体）
+# ---------------------------------------------------------------------------
+def _read_env_value(names) -> tuple:
+    """按优先级读一个环境值：**进程环境变量 → HKCU\\Environment**（用户级持久变量）。
+
+    返回 `(值, 来源描述)`；取不到返回 `('', '')`。
+    ★ 为什么要读注册表：本机 Key 都配在用户级持久变量里（`setx` 写入），
+      而当前进程不一定继承得到 —— 只读 `os.environ` 会误判成「没配 Key」。
+    """
+    import os
+    for n in names:
+        v = (os.environ.get(n) or "").strip()
+        if v:
+            return v, "进程环境变量 %s" % n
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+                for n in names:
+                    try:
+                        v, _ = winreg.QueryValueEx(k, n)
+                    except OSError:
+                        continue
+                    v = str(v or "").strip()
+                    if v:
+                        return v, "HKCU\\Environment:%s" % n
+        except OSError:
+            pass
+    return "", ""
+
+
+def _key_fingerprint(key: str) -> str:
+    """Key 指纹：`sha256 前 8 位 + 后 4 位`。**足以核对、不足以复原**。"""
+    import hashlib
+    k = (key or "").strip()
+    if not k:
+        return ""
+    return "%s…%s" % (hashlib.sha256(k.encode("utf-8")).hexdigest()[:8], k[-4:])
+
+
+def live_key() -> dict:
+    """当前环境里的 RunningHub Key 与站点（只读）。→ {key, source, fingerprint, site}"""
+    key, src = _read_env_value(KEY_ENV_NAMES)
+    site, _ = _read_env_value(SITE_ENV_NAMES)
+    return {"key": key, "source": src, "fingerprint": _key_fingerprint(key),
+            "site": site.strip().rstrip("/")}
+
+
+def _channels(image: dict, video: dict) -> list:
+    return [c for c in ((image or {}).get("choice"), (video or {}).get("choice")) if c]
+
+
+def _workflow_api_state(image: dict, video: dict, wa: dict) -> dict:
+    """第 8 项：工作流 API（用哪条工作流 / 哪个服务地址）。
+
+    * 两条通道都是「闭源人工落盘」→ 无需（不算缺项）；
+    * 有 RunningHub 通道 → 必须给 `workflowId`（或应用地址）+ 站点；
+    * 有云端 ComfyUI → 必须给服务地址 + 工作流 API 文件。
+    """
+    chans = _channels(image, video)
+    rh = [c for c in chans if c in RH_KINDS]
+    comfy = [c for c in chans if c in COMFY_KINDS]
+    if not rh and not comfy:
+        return {"ok": True, "required": False, "kind": None, "ref": None, "site": None,
+                "missing": [], "note": "通道均为闭源人工落盘，不调 API"}
+    # 纯本地 ComfyUI：服务地址默认 127.0.0.1:8188、工作流缺省用仓库内置 Qwen-Image 2.1
+    #   → 不强制确认（换工作流是可选优化，不是开工前提）
+    if not rh and all(c == "local_comfyui" for c in comfy):
+        return {"ok": True, "required": False, "kind": "local_comfyui",
+                "ref": (wa or {}).get("comfy_workflow") or "仓库内置 Qwen-Image 2.1",
+                "site": None, "missing": [],
+                "note": "本地 ComfyUI：服务地址 127.0.0.1:8188，工作流缺省用仓库内置"}
+    kind = (wa or {}).get("kind")
+    missing = []
+    if rh:
+        want = rh[0]
+        if kind not in RH_KINDS:
+            missing.append("未指定工作流 API（--workflow-api %s）" % want)
+        if want == "runninghub_ai_app":
+            if not (wa or {}).get("app_url"):
+                missing.append("缺应用地址（--app-url）")
+        elif not (wa or {}).get("workflow_id"):
+            missing.append("缺工作流 ID（--workflow-id）")
+        if not (wa or {}).get("site"):
+            missing.append("缺站点（--site，须为 %s 之一）" % " / ".join(KNOWN_SITES))
+    elif comfy:
+        if kind != "cloud_comfyui":
+            missing.append("未指定云端 ComfyUI（--workflow-api cloud_comfyui）")
+        if not (wa or {}).get("comfy_url"):
+            missing.append("缺服务地址（--comfy-url）")
+        if not (wa or {}).get("comfy_workflow"):
+            missing.append("缺工作流 API 文件（--comfy-workflow）")
+    ref = ((wa or {}).get("workflow_id") or (wa or {}).get("app_url")
+           or (wa or {}).get("comfy_url") or None)
+    return {"ok": not missing, "required": True, "kind": kind, "ref": ref,
+            "site": (wa or {}).get("site"), "missing": missing, "note": ""}
+
+
+def _account_state(image: dict, video: dict, acct: dict) -> dict:
+    """第 9 项：账号 API Key（花谁的额度）。登记指纹，**真跑前比对**。"""
+    chans = _channels(image, video)
+    rh = [c for c in chans if c in RH_KINDS]
+    if not rh:
+        return {"ok": True, "required": False, "alias": None, "fingerprint": None,
+                "source": None, "site": None, "missing": [],
+                "note": "无云端计费通道，不花任何账号额度"}
+    acct = acct or {}
+    missing = []
+    if not acct.get("alias"):
+        missing.append("未指定账号（--account <别名>）")
+    if not acct.get("key_fingerprint"):
+        missing.append("未读到 API Key（%s）" % " / ".join(KEY_ENV_NAMES))
+    if not acct.get("site"):
+        missing.append("缺站点（--site）")
+    drift = ""
+    live = live_key()
+    if live["fingerprint"] and acct.get("key_fingerprint") \
+            and live["fingerprint"] != acct["key_fingerprint"]:
+        drift = ("当前环境 Key（%s）与确认的账号（%s：%s）不一致 —— 会花错账号的钱"
+                 % (live["fingerprint"], acct.get("alias"), acct["key_fingerprint"]))
+        missing.append(drift)
+    return {"ok": not missing, "required": True, "alias": acct.get("alias"),
+            "fingerprint": acct.get("key_fingerprint"), "source": acct.get("key_source"),
+            "site": acct.get("site"), "live_fingerprint": live["fingerprint"],
+            "drift": drift, "missing": missing, "note": ""}
 
 
 def _blank() -> dict:
@@ -108,6 +261,12 @@ def _blank() -> dict:
         "resolution": {"deliver": None,
                        "source_megapixels": VIDEO_DEFAULTS["megapixels"]},
         "video_options": dict(VIDEO_DEFAULTS),
+        # ★ 2026-10-21：工作流 API 与账号 Key（只登记"用哪个"，Key 本体永不落盘）
+        "workflow_api": {"kind": None, "workflow_id": None, "app_url": None,
+                         "comfy_url": None, "comfy_workflow": None,
+                         "site": None, "confirmed": None},
+        "account": {"alias": None, "key_source": None, "key_fingerprint": None,
+                    "site": None, "confirmed": None},
         "pipeline": {"enabled": None, "budget_cap_coins": None,
                      "budget_cap_cny": None, "eta_minutes": None},
         "history": [],
@@ -125,7 +284,8 @@ def load(ws: pathlib.Path) -> dict:
             raw = None
         if isinstance(raw, dict):
             for k, v in raw.items():
-                if k in ("episodes", "resolution", "video_options", "pipeline") and isinstance(v, dict):
+                if k in ("episodes", "resolution", "video_options", "pipeline",
+                         "workflow_api", "account") and isinstance(v, dict):
                     d[k].update(v)
                 elif k == "history" and isinstance(v, list):
                     d[k] = v
@@ -174,7 +334,8 @@ def _model_state(ws: pathlib.Path, kind: str) -> dict:
     opt = MG._find_option(kind, choice) or {}                    # noqa: SLF001
     return {"ok": not miss, "choice": choice, "label": m.get("label") or opt.get("label"),
             "engine_arg": m.get("engine_arg") or opt.get("engine_arg"),
-            "missing": list(miss), "manual": bool(opt.get("manual"))}
+            "missing": list(miss), "manual": bool(opt.get("manual")),
+            "detail": dict(detail)}
 
 
 def _style_state(ws: pathlib.Path) -> dict:
@@ -200,12 +361,33 @@ def _parse_resolution(s: str) -> tuple:
 
 
 def collect(ws: pathlib.Path) -> dict:
-    """七项状态 + 派生值（每集镜数 / 单段币价 / 预算建议 / ETA）。"""
+    """九项状态 + 派生值（每集镜数 / 单段币价 / 预算建议 / ETA）。"""
     ws = pathlib.Path(ws)
     d = load(ws)
     style = _style_state(ws)
     image = _model_state(ws, "image")
     video = _model_state(ws, "video")
+
+    # 工作流 API：优先用 setup 里显式确认的；没有则从模型确认单的「执行依据」推断
+    # （用户已经在 `models set --workflow-id` 里给过，不该让他再抄一遍；但站点与类型仍要能核对）
+    wa_eff = dict(d.get("workflow_api") or {})
+    if not wa_eff.get("kind"):
+        for m in (video, image):
+            det = (m or {}).get("detail") or {}
+            if det.get("workflow_id"):
+                wa_eff.update({"kind": m.get("choice"), "workflow_id": det["workflow_id"]})
+                break
+            if det.get("app_url"):
+                wa_eff.update({"kind": m.get("choice"), "app_url": det["app_url"]})
+                break
+            if det.get("comfy_url"):
+                wa_eff.update({"kind": m.get("choice"), "comfy_url": det["comfy_url"],
+                               "comfy_workflow": det.get("comfy_workflow")})
+                break
+    if not wa_eff.get("site"):
+        _site, _ = _read_env_value(SITE_ENV_NAMES)
+        if _site:
+            wa_eff["site"] = _site.strip().rstrip("/")
 
     ep = d.get("episodes") or {}
     eps_ok = bool(ep.get("count") and ep.get("seconds") and
@@ -247,6 +429,8 @@ def collect(ws: pathlib.Path) -> dict:
                      "shots_min": ep.get("shots_min"), "shots_max": ep.get("shots_max")},
         "image_model": image,
         "video_model": video,
+        "workflow_api": _workflow_api_state(image, video, wa_eff),
+        "account": _account_state(image, video, d.get("account") or {}),
         "resolution": {"ok": res_ok, "deliver": res.get("deliver"), "parsed": res_val,
                        "source_megapixels": mp},
         "video_options": {"ok": vo_ok, **{k: vo.get(k) for k in
@@ -275,33 +459,43 @@ FIX_HINTS = {
     "episodes": 'drama.py setup set --episodes 30 --ep-seconds 60',
     "image_model": 'drama.py models set image=local_comfyui（或 runninghub / closed_source）',
     "video_model": 'drama.py models set video=runninghub --workflow-id <id>',
+    "workflow_api": ('drama.py setup set --workflow-api runninghub_workflow '
+                     '--workflow-id <id> --site https://www.runninghub.ai'),
+    "account": 'drama.py setup set --account "账号别名"（用当前环境 Key 登记指纹）',
     "resolution": 'drama.py setup set --resolution 1080x1920',
     "video_options": 'drama.py setup set --steps 4 --megapixels 0.8 --voice h3 --concurrency 2',
     "pipeline": 'drama.py setup set --pipeline on --budget-coins 9000（或 --pipeline off）',
 }
 ITEM_LABELS = {
     "style": "画风", "episodes": "剧集长度与每集时长", "image_model": "生图模型",
-    "video_model": "视频模型", "resolution": "画面分辨率",
+    "video_model": "视频模型", "workflow_api": "工作流 API",
+    "account": "账号 API Key", "resolution": "画面分辨率",
     "video_options": "视频功能选项", "pipeline": "流水线模式",
 }
 
 
 def require(ws: pathlib.Path) -> tuple:
-    """门禁：七项全齐 → (True, 摘要)；否则 (False, 缺失清单文本)。"""
+    """门禁：九项全齐 → (True, 摘要)；否则 (False, 缺失清单文本)。"""
     st = collect(ws)
+    total = len(st["items"])
     if st["ok"]:
         it = st["items"]
-        return True, ("前置条件 7/7 已确认：%s｜%d 集 × %d 秒｜生图=%s｜视频=%s｜%s｜流水线=%s"
-                      % (it["style"]["value"], int(it["episodes"]["count"]),
+        return True, ("前置条件 %d/%d 已确认：%s｜%d 集 × %d 秒｜生图=%s｜视频=%s｜"
+                      "工作流=%s｜账号=%s｜%s｜流水线=%s"
+                      % (total, total, it["style"]["value"], int(it["episodes"]["count"]),
                          int(it["episodes"]["seconds"]), it["image_model"]["choice"],
-                         it["video_model"]["choice"], it["resolution"]["deliver"],
+                         it["video_model"]["choice"],
+                         (it["workflow_api"].get("ref") or "无需"),
+                         (it["account"].get("alias") or "无需"),
+                         it["resolution"]["deliver"],
                          "开" if it["pipeline"]["enabled"] else "关"))
-    lines = ["前置条件未齐（%d/%d）：" % (7 - len(st["missing"]), 7)]
+    lines = ["前置条件未齐（%d/%d）：" % (total - len(st["missing"]), total)]
     for k in st["missing"]:
         detail = st["items"][k]
         extra = ""
-        if k in ("image_model", "video_model") and detail.get("missing"):
-            extra = "（缺 %s）" % "、".join(str(x) for x in detail["missing"])
+        if k in ("image_model", "video_model", "workflow_api", "account") \
+                and detail.get("missing"):
+            extra = "（%s）" % "；".join(str(x) for x in detail["missing"])
         lines.append("  - %s%s → %s" % (ITEM_LABELS.get(k, k), extra, FIX_HINTS.get(k, "")))
     return False, "\n".join(lines)
 
@@ -311,7 +505,8 @@ def require(ws: pathlib.Path) -> tuple:
 # ---------------------------------------------------------------------------
 def render(st: dict) -> str:
     it, dv = st["items"], st["derived"]
-    L = ["=" * 72, "开工前置条件（7 项）", "=" * 72]
+    n = len(it)
+    L = ["=" * 72, "开工前置条件（%d 项）" % n, "=" * 72]
     mark = lambda ok: "[OK]  " if ok else "[ 缺] "                     # noqa: E731
 
     s = it["style"]
@@ -328,21 +523,43 @@ def render(st: dict) -> str:
                                        ("%s（%s）" % (im["choice"], im.get("label")))
                                        if im["ok"] else ("未确认" if not im["choice"]
                                                          else "执行依据不全：%s" % "、".join(map(str, im["missing"])))))
-    vo = it["video_options"]
-    L.append("%s4 视频模型    : %s" % (mark(vm["ok"]),
+    L.append("%s5 视频模型    : %s" % (mark(vm["ok"]),
                                        ("%s（%s）" % (vm["choice"], vm.get("label")))
                                        if vm["ok"] else ("未确认" if not vm["choice"]
                                                          else "执行依据不全：%s" % "、".join(map(str, vm["missing"])))))
-    L.append("%s5 功能选项    : %s 步 / %s MP / 声音=%s / 并发 %s%s"
-             % (mark(vo["ok"]), vo.get("steps"), vo.get("megapixels"), vo.get("voice"),
-                vo.get("concurrency"),
+    vo = it["video_options"]
+    L.append("       功能选项    : %s 步 / %s MP / 声音=%s / 并发 %s%s"
+             % (vo.get("steps"), vo.get("megapixels"), vo.get("voice"), vo.get("concurrency"),
                 "" if vo["ok"] else "   ← 非法"))
+
+    wa = it["workflow_api"]
+    if not wa.get("required"):
+        wa_txt = "无需 —— %s%s" % (wa.get("note", ""),
+                                  "（%s）" % wa.get("ref") if wa.get("ref") else "")
+    elif wa["ok"]:
+        wa_txt = "%s｜%s%s" % (wa.get("kind"), wa.get("ref"),
+                              "｜%s" % wa.get("site") if wa.get("site") else "")
+    else:
+        wa_txt = "未确认：" + "；".join(map(str, wa["missing"]))
+    L.append("%s6 工作流 API  : %s" % (mark(wa["ok"]), wa_txt))
+
+    ac = it["account"]
+    if not ac.get("required"):
+        ac_txt = "无需 —— %s" % ac.get("note", "")
+    elif ac["ok"]:
+        ac_txt = "%s｜%s｜%s" % (ac.get("alias"), ac.get("fingerprint"), ac.get("source"))
+    elif ac.get("drift"):
+        ac_txt = "★ 账号漂移：%s" % ac["drift"]
+    else:
+        ac_txt = "未确认：" + "；".join(map(str, ac["missing"]))
+    L.append("%s7 账号 API Key: %s" % (mark(ac["ok"]), ac_txt))
+
     r = it["resolution"]
-    L.append("%s6 画面分辨率  : %s%s" % (mark(r["ok"]), r.get("deliver") or "未确认",
+    L.append("%s8 画面分辨率  : %s%s" % (mark(r["ok"]), r.get("deliver") or "未确认",
                                          "（源 %.2f MP）" % r["source_megapixels"]
                                          if r.get("deliver") else ""))
     p = it["pipeline"]
-    L.append("%s7 流水线模式  : %s" % (mark(p["ok"]),
+    L.append("%s9 流水线模式  : %s" % (mark(p["ok"]),
                                        ("开（预算上限 %s RH币 ≈ ￥%s）"
                                         % (p.get("budget_cap_coins"), p.get("budget_cap_cny")))
                                        if p.get("enabled") else
@@ -365,7 +582,8 @@ def render(st: dict) -> str:
 
 def render_ask(ws: pathlib.Path) -> str:
     st = collect(ws)
-    L = ["=" * 72, "开工前需要你拍板 7 件事（其余我按默认值走，不反复问）", "=" * 72, ""]
+    live = live_key()
+    L = ["=" * 72, "开工前需要你拍板 9 件事（其余我按默认值走，不反复问）", "=" * 72, ""]
     L.append("1. 画风（不可事后更换，改 = 已出素材作废）")
     L.append("   3d_manhua（3D 漫剧）/ 2d_animation（2D 动画）/ live_action（真人写实）")
     L.append("2. 剧集长度：集数（默认 30）")
@@ -376,15 +594,29 @@ def render_ask(ws: pathlib.Path) -> str:
              % (VIDEO_DEFAULTS["steps"], VIDEO_DEFAULTS["megapixels"],
                 VIDEO_DEFAULTS["voice"], VIDEO_DEFAULTS["concurrency"]))
     L.append("   声音归属：h3=模型自带音轨（字幕须 ASR 校时）/ external=另配 TTS / mute=全后配")
-    L.append("6. 画面分辨率：%s（平台下限，源 0.8MP 必须超分）" % RESOLUTION_DEFAULT)
-    L.append("7. 是否开启流水线模式：开 → 必须同时给**预算上限**；确认后不再逐步问你")
+    L.append("6. **用哪条工作流 API**（走 RunningHub 时必须明确）")
+    L.append("   工作流 ID（workflowId）/ AI 应用地址（appUrl）/ 云端 ComfyUI 服务地址 + 工作流文件，")
+    L.append("   并指明站点：%s" % " 或 ".join(KNOWN_SITES))
+    L.append("   ⚠ 同名工作流在平台上可能有多份，选错 = 换模型/换步数，成片风格整体漂移且不报错。")
+    L.append("7. **用哪个账号的 API Key**（花谁的额度、带谁的水印）")
+    L.append("   请给我一个**账号别名**（例：主账号 A / 小号 B），我用当前环境里的 Key 算指纹登记：")
+    if live["fingerprint"]:
+        L.append("   当前检测到：%s（来源 %s，站点 %s）—— 是不是这一把？"
+                 % (live["fingerprint"], live["source"], live["site"] or "未设 RUNNINGHUB_BASE_URL"))
+    else:
+        L.append("   ★ 当前**没检测到** RUNNINGHUB_API_KEY（进程环境与 HKCU\\Environment 都没有）")
+    L.append("   ⚠ 换 Key 后确认单会失效：真跑前会比对指纹，不一致直接停（防止花错账号的钱）。")
+    L.append("8. 画面分辨率：%s（平台下限，源 0.8MP 必须超分）" % RESOLUTION_DEFAULT)
+    L.append("9. 是否开启流水线模式：开 → 必须同时给**预算上限**；确认后不再逐步问你")
     L.append("")
     L.append("-" * 72)
     L.append(render(st))
     L.append("-" * 72)
     L.append("用户答完后一次性写单：")
     L.append("  drama.py setup set --style live_action --episodes 30 --ep-seconds 60 \\")
-    L.append("      --image-model local_comfyui --video-model runninghub --workflow-id <id> \\")
+    L.append("      --image-model local_comfyui --video-model runninghub \\")
+    L.append("      --workflow-api runninghub_workflow --workflow-id <id> \\")
+    L.append("      --site https://www.runninghub.ai --account \"主账号 A\" \\")
     L.append("      --resolution 1080x1920 --pipeline on --budget-coins 9000")
     return "\n".join(L)
 
@@ -484,6 +716,12 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
             v = getattr(a, akey, None)
             if v:
                 detail[mkey] = v
+        # ★ 2026-10-21：`--workflow-id` / `--app-url` / `--comfy-*` 是「工作流 API」的通用写法，
+        #   同时也要回填到 model-plan 的执行依据里 —— 否则用户要抄两遍，且两处可能抄成不同的值。
+        for mkey, akey in (("workflow_id", "workflow_id"), ("app_url", "app_url"),
+                           ("comfy_url", "comfy_url"), ("comfy_workflow", "comfy_workflow")):
+            if not detail.get(mkey) and getattr(a, akey, None):
+                detail[mkey] = getattr(a, akey)
         _quiet = _capture()
         with _quiet:
             r = MG._do_set(ws, kind, choice, detail, source="setup")   # noqa: SLF001
@@ -525,7 +763,66 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
     if getattr(a, "megapixels", None) is not None:
         d["resolution"]["source_megapixels"] = float(a.megapixels)
 
-    # ⑥ 流水线模式 + 预算
+    # ⑥ 工作流 API（用哪条工作流 / 哪个服务地址）
+    wa = d["workflow_api"]
+    if getattr(a, "workflow_api", None):
+        kind = str(a.workflow_api).strip()
+        if kind not in WORKFLOW_KINDS:
+            msgs.append("[FAIL] 未知工作流 API 类型：%s（可选 %s）"
+                        % (kind, " / ".join(WORKFLOW_KINDS)))
+            return 2, msgs
+        _note(d, "workflow_api.kind", wa.get("kind"), kind)
+        wa["kind"] = kind
+    for key, flag in (("workflow_id", "workflow_id"), ("app_url", "app_url"),
+                      ("comfy_url", "comfy_url"), ("comfy_workflow", "comfy_workflow"),
+                      ("site", "site")):
+        v = getattr(a, flag, None)
+        if not v:
+            continue
+        v = str(v).strip()
+        if key == "site":
+            v = v.rstrip("/")
+            if v not in KNOWN_SITES:
+                msgs.append("[FAIL] 站点只支持 %s（收到 %s）—— 站点错会导致上传报「API Key 不存在」"
+                            % (" / ".join(KNOWN_SITES), v))
+                return 2, msgs
+        if key == "comfy_workflow":
+            p = pathlib.Path(v).expanduser()
+            p = p if p.is_absolute() else (ws / p)
+            if not p.is_file():
+                msgs.append("[WARN] 工作流 API 文件不存在：%s（先核对路径）" % p)
+            v = str(p)
+        _note(d, "workflow_api.%s" % key, wa.get(key), v)
+        wa[key] = v
+    if wa.get("kind") or any(wa.get(k) for k in ("workflow_id", "app_url", "comfy_url")):
+        wa["confirmed"] = True
+        wa["confirmed_at"] = _now()
+        if not wa.get("site"):
+            _s, _ = _read_env_value(SITE_ENV_NAMES)
+            if _s:
+                wa["site"] = _s.strip().rstrip("/")
+
+    # ⑦ 账号 API Key（只登记「用哪个账号」+ 指纹，Key 本体永不落盘）
+    ac = d["account"]
+    if getattr(a, "account", None) or getattr(a, "account_source", None):
+        alias = str(getattr(a, "account", None) or "").strip() or "未命名账号"
+        src_flag = getattr(a, "account_source", None)
+        names = (src_flag,) if src_flag else KEY_ENV_NAMES
+        key, src = _read_env_value(names)
+        if not key:
+            msgs.append("[BLOCK] 没读到 API Key（来源：%s）。请先配好用户级持久变量，"
+                        "或用 --account-source <变量名> 指定" % " / ".join(names))
+            return EXIT_WAIT_CONFIRM, msgs
+        fp = _key_fingerprint(key)
+        site, _ = _read_env_value(SITE_ENV_NAMES)
+        _note(d, "account.alias", ac.get("alias"), alias)
+        _note(d, "account.key_fingerprint", ac.get("key_fingerprint"), fp)
+        ac.update({"alias": alias, "key_source": src, "key_fingerprint": fp,
+                   "site": (site.strip().rstrip("/") or wa.get("site")),
+                   "confirmed": True, "confirmed_at": _now()})
+        msgs.append("[OK] 账号 = %s（指纹 %s，来源 %s）" % (alias, fp, src))
+
+    # ⑧ 流水线模式 + 预算
     if getattr(a, "pipeline", None):
         on = str(a.pipeline).lower() in ("on", "1", "true", "yes", "开")
         _note(d, "pipeline.enabled", d["pipeline"].get("enabled"), on)
@@ -551,13 +848,86 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
     st = collect(ws)
     msgs.append("[写到] %s" % p)
     if st["ok"]:
-        msgs.append("[OK] 前置条件 7/7 已就绪，可以开工")
+        msgs.append("[OK] 前置条件 %d/%d 已就绪，可以开工"
+                    % (len(st["items"]), len(st["items"])))
     else:
         msgs.append("[BLOCK] 还缺：%s（退出码 %d）"
                     % ("、".join(ITEM_LABELS[k] for k in st["missing"]), EXIT_WAIT_CONFIRM))
         if rc == 0:
             rc = EXIT_WAIT_CONFIRM
     return rc, msgs
+
+
+def _key_entries(ws: pathlib.Path) -> list:
+    """可选的账号清单：`<ws>/keys.json`（`{"keys":[{account,site,tier,env}]}` 或顶层数组）。
+
+    只写**环境变量名**，Key 本体不进清单、不进确认单、不进任何日志。
+    """
+    kp = pathlib.Path(ws) / "keys.json"
+    if not kp.is_file():
+        return []
+    try:
+        raw = json.loads(kp.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    items = raw.get("keys") if isinstance(raw, dict) else raw
+    return [e for e in (items or []) if isinstance(e, dict)]
+
+
+def cmd_accounts(a) -> int:
+    """列出「这台机器上能用的账号」+ 当前确认的是哪一个（只显示指纹）。"""
+    ws = _resolve_ws(a.workspace)
+    d = load(ws)
+    ac = d.get("account") or {}
+    live = live_key()
+
+    rows = []
+    if live["fingerprint"]:
+        rows.append({"account": "（默认环境变量）", "env": ", ".join(KEY_ENV_NAMES),
+                     "site": live["site"], "tier": "", "fingerprint": live["fingerprint"],
+                     "usable": True, "origin": "环境变量"})
+    for e in _key_entries(ws):
+        env = str(e.get("env") or "").strip()
+        key, _src = _read_env_value((env,)) if env else ("", "")
+        rows.append({"account": str(e.get("account") or "（未命名）"), "env": env or "（未指定 env）",
+                     "site": str(e.get("site") or ""), "tier": str(e.get("tier") or ""),
+                     "fingerprint": _key_fingerprint(key) if key else "（未设）",
+                     "usable": bool(key), "origin": "keys.json"})
+
+    if a.json:
+        print(json.dumps({"confirmed": ac, "candidates": rows,
+                          "live": {"fingerprint": live["fingerprint"], "site": live["site"]}},
+                         ensure_ascii=False, indent=2))
+        return 0
+
+    L = ["=" * 72, "可用账号（只显示指纹，Key 本体不落盘）", "=" * 72]
+    if not rows:
+        L.append("★ 没有探测到任何 API Key：")
+        L.append("  进程环境变量与 HKCU\\Environment 都没有 %s" % " / ".join(KEY_ENV_NAMES))
+        L.append("  配法（PowerShell，用户级持久变量，新开终端生效）：")
+        L.append("    setx RUNNINGHUB_API_KEY \"<你的 Key>\"")
+        L.append("    setx RUNNINGHUB_BASE_URL \"https://www.runninghub.ai\"")
+    else:
+        L.append("%-16s %-26s %-22s %-14s %s" % ("账号", "Key 来源（环境变量）", "站点", "指纹", "可用"))
+        L.append("-" * 72)
+        for r in rows:
+            L.append("%-16s %-26s %-22s %-14s %s"
+                     % (r["account"][:16], r["env"][:26], (r["site"] or "-")[:22],
+                        r["fingerprint"], "是" if r["usable"] else "否"))
+        L.append("")
+        if len(rows) > 1:
+            L.append("★ 多账号：用 `--account <别名> --account-source <环境变量名>` 指定用哪一个。")
+        L.append("当前确认：%s" % (
+            ("%s（指纹 %s）" % (ac.get("alias"), ac.get("key_fingerprint")))
+            if ac.get("alias") else "未确认"))
+        if ac.get("key_fingerprint") and live["fingerprint"] \
+                and ac["key_fingerprint"] != live["fingerprint"]:
+            L.append("★★ 漂移警告：当前环境 Key（%s）≠ 确认的账号（%s）"
+                     % (live["fingerprint"], ac["key_fingerprint"]))
+            L.append("   若确实要换账号，重新跑 setup set --account \"<别名>\" 覆盖确认单。")
+    L.append("=" * 72)
+    print("\n".join(L))
+    return 0
 
 
 def cmd_reset(a) -> int:
@@ -617,14 +987,14 @@ def _resolve_ws(explicit) -> pathlib.Path:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="开工前置条件确认单（7 项）")
+    ap = argparse.ArgumentParser(description="开工前置条件确认单（9 项）")
     ap.add_argument("--workspace", default=None)
     sub = ap.add_subparsers(dest="cmd")
 
-    for name in ("show", "ask", "require", "reset"):
+    for name in ("show", "ask", "require", "reset", "accounts"):
         q = sub.add_parser(name)
         q.add_argument("--workspace", default=argparse.SUPPRESS)
-        if name == "show" or name == "require":
+        if name in ("show", "require", "accounts"):
             q.add_argument("--json", action="store_true")
         if name == "reset":
             q.add_argument("--keep-style", dest="keep_style", action="store_true")
@@ -646,6 +1016,22 @@ def main() -> int:
     q.add_argument("--video-comfy-url", dest="video_comfy_url", default=None)
     q.add_argument("--video-app-url", dest="video_app_url", default=None)
     q.add_argument("--video-app-id", dest="video_app_id", default=None)
+    # ★ 2026-10-21：工作流 API 与账号 Key（必须显式确认"用哪条工作流 / 哪个账号"）
+    q.add_argument("--workflow-api", dest="workflow_api", default=None,
+                   choices=tuple(WORKFLOW_KINDS),
+                   help="用哪类工作流 API：%s" % " / ".join(WORKFLOW_KINDS))
+    q.add_argument("--workflow-id", dest="workflow_id", default=None,
+                   help="RunningHub workflowId（不是 API 导出的 json 文件名）")
+    q.add_argument("--app-url", dest="app_url", default=None, help="RunningHub AI 应用地址")
+    q.add_argument("--comfy-url", dest="comfy_url", default=None, help="云端 ComfyUI 服务地址")
+    q.add_argument("--comfy-workflow", dest="comfy_workflow", default=None,
+                   help="工作流 API 文件（*_api.json）")
+    q.add_argument("--site", default=None,
+                   help="站点：%s" % " / ".join(KNOWN_SITES))
+    q.add_argument("--account", default=None,
+                   help="账号别名（花谁的额度）；用当前环境 Key 登记指纹，Key 本体不落盘")
+    q.add_argument("--account-source", dest="account_source", default=None,
+                   help="从哪个环境变量读 Key（默认 %s）" % " / ".join(KEY_ENV_NAMES))
     q.add_argument("--resolution", default=None, help="交付画幅，如 1080x1920")
     q.add_argument("--steps", type=int, default=None, help="视频采样步数（turbo 常 4）")
     q.add_argument("--megapixels", type=float, default=None, help="视频源像素（0.8 / 1.0）")
@@ -656,7 +1042,7 @@ def main() -> int:
 
     a = ap.parse_args()
     fn = {"show": cmd_show, "ask": cmd_ask, "require": cmd_require,
-          "set": cmd_set, "reset": cmd_reset}.get(a.cmd)
+          "set": cmd_set, "reset": cmd_reset, "accounts": cmd_accounts}.get(a.cmd)
     if not fn:
         print(render(collect(_resolve_ws(a.workspace))))
         return 0
