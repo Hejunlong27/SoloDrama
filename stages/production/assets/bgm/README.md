@@ -27,6 +27,25 @@
 
 **`bpm` 全部为空**——必须人工听着填（剪接点对齐要用），工具不猜。
 
+### 另有 6 首 AI 生成（2026-10-21 由用户用 AI 音乐平台生成）
+
+| id | 情绪 | 曲目 | 时长 | 实测响度 | 增益 | 可循环 |
+|---|---|---|---|---|---|---|
+| `tension_11_quiet_tension` | tension | Quiet Tension | 116s | -19.5 LUFS | -13.5 dB | **是**（首尾电平一致） |
+| `suspense_11_subtle_pressure` | suspense | Subtle Pressure | 88s | -27.2 LUFS | -6.8 dB | 否（尾部淡出） |
+| `suspense_12_silence` | suspense | Silence | 193s | -25.1 LUFS | -8.9 dB | 否（弱起弱收） |
+| `revenge_11_steady_fury` | revenge | Steady Fury | 149s | -14.7 LUFS | -16.3 dB | 否（尾部淡出） |
+| `warm_11_tender_reunion` | warm | Tender Reunion | 176s | -17.4 LUFS | -14.6 dB | 否（尾部淡出） |
+| `sad_11_no_words` | sad | No Words | 138s | -13.7 LUFS | -21.3 dB | 否（尾部淡出） |
+
+⚠️ **待补**：这 6 首的 `license_note` 目前只写「AI 生成，平台与商用条款待补」——
+发行前必须补上 **平台名 + 授权截图**（`license=generated` 的合规要求）。
+另外它们的 `bpm` 也还没填。
+
+> 注意这 6 首的响度跨了 13.5 dB（-13.7 ~ -27.2）。所以清单里记 `loudness_lufs`、
+> 增益按实测反推 —— **不要给所有曲子套同一个 -22 dB**，否则有的震耳朵、有的听不见。
+> 详见 `docs/production/BGM与音频设计.md` §2.3。
+
 ### 换台机器怎么把音频拿回来
 
 清单在仓库里、音频不在，所以 clone 下来库是「有目录无曲目」。两种办法：

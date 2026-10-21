@@ -57,7 +57,7 @@
 
 命令
 ----
-    python bgm.py library [--scan] [--json]     看库（--scan 用 ffprobe 补时长/BPM 缺失项）
+    python bgm.py library [--scan [--loudness]] [--json]   看库（补时长 / 补响度）
     python bgm.py plan --ep ep01 [--mood tension] [--apply]    生成铺排计划
     python bgm.py check --ep ep01 [--json]      门禁（退出码 2 = 不可混）
     python bgm.py mix --ep ep01 [--apply]       混音（默认干跑，打印 ffmpeg 命令）
@@ -91,6 +91,15 @@ MOOD_DEFAULTS = {
     "epic": {"gain_db": -19.0, "fade_in": 1.0, "fade_out": 2.5},
 }
 DEFAULT_MOOD = "tension"
+
+# ★ 2026-10-21：铺底目标响度（短剧口径）。
+#   对白通常 -16 LUFS 左右，BGM 压到 -33 LUFS 就"听得到但不抢话"；
+#   实测用户生成的 6 首响度从 -13.7 到 -27.2 LUFS（差 13.5 dB），
+#   所以**不能给统一增益** —— 必须按每首实测 LUFS 反推：
+#       gain_db = TARGET_BED_LUFS - loudness_lufs
+TARGET_BED_LUFS = -33.0
+BED_LUFS_MAX = -25.0        # 高于此值会压住对白
+BED_LUFS_MIN = -42.0        # 低于此值基本听不见
 
 # 题材 → 默认情绪（与 generation-brief / 题材公式的 id 对齐，认不出用 default）
 GENRE_MOOD = {
@@ -209,10 +218,26 @@ def _probe(path: pathlib.Path) -> dict:
     return out
 
 
-def scan(ws: pathlib.Path) -> dict:
-    """用 ffprobe 补齐库条目的时长（BPM 不猜，只保留人工填的值）。"""
+def _lufs(path: pathlib.Path):
+    """集成响度（EBU R128）。用它反推铺底增益，比"统一 -22dB"准得多。"""
+    try:
+        r = subprocess.run([tool("ffmpeg"), "-hide_banner", "-nostats", "-i", str(path),
+                            "-af", "ebur128=peak=true", "-f", "null", "-"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    hits = re.findall(r"I:\s*(-?\d+\.\d+)\s*LUFS", (r.stderr or ""))
+    return float(hits[-1]) if hits else None
+
+
+def scan(ws: pathlib.Path, loudness: bool = False) -> dict:
+    """用 ffprobe 补齐库条目的时长；`loudness=True` 时再补 EBU R128 响度。
+
+    BPM 不猜（必须人工听），只保留人工填的值。
+    """
     lib = load_library(ws)
-    filled, failed = [], []
+    filled, failed, loud = [], [], []
     for t in lib["tracks"]:
         f = track_file(t)
         if not f.is_file():
@@ -225,7 +250,12 @@ def scan(ws: pathlib.Path) -> dict:
                 filled.append(t["id"])
         else:
             failed.append({"id": t.get("id"), "file": str(f), "error": got["error"] or "读不到时长"})
-    return {"library": lib, "filled": filled, "failed": failed}
+        if loudness:
+            lu = _lufs(f)
+            if lu is not None:
+                t["loudness_lufs"] = lu
+                loud.append({"id": t.get("id"), "lufs": lu})
+    return {"library": lib, "filled": filled, "failed": failed, "loudness": loud}
 
 
 # ---------------------------------------------------------------------------
@@ -375,14 +405,26 @@ def make_plan(ws: pathlib.Path, ep: str, mood: str = None, track_id: str = None,
     # 选曲优先"最久没用过"：从未用过的排最前（-1），其次是上次用得很早的
     pool.sort(key=lambda t: (usage.get(str(t.get("id")), -1), str(t.get("id"))))
     track = pool[0]
-    # 增益优先级：命令行 > 曲目建议值（license 授权时按曲目登记的最稳）> 情绪默认
+    # 增益优先级：命令行 > 曲目建议值 > **按实测响度反推** > 情绪默认
     try:
         track_gain = track.get("gain_db")
         track_gain = float(track_gain) if track_gain is not None else None
     except (TypeError, ValueError):
         track_gain = None
-    gain = float(gain_db if gain_db is not None
-                 else (track_gain if track_gain is not None else dflt["gain_db"]))
+    try:
+        track_lufs = track.get("loudness_lufs")
+        track_lufs = float(track_lufs) if track_lufs is not None else None
+    except (TypeError, ValueError):
+        track_lufs = None
+    if gain_db is not None:
+        gain = float(gain_db)
+    elif track_gain is not None:
+        gain = track_gain
+    elif track_lufs is not None:
+        # 不同来源的曲子母带响度差得远（实测 -13.7 ~ -27.2 LUFS），按目标反推才不跑偏
+        gain = round(TARGET_BED_LUFS - track_lufs, 1)
+    else:
+        gain = float(dflt["gain_db"])
     tid = str(track.get("id"))
     segs = []
     n = max(1, int(segments))
@@ -401,8 +443,11 @@ def make_plan(ws: pathlib.Path, ep: str, mood: str = None, track_id: str = None,
                          "loop": bool(track.get("loop", True)),
                          "note": "整集铺底" if n == 1 else "第 %d/%d 段" % (i + 1, n)})
     return {"ep": ep, "total_s": total, "voice": ep_voice(ws), "mood": mood,
-            "ducking": {"enabled": True, "threshold": 0.05, "ratio": 6,
-                        "attack": 20, "release": 350},
+            # ★ threshold 从 0.05 提到 0.15：短剧人声几乎连续，0.05(-26dBFS) 会在整集
+            #   持续压缩，BGM 被压到听不见（实测片尾无对白处才抬 13dB，有对白处几乎为零）。
+            #   0.15 ≈ -16dBFS 只在人声峰值处压，句中间隙能露出来。
+            "ducking": {"enabled": True, "threshold": 0.15, "ratio": 4,
+                        "attack": 20, "release": 300},
             "segments": segs,
             "_note": "由 bgm.py plan 生成；可手工改 gain_db / 换 track / 加段，改完跑 check"}
 
@@ -451,14 +496,36 @@ def check_plan(ws: pathlib.Path, plan: dict) -> list:
         covered += max(0.0, b - a)
         gain = s.get("gain_db")
         try:
-            g = float(gain)
+            g = float(gain) if gain is not None else None
         except (TypeError, ValueError):
             g = None
+        # ★ 2026-10-21：判的是**最终铺底响度**，不是相对增益。
+        #   起因：AI 生成的曲子母带响度差 13 dB（-13.7 ~ -27.2 LUFS），
+        #   同一首"提 6dB"可能才 -21 LUFS（完全不抢戏），另一首"降 22dB"却是 -36。
+        #   只看 gain 会同时误杀（太轻的曲子被拦）与漏放（本来就响的曲子）。
+        try:
+            lu = t.get("loudness_lufs")
+            lu = float(lu) if lu is not None else None
+        except (TypeError, ValueError):
+            lu = None
         if g is None:
             out.append({"level": "warn", "code": "B008", "msg": "第 %d 段没写 gain_db" % i})
+        elif lu is not None:
+            final = lu + g
+            if final > BED_LUFS_MAX:
+                out.append({"level": "hard", "code": "B009",
+                            "msg": "第 %d 段最终铺底 %.1f LUFS 过高（> %.0f），会压住对白"
+                                   "（原曲 %.1f LUFS + 增益 %.1f dB）"
+                                   % (i, final, BED_LUFS_MAX, lu, g)})
+            elif final < BED_LUFS_MIN:
+                out.append({"level": "hard", "code": "B014",
+                            "msg": "第 %d 段最终铺底 %.1f LUFS 过低（< %.0f），基本听不见"
+                                   "（原曲 %.1f LUFS + 增益 %.1f dB）"
+                                   % (i, final, BED_LUFS_MIN, lu, g)})
         elif g > -6:
             out.append({"level": "hard", "code": "B009",
-                        "msg": "第 %d 段 gain_db=%.1f dB 太高（> -6），会压住对白" % (i, g)})
+                        "msg": "第 %d 段 gain_db=%.1f 偏高（> -6）且缺 loudness_lufs，无法判断"
+                               "是否会压住对白 —— 先跑 `library --scan --loudness` 补响度" % (i, g)})
         elif g < -30:
             out.append({"level": "warn", "code": "B010",
                         "msg": "第 %d 段 gain_db=%.1f dB 过低，基本听不见" % (i, g)})
@@ -544,30 +611,57 @@ def target_video(ws: pathlib.Path, ep: str) -> pathlib.Path:
     return d / ("%s_master_2k.mp4" % ep)
 
 
+def sync_plan_gain(ws: pathlib.Path, plan: dict) -> list:
+    """把计划里的增益同步成库里当前的实测建议值（差 >3 dB 才动，段可 `gain_locked` 锁住）。
+
+    为什么需要：`plan` 一旦落盘就把 `gain_db` 写死了，但库里的建议值会变 ——
+    典型场景是刚入库的曲子补了 `loudness_lufs`，增益从拍脑袋的 -22 校正成 -10.1。
+    旧计划带着 -22 去混，最终铺底就成了 -44.9 LUFS（等于没铺）。
+    """
+    lib = {str(t.get("id")): t for t in load_library(ws)["tracks"]}
+    notes = []
+    for i, s in enumerate(plan.get("segments") or [], 1):
+        if s.get("gain_locked"):
+            continue
+        t = lib.get(str(s.get("track")))
+        if not t or t.get("gain_db") is None:
+            continue
+        try:
+            want, cur = float(t["gain_db"]), float(s.get("gain_db"))
+        except (TypeError, ValueError):
+            continue
+        if abs(want - cur) > 3.0:
+            s["gain_db"] = want
+            notes.append("第 %d 段增益 %.1f → %.1f dB（按库中实测响度校正）" % (i, cur, want))
+    return notes
+
+
 def mix_episode(ws: pathlib.Path, plan: dict, base: pathlib.Path = None,
                 out: pathlib.Path = None, apply: bool = False) -> dict:
-    """按计划混音。返回 {ok, cmd, out, error}；apply=False 时只构建不执行。"""
+    """按计划混音。返回 {ok, cmd, out, error, issues, notes}；apply=False 只构建不执行。"""
     ep = str(plan.get("ep") or "")
+    notes = sync_plan_gain(ws, plan)          # 先校正过期增益，再过门禁
     base = base or target_video(ws, ep)
     out = out or (subs_dir(ws, ep) / ("%s_mix.mp4" % ep))
     issues = check_plan(ws, plan)
     hard = [i for i in issues if i["level"] == "hard"]
     if hard:
-        return {"ok": False, "error": "; ".join(i["msg"] for i in hard[:4]), "issues": issues}
+        return {"ok": False, "error": "; ".join(i["msg"] for i in hard[:4]),
+                "issues": issues, "notes": notes}
     if not pathlib.Path(base).is_file():
         return {"ok": False, "error": "找不到要混音的母版：%s（先跑 --stage master / upscale）"
-                                     % base, "issues": issues}
+                                     % base, "issues": issues, "notes": notes}
     cmd = build_mix_cmd(ws, plan, pathlib.Path(base), pathlib.Path(out))
     if not apply:
         return {"ok": True, "dry_run": True, "cmd": " ".join(cmd), "out": str(out),
-                "issues": issues}
+                "issues": issues, "notes": notes}
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return {"ok": False, "cmd": " ".join(cmd), "out": str(out),
-                "error": (r.stderr or "").strip()[:600], "issues": issues}
+                "error": (r.stderr or "").strip()[:600], "issues": issues, "notes": notes}
     got = _probe(pathlib.Path(out))
     return {"ok": pathlib.Path(out).is_file(), "out": str(out), "duration": got.get("duration"),
-            "cmd": " ".join(cmd), "issues": issues}
+            "cmd": " ".join(cmd), "issues": issues, "notes": notes}
 
 
 # ---------------------------------------------------------------------------
@@ -639,28 +733,62 @@ def render_plan(plan: dict, issues: list) -> str:
 # ---------------------------------------------------------------------------
 # 命令
 # ---------------------------------------------------------------------------
+def writeback(lib: dict, fields=("duration", "loudness_lufs")) -> list:
+    """把 scan 补到的字段写回**各自的**清单文件（项目库 / 共享库分开写）。
+
+    为什么要按 `_root` 分组：合并后的库混着两处来源，早先只回写项目库，
+    于是共享库那批曲目的 `loudness_lufs` 永远补不上 —— 增益就只能靠拍脑袋的 -22 dB。
+    """
+    by_root = {}
+    for t in lib.get("tracks") or []:
+        root = t.get("_root")
+        if root:
+            by_root.setdefault(root, []).append(t)
+    changed = []
+    for root, tracks in by_root.items():
+        p = pathlib.Path(root) / LIB_NAME
+        if not p.is_file():
+            continue
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        items = raw.get("tracks") if isinstance(raw, dict) else raw
+        items = [x for x in (items or []) if isinstance(x, dict)]
+        touched = False
+        by_id = {str(x.get("id")): x for x in items}
+        for t in tracks:
+            dst = by_id.get(str(t.get("id")))
+            if not dst:
+                continue
+            for k in fields:
+                if t.get(k) is not None and dst.get(k) != t.get(k):
+                    dst[k] = t[k]
+                    touched = True
+        if touched:
+            if isinstance(raw, dict):
+                raw["tracks"] = [by_id[str(x.get("id"))] for x in items]
+            else:
+                raw = [by_id[str(x.get("id"))] for x in items]
+            p.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+                         encoding="utf-8", newline="")
+            changed.append(str(p))
+    return changed
+
+
 def cmd_library(a) -> int:
     ws = _ws(a.workspace)
     if a.scan:
-        got = scan(ws)
+        got = scan(ws, loudness=bool(getattr(a, "loudness", False)))
         if got["filled"]:
             print("[OK] 用 ffprobe 补了 %d 条时长：%s" % (len(got["filled"]),
                                                         "、".join(got["filled"])))
-            # 只回写项目库（共享库是仓库文件，由维护者手工更新）
-            p = project_lib_dir(ws) / LIB_NAME
-            if p.is_file():
-                raw = json.loads(p.read_text(encoding="utf-8-sig"))
-                tracks = raw.get("tracks") if isinstance(raw, dict) else raw
-                byid = {str(t.get("id")): t for t in (got["library"]["tracks"])}
-                for t in (tracks or []):
-                    src = byid.get(str(t.get("id")))
-                    if src and src.get("duration"):
-                        t["duration"] = src["duration"]
-                if isinstance(raw, dict):
-                    raw["tracks"] = tracks
-                p.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
-                             encoding="utf-8", newline="")
-                print("     已回写：%s" % p)
+        if got.get("loudness"):
+            print("[OK] 实测响度 %d 条（按 %.0f LUFS 铺底反推增益）"
+                  % (len(got["loudness"]), TARGET_BED_LUFS))
+        # 按条目来源分别回写项目库 / 共享库（早先只写项目库，共享库的响度永远补不上）
+        for path in writeback(got["library"], ("duration", "loudness_lufs")):
+            print("     已回写：%s" % path)
         if got["failed"]:
             print("[WARN] %d 条读不到时长（文件缺失或不是音频）：" % len(got["failed"]))
             for f in got["failed"][:8]:
@@ -793,6 +921,8 @@ def main() -> int:
     q = sub.add_parser("library", help="看库 / 扫描补时长")
     q.add_argument("--workspace", default=argparse.SUPPRESS)
     q.add_argument("--scan", action="store_true", help="用 ffprobe 补时长并回写项目库")
+    q.add_argument("--loudness", action="store_true",
+                   help="连同 EBU R128 响度一起补（用于按实测响度反推铺底增益）")
     q.add_argument("--json", action="store_true")
 
     q = sub.add_parser("plan", help="生成某集的铺排计划")

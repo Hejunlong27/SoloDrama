@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_note": "由 tools 脚本从 Wikimedia Commons 抓取（全部 CC BY 4.0 / 3.0，可商用需署名）。音频文件不进 git（见 .gitignore）；bpm 留空需人工填。`bgm.py credits --ep epNN` 可直接生成署名段。",
+  "_note": "音频文件不进 git（见 .gitignore）。CC BY 曲目须署名：bgm.py credits --ep epNN。AI 生成曲目 license=generated，license_note 必须写清平台与商用条款。bpm 留空需人工填；loudness_lufs 用于按实测响度反推铺底增益。",
   "tracks": [
     {
       "id": "epic_01_dramatic_trailer_by_rafa",
@@ -14,12 +14,14 @@
       "license": "licensed",
       "source": "Dramatic Trailer by Rafael Krux.ogg",
       "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Rafael Krux — “Dramatic Trailer by Rafael Krux”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Dramatic_Trailer_by_Rafael_Krux.ogg",
-      "gain_db": -19,
+      "gain_db": -23.2,
       "artist": "Rafael Krux",
       "title": "Dramatic Trailer by Rafael Krux",
       "license_name": "CC BY 4.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Dramatic_Trailer_by_Rafael_Krux.ogg",
-      "attribution": "Rafael Krux — “Dramatic Trailer by Rafael Krux”（CC BY 4.0，via Wikimedia Commons）"
+      "attribution": "Rafael Krux — “Dramatic Trailer by Rafael Krux”（CC BY 4.0，via Wikimedia Commons）",
+      "loudness_lufs": -6.8,
+      "bed_target_lufs": -30.0
     },
     {
       "id": "epic_02_rafael_krux_uplifting_bl",
@@ -33,12 +35,14 @@
       "license": "licensed",
       "source": "Rafael Krux - Uplifting Blockbuster (cc-by) (filmmusic).mp3",
       "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Rafael Krux — “Uplifting Blockbuster (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Uplifting_Blockbuster_(cc-by)_(filmmusic).mp3",
-      "gain_db": -19,
+      "gain_db": -15.9,
       "artist": "Rafael Krux",
       "title": "Uplifting Blockbuster (cc-by) (filmmusic)",
       "license_name": "CC BY 4.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Uplifting_Blockbuster_(cc-by)_(filmmusic).mp3",
-      "attribution": "Rafael Krux — “Uplifting Blockbuster (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）"
+      "attribution": "Rafael Krux — “Uplifting Blockbuster (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）",
+      "loudness_lufs": -14.1,
+      "bed_target_lufs": -30.0
     },
     {
       "id": "revenge_01_scott_buckley_crusader",
@@ -52,12 +56,14 @@
       "license": "licensed",
       "source": "Scott Buckley - Crusader.oga",
       "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Scott Buckley — “Crusader”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Crusader.oga",
-      "gain_db": -20,
+      "gain_db": -14.8,
       "artist": "Scott Buckley",
       "title": "Crusader",
       "license_name": "CC BY 4.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Crusader.oga",
-      "attribution": "Scott Buckley — “Crusader”（CC BY 4.0，via Wikimedia Commons）"
+      "attribution": "Scott Buckley — “Crusader”（CC BY 4.0，via Wikimedia Commons）",
+      "loudness_lufs": -16.2,
+      "bed_target_lufs": -31.0
     },
     {
       "id": "revenge_02_ghost_dance_macleod_kevi",
@@ -71,12 +77,35 @@
       "license": "licensed",
       "source": "Ghost Dance (MacLeod, Kevin) (ISRC USUAN1100573).oga",
       "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Ghost Dance (MacLeod, Kevin)”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Ghost_Dance_(MacLeod,_Kevin)_(ISRC_USUAN1100573).oga",
-      "gain_db": -20,
+      "gain_db": -11.9,
       "artist": "Kevin MacLeod",
       "title": "Ghost Dance (MacLeod, Kevin)",
       "license_name": "CC BY 3.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Ghost_Dance_(MacLeod,_Kevin)_(ISRC_USUAN1100573).oga",
-      "attribution": "Kevin MacLeod — “Ghost Dance (MacLeod, Kevin)”（CC BY 3.0，via Wikimedia Commons）"
+      "attribution": "Kevin MacLeod — “Ghost Dance (MacLeod, Kevin)”（CC BY 3.0，via Wikimedia Commons）",
+      "loudness_lufs": -19.1,
+      "bed_target_lufs": -31.0
+    },
+    {
+      "id": "revenge_11_steady_fury",
+      "file": "revenge_11_steady_fury.mp3",
+      "moods": [
+        "revenge"
+      ],
+      "bpm": null,
+      "duration": 148.9,
+      "loudness_lufs": -14.7,
+      "loop": false,
+      "license": "generated",
+      "artist": "AI 生成",
+      "title": "Steady Fury",
+      "license_name": "AI 生成（平台商用条款待补）",
+      "source": "用户用 AI 音乐平台生成，原始文件（无二次压缩）",
+      "source_url": "",
+      "attribution": "AI 生成：Steady Fury",
+      "license_note": "AI 生成曲目（平台与商用条款待用户补：需平台名 + 授权截图）。入库时未转码、未做响度统一；增益按实测 -14.7 LUFS 反推至 -33 LUFS 铺底。用途：稳定的怒意/打脸前夜",
+      "gain_db": -16.3,
+      "bed_target_lufs": -31.0
     },
     {
       "id": "sad_01_touching_moments_two_hig",
@@ -90,12 +119,14 @@
       "license": "licensed",
       "source": "Touching Moments Two - Higher (ISRC USUAN1100037).mp3",
       "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Touching Moments Two - Higher”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Touching_Moments_Two_-_Higher_(ISRC_USUAN1100037).mp3",
-      "gain_db": -24,
+      "gain_db": -6.4,
       "artist": "Kevin MacLeod",
       "title": "Touching Moments Two - Higher",
       "license_name": "CC BY 3.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Touching_Moments_Two_-_Higher_(ISRC_USUAN1100037).mp3",
-      "attribution": "Kevin MacLeod — “Touching Moments Two - Higher”（CC BY 3.0，via Wikimedia Commons）"
+      "attribution": "Kevin MacLeod — “Touching Moments Two - Higher”（CC BY 3.0，via Wikimedia Commons）",
+      "loudness_lufs": -28.6,
+      "bed_target_lufs": -35.0
     },
     {
       "id": "sad_02_touching_moments_four_me",
@@ -109,12 +140,35 @@
       "license": "licensed",
       "source": "Touching Moments Four - Melody (ISRC USUAN1100040).mp3",
       "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Touching Moments Four - Melody”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Touching_Moments_Four_-_Melody_(ISRC_USUAN1100040).mp3",
-      "gain_db": -24,
+      "gain_db": -6.4,
       "artist": "Kevin MacLeod",
       "title": "Touching Moments Four - Melody",
       "license_name": "CC BY 3.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Touching_Moments_Four_-_Melody_(ISRC_USUAN1100040).mp3",
-      "attribution": "Kevin MacLeod — “Touching Moments Four - Melody”（CC BY 3.0，via Wikimedia Commons）"
+      "attribution": "Kevin MacLeod — “Touching Moments Four - Melody”（CC BY 3.0，via Wikimedia Commons）",
+      "loudness_lufs": -28.6,
+      "bed_target_lufs": -35.0
+    },
+    {
+      "id": "sad_11_no_words",
+      "file": "sad_11_no_words.mp3",
+      "moods": [
+        "sad"
+      ],
+      "bpm": null,
+      "duration": 137.59,
+      "loudness_lufs": -13.7,
+      "loop": false,
+      "license": "generated",
+      "artist": "AI 生成",
+      "title": "No Words",
+      "license_name": "AI 生成（平台商用条款待补）",
+      "source": "用户用 AI 音乐平台生成，原始文件（无二次压缩）",
+      "source_url": "",
+      "attribution": "AI 生成：No Words",
+      "license_note": "AI 生成曲目（平台与商用条款待用户补：需平台名 + 授权截图）。入库时未转码、未做响度统一；增益按实测 -13.7 LUFS 反推至 -33 LUFS 铺底。用途：无言/失去",
+      "gain_db": -21.3,
+      "bed_target_lufs": -35.0
     },
     {
       "id": "suspense_01_passing_action",
@@ -128,12 +182,14 @@
       "license": "licensed",
       "source": "Passing Action (ISRC USUAN1100117).mp3",
       "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Passing Action”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Passing_Action_(ISRC_USUAN1100117).mp3",
-      "gain_db": -23,
+      "gain_db": -10.5,
       "artist": "Kevin MacLeod",
       "title": "Passing Action",
       "license_name": "CC BY 3.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Passing_Action_(ISRC_USUAN1100117).mp3",
-      "attribution": "Kevin MacLeod — “Passing Action”（CC BY 3.0，via Wikimedia Commons）"
+      "attribution": "Kevin MacLeod — “Passing Action”（CC BY 3.0，via Wikimedia Commons）",
+      "loudness_lufs": -23.5,
+      "bed_target_lufs": -34.0
     },
     {
       "id": "suspense_02_rafael_krux_lights_creep",
@@ -147,12 +203,56 @@
       "license": "licensed",
       "source": "Rafael Krux - Lights - Creepy Ambient Suspense (cc-by) (filmmusic).mp3",
       "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Rafael Krux — “Lights - Creepy Ambient Suspense (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Lights_-_Creepy_Ambient_Suspense_(cc-by)_(filmmusic).mp3",
-      "gain_db": -23,
+      "gain_db": -19.6,
       "artist": "Rafael Krux",
       "title": "Lights - Creepy Ambient Suspense (cc-by) (filmmusic)",
       "license_name": "CC BY 4.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Rafael_Krux_-_Lights_-_Creepy_Ambient_Suspense_(cc-by)_(filmmusic).mp3",
-      "attribution": "Rafael Krux — “Lights - Creepy Ambient Suspense (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）"
+      "attribution": "Rafael Krux — “Lights - Creepy Ambient Suspense (cc-by) (filmmusic)”（CC BY 4.0，via Wikimedia Commons）",
+      "loudness_lufs": -14.4,
+      "bed_target_lufs": -34.0
+    },
+    {
+      "id": "suspense_11_subtle_pressure",
+      "file": "suspense_11_subtle_pressure.mp3",
+      "moods": [
+        "suspense"
+      ],
+      "bpm": null,
+      "duration": 88.03,
+      "loudness_lufs": -27.2,
+      "loop": false,
+      "license": "generated",
+      "artist": "AI 生成",
+      "title": "Subtle Pressure",
+      "license_name": "AI 生成（平台商用条款待补）",
+      "source": "用户用 AI 音乐平台生成，原始文件（无二次压缩）",
+      "source_url": "",
+      "attribution": "AI 生成：Subtle Pressure",
+      "license_note": "AI 生成曲目（平台与商用条款待用户补：需平台名 + 授权截图）。入库时未转码、未做响度统一；增益按实测 -27.2 LUFS 反推至 -33 LUFS 铺底。用途：微妙的施压/信息差",
+      "gain_db": -6.8,
+      "bed_target_lufs": -34.0
+    },
+    {
+      "id": "suspense_12_silence",
+      "file": "suspense_12_silence.mp3",
+      "moods": [
+        "suspense"
+      ],
+      "bpm": null,
+      "duration": 193.02,
+      "loudness_lufs": -25.1,
+      "loop": false,
+      "license": "generated",
+      "artist": "AI 生成",
+      "title": "Silence",
+      "license_name": "AI 生成（平台商用条款待补）",
+      "source": "用户用 AI 音乐平台生成，原始文件（无二次压缩）",
+      "source_url": "",
+      "attribution": "AI 生成：Silence",
+      "license_note": "AI 生成曲目（平台与商用条款待用户补：需平台名 + 授权截图）。入库时未转码、未做响度统一；增益按实测 -25.1 LUFS 反推至 -33 LUFS 铺底。用途：留白悬疑",
+      "gain_db": -8.9,
+      "bed_target_lufs": -34.0
     },
     {
       "id": "tension_01_ossuary_6_air",
@@ -166,12 +266,14 @@
       "license": "licensed",
       "source": "Ossuary 6 - Air (ISRC USUAN1500048).mp3",
       "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Ossuary_6_-_Air_(ISRC_USUAN1500048).mp3",
-      "gain_db": -22,
+      "gain_db": -10.1,
       "artist": "Kevin MacLeod",
       "title": "Ossuary 6 - Air",
       "license_name": "CC BY 3.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Ossuary_6_-_Air_(ISRC_USUAN1500048).mp3",
-      "attribution": "Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）"
+      "attribution": "Kevin MacLeod — “Ossuary 6 - Air”（CC BY 3.0，via Wikimedia Commons）",
+      "loudness_lufs": -22.9,
+      "bed_target_lufs": -33.0
     },
     {
       "id": "tension_02_impending_boom",
@@ -185,12 +287,35 @@
       "license": "licensed",
       "source": "Impending Boom (ISRC USUAN1100198).mp3",
       "license_note": "CC BY 3.0：可商用，**发行时必须署名**（发布文案或片尾）：Kevin MacLeod — “Impending Boom”（CC BY 3.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Impending_Boom_(ISRC_USUAN1100198).mp3",
-      "gain_db": -22,
+      "gain_db": -7.7,
       "artist": "Kevin MacLeod",
       "title": "Impending Boom",
       "license_name": "CC BY 3.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Impending_Boom_(ISRC_USUAN1100198).mp3",
-      "attribution": "Kevin MacLeod — “Impending Boom”（CC BY 3.0，via Wikimedia Commons）"
+      "attribution": "Kevin MacLeod — “Impending Boom”（CC BY 3.0，via Wikimedia Commons）",
+      "loudness_lufs": -25.3,
+      "bed_target_lufs": -33.0
+    },
+    {
+      "id": "tension_11_quiet_tension",
+      "file": "tension_11_quiet_tension.mp3",
+      "moods": [
+        "tension"
+      ],
+      "bpm": null,
+      "duration": 116.14,
+      "loudness_lufs": -19.5,
+      "loop": true,
+      "license": "generated",
+      "artist": "AI 生成",
+      "title": "Quiet Tension",
+      "license_name": "AI 生成（平台商用条款待补）",
+      "source": "用户用 AI 音乐平台生成，原始文件（无二次压缩）",
+      "source_url": "",
+      "attribution": "AI 生成：Quiet Tension",
+      "license_note": "AI 生成曲目（平台与商用条款待用户补：需平台名 + 授权截图）。入库时未转码、未做响度统一；增益按实测 -19.5 LUFS 反推至 -33 LUFS 铺底。用途：安静的对峙压迫",
+      "gain_db": -13.5,
+      "bed_target_lufs": -33.0
     },
     {
       "id": "warm_01_scott_buckley_sleep_pian",
@@ -204,12 +329,14 @@
       "license": "licensed",
       "source": "Scott Buckley - Sleep (piano-only mix).oga",
       "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Scott Buckley — “Sleep (piano-only mix)”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Sleep_(piano-only_mix).oga",
-      "gain_db": -21,
+      "gain_db": -17.0,
       "artist": "Scott Buckley",
       "title": "Sleep (piano-only mix)",
       "license_name": "CC BY 4.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Sleep_(piano-only_mix).oga",
-      "attribution": "Scott Buckley — “Sleep (piano-only mix)”（CC BY 4.0，via Wikimedia Commons）"
+      "attribution": "Scott Buckley — “Sleep (piano-only mix)”（CC BY 4.0，via Wikimedia Commons）",
+      "loudness_lufs": -15.0,
+      "bed_target_lufs": -32.0
     },
     {
       "id": "warm_02_scott_buckley_interventi",
@@ -223,12 +350,35 @@
       "license": "licensed",
       "source": "Scott Buckley - Intervention.oga",
       "license_note": "CC BY 4.0：可商用，**发行时必须署名**（发布文案或片尾）：Scott Buckley — “Intervention”（CC BY 4.0，via Wikimedia Commons）。来源：https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Intervention.oga",
-      "gain_db": -21,
+      "gain_db": -16.9,
       "artist": "Scott Buckley",
       "title": "Intervention",
       "license_name": "CC BY 4.0",
       "source_url": "https://commons.wikimedia.org/wiki/File:Scott_Buckley_-_Intervention.oga",
-      "attribution": "Scott Buckley — “Intervention”（CC BY 4.0，via Wikimedia Commons）"
+      "attribution": "Scott Buckley — “Intervention”（CC BY 4.0，via Wikimedia Commons）",
+      "loudness_lufs": -15.1,
+      "bed_target_lufs": -32.0
+    },
+    {
+      "id": "warm_11_tender_reunion",
+      "file": "warm_11_tender_reunion.mp3",
+      "moods": [
+        "warm"
+      ],
+      "bpm": null,
+      "duration": 176.2,
+      "loudness_lufs": -17.4,
+      "loop": false,
+      "license": "generated",
+      "artist": "AI 生成",
+      "title": "Tender Reunion",
+      "license_name": "AI 生成（平台商用条款待补）",
+      "source": "用户用 AI 音乐平台生成，原始文件（无二次压缩）",
+      "source_url": "",
+      "attribution": "AI 生成：Tender Reunion",
+      "license_note": "AI 生成曲目（平台与商用条款待用户补：需平台名 + 授权截图）。入库时未转码、未做响度统一；增益按实测 -17.4 LUFS 反推至 -33 LUFS 铺底。用途：温柔重逢/家庭情感",
+      "gain_db": -14.6,
+      "bed_target_lufs": -32.0
     }
   ]
 }

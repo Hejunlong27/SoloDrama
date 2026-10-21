@@ -308,6 +308,65 @@ class TestMixReal(Base):
         self.assertIn("video", probe.stdout)
 
 
+class TestLoudnessGate(Base):
+    """★ 2026-10-21：判「最终铺底响度」而不是「相对增益」。
+
+    起因：用户生成的 6 首母带响度差 13.5 dB（-13.7 ~ -27.2 LUFS）。
+    只看 gain_db 会同时误杀（本来很轻的曲子提 6dB 才 -21 LUFS，完全不抢戏）
+    与漏放（本来就 -6.8 LUFS 的曲子降 19dB 还有 -25.8，仍然压对白）。
+    """
+
+    def _plan_with(self, gain_db=None, lufs=None, plan_gain=None):
+        t = self.track()
+        t.pop("gain_db", None)
+        if gain_db is not None:
+            t["gain_db"] = gain_db
+        if lufs is not None:
+            t["loudness_lufs"] = lufs
+        self.lib([t])
+        self.touch_audio()
+        self.touch_master(60.0)
+        plan = B.make_plan(self.ws, "ep01", mood="tension")
+        if plan_gain is not None:
+            plan["segments"][0]["gain_db"] = plan_gain
+        return plan
+
+    def test_70_bed_too_loud(self):
+        plan = self._plan_with(gain_db=-3, lufs=-10.0)      # -13 LUFS，压对白
+        codes = [i["code"] for i in B.check_plan(self.ws, plan)]
+        self.assertIn("B009", codes)
+
+    def test_71_quiet_track_may_boost_above_minus6(self):
+        """很轻的曲子（-38 LUFS）提 4 dB 只到 -34 —— 旧口径会因为 gain>-6 误杀。"""
+        plan = self._plan_with(gain_db=4, lufs=-38.0)
+        codes = [i["code"] for i in B.check_plan(self.ws, plan)]
+        self.assertNotIn("B009", codes)
+        self.assertNotIn("B014", codes)
+
+    def test_72_bed_too_quiet(self):
+        plan = self._plan_with(gain_db=-25, lufs=-20.0)     # -45 LUFS，听不见
+        codes = [i["code"] for i in B.check_plan(self.ws, plan)]
+        self.assertIn("B014", codes)
+
+    def test_73_gain_derived_from_lufs(self):
+        """库里没写 gain_db 但有 loudness_lufs → 按 -33 LUFS 反推。"""
+        plan = self._plan_with(lufs=-20.0)
+        self.assertAlmostEqual(plan["segments"][0]["gain_db"], -13.0, places=1)
+
+    def test_74_sync_plan_gain_fixes_stale_plan(self):
+        """库里的增益被实测校准后，旧计划里的增益要被自动纠正。"""
+        plan = self._plan_with(gain_db=-10.0, lufs=-22.9, plan_gain=-22.0)
+        notes = B.sync_plan_gain(self.ws, plan)
+        self.assertEqual(plan["segments"][0]["gain_db"], -10.0)
+        self.assertTrue(notes and "校正" in notes[0])
+
+    def test_75_gain_locked_respected(self):
+        plan = self._plan_with(gain_db=-10.0, lufs=-22.9, plan_gain=-22.0)
+        plan["segments"][0]["gain_locked"] = True
+        B.sync_plan_gain(self.ws, plan)
+        self.assertEqual(plan["segments"][0]["gain_db"], -22.0)
+
+
 class TestSelectionAndCredits(Base):
     def test_60_lru_avoids_repeating_last_track(self):
         """相邻集不重复：ep01 用过 A 之后，ep02 应优先选从未用过的 B。"""
