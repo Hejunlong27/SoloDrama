@@ -120,18 +120,20 @@ def _registry() -> dict:
         if env_ws and Path(env_ws).is_dir():
             data["current"] = str(Path(env_ws).resolve())
     if not data.get("current") and data["items"]:
-        data["current"] = data["items"][0]["path"]
+        # ★ 兜底也必须挑「真实存在」的那一个：登记表里常年混着已删除/已改名的旧路径
+        #   （实测 `D:\剧本\海外剧\3`），拿 items[0] 兜底会把用户直接送进一个不存在的目录。
+        live = [it for it in data["items"] if Path(it.get("path") or "").is_dir()]
+        data["current"] = (live or data["items"])[0]["path"]
     return data
 
 
 def _i_workspaces() -> dict:
     reg = _registry()
     known = {it["path"] for it in reg["items"]}
-    for extra in (reg.get("current"),):
-        if extra and extra not in known:
-            reg["items"].insert(0, {"path": extra, "title": Path(extra).name,
-                                    "added_at": time.time()})
-            known.add(extra)
+    # ★ 2026-10-28：**不再**把「当前工作区」硬塞进 items。
+    #   旧逻辑 `for extra in (reg.get("current"),)` 会把一个已删除的目录伪造成项目卡片
+    #   （exists=false），既污染清单又参与排序。当前目录是否可用改由 `current_exists` 表达，
+    #   无效时下面会自愈到真实项目。
     # 合并「本机扫描」结果：把有产出的剧补进来，并给每一项标注产出与花费
     scanned = {}
     try:
@@ -151,10 +153,28 @@ def _i_workspaces() -> dict:
         s = scanned.get(str(p.resolve())) if it["exists"] else None
         if s:
             it["images"] = s["images"]
+            it["loose"] = s.get("loose", 0)
             it["yuan"] = s["yuan"]
             it["has_output"] = s["has_output"]
             it["updated_text"] = s["updated_text"]
-    reg["items"].sort(key=lambda x: (x.get("images") or 0, x.get("added_at") or 0), reverse=True)
+    reg["items"].sort(key=lambda x: ((x.get("images") or 0) + (x.get("loose") or 0),
+                                     x.get("added_at") or 0), reverse=True)
+
+    # ---- 当前工作区自愈：绝不把用户留在死路径上 ----
+    cur = str(reg.get("current") or "")
+    replaced = ""
+    if not (cur and Path(cur).is_dir()):
+        live = [it for it in reg["items"] if it["exists"]]
+        pick = next((it for it in live if it.get("is_workspace")), live[0] if live else None)
+        reg["current"] = pick["path"] if pick else ""
+        replaced = cur
+        if pick:                                  # 只在真的换成了可用目录时才落盘
+            paths.write_json(paths.REGISTRY_FILE, reg)
+    reg["current_exists"] = bool(reg.get("current")) and Path(reg["current"]).is_dir()
+    reg["stale"] = [it["path"] for it in reg["items"] if not it["exists"]]
+    if replaced:
+        # 只用于界面上解释「为什么当前项目变了」，不写入注册表
+        reg["current_replaced"] = replaced
     return reg
 
 
@@ -285,6 +305,29 @@ def set_current(payload: dict = Body(...)):
     paths.write_json(paths.REGISTRY_FILE, reg)
     reader.clear_cache()
     return _i_workspaces()
+
+
+@app.post("/api/workspaces/prune")
+def prune_workspaces():
+    """清掉登记表里已不存在的目录（只动注册表，**不删任何磁盘文件**）。
+
+    为什么需要：项目列表经年累积会混进已删除/已改名的路径，界面上表现为
+    「登记了 N 个、只显示 M 个」（前端过滤 exists），数字对不上又无从清理。
+    """
+    _write_guard()
+    reg = _registry()
+    keep, gone = [], []
+    for it in reg["items"]:
+        (keep if Path(it.get("path") or "").is_dir() else gone).append(it)
+    if gone:
+        reg["items"] = keep
+        cur = str(reg.get("current") or "")
+        if cur and not Path(cur).is_dir():
+            reg["current"] = keep[0]["path"] if keep else ""
+        paths.write_json(paths.REGISTRY_FILE, reg)
+        reader.clear_cache()
+    return {"ok": True, "removed": [it["path"] for it in gone], "kept": len(keep),
+            **_i_workspaces()}
 
 
 # ---------------------------------------------------------------------------

@@ -8,9 +8,9 @@ let sortKey = 'recent';
 function sortProjects(list) {
   const arr = list.slice();
   if (sortKey === 'cost') arr.sort((a, b) => (b.yuan || 0) - (a.yuan || 0));
-  else if (sortKey === 'images') arr.sort((a, b) => (b.images || 0) - (a.images || 0));
+  else if (sortKey === 'images') arr.sort((a, b) => imgTotal(b) - imgTotal(a));
   else if (sortKey === 'name') arr.sort((a, b) => String(a.title || a.path).localeCompare(String(b.title || b.path), 'zh'));
-  else arr.sort((a, b) => (b.images || 0) - (a.images || 0) || String(b.updated_text).localeCompare(String(a.updated_text)));
+  else arr.sort((a, b) => imgTotal(b) - imgTotal(a) || String(b.updated_text).localeCompare(String(a.updated_text)));
   return arr;
 }
 
@@ -22,17 +22,33 @@ function yuanText(v) {
   return money(n);
 }
 
+/* 图片总数 = 已归档资产 + 参考图 + 散图。
+   ★ 真实项目常把图直接丢在剧目录根下，只数 04-资产 会显示「0 张图 / 暂无产出」，
+     用户明明有 21 张图却被判成没开工。散图口径与资产页「散图」页签同源（后端同一函数）。 */
+function imgTotal(p) {
+  return (Number(p.images) || 0) + (Number(p.loose) || 0);
+}
+
+function imgTitle(p) {
+  const std = Number(p.images) || 0;
+  const loose = Number(p.loose) || 0;
+  if (!loose) return std + ' 张已归档资产';
+  return std + ' 张已归档 + ' + loose + ' 张散图（未归档，见资产页「散图」）';
+}
+
 export async function render(ctx) {
   const d = await api.workspaces();
   const all = (d.items || []).filter((p) => p.exists);
   const list = sortProjects(all);
-  const current = d.current || S.ws;
+  const stale = (d.stale || []).filter(Boolean);
+  // 「当前」标记只认真实存在的项目：后端已自愈，这里再兜一道，避免标在看不见的项上
+  const current = all.some((p) => p.path === d.current) ? d.current : (S.ws || '');
 
   const cards = list.map((p) => {
     const on = p.path === current;
     return '<div class="card" data-pick="' + esc(p.path) + '" style="cursor:pointer;' + (on ? 'border-color:var(--accent-line)' : '') + '">'
-      + '<div class="mtile-ph">' + icon('film', 26)
-      + '<span>' + (p.has_output ? (p.images || 0) + ' 张图' : '暂无产出') + '</span>'
+      + '<div class="mtile-ph" title="' + esc(imgTitle(p)) + '">' + icon('film', 26)
+      + '<span>' + (p.has_output ? imgTotal(p) + ' 张图' : '暂无产出') + '</span>'
       + '<span class="mtile-tag">' + badge(p.has_output ? 'ok' : 'outline', p.has_output ? '有产出' : '未开工') + '</span>'
       + '</div>'
       + '<div class="card-b">'
@@ -49,20 +65,32 @@ export async function render(ctx) {
     '<tr class="clickable" data-pick="' + esc(p.path) + '">'
     + '<td><div>' + esc(p.title || p.path) + (p.path === current ? ' ' + badge('warn', '当前') : '') + '</div>'
     + '<div class="row-sub mono">' + esc(p.path) + '</div></td>'
-    + '<td class="num">' + (p.images || 0) + '</td>'
+    + '<td class="num">' + imgTotal(p) + '</td>'
     + '<td class="num">' + yuanText(p.yuan) + '</td>'
     + '<td class="small dim">' + esc(p.updated_text || '—') + '</td>'
     + '<td class="right"><button class="btn quiet sm" data-pick="' + esc(p.path) + '">打开</button></td></tr>'
   )).join('');
 
+  /* 失效目录提示：登记表里混着已删除/已改名的路径时，「登记了几个」和「看到几个」会对不上。
+     只清注册表条目，不碰磁盘。 */
+  const staleBar = stale.length
+    ? '<div class="alert warn" style="margin-bottom:14px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
+      + '<div class="flex1">有 ' + stale.length + ' 个登记目录已经不存在（<span class="mono">'
+      + esc(stale.slice(0, 3).join('、')) + (stale.length > 3 ? ' 等' : '') + '</span>）</div>'
+      + '<button class="btn quiet sm" id="btnPrune">从清单里移除</button></div>'
+    : '';
+
   const html = ''
     + '<div class="page-head"><div><h1 class="page-title">项目管理</h1>'
-    + '<div class="page-sub">' + all.length + ' 个已登记项目 · 搜索按名称/路径匹配，不读文件内容</div></div>'
+    + '<div class="page-sub">' + all.length + ' 个可用项目'
+    + (stale.length ? ' · ' + stale.length + ' 个失效' : '') + ' · 搜索按名称/路径匹配，不读文件内容</div></div>'
     + '<div class="page-actions">'
     + '<button class="btn quiet" id="btnScan">' + icon('search', 14) + ' 扫描本机</button>'
     + '<button class="btn quiet" id="btnReg">' + icon('folder', 14) + ' 登记已有目录</button>'
     + '<button class="btn primary" id="btnNew">' + icon('plus', 14) + ' 新建项目</button>'
     + '</div></div>'
+
+    + staleBar
 
     + '<div class="row" style="margin-bottom:14px;flex-wrap:wrap">'
     + '<div class="search" style="width:280px"><span class="nav-ico">' + icon('search', 14) + '</span>'
@@ -118,11 +146,27 @@ export async function render(ctx) {
         };
       });
 
+      const pruneBtn = root.querySelector('#btnPrune');
+      if (pruneBtn) {
+        pruneBtn.onclick = async () => {
+          pruneBtn.disabled = true;
+          try {
+            const r = await api.prune();
+            await loadProjects();
+            toast(r.removed && r.removed.length ? '已移除 ' + r.removed.length + ' 个失效目录' : '没有需要清理的');
+            ctx.refresh();
+          } catch (err) {
+            pruneBtn.disabled = false;
+            toast('清理失败：' + (err && err.message ? err.message : err), 'bad');
+          }
+        };
+      }
+
       root.querySelector('#btnReg').onclick = () => {
         openModal({
           title: '登记已有项目目录',
           html: '<div class="field"><label>目录完整路径（必须已存在）</label>'
-            + '<input class="input mono" id="regPath" placeholder="D:\\\\剧本\\\\海外剧\\\\3">'
+            + '<input class="input mono" id="regPath" placeholder="D:\\\\剧本\\\\我的新短剧">'
             + '<div class="help">登记只写入控制台的项目清单，不动目录内容。</div></div>',
           foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
             + '<button class="btn primary" id="regOk">登记</button>',
@@ -175,7 +219,8 @@ async function scanDrawer(ctx) {
     '<div class="row" style="padding:8px 0;border-bottom:1px solid var(--line)">'
     + '<div class="flex1"><div class="small">' + esc(it.name) + '</div>'
     + '<div class="tiny dim mono" style="overflow:hidden;text-overflow:ellipsis">' + esc(it.path) + '</div>'
-    + '<div class="tiny dim">' + (it.images || 0) + ' 张图 · ' + yuanText(it.yuan) + ' · ' + esc(it.updated_text || '') + '</div></div>'
+    + '<div class="tiny dim">' + ((Number(it.images) || 0) + (Number(it.loose) || 0)) + ' 张图 · '
+    + yuanText(it.yuan) + ' · ' + esc(it.updated_text || '') + '</div></div>'
     + '<button class="btn quiet sm" data-add="' + esc(it.path) + '">登记</button></div>'
   )).join('') || '<div class="empty"><div class="empty-t">没有发现新项目</div>'
     + '<div class="empty-h">已扫描：' + esc((d.roots || []).join('、')) + '</div></div>';

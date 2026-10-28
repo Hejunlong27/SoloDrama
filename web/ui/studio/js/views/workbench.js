@@ -82,7 +82,9 @@ export async function render(ctx) {
     + '<td><div class="row gap8">' + dot(p.has_output ? 'done' : 'todo')
     + '<span>' + esc(p.title || p.path) + '</span></div>'
     + '<div class="row-sub mono">' + esc(p.path) + '</div></td>'
-    + '<td class="num">' + (p.images || 0) + '</td>'
+    /* 图片数 = 已归档 + 散图：与项目卡片、资产页「散图」同口径。
+       只数 images 会让「图都在根目录」的真实项目在这里显示 0。 */
+    + '<td class="num">' + ((Number(p.images) || 0) + (Number(p.loose) || 0)) + '</td>'
     + '<td class="num">' + (p.yuan ? money(p.yuan) : '—') + '</td>'
     + '<td class="small dim">' + esc(p.updated_text || '—') + '</td>'
     + '<td class="right"><button class="btn quiet sm" data-open="' + esc(p.path) + '">打开</button></td></tr>'

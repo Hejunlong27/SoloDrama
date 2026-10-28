@@ -49,6 +49,23 @@ def _count_images(d: Path) -> int:
     return n
 
 
+def _loose_count(ws: Path) -> int:
+    """标准资产目录之外的图片数（剧目录根 + 一层子目录）。
+
+    ★ 2026-10-28 实测：真实项目（`D:\\剧本\\海外剧\\2、母亲之路`）把 21 张图直接丢在剧目录
+      根下，`04-资产/{characters,scenes,props}` 一个都没有 ⇒ 旧口径单看标准目录，
+      项目卡片会写「暂无产出」、资产中心会写「还没有图片」。**用户明明有图**。
+      所以计数必须走 `artifacts.loose_images` 这一处真源，与资产页「散图」页签同口径，
+      否则两个页面会各说一套。
+    """
+    try:
+        from . import artifacts
+        d = artifacts.loose_images(str(ws), limit=2000) or {}
+        return len(d.get("items") or [])
+    except Exception:  # noqa: BLE001 —— 统计失败不能拖垮整个清单
+        return 0
+
+
 def _read_json(p: Path):
     try:
         return json.loads(p.read_text(encoding="utf-8-sig"))
@@ -124,6 +141,10 @@ def _inventory(ws: Path) -> dict:
 
     images = {k: _count_images(assets_dir / k) for k in KINDS}
     images["total"] = sum(images.values())
+    # ★ 散图独立一格：不并入 total（`total` 是「已归档资产」的稳定口径，多处断言依赖它），
+    #   但在界面与 has_output 里必须算进去，否则「有 21 张图」会被判成「未开工」。
+    images["loose"] = _loose_count(ws)
+    images["all"] = images["total"] + images["loose"]
 
     refs = 0
     for cand in (assets_dir / "refs", out_dir / "assets" / "refs", ws / "video-pipeline" / "data" / "refs",
@@ -203,7 +224,8 @@ def _inventory(ws: Path) -> dict:
             "source": source,
             "source_text": source_text,
         },
-        "has_output": bool(images["total"] or refs or clips),
+        # ★ 散图也算产出：真实项目把图放根目录，只看标准目录会误判成「未开工」。
+        "has_output": bool(images["total"] or images["loose"] or refs or clips),
         "updated_at": newest,
         "updated_text": (time.strftime("%m-%d %H:%M", time.localtime(newest)) if newest else ""),
     }
@@ -254,7 +276,10 @@ def discover(refresh: bool = False, max_depth: int = 3, limit: int = 40) -> dict
                     found.append({
                         "path": str(c),
                         "name": c.name,
+                        # `images` 口径保持「已归档资产 + 参考图」不变（多处断言依赖），
+                        # 散图单列 `loose`，由界面自行相加显示。
                         "images": inv["images"]["total"] + inv["refs"],
+                        "loose": inv["images"]["loose"],
                         "yuan": round(inv["spend"]["coins"] * 0.0025, 4),
                         "coins": inv["spend"]["coins"],
                         "has_output": inv["has_output"],

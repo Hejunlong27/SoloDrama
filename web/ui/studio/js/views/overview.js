@@ -109,7 +109,7 @@ export async function render(ctx) {
       ['镜头 / 提示词', (counts.shots || 0) + ' 镜 · ' + (counts.prompts || 0) + ' 条'],
       ['画风', (ov.style && (ov.style.label || ov.style.choice)) || '未确认'],
       ['图片', (counts.images && (counts.images.total + ' 张（角色 ' + counts.images.characters + ' / 场景 '
-        + counts.images.scenes + '）')) || '0 张'],
+        + counts.images.scenes + '）' + (counts.images.loose ? ' · 另有 ' + counts.images.loose + ' 张散图' : ''))) || '0 张'],
       ['成片 / 母版', (counts.clips || 0) + ' 段 · ' + (counts.renders || 0) + ' 集'],
       ['最近批次', ov.latest_batch || '—', true]
     ])

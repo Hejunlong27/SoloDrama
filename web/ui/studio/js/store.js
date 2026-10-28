@@ -63,13 +63,17 @@ export async function loadProjects() {
   try {
     const d = await api.workspaces();
     S.projects = (d.items || []).filter((it) => it.exists);
+    S.stale = d.stale || [];
     /* ★ 用 URL 显式指定的工作区必须被尊重：哪怕它还没登记。
        否则深链/书签会被静默改成「上次用过的项目」，用户以为看的是 A 却发现是 B。 */
     const explicit = wsFromUrl();
     if (S.ws && explicit && samePath(explicit, S.ws)) return S.projects;
     if (!S.ws || !S.projects.some((p) => samePath(p.path, S.ws))) {
-      const cur = d.current || (S.projects[0] && S.projects[0].path) || '';
-      if (cur) setWs(cur);
+      /* ★ 后端返回的 current 也可能已失效（目录被删/改名）。只认「在可用列表里」的 current，
+         否则整个应用会带着一个死路径请求所有接口。服务端已自愈，前端再兜一道。 */
+      const live = (p) => !!p && S.projects.some((x) => samePath(x.path, p));
+      const cur = [d.current, S.projects[0] && S.projects[0].path].find(live) || '';
+      if (cur) setWs(cur); else setWs('');
     }
     return S.projects;
   } finally {

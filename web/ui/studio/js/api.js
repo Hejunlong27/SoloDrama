@@ -66,6 +66,7 @@ export const api = {
   setCurrent: (ws) => post('/api/workspaces/current', { path: ws }),
   createProject: (body) => post('/api/projects/create', body),
   register: (ws, title) => post('/api/workspaces', { path: ws, title }),
+  prune: () => post('/api/workspaces/prune', {}),
 
   capabilities: () => get('/api/studio/capabilities'),
   overview: (ws) => get('/api/studio/overview', { ws }),

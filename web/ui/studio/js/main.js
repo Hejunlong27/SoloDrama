@@ -102,7 +102,8 @@ function renderTop() {
   const p = currentProject();
   document.getElementById('projName').textContent = p ? p.title || p.path : (S.ws ? S.ws : '未选择项目');
   document.getElementById('projMeta').textContent = p
-    ? ((p.images ? p.images + ' 张图' : '') + (p.yuan ? ' · ' + (p.yuan < 100 ? '¥' + p.yuan.toFixed(2) : '¥' + Math.round(p.yuan)) : ''))
+    ? (((Number(p.images) || 0) + (Number(p.loose) || 0)) ? ((Number(p.images) || 0) + (Number(p.loose) || 0)) + ' 张图' : '')
+      + (p.yuan ? ' · ' + (p.yuan < 100 ? '¥' + p.yuan.toFixed(2) : '¥' + Math.round(p.yuan)) : '')
     : '';
   const d = document.getElementById('projDot');
   d.className = 'dot proj-dot ' + (p ? (p.has_output ? 'done' : 'todo') : 'todo');

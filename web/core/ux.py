@@ -290,6 +290,11 @@ def spent_summary(ws, status_data=None) -> dict:
         lines.append({"label": "角色和场景的图", "value": " · ".join(parts)})
     if inv["refs"]:
         lines.append({"label": "用来对照的参考图", "value": "%d 张" % inv["refs"]})
+    # ★ 散图单列一行：真实项目把图直接放剧目录根下（不进 04-资产），
+    #   只报「已归档资产」会让用户以为自己的图没了。数字与资产页「散图」页签同源。
+    if imgs.get("loose"):
+        lines.append({"label": "还没归档的图（散图）",
+                      "value": "%d 张 · 资产页「散图」里能看到" % imgs["loose"]})
     if inv["clips"]:
         lines.append({"label": "已做出的镜头", "value": "%d 段" % inv["clips"]})
     if inv["renders"]:
@@ -458,7 +463,7 @@ def home(ws) -> dict:
         "episodes": episodes(st, info.get("out_dir")),
         "counts": {
             "shots": (st.get("data") or {}).get("shots", 0),
-            "images": spent["images"]["total"],
+            "images": spent["images"].get("all", spent["images"]["total"]),
             "clips": spent["clips"],
         },
         "has_workspace": bool(info.get("ok")),

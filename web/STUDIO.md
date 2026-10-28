@@ -89,7 +89,7 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 页面      | 真实功能                                                                       | 后端来源                                                                                                                                       |
 | ------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | 工作台     | 项目数/产出/花费、待处理事项、运行中任务、**接入状态**（LLM 提供商与用途就绪数、出图/出片通道、工作流 API、ComfyUI 体检按钮） | `/api/workspaces`、`/api/jobs`、`/api/studio/workflow`、`/api/studio/setup`、`/api/llm/providers`、`/api/llm/purposes`、`/api/run`(`diag.comfy`) |
-| 项目管理    | 登记、扫描本机、搜索/筛选/排序、打开、**新建项目**（调 `creation.py scaffold`，建完自动登记）              | `/api/workspaces*`、`/api/projects/create`                                                                                                  |
+| 项目管理    | 登记、扫描本机、搜索/筛选/排序、打开、**新建项目**（调 `creation.py scaffold`，建完自动登记）、**失效目录提示与一键清理**（只清注册表，不碰磁盘） | `/api/workspaces*`、`/api/workspaces/prune`、`/api/projects/create`                                                                          |
 | 项目详情    | 11 环节判据、集数规划、产物目录、G-0 九项、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
 | 创作中心    | S1–S5 完成度（引擎 probes）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
 | 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
@@ -229,7 +229,7 @@ HEADER 优先沿用**已有正式剧本的六行**（保住人工写的视觉锚
 ## 6. 测试
 
 ```bash
-# 离线单元/契约（默认 venv 即可；共 31 个文件）
+# 离线单元/契约（默认 venv 即可；共 34 个文件）
 for t in $(find stages tools web -name "test_*.py" -not -path "*__pycache__*"); do
   python "$t" || echo "FAILED $t"; done
 
@@ -240,10 +240,12 @@ envs/solodrama-web/Scripts/python.exe web/tests/test_llm_e2e.py
 python web/tools/verify_llm_loop.py
 ```
 
-本轮实测结果（2026-10-23）：
+本轮实测结果（2026-10-28）：
 
-- **31 个测试文件全绿**（引擎 22 + web 9）。新增：`test_llm_gateway.py`、`test_llm_e2e.py`、  
-  `test_studio_assets.py` 扩展（12 个视图）。
+- **34 个测试文件全绿**（引擎 22 + web 12）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
+  `test_inventory.py` 补 `[5] 散图口径`。
+- 新增 `test_workspaces.py` 的动因：真实登记表里 `current` 指着已删除的目录，四个用例分别守住
+  「死路径自愈并落盘」「未登记的死 current 不许变卡片」「全盘皆死时置空」「prune 只清注册表」。
 - `test_llm_gateway.py`：Schema 校验 7 例、安全 12 例、配置隔离 6 例、**代理默认值 3 例**、成功路径 5 例、错误分类与重试 12 例、模板 6 例、**离线演练通道 17 例**、创作闭环 12 例、门禁与失败保护 6 例 —— 全部通过。
 - `test_llm_e2e.py`：**10 组**断言，走真实 HTTP（本地伪造上游 + 内置演练通道），覆盖 SSRF 拒绝、Key 不回显、
   428 门禁、跨站 403、生成→编辑→落盘→幂等、上游 401/烂 JSON 分类、诊断卡门禁、**演练草稿默认拒写 + allow_simulated 放行**。
@@ -290,6 +292,17 @@ python web/tools/verify_llm_loop.py
   `04-资产/{characters,scenes,props}` → 打开是空的。`artifacts.loose_images()` 扫根目录 + 一层子目录，
   跳过 `04-资产`/`06-提示词`/`07-成片`/`09-发行` 与工程目录，**只报告位置**。
   移动用户文件属破坏性操作，产品里不自动做。
+- **散图数必须一路加到所有计数口径**：`inventory` 里 `images.total` 是「已归档资产」的稳定口径
+  （多处断言依赖，不改），散图单列 `images.loose`，合计 `images.all`。凡是「这部有多少张图」
+  的显示（项目卡片、工作台表格、顶部项目条、扫描本机列表、项目详情）都要用
+  `images + loose`，否则会出现「项目卡片说 21 张、工作台说 0 张」。`has_output` 也把散图算进去，
+  否则图都在根目录的项目会被判成「未开工」。
+- **当前工作区绝不能停在死路径上**：登记表会攒下已删除/已改名的路径（实测 `current` 指着
+  已删除的 `D:\剧本\海外剧\3`）。旧实现把 `current` 无条件塞进 `items` 伪造成卡片，前端又直接
+  采信 `current` ⇒ 一进站就用不存在的目录请求所有接口，页面全空还不报错。现在：
+  `_i_workspaces()` 不再伪造条目，`current` 失效时自愈到「第一个真实存在且像工作区」的项目并落盘，
+  响应里给 `current_exists` / `stale` / `current_replaced`；前端 `loadProjects()` 只接受在可用列表里的
+  `current`（双保险）。失效条目用 `POST /api/workspaces/prune` 清掉——**只删注册表条目，不删磁盘**。
 - **资产出图的前置是「资产提示词 md」，不是 ComfyUI**：引擎的 `gen_assets_local.py` / `gen_asset*.py`
   **没有命令行参数**，只认环境变量 `SOLODRAMA_ASSET_MD`；缺了会在解析 `--check` 之前就 rc=1，
   看起来像「ComfyUI 没开」，其实是缺文件。资产中心会在打开时自动探测

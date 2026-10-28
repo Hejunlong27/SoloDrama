@@ -102,6 +102,32 @@ def main():
         hit = [x for x in d["items"] if x["name"] == "剧A"][0]
         check(hit["images"] == 10, "发现里的图片数应为 6+4=10，实际 %s" % hit["images"])
         check(hit["coins"] == 34, "发现里的点数应为 34，实际 %s" % hit["coins"])
+
+        print("[5] 散图口径：图丢在剧目录根下也算产出")
+        # 实测场景：`D:\剧本\海外剧\2、母亲之路` 有 21 张图直接放在剧目录根下，
+        # `04-资产/{characters,scenes,props}` 一个都没有。旧口径下项目卡片写「暂无产出」。
+        loose_ws = root / "散图剧"
+        (loose_ws / "video-pipeline").mkdir(parents=True, exist_ok=True)
+        _mkfile(loose_ws / "六月.png")
+        _mkfile(loose_ws / "加油站.png")
+        _mkfile(loose_ws / "分镜" / "shot_01.png")
+        _mkfile(loose_ws / "video-pipeline" / "output" / "不该算进来.png")   # 工程目录里的图不算资产
+        _mkfile(loose_ws / "notes.txt")                                      # 非图片不算
+        inv3 = inventory.inventory(str(loose_ws))
+        check(inv3["images"]["loose"] == 3, "散图应为 3 张（根 2 + 分镜 1），实际 %s"
+              % inv3["images"]["loose"])
+        check(inv3["images"]["total"] == 0, "已归档总数仍应为 0（口径不变），实际 %s"
+              % inv3["images"]["total"])
+        check(inv3["images"]["all"] == 3, "合计应为 3，实际 %s" % inv3["images"]["all"])
+        check(inv3["has_output"] is True, "只有散图也应判定为有产出")
+        inventory._CACHE.clear()
+        d2 = inventory.discover(refresh=True)
+        hit2 = [x for x in d2["items"] if x["name"] == "散图剧"]
+        check(bool(hit2), "散图剧未被发现：%s" % [x["name"] for x in d2["items"]])
+        if hit2:
+            check(hit2[0]["loose"] == 3, "发现结果里应带散图数，实际 %s" % hit2[0].get("loose"))
+            check(hit2[0]["images"] == 0, "发现结果 images 口径保持「已归档 + 参考图」不变")
+            check(hit2[0]["has_output"] is True, "有散图的项目应算作有产出")
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 
