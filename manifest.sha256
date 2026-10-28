@@ -1,8 +1,8 @@
 d60f352d0db1404c70afb4bb8b2ca3fd1c610572aa40720e8a0b7baa7885418c  *.gitattributes
 4d6fe1eb43ade3083b8d8fd69e7fc1eba5f6dd6bab9c0486b57e822e46e24227  *.gitignore
 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  *LICENSE
-b114d7d6919f87189667205b9240a7bf6361c713573053a297e9374fbd8435af  *README.md
-b76c53e5d6415c3ba09f56e412e6f5fdd4b93b7b5947c9448bca8c9c08df1c0a  *VERSIONS.md
+a91425327c0cb0f06c2d1333078696c874f857d9a527e5ab90c51a3977b96faa  *README.md
+f5c8716d1abec04e423bfffb5417cb01675b411a773f41b95ebda01846eef0d2  *VERSIONS.md
 b3dbeb7a32a5064a850a550be87faf1634283bb90b14c36d8f6ec8e60a1d31d6  *configs/model-plan.example.json
 7c86d9856645453ba9b96aa6760dbb27496ab7a062d11ae6e8f3daf834370c66  *configs/settings.example.json
 696db6b6c2bfe645fcf8a83019e5cbf3794b5cc81f454e7e6db2b19f0d03ba90  *design/SoloDrama_Studio_产品定义_v1.md
@@ -200,8 +200,8 @@ e4acbe8b1bb5062cfcac27aa2b80b53fc8334cd97d1a7584e77ddae8e2051cce  *tools/core/sc
 dc8b12f9296c17ec536193ec41ef61a4dc284eef4bd67615887090c2b5cf6350  *tools/env_check.py
 8752961c5964f8ef319a9c3cfc13acb7fd6cdae232d7183efd16db1b468d7c19  *tools/tests/test_env_check.py
 731105d0afa390dff9af35743124d370071a585425394ea585d276b1a0984029  *web/README.md
-952bb7ecfb05acc8c0793e17bc9bb7f338b175b3a5cd8497fc5cde3662167491  *web/STUDIO.md
-21b123daba35525ba2bf1ad224eac66445690b081928cf7bfcd695e050b3debe  *web/app.py
+33c18b434c1055f85b3e4dfa85e0e701b4679d6f7d1479a6d05bb924da5c49f2  *web/STUDIO.md
+cf76872d2f86570c4ea35400e3a37a97363e2e36783a9759ec8930179c4cfa37  *web/app.py
 5908ab054edcebd70f66c9e1761453a8109abc745080a394cf91681b305bc7d3  *web/core/__init__.py
 f2092e746d4958a83836c54b3e5eab4a089c5ed54871bbbd173d8debe2f69780  *web/core/adapters.py
 88aa25060b81326fe8ee52020064313b0b41b12d7a952512a0d3f710980b9dc5  *web/core/artifacts.py
@@ -222,6 +222,7 @@ d183b136e3d8b8ddf85cd5fe046adeaa1af24ab0b52868c24cd3174aad881f27  *web/core/llm/
 adc4a3c5073c8f19de32d4ca6b9783dde56b7290c2bfd0a6b69b271254e53023  *web/core/llm/store.py
 75a5b977c62c84f54cc61694b453d017c585f40676609cfedf254c5f712ba96c  *web/core/llm/templates.py
 6cb665aa72b9a73ba18a41f732974021a3235d3721f86db703605f4bffb46cfb  *web/core/paths.py
+d98e9145d21abdf592f55af323a6f07a6bf9f62e10a9e0b7e23cc2d58ff87d8b  *web/core/pipeline.py
 2e468af415f07ceaaa9228ea6595455f88d68d2098639d9526b9f5d2b48cb17c  *web/core/reader.py
 b530e8b513367b2ae9e8a1d4d593dcd6f2c05b3aa9c8868ad80a442ae2a2b507  *web/core/runner.py
 cde1d93eed2c68b6827374c61231a15a5413a18dd887940a78ff52412fa0bfd2  *web/core/studio.py
@@ -237,6 +238,7 @@ dda77c97d4033c22889518b67834c868d08a59a9d19a828ef413a35380275e3a  *web/tests/tes
 60730322cea07d56352eaa562afe620efa2da12fee7e911f4264e043f22b9f8b  *web/tests/test_jobs.py
 34c3fff0bede8c3370b152c911e50f02803e7c8e72f16359987a704add5857e6  *web/tests/test_llm_e2e.py
 cf7b4c0e8e686057c3f92eb6b226d6be5c9690683321203a30e8a0879feaba05  *web/tests/test_llm_gateway.py
+f5c20711b00734fa67ab3da86b826f170b49efaacf147e2c933920f6c542f45d  *web/tests/test_pipeline.py
 48eb489da0d667175853ebc321939aefa7255345f4557dee27a227ba06e6353c  *web/tests/test_runner.py
 2babe5cb98dffe0757f13c9217db313fa4143358830c0b7de871b1a5df9f51b9  *web/tests/test_studio_assets.py
 046b4878afbd1e488614955efdeb07fca2cb9e7afac8d435d9a52e6b270fdeb8  *web/tests/test_ui_assets.py
@@ -251,8 +253,8 @@ fe1c35435d829c089f1d680e32adc91f37cb70608b068def1ab57eda6f7a24bd  *web/ui/index.
 adc974dfad9b33b508facc94ef23b36db36d55919646d8ede6306bee47cec67a  *web/ui/studio/css/tokens.css
 0e20c96248fc782944c670a5343a64b684a1fec7a3f648d6b3bdc41075bfd62a  *web/ui/studio/index.html
 42b9153e14e48ce2289d76a99f201e4ee461a9a24652a745bc273c16d1438b45  *web/ui/studio/js/action.js
-a90e47c6e0c26d5d7202ddac08d65a0d9522d5f80a39d6e2351f7b4a9c3c4e5e  *web/ui/studio/js/api.js
-5ba3757502d27fad76cf8e791301b367988ef93c9a36bf1891fff5f3b823f42e  *web/ui/studio/js/main.js
+b7f2e17be5ef74012e69efaec27c32718baf6a089af57dfddbe897df7984541e  *web/ui/studio/js/api.js
+8837e4cec2a27f433e189e407dc42e591bc52a80519b757fb9ed51a5f5943dd4  *web/ui/studio/js/main.js
 519cf1c49b80fc7297fcfb32a1df72258958f8926afefee5f7baf2e33fa09a3c  *web/ui/studio/js/store.js
 fe4965a9e153d6568de42fec010ea4addd5b3f57433da4a72859ca9a2791ece5  *web/ui/studio/js/ui.js
 4d997f7c41b4dc5cd876df19139527970a38e760541efcda9fdf527fa6b1e95a  *web/ui/studio/js/views/assets.js
@@ -262,6 +264,7 @@ b098324d99848f471a360002e5d2f53a2375aa630e0a7aebc02ac69c112986e8  *web/ui/studio
 e53ea60da32ee2ae3ad9d3e519e897391d4df362fec149118ec0c64df63fb581  *web/ui/studio/js/views/generators.js
 5a3156d1860da8066ed547a6d28087846ff2c7f9e3a1c748f62b9396da3412ee  *web/ui/studio/js/views/models.js
 4b3b835470f9d77db85ffb315c25358e0646319da498bdd99622dd855a11c5f3  *web/ui/studio/js/views/overview.js
+b1432d9495bc4855f131b26c04d205a4c0d42c31989571bb989decc39167fbf3  *web/ui/studio/js/views/pipeline.js
 f04d5e2824b978ecee34e157fe5886b4460d3bfd7aae0fd38c3329c5c8a4243e  *web/ui/studio/js/views/post.js
 689145bd474295f2b59019922d4470d824f41dfde2efbdd2fb66df243fed7cba  *web/ui/studio/js/views/projects.js
 ae34f9867c27e106d85c1419e50747171ada45c325ec9ee69db5e16a1d9e3c85  *web/ui/studio/js/views/release.js

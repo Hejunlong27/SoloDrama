@@ -93,6 +93,7 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 项目详情    | 11 环节判据、集数规划、产物目录、G-0 九项、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
 | 创作中心    | S1–S5 完成度（引擎 probes）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
 | 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
+| 流水线 | **11 个环节串成一条可执行的线**：连跑 / 逐步确认两种模式、预算内自动放行、遇「前置未齐 / 需人工 / 计费估不出来」停下并说明原因 | `/api/pipeline/plan`（只读计划）、`/api/pipeline/run`（执行，默认 dry_run） |
 | 生成通道 | **图像 / 视频** 各条通道的真实状态（本地 ComfyUI ｜ RunningHub 工作流）、**文生图与图生图分开登记**、缺什么/下一步、￥0 还是计费；可在此写入云端工作流 ID 与节点（写前备份） | `/api/generators`（只读探测）、`POST /api/generators/rh`（写项目 `config.local.json`） |
 | 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**出片**（计费五步）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
@@ -253,7 +254,7 @@ HEADER 优先沿用**已有正式剧本的六行**（保住人工写的视觉锚
 ## 6. 测试
 
 ```bash
-# 离线单元/契约（默认 venv 即可；共 36 个文件）
+# 离线单元/契约（默认 venv 即可；共 37 个文件）
 for t in $(find stages tools web -name "test_*.py" -not -path "*__pycache__*"); do
   python "$t" || echo "FAILED $t"; done
 
@@ -266,7 +267,7 @@ python web/tools/verify_llm_loop.py
 
 本轮实测结果（2026-10-28）：
 
-- **36 个测试文件全绿**（引擎 23 + web 13）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
+- **37 个测试文件全绿**（引擎 23 + web 14）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
   `test_inventory.py` 补 `[5] 散图口径`。
 - 新增 `test_workspaces.py` 的动因：真实登记表里 `current` 指着已删除的目录，四个用例分别守住
   「死路径自愈并落盘」「未登记的死 current 不许变卡片」「全盘皆死时置空」「prune 只清注册表」。
@@ -420,3 +421,31 @@ python comfy_local_video.py --workflow 新工作流.json --check         # ④ �
 * 8G 卡跑 H3 时显存会很紧（实测空闲 0.6G 也能出，但慢）；`--mp` 降到 0.3–0.4 可快一些。
 * 本地图生图（Qwen-Image）尚未内置：需要一份带 `LoadImage` 的图生图工作流，放到
   `stages/assets/comfyui/` 并登记节点映射后才可用（页面会如实标「不支持」）。
+
+---
+
+## 10. 流水线（连跑模式）
+
+真源 `web/core/pipeline.py`；页面 `#/pipeline`（项目级）。
+
+### 10.1 两种模式
+
+| 模式 | 行为 |
+| --- | --- |
+| 逐步确认 | 点一次只跑 **1 步**（`max_steps=1`），跑完停下看结果 |
+| 连跑（流水线） | 按环节顺序最多推进 **6 步**，遇以下情况立刻停 |
+|  | ① 引擎 probes 未过（前置未齐）；② 环节标记为「需人工」；③ 计费步骤估不出金额或超预算 |
+
+### 10.2 三条硬纪律
+
+1. **不猜**：只有 `STAGE_MAP` 里明确登记了命令的环节才算「可自动」。没登记的一律标 `manual`
+   并给出该去的页面（S3 资产设计 → 资产中心、S7/S11 → 发行中心）。假装能全自动比不给这功能更糟。
+2. **计费可估才放行**：`est_coins` 已知且「累计 + 本步 ≤ 预算」才自动跑；估不出来就停（不猜金额）。
+3. **前置未齐不动手**：环节自带 probes（`found/need`），未满足就停在该环节，不跳过、不硬跑。
+
+### 10.3 与旧控制台的区别
+
+`/api/pipeline`（旧）返回旧控制台的 15 轮视图（`reader.pipeline`）；新接口是
+`/api/pipeline/plan` + `/api/pipeline/run`。⚠ 踩过的坑：旧路由的处理函数曾叫 `pipeline`，
+**在模块级覆盖了 `core.pipeline` 模块**，导致新接口 500 —— 已改名 `legacy_pipeline`，
+以后新增同名模块时先 grep 函数名。

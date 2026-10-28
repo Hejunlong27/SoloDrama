@@ -24,6 +24,7 @@ const NAV = [
   {
     label: '当前项目', project: true, items: [
       { key: 'overview', label: '项目详情', ico: 'layers' },
+      { key: 'pipeline', label: '流水线', ico: 'terminal' },
       { key: 'creation', label: '创作中心', ico: 'spark' },
       { key: 'assets', label: '资产中心', ico: 'image' },
       { key: 'storyboard', label: '分镜与视频', ico: 'film' },
@@ -34,12 +35,13 @@ const NAV = [
   { label: '系统', items: [{ key: 'settings', label: '系统设置', ico: 'settings' }] }
 ];
 
-const PROJECT_ROUTES = ['overview', 'creation', 'assets', 'storyboard', 'post', 'release'];
+const PROJECT_ROUTES = ['overview', 'pipeline', 'creation', 'assets', 'storyboard', 'post', 'release'];
 
 const VIEWS = {
   workbench: () => import('./views/workbench.js'),
   projects: () => import('./views/projects.js'),
   overview: () => import('./views/overview.js'),
+  pipeline: () => import('./views/pipeline.js'),
   creation: () => import('./views/creation.js'),
   assets: () => import('./views/assets.js'),
   storyboard: () => import('./views/storyboard.js'),

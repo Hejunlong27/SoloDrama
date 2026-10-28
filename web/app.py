@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from core import (adapters, artifacts, commands as CMD, connections, generators, inventory,
-                    jobs, paths, reader, runner, studio, ux)
+                    jobs, paths, pipeline, reader, runner, studio, ux)
 from core.llm import drafts as llm_drafts, gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
@@ -418,7 +418,9 @@ def overview(ws: str = Query(...)):
 
 
 @app.get("/api/pipeline")
-def pipeline(ws: str = Query(...)):
+def legacy_pipeline(ws: str = Query(...)):
+    # ★ 函数名不能叫 pipeline：那会在模块级覆盖 core.pipeline 模块，
+    #   导致下面 /api/pipeline/plan 里的 pipeline.plan 变成「函数对象没有 plan」→ 500。
     return reader.pipeline(_require_ws(ws))
 
 
@@ -768,6 +770,33 @@ def api_generators_rh(payload: dict = Body(...)):
     return {"ok": True, "config_path": str(cfg_path), "provider": name,
             "backup": str(bak) if bak else "",
             **generators.channels(str(ws))}
+
+
+@app.get("/api/pipeline/plan")
+def api_pipeline_plan(ws: str = Query(...), budget: float = Query(default=0.0)):
+    """流水线计划：11 个环节哪些能自动、哪些要人、哪些被前置挡住。只读。"""
+    return pipeline.plan(str(_require_ws(ws)), budget=float(budget or 0))
+
+
+@app.post("/api/pipeline/run")
+def api_pipeline_run(payload: dict = Body(...)):
+    """按计划推进（默认 dry_run：只回报会跑什么）。
+
+    计费环节遵循「预算内自动放行」：`est_coins` 已知且不超预算才自动跑，
+    估不出来就停下来问 —— 不猜金额。
+    """
+    ws = str(_require_ws(payload.get("ws")))
+    budget = float(payload.get("budget") or 0)
+    until = str(payload.get("until") or "").strip()
+    try:
+        max_steps = int(payload.get("max_steps") or 6)
+    except (TypeError, ValueError):
+        max_steps = 6
+    dry_run = payload.get("dry_run", True)
+    if not dry_run:
+        _write_guard()
+    return pipeline.run(ws, budget=budget, until=until,
+                        max_steps=max(1, min(max_steps, 12)), dry_run=bool(dry_run))
 
 
 @app.get("/api/generators")
