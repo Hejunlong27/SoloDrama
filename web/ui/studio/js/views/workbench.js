@@ -10,13 +10,14 @@ function kpi(label, value, note) {
 }
 
 export async function render(ctx) {
-  const [wsList, jobs, wf, setup, llmProv, llmPurp] = await Promise.all([
+  const [wsList, jobs, wf, setup, llmProv, llmPurp, conn] = await Promise.all([
     api.workspaces().catch(() => ({ items: [] })),
     api.jobs(ctx.ws, 20).catch(() => ({ items: [] })),
     ctx.ws ? api.workflow(ctx.ws).catch(() => null) : Promise.resolve(null),
     ctx.ws ? api.setup(ctx.ws).catch(() => null) : Promise.resolve(null),
     api.llmProviders().catch(() => ({ items: [] })),
-    api.llmPurposes().catch(() => ({ items: [] }))
+    api.llmPurposes().catch(() => ({ items: [] })),
+    api.connections().catch(() => null)
   ]);
   const providers = llmProv.items || [];
   const purposes = llmPurp.items || [];
@@ -58,6 +59,20 @@ export async function render(ctx) {
     });
   }
   const overRefs = projects.filter((p) => false);   /* 参考图超限是项目级信息，见项目详情 */
+
+  /* 连接状态进「待处理」：通道没接通时，用户点任何出图/出片都会失败，
+     与其等他撞墙，不如在工作台就把「缺哪一路」摆出来。 */
+  const connItems = (conn && conn.items) || [];
+  const connOk = connItems.filter((i) => i.last_ok === true).length;
+  const connMissing = connItems.filter((i) => i.last_ok !== true).map((i) => i.label);
+  if (connItems.length && connMissing.length) {
+    problems.push({
+      tone: 'warn',
+      title: '外部通道未接通（' + connOk + '/' + connItems.length + '）',
+      detail: '缺：' + connMissing.join('、') + '。这些环节会停在「未接通」，不影响已完成的工序。',
+      route: 'connections'
+    });
+  }
   if (!problems.length) {
     problems.push({ tone: 'ok', title: '没有需要你处理的事', detail: '所有任务都已结束；下一步在项目详情里看阶段。', route: 'projects' });
   }
