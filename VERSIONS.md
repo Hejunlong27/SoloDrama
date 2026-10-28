@@ -1,6 +1,15 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-10-29 更新（V0.7.19 · 项目图标：竖屏画幅 + 播放）**：用户要「给项目生成一个 logo，用于项目图标」。此前侧栏是 `SD` 文字占位、浏览器标签是默认图标（全站无 favicon），这一轮把图标做成可复现的资产链。
+  ① **真源 `tools/make_logo.py`**：几何（`FRAME = (18,6,28,52,7)`、`PLAY`）与配色（`AMBER #E0A458` / `INK #171A1F`）都在文件头常量里，改完跑一遍即重出 12 个文件，避免「改了 SVG 忘了 PNG」。产物进 `web/ui/studio/img/`：`logo.svg`、`logo-mark.svg`、`logo-mark-light.svg`、`logo-square.svg`、`logo-maskable.svg`、`icon-192/512.png`、`icon-maskable-512.png`、`apple-touch-icon.png`、`favicon-16/32.png`、`favicon.ico`（Pillow 打包 16/32/48/64）。
+  ② **图形语言**：竖屏画幅（28×52，9:16）里挖一个播放三角 —— 短剧的本体是竖屏，不是加个播放键。三角用 `fill-rule="evenodd"` **挖空**，不是再叠一个琥珀三角：后者换底色就露补丁，而且 PNG 边缘会出现色差。
+  ③ **选型是量出来的**：做了 4 轮对比页（描边取景框 / 闭合框穿透 / 竖屏描边 / 圆环开口 / 实心竖屏 / 方折 S / 叠片），每轮都在 256/96/48/32/16px 下看，并对 16px 做 8x 最近邻放大验像素。结论：**描边风格在 16px 必糊**（线宽 5/64≈1.25px，框与三角粘连）；齿孔、字幕条在 48px 以上加分、32px 以下成噪点；第一版三角 tip 距右边框仅 1px（≈0.25px@16px）看着像连体 —— 最终只留两个形，四周留 5–7px 琥珀边。
+  ④ **接进产品**：`index.html` 加 SVG favicon + PNG/ICO 兜底 + `apple-touch-icon` + `manifest.webmanifest` + `theme-color`；侧栏 `.brand-mark` 换成 `<img src="img/logo.svg">`，并**删掉 CSS 里的琥珀底与圆角**（否则图标外多一圈方框，且与 favicon 不是同一个东西）；旧控制台 `/ui/index.html`、`/ui/advanced.html` 与 README 首图同步。
+  ⑤ **两个平台细节写进自检**：iOS 主屏图标必须**实心方底**（透明角会被系统填黑）→ 用 `logo-square.svg` 出 180×180；PWA maskable 把 mark 缩到 80% 留安全区 → `logo-maskable.svg`。
+  ⑥ **MIME 钉死**：`.webmanifest → application/manifest+json`、`.ico → image/x-icon`。Windows 上 `mimetypes` 会读注册表，Chrome 对错误 MIME 的 manifest 直接忽略（不报错，只是「添加到主屏」失效）。
+  ⑦ 测试：`test_studio_assets.py` 增第 6 组（12 个文件存在非空、`index.html` 引用的图标/清单必须存在、manifest 合法且 icon src 存在 + 含 maskable、品牌区不许退回文字占位、`logo.svg` 主色必须等于 `tokens.css --accent`）。全量 **38 个 `test_*.py` 0 失败**。
+  ⑧ 实测：`curl` 四个资源均 200 且 MIME 正确；侧栏展开/折叠两种状态截图复核无多余边框；`tools/make_logo.py --out <临时目录>` 重跑，与仓库内 12 个文件**逐字节一致**。
 - **2026-10-29 更新（V0.7.18 · 环境体检 + 一键修复）**：用户要「检测发现缺什么环境配置，能一键安装/修复」。诊断侧已有 `tools/env_check.py`（`--fix` 只打印命令），本轮把它做成产品闭环：`web/core/health.py` + 页面 `#/health`。
   ① **15 项体检**：`env_check --json` 的 12 项（Python / 虚拟环境 / 解释器 / Pillow / httpx / ffmpeg / ffprobe / whisper-cli / RUNNINGHUB_API_KEY / RUNNINGHUB_BASE_URL / ComfyUI 8188 / manifest）原样接管并归一 id（`dep.pillow`、`bin.ffmpeg`…），另加三项 Studio 自有：`dir.var` 与 `dir.llm` 是否可写、`rt.engine_py` 是否被配置指到空文件（`paths.engine_python()` 会**静默回落**，用户根本发现不了）。
   ② **只自动修三类，其余如实标人工**：`pip`（`[engine_python, -m, pip, install, <requirements 里的锁定版本>]`，禁止 `--user` / `--break-system-packages` —— 那会装到引擎读不到的地方）、`mkdir`（只建 `web/var` 与 `web/var/llm`）、`config`（清掉 `configs/settings.json` 的失效 `python`，写前备份、其它键原样保留）。`manual`：winget 装 ffmpeg（要 UAC）、启动 ComfyUI（外部 GUI 进程）、manifest 不符（那是「仓库被改过」不是「环境缺东西」）；`page`：填 Key（跳连接中心，Key 不走环境变量）。每类都带一句「为什么不能自动」——只说「需人工」等于没说。

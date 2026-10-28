@@ -76,12 +76,11 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .brand-mark {
   width: 26px; height: 26px; flex: none;
-  border-radius: var(--r-sm);
-  background: var(--accent);
-  color: #171a1f;
   display: flex; align-items: center; justify-content: center;
-  font-weight: 600; font-size: 12px;
+  /* 底色与圆角由 img/logo.svg 自带（图标要能原样当 favicon / 应用图标用），
+     这里只负责占位与居中，别再加 background，否则会多出一圈琥珀边框。 */
 }
+.brand-mark img { width: 26px; height: 26px; display: block; }
 .brand-name { font-size: var(--fs-14); line-height: 1.1; }
 .brand-sub { font-size: 10px; color: var(--txt-3); letter-spacing: .06em; }
 

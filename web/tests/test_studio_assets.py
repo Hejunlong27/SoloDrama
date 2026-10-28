@@ -6,7 +6,9 @@
   1. **类名不漏**：HTML/JS 里用到的静态 class，必须在 tokens.css / app.css 里有规则；
   2. **离线优先**：不得引用任何外部资源（无 CDN、无 http(s) 资源、无 @import url(http)）；
   3. **不用 emoji**：跨机器渲染不一致；
-  4. **入口与视图齐备**：index.html、外壳模块、11 个视图模块都在，且每个视图导出 render()。
+  4. **入口与视图齐备**：index.html、外壳模块、11 个视图模块都在，且每个视图导出 render()；
+  5. **图标链路不悬空**：index.html 引用的 favicon / apple-touch / manifest 必须真实存在，
+     manifest 里登记的每个图标也要存在（这类错浏览器不报错，只是默默用默认图标）。
 
 为什么单独一个文件而不是改 test_ui_assets：
   旧测试只 glob `ui/*.html` / `ui/*.js`（**不递归**），把 Studio 放进 `ui/studio/` 后
@@ -14,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -122,9 +125,60 @@ def test_no_secret_or_shell():
         check("file://" not in text, "%s 出现 file:// 请求" % f.name)
 
 
+def test_brand_assets():
+    print("[6] 图标：引用的文件必须存在，manifest 必须自洽")
+    img = STUDIO / "img"
+    need = ["logo.svg", "logo-mark.svg", "logo-mark-light.svg", "logo-square.svg",
+            "logo-maskable.svg", "icon-192.png", "icon-512.png", "icon-maskable-512.png",
+            "apple-touch-icon.png", "favicon-16.png", "favicon-32.png", "favicon.ico"]
+    for n in need:
+        p = img / n
+        check(p.is_file(), "缺少图标文件 img/%s" % n)
+        if p.is_file():
+            check(p.stat().st_size > 100, "img/%s 太小（%d B），可能是坏文件" % (n, p.stat().st_size))
+
+    idx = (STUDIO / "index.html").read_text(encoding="utf-8")
+    links = re.findall(r'<link[^>]+href="([^"]+)"[^>]*>', idx)
+    brand_links = [h for h in links if h.startswith("img/") or h.endswith(".webmanifest")]
+    check(len(brand_links) >= 4, "index.html 里的图标/清单声明太少：%s" % brand_links)
+    for href in brand_links:
+        check((STUDIO / href).is_file(), "index.html 引用了不存在的 %s" % href)
+
+    mf = STUDIO / "manifest.webmanifest"
+    check(mf.is_file(), "缺少 manifest.webmanifest")
+    if mf.is_file():
+        try:
+            data = json.loads(mf.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            data = {}
+            check(False, "manifest.webmanifest 不是合法 JSON：%s" % exc)
+        icons = data.get("icons") or []
+        check(len(icons) >= 3, "manifest 至少要有 3 个图标，实际 %d" % len(icons))
+        check(any("maskable" in str(i.get("purpose") or "") for i in icons),
+              "manifest 缺少 maskable 图标（Android 主屏会被裁掉边）")
+        for it in icons:
+            src = str(it.get("src") or "")
+            check((STUDIO / src).is_file(), "manifest 里的图标不存在：%s" % src)
+        for k in ("name", "short_name", "start_url", "display", "theme_color"):
+            check(bool(data.get(k)), "manifest 缺字段 %s" % k)
+
+    # 品牌区必须用正式图标，不能再退回「SD」文字占位
+    check("brand-mark" in idx, "index.html 里没有 .brand-mark")
+    check('<img src="img/logo.svg"' in idx, "品牌区应使用 img/logo.svg（不要退回文字占位）")
+
+    # 图标主色必须与设计 Token 的品牌色一致，否则侧栏图标会「偏色」
+    tokens = (STUDIO / "css" / "tokens.css").read_text(encoding="utf-8")
+    m = re.search(r"--accent://s*#([0-9a-fA-F]{6})", tokens)
+    logo = (img / "logo.svg").read_text(encoding="utf-8")
+    if m:
+        check("#" + m.group(1).lower() in logo.lower(),
+              "logo.svg 的主色应与 tokens.css 的 --accent（#%s）一致" % m.group(1))
+    check('viewBox="0 0 64 64"' in logo, "logo.svg 应为 1:1 的 64 视口（方图标）")
+
+
 if __name__ == "__main__":
     for fn in (test_entries, test_css_covers_classes, test_offline_first,
-               test_no_emoji, test_no_secret_or_shell):
+               test_no_emoji, test_no_secret_or_shell, test_brand_assets):
         fn()
     print("-" * 60)
     if FAILS:

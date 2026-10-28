@@ -492,3 +492,42 @@ python comfy_local_video.py --workflow 新工作流.json --check         # ④ �
   所以想复现「缺依赖」现场必须直接 `python -m uvicorn app:app` 起。
 * **`web/var` 里没有 `health-fixes.jsonl` 时 `history()` 返回空**，不报错 —— 页面显示「还没有修复记录」。
 
+---
+
+## 12. 品牌与图标
+
+真源 `tools/make_logo.py`（几何与配色都在文件头常量里），产物在 `web/ui/studio/img/`。
+
+| 文件 | 用在哪 |
+| --- | --- |
+| `logo.svg` | 侧栏品牌区、`<link rel="icon" type="image/svg+xml">`、README 首图 |
+| `icon-192.png` / `icon-512.png` | `manifest.webmanifest` 的 `purpose: any` |
+| `icon-maskable-512.png` | `purpose: maskable`：mark 缩到 80%，四周留系统裁切的安全区 |
+| `apple-touch-icon.png` | iOS 主屏：**实心方底**（透明角会被系统填成黑色） |
+| `favicon-16/32.png` + `favicon.ico` | 老浏览器兜底；ico 内打包 16/32/48/64 |
+| `logo-mark.svg` / `logo-mark-light.svg` | 单色 mark：浅底用深墨，深底用琥珀 |
+
+图形语言：**竖屏画幅 + 播放三角**。竖屏是短剧的本体（不是装饰）；播放三角用
+`fill-rule="evenodd"` **挖空**，而不是在上面叠一个琥珀色三角形 —— 后者一旦换底色就会露出补丁。
+
+选型时实测的三条（都影响可用性，不是审美偏好）：
+
+1. **描边风格在 16px 会糊成一坨**：「取景框 + 播放」的线宽 5/64 ≈ 1.25px，缩到标签页尺寸后
+   框和三角粘在一起；实心剪影（深色画幅 + 挖空三角）才保得住两个形。
+2. **细节只在 48px 以上加分**：试过胶片齿孔、底部字幕条 —— 256px 很好看，32px 变噪点、16px 像脏点，
+   所以最终只留「画幅 + 三角」两个形。
+3. **三角与画框的间距必须 ≥5/64**：第一版 tip 离右边框只有 1px（≈0.25px @16px），
+   看起来像连体字，必须留出真正的琥珀边。
+
+改图标的标准动作：
+
+```bash
+# ① 改 tools/make_logo.py 顶部的 FRAME / PLAY / AMBER / INK
+python tools/make_logo.py            # ② 重新生成 12 个文件（含自检：尺寸 / 透明角 / iOS 满幅）
+python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不悬空 + 主色与 --accent 一致」
+```
+
+产物是**可复现**的：同一浏览器版本下重跑，12 个文件逐字节一致（已验证）。
+`brand-mark` 的 CSS 刻意不再画琥珀底 —— 底色与圆角由 `logo.svg` 自带，
+否则侧栏图标外面会多出一圈方框，且和 favicon 不是同一个东西。
+

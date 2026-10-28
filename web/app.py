@@ -36,7 +36,8 @@ from core.llm.errors import LLMError
 #   历史机器可能把 .js 报成 text/plain —— 浏览器会拒绝加载 ES module。
 for _ext, _type in ((".js", "text/javascript"), (".mjs", "text/javascript"),
                     (".css", "text/css"), (".svg", "image/svg+xml"),
-                    (".json", "application/json"), (".woff2", "font/woff2")):
+                    (".json", "application/json"), (".woff2", "font/woff2"),
+                    (".webmanifest", "application/manifest+json"), (".ico", "image/x-icon")):
     mimetypes.add_type(_type, _ext)
 
 app = FastAPI(title="SoloDrama 控制台", version="0.2.0",
