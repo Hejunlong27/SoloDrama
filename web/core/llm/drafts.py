@@ -24,37 +24,16 @@ import uuid
 from pathlib import Path
 
 from .. import jobs, paths
+from . import budget
 from .errors import LLMError
 
 # ---- 与引擎同步的常量（引擎可导入时以引擎为准，避免第七份口径）----
 FFS_HEADER_ORDER = ["TITLE", "EP", "PLATFORM", "STYLE LOCK", "CHAR", "SCENE"]
 FFS_SHOT_FIELDS = ["SHOT", "LOCATION", "TIME", "CHAR", "ACTION", "DIALOG", "VO", "SFX"]
 DUR_MIN, DUR_MAX = 4, 15
-_SECONDS = {60: (5, 10, 60, 80), 70: (5, 12, 70, 95), 90: (6, 15, 90, 120)}
-
-
-def _engine():
-    """尽量复用 `script_rewrite.py` 的口径常量；失败则用本地副本。"""
-    try:
-        s = str(paths.CREATION_SCRIPTS)
-        import sys
-        if s not in sys.path:
-            sys.path.insert(0, s)
-        import script_rewrite  # noqa: PLC0415
-        return script_rewrite
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def bounds_for(ep_seconds):
-    eng = _engine()
-    if eng is not None:
-        try:
-            return eng.bounds_for(ep_seconds)
-        except Exception:  # noqa: BLE001
-            pass
-    sec = int(ep_seconds or 60)
-    return _SECONDS[min(_SECONDS, key=lambda s: abs(s - sec))]
+    """镜数/时长边界。实现见 `budget.py`（提示词与校验器共用同一真源）。"""
+    return budget.bounds_for(ep_seconds)
 
 
 def _layout():

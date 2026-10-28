@@ -138,6 +138,29 @@ web/core/llm/
 能力标识：`json` / `tools` / `stream` / `vision`。用途声明 `requires`，**能力不满足时网关直接拒发请求**  
 （省一次失败与一次计费），而不是发出去再报错。
 
+#### 4.2.1 DeepSeek（真实通道，2026-10-28 实测接通）
+
+| 项 | 值 |
+| --- | --- |
+| 端点 | `https://api.deepseek.com/v1`（不要写成控制台首页；`/v1/models` 可自检） |
+| 可用模型 id | **`deepseek-flash`**、`deepseek-v4-pro` |
+| 不认的 id | `deepseek-v4.1-flash` 这类**平台侧别名** → HTTP 400 `invalid_request_error` |
+| Key | 只进 `web/var/llm/keys.json`（git 已忽略），界面回显仅 `sk-2…44d0` |
+| 超时 / 重试 | 120 秒 / 0 次（推理模型首字慢；重试会重复计费，改为人工重试） |
+
+**两个模型都是推理模型**，这带来两个必须在产品里体现的差异：
+
+1. **思考过程也计入 `max_tokens`**。给 8–16 个 token 时，思考就吃光额度，
+   回包是 `HTTP 200` + `content: ""`。旧口径会把这种情况报成「输出不是合法 JSON」，
+   用户完全不知道该调大额度。现在明确分成两类：
+   `truncated`（`finish_reason=length`，额度不足）与 `empty`（内容策略拦截或模型真的没话说）。
+   探针统一给 **64 tokens**（`connections._LLM_PROBE_TOKENS`），够它想完并吐一句「可用」。
+2. **数值预算写进提示词**。`Script.episode` 的 Schema 只能管住单镜 `DUR ∈ [4,15]`，
+   管不住「所有 DUR 之和」。实测模型会写出 90 秒的「60 秒档」剧集。
+   现在 `render_parts()` 会把 `budget.bounds_for(ep_seconds)` 算出的边界
+   （镜数 5–10、总时长 60–80 秒）直接写进 user 段——**提示词与校验器共用同一个函数**，不会各说一套。
+
+
 ### 4.3 用途路由（7 个）
 
 | 用途                       | 模板（仓库原文）                  | 输出 Schema                                         |
@@ -181,7 +204,7 @@ python web/tools/verify_llm_loop.py --provider <id> --confirm-cost   # 用已配
 ```
 
 按顺序打印 10 步：配置 → 连接测试 → 绑定用途 → 预览提示词 → 生成 → 人工编辑 → 确认落盘 →
-**引擎 lint 验收** → 用量口径 → 产物预览。末行 `27/27 项通过` 即全通。
+**引擎 lint 验收** → 用量口径 → 产物预览。末行 `28/28 项通过` 即全通（真实通道与演练通道各跑一遍）。
 
 关键点：**最后一步不是本脚本自说自话，而是调用 `script_rewrite.py lint`**——
 产物能不能用由引擎判定（退出码 0 才算通过）。
@@ -249,7 +272,7 @@ python web/tools/verify_llm_loop.py
 - `test_llm_gateway.py`：Schema 校验 7 例、安全 12 例、配置隔离 6 例、**代理默认值 3 例**、成功路径 5 例、错误分类与重试 12 例、模板 6 例、**离线演练通道 17 例**、创作闭环 12 例、门禁与失败保护 6 例 —— 全部通过。
 - `test_llm_e2e.py`：**10 组**断言，走真实 HTTP（本地伪造上游 + 内置演练通道），覆盖 SSRF 拒绝、Key 不回显、
   428 门禁、跨站 403、生成→编辑→落盘→幂等、上游 401/烂 JSON 分类、诊断卡门禁、**演练草稿默认拒写 + allow_simulated 放行**。
-- `verify_llm_loop.py`：**27/27 通过（0.7s）**，末步 `script_rewrite.py lint` 退出码 **0**。
+- `verify_llm_loop.py`：离线演练 **27/27**（0.7s）；**真实 DeepSeek 通道 28/28**（约 27s，多出的一项是把「演练草稿必须被门禁拒收」改成两种通道都验）。末步 `script_rewrite.py lint` 退出码 **0**。
 
 ---
 
@@ -258,7 +281,7 @@ python web/tools/verify_llm_loop.py
 | 项                                     | 状态  | 原因 / 下一步                                                                      |
 | ------------------------------------- | --- | ----------------------------------------------------------------------------- |
 | 流式输出（SSE 逐字）                          | 未实现 | 网关是同步链路；要流式需把 gateway 改异步并加 SSE 转发。已在能力表标 `llm_stream: false`                 |
-| 真实模型连接验证 | **受阻（环境出网策略）** | 已获授权并实测：本机只能经代理出网（`HTTP_PROXY=127.0.0.1:64746`），该代理对 `api.openai.com` 返回 **502 CONNECT tunnel failed**，直连则超时；`example.com` 经同一代理为 200，说明代理本身可用。另：`OPENAI_API_KEY` 打码后为 `user…qXud`（不是 `sk-` 形态），很可能不是 OpenAI 平台 Key。→ 换成可达端点或正确的 Key 后，用 `verify_llm_loop.py --provider <id> --confirm-cost` 即可验完 |
+| 真实模型连接验证 | **已接通（DeepSeek，2026-10-28）** | 旧结论是「环境出网策略受阻」，实际卡点有两个：① 本机 `OPENAI_BASE_URL` 指向 `api.commandcode.ai`、`OPENAI_API_KEY` 也不是 OpenAI 形态的 Key（打码 `user…qXud`）；② 那个 provider 的 `env_var` 绑的是 `OPENAI_API_KEY`，于是拿着别人的 Key 去敲 DeepSeek，稳态 401。换成 DeepSeek 官方端点 + 自己的 Key 后一次通过：`verify_llm_loop.py --llm-dir web/var/llm --provider deepseek --confirm-cost` **28/28**，引擎 `script_rewrite.py lint` 退出码 0（8 镜 / 70 秒 / 台词齐全）。⚠ 仍未接入第二家云端模型做对比评测 |
 | `release_check` / `release_export` 入口 | 未接入 | `release_check --json` 会写 `09-发行/release-manifest.json`（属写操作），需先定"写前确认"的交互再放行 |
 | `bgm.*` 入口                            | 未接入 | `bgm.py` 未进命令白名单，需先补门禁口径（license/铺底 LUFS/覆盖率的判定要在服务端复算）                       |
 | `character_design` 审计入口               | 未接入 | 未进白名单；需先确认 `plan/check/audit` 三段的可重入性                                         |
@@ -310,3 +333,11 @@ python web/tools/verify_llm_loop.py
   选中后由后端注入（命令声明 `env={"SOLODRAMA_ASSET_MD": "asset_md"}`），**不需要你手动设环境变量**。
 - **`/api/studio/script/context` 会读 blueprint**：旧项目若没有 `blueprint.json`，生成会被拒绝并给出原因，  
   不会静默降级成"随便写一集"。
+- **`/?ws=<剧目录>` 深链必须带住查询串**：`/` 是 307 到 `/studio/`，若跳转时把 query 丢掉，
+  前端只能退回注册表的 `current` —— 用户以为打开的是 A，看到的却是 B（本机实测：书签里的 `?ws`
+  从来没生效过，而 `current` 还会被后续操作改写）。已修，`test_workspaces.py` §5 守着「无 query 时不许硬拼 `?`」。
+- **注册表写盘前必须剥掉计算字段**：`_i_workspaces()` 会往 items 上贴 `exists/images/loose/yuan…`，
+  这些是**算出来的快照**。一旦随自愈写回 `registry.json`，下次读到的「注册表」就混着上次的扫描结果——
+  `images` 越写越旧，`exists` 变成过期快照（目录删了卡片还显示在）。统一走 `_registry_clean()`。
+- **推理模型的「空回包」不是网络问题**：`finish_reason=length` 说明额度被思考吃光；
+  报 `parse`（输出不是合法 JSON）会把人带偏到提示词上。见 §4.2.1。

@@ -442,6 +442,10 @@ def _rh_verdict(payload: Any, what: str) -> dict:
 _LLM_PROBE_MSG = [{"role": "user", "content": "只回复：可用"}]
 _LLM_PROBE_TIMEOUT = 20.0
 _LLM_PROBE_MAX = 2          # 最多实测两个提供商：多测一个就多一次计费
+# ★ 额度不能太小：DeepSeek flash / v4-pro 这类**推理模型**会把思考也算进 max_tokens，
+#   给 8 个 token 时思考就吃光了，回包 content 为空。探针要的是「能不能调通」，
+#   64 个 token 足够它想完并吐一句「可用」，成本仍可忽略。
+_LLM_PROBE_TOKENS = 64
 
 _LLM_NEXT = {
     "auth": "Key 无效或已过期：回控制台重新复制一次（不同站点/平台之间的 Key 不通用）",
@@ -453,6 +457,9 @@ _LLM_NEXT = {
     "protocol": "端点不像 OpenAI 兼容接口：地址应指向 /v1，而不是控制台首页",
     "blocked": "地址被本地安全策略拒绝（只允许 http/https 与常见端口）",
     "config": "提供商配置不完整：补上 base_url 与默认模型",
+    # 推理模型（DeepSeek flash / v4-pro 等）最常见的两种「HTTP 200 但没内容」
+    "truncated": "额度给了但被思考吃光：把该用途的 max_tokens 调大（探针本身用 64 tokens 就够）",
+    "empty": "回包为空：确认模型名可用；若提示被拦截，换个说法或换模型",
 }
 
 
@@ -488,6 +495,14 @@ def _test_llm() -> dict:
                 "detail": "%d 个提供商都没有可用 Key（%s）" % (len(provs), "、".join(no_key[:3])),
                 "next": "在 AI 模型中心填入 Key（只进不出、不回显），再点一次测试"}
 
+    # ★ 真实通道优先排队：探针有名额（_LLM_PROBE_MAX），名额不能被 Mock 占掉。
+    #   否则「配了云端 Key 但界面上写 Mock 可调用」，看起来就像没接通。
+    def _rank(p):
+        if (p.get("kind") or "") == "mock":
+            return 2
+        return 1 if p.get("local") else 0
+    ready.sort(key=_rank)
+
     probes = []
     for x in ready[:_LLM_PROBE_MAX]:
         pid = x.get("id")
@@ -496,6 +511,7 @@ def _test_llm() -> dict:
             cfg = llm_store.get_provider(pid, with_key=True)
         except Exception as e:      # noqa: BLE001
             probes.append({"id": pid, "name": name, "ok": False, "kind": "config",
+                           "provider_kind": x.get("kind"),
                            "detail": "读不到该提供商的完整配置（%s）" % type(e).__name__,
                            "next": _LLM_NEXT["config"]})
             continue
@@ -503,33 +519,42 @@ def _test_llm() -> dict:
         started = time.time()
         try:
             prov = llm_providers.build(cfg, cfg.get("_key") or "")
-            res = prov.chat(_LLM_PROBE_MSG, model=model or None, max_tokens=8,
+            res = prov.chat(_LLM_PROBE_MSG, model=model or None, max_tokens=_LLM_PROBE_TOKENS,
                             timeout_s=_LLM_PROBE_TIMEOUT)
         except LLMError as e:
             probes.append({"id": pid, "name": name, "model": model or "(未填)",
                            "ok": False, "kind": e.kind, "status": e.status,
+                           "provider_kind": x.get("kind"),
                            "detail": e.text, "next": _LLM_NEXT.get(e.kind, "按提示修正后重试"),
                            "ms": int((time.time() - started) * 1000)})
             continue
         except Exception as e:      # noqa: BLE001
             probes.append({"id": pid, "name": name, "model": model or "(未填)",
-                           "ok": False, "kind": "exception",
+                           "ok": False, "kind": "exception", "provider_kind": x.get("kind"),
                            "detail": "%s: %s" % (type(e).__name__, str(e)[:120]),
                            "next": "把这段原文发给开发者", "ms": int((time.time() - started) * 1000)})
             continue
         got = str(getattr(res, "text", "") or "").strip()
+        toks = (getattr(res, "usage", None) or {}).get("total_tokens")
         probes.append({"id": pid, "name": name, "model": model or "(未填)", "ok": True,
-                       "detail": "可调用" + ("（回包「%s」）" % got[:16] if got else ""),
+                       "provider_kind": x.get("kind"),
+                       "detail": ("可调用（回包「%s」）" % got[:16] if got
+                                  else "可调用，但回包为空（已用 %s tokens）" % (toks or "?")),
                        "ms": int((time.time() - started) * 1000)})
 
     good = [x for x in probes if x["ok"]]
     if good:
-        tail_txt = ""
+        # ★ 头条只认真实通道：Mock 永远能用，把它写在标题里等于告诉用户「还是没接通」。
+        headline = ([x for x in good if (x.get("provider_kind") or "") != "mock"] or good)[0]
         bad = [x for x in probes if not x["ok"]]
+        tail_txt = ""
         if bad:
             tail_txt = "；%s 不可用：%s" % (bad[0].get("name"), bad[0].get("detail"))
+        skipped = len(ready) - len(probes)
+        if skipped > 0:
+            tail_txt += "；另有 %d 个提供商本次未测（每次最多测 %d 个，避开重复计费）" % (skipped, _LLM_PROBE_MAX)
         return {"ok": True, "reason": "ok",
-                "detail": "%s 可调用 · 实测 %d/%d" % (good[0].get("name"), len(good), len(probes)) + tail_txt,
+                "detail": "%s 可调用 · 实测 %d/%d%s" % (headline.get("name"), len(good), len(probes), tail_txt),
                 "providers": probes, "next": (bad[0].get("next") or "") if bad else ""}
 
     first = probes[0] if probes else {}

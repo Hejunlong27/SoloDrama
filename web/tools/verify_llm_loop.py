@@ -210,12 +210,29 @@ def main() -> int:
 
     # ---------------------------------------------------------------- 7
     head(7, "确认落盘（正式产物）")
+    # ★ 演练门禁必须**两种通道都验**：旧写法只覆盖 Mock 路径，一旦用真实提供商跑
+    #   （也就是真正要证明「接通了真模型」的那一次），这条断言必然报 NG，把 25/26 拖成「失败」。
+    #   现在：无论哪条通道，都额外造一个 simulated=true 的草稿去撞门禁，确认它没被削弱。
+    probe_id = "gateprobe"
+    probe_path = drafts.draft_dir(str(ws)) / ("%s.json" % probe_id)
+    probe_path.parent.mkdir(parents=True, exist_ok=True)
+    probe_path.write_text(json.dumps({
+        "id": probe_id, "ep": 1, "simulated": True, "status": "draft",
+        "target": str(ws / "script" / "ep_01.md"), "md": "# TITLE: 门禁探针\n\nDUR: 8\n",
+    }, ensure_ascii=False), encoding="utf-8")
     try:
-        drafts.confirm(ws, d["id"])
+        drafts.confirm(ws, probe_id)
         ok(False, "演练草稿未加 allow_simulated 时**必须**被拒绝")
     except LLMError as exc:
-        ok("演练" in exc.text, "演练草稿默认禁止写入正式剧本")
-    res = drafts.confirm(ws, d["id"], allow_simulated=True)
+        ok("演练" in exc.text, "演练草稿默认禁止写入正式剧本", "· 两种通道都验")
+
+    if real:
+        # 真实通道：草稿不是演练产物，直接落盘（不需要 allow_simulated）
+        res = drafts.confirm(ws, d["id"])
+        ok(res.get("ok") is True, "真实模型草稿可直接落盘（无需 allow_simulated）")
+        ok(d.get("simulated") is not True, "真实通道草稿标记为非演练")
+    else:
+        res = drafts.confirm(ws, d["id"], allow_simulated=True)
     target = Path(res["target"])
     ok(res.get("ok") is True and target.is_file(), "落盘成功", "· %s" % target.name)
     text = target.read_text(encoding="utf-8")

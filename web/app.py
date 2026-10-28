@@ -169,13 +169,28 @@ def _i_workspaces() -> dict:
         reg["current"] = pick["path"] if pick else ""
         replaced = cur
         if pick:                                  # 只在真的换成了可用目录时才落盘
-            paths.write_json(paths.REGISTRY_FILE, reg)
+            paths.write_json(paths.REGISTRY_FILE, _registry_clean(reg))
     reg["current_exists"] = bool(reg.get("current")) and Path(reg["current"]).is_dir()
     reg["stale"] = [it["path"] for it in reg["items"] if not it["exists"]]
     if replaced:
         # 只用于界面上解释「为什么当前项目变了」，不写入注册表
         reg["current_replaced"] = replaced
     return reg
+
+
+# 这些是 `_i_workspaces()` **算出来**的字段，不属于注册表。落盘时必须剥掉：
+# 一旦写回去，下次读到的「注册表」就混着上次的扫描结果（images/loose 会越写越旧），
+# 而且 `exists` 会变成过期快照 —— 用户删了目录，卡片却还显示存在。
+_REG_COMPUTED = {"exists", "is_workspace", "images", "loose", "yuan", "has_output",
+                 "updated_text", "current_exists", "stale", "current_replaced"}
+
+
+def _registry_clean(reg: dict) -> dict:
+    """只保留注册表该有的字段（写盘前统一过一遍）。"""
+    out = {k: v for k, v in reg.items() if k not in _REG_COMPUTED}
+    out["items"] = [{k: v for k, v in (it or {}).items() if k not in _REG_COMPUTED}
+                    for it in (reg.get("items") or [])]
+    return out
 
 
 def _require_ws(ws: str) -> Path:
@@ -222,7 +237,7 @@ def register_workspace(payload: dict = Body(...)):
         reg["items"].insert(0, {"path": str(p), "title": payload.get("title") or p.name,
                                 "added_at": time.time()})
     reg["current"] = str(p)
-    paths.write_json(paths.REGISTRY_FILE, reg)
+    paths.write_json(paths.REGISTRY_FILE, _registry_clean(reg))
     reader.clear_cache()
     return _i_workspaces()
 
@@ -282,7 +297,7 @@ def project_create(payload: dict = Body(...)):
         if not any(it["path"] == str(p) for it in reg["items"]):
             reg["items"].insert(0, {"path": str(p), "title": title, "added_at": time.time()})
         reg["current"] = str(p)
-        paths.write_json(paths.REGISTRY_FILE, reg)
+        paths.write_json(paths.REGISTRY_FILE, _registry_clean(reg))
         reader.clear_cache()
         registered = True
 
@@ -302,7 +317,7 @@ def set_current(payload: dict = Body(...)):
     p = _require_ws(payload.get("path"))
     reg = _registry()
     reg["current"] = str(p)
-    paths.write_json(paths.REGISTRY_FILE, reg)
+    paths.write_json(paths.REGISTRY_FILE, _registry_clean(reg))
     reader.clear_cache()
     return _i_workspaces()
 
@@ -324,7 +339,7 @@ def prune_workspaces():
         cur = str(reg.get("current") or "")
         if cur and not Path(cur).is_dir():
             reg["current"] = keep[0]["path"] if keep else ""
-        paths.write_json(paths.REGISTRY_FILE, reg)
+        paths.write_json(paths.REGISTRY_FILE, _registry_clean(reg))
         reader.clear_cache()
     return {"ok": True, "removed": [it["path"] for it in gone], "kept": len(keep),
             **_i_workspaces()}
@@ -1018,5 +1033,13 @@ if STUDIO_DIR.is_dir():
 
 
 @app.get("/")
-def root():
-    return RedirectResponse("/studio/" if STUDIO_DIR.is_dir() else "/ui/")
+def root(request: Request):
+    """根路径跳 Studio（没有 Studio 时跳旧控制台）。
+
+    ★ 必须把查询串一起带过去：`/?ws=<剧目录>` 是深链/书签的唯一写法，
+      而 307 到 `/studio/` 不带 query 的话，工作区会静默退回「上次用过的项目」——
+      用户以为打开的是 A，看到的却是 B（本机实测：书签里的 ?ws 从来没生效过）。
+    """
+    target = "/studio/" if STUDIO_DIR.is_dir() else "/ui/"
+    qs = request.url.query
+    return RedirectResponse(target + (("?" + qs) if qs else ""))

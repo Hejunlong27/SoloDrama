@@ -128,7 +128,7 @@ class Gateway:
                 res = p.chat(
                     [{"role": "system", "content": "你是连通性探针。"},
                      {"role": "user", "content": "只回复 JSON：{\"ping\": true}"}],
-                    model=prov.get("default_model"), max_tokens=16, json_mode=False, timeout_s=30,
+                    model=prov.get("default_model"), max_tokens=64, json_mode=False, timeout_s=30,
                 )
                 out = {"ok": True, "mode": "generate", "sample": (res.text or "")[:80],
                        "elapsed_ms": int((time.time() - t0) * 1000),
@@ -325,7 +325,12 @@ class Gateway:
             errs = schema_mod.validate(data, sch)
             if errs:
                 shown = "；".join("%s %s" % (e["path"], e["message"]) for e in errs[:6])
-                exc = LLMError("schema", "输出未通过 Schema 校验：%s" % shown,
+                # 常见错误要给「怎么改」，不能只报「必填字段缺失或为空」
+                hint = templates.field_hint((errs[0] or {}).get("path"))
+                msg = "输出未通过 Schema 校验：%s" % shown
+                if hint:
+                    msg += "。改法：%s" % hint
+                exc = LLMError("schema", msg,
                                detail=json.dumps(errs[:20], ensure_ascii=False))
                 r = fail(exc, {"attempts": attempt + 1, "elapsed_ms": elapsed_ms,
                                "usage": out["usage"], "cost": cost,

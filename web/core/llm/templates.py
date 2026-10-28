@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 
 from .. import paths
+from . import budget
 
 PROMPT_DIR = paths.STAGES_DIR / "creation" / "prompts"
 
@@ -297,6 +298,36 @@ def all_templates() -> list:
     return [describe(t["id"]) for t in TEMPLATES]
 
 
+# ---------------------------------------------------------------------------
+# Schema 表达不了的业务约定（随提示词下发，并在校验失败时作为「下一步」提示）
+# ---------------------------------------------------------------------------
+SCHEMA_NOTES = {
+    "script.episode": [
+        "没有台词的镜头，`dialog` 必须写字符串「无」，**不要留空字符串**："
+        "引擎 lint 要求 `DIALOG:` 后面必须有内容（仓库提示词里写的也是「台词 或 无」）。",
+        "没有旁白的镜头，`vo` 同样写「无」，不要留空。",
+        "旁白（`vo`）每集不超过 2 条、只在开头或结尾出现；叙事靠台词推进。",
+        "60 秒档台词不少于 10 句（可分布在 5-10 个镜头里），单句中文不超过 20 字。",
+        # 实测（2026-10-28）模型会自创「男客」「经理」这类临时角色，
+        # 引擎 lint 只 WARN，但分镜阶段无法映射资产，白跑一趟。
+        "`char` 只能使用 HEADER 里 CHAR 已登记的代号；需要群众角色时用已登记代号，"
+        "不要自创「男客」「经理」这类名字。",
+    ],
+}
+
+# 字段级「怎么改」提示：只在 Schema 校验失败时追加一行，不改变判定结果
+FIELD_HINTS = {
+    "dialog": "无台词的镜头请填「无」，不要留空字符串",
+    "vo": "没有旁白请填「无」，不要留空字符串",
+}
+
+
+def field_hint(path: str) -> str:
+    """从 `shots[7].dialog` 这样的路径里取出最后一节，给出可执行的修改建议。"""
+    tail = str(path or "").split(".")[-1].strip()
+    return FIELD_HINTS.get(tail, "")
+
+
 def render_parts(tid: str, variables: dict):
     """渲染成 (system, user) 两段。
 
@@ -330,6 +361,23 @@ def render_parts(tid: str, variables: dict):
                   "只输出**一个 JSON 对象**：不要解释、不要前言、不要 markdown 代码围栏、不要在 JSON 前后加任何文字。",
                   "下列 Schema 为硬约束，字段类型/取值范围/枚举不满足即视为失败：", "",
                   "```json", json.dumps(sch, ensure_ascii=False, indent=2), "```"]
+        # ★ Schema 只能约束「类型/范围」，管不了「空字符串是合法值吗」这类业务约定。
+        #   实测（2026-10-28，DeepSeek 真实通道）模型会把无台词的镜头写成 dialog: ""，
+        #   而引擎 lint 要求 `DIALOG:` 后有内容（无台词写「无」）—— 不看这段约定就会整集失败。
+        notes = SCHEMA_NOTES.get(t["schema_id"]) or []
+        if notes:
+            parts += ["", "### 字段填写约定（Schema 表达不了的业务规则，违反同样算失败）", ""]
+            parts += ["- %s" % n for n in notes]
+        # ★ 数值预算也写进来：Schema 能管住单镜 DUR ∈ [4,15]，管不住「所有 DUR 之和」。
+        #   实测（2026-10-28）模型会写出 90 秒的「60 秒档」剧集，被服务端拒收。
+        #   这里的数字取自 budget.bounds_for()，与校验器**同一个函数**，不会各说一套。
+        if t["schema_id"] == "script.episode":
+            sec = int(vars_.get("ep_seconds") or 60)
+            s_min, s_max, t_min, t_max = budget.bounds_for(sec)
+            parts += ["", "### 本集硬指标（服务端会复算，超界直接判失败）", "",
+                      "- 镜头数：%d–%d 个（`shots` 数组长度）" % (s_min, s_max),
+                      "- 所有镜头的 `dur` 之和：%d–%d 秒（这是 %d 秒档）" % (t_min, t_max, sec),
+                      "- 单个 `dur`：4–15 秒"]
     else:
         parts += ["", "## 输出契约", "",
                   "按上文要求输出正文。本环节没有机器可校验的 Schema，输出将由人工复核。"]

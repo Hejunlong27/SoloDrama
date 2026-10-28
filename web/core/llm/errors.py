@@ -21,6 +21,11 @@ KINDS = {
     "protocol": ("端点响应不符合预期协议（可能不是 OpenAI 兼容接口）", False),
     "bad_request": ("请求参数不被该模型接受", False),
     "unsupported": ("当前模型能力不满足该用途的要求", False),
+    # ★ 2026-10-28 新增两类：推理模型（DeepSeek flash/pro 等）把「思考」也算进 max_tokens，
+    #   额度给小了会表现为「HTTP 200 但 content 为空」。旧口径会把这种情况报成
+    #   parse（「输出不是合法 JSON」），用户完全不知道该调大额度。
+    "truncated": ("输出被 max_tokens 截断（推理模型的思考过程也占额度），请把 max_tokens 调大后重试", False),
+    "empty": ("模型返回了空内容：可能是额度被思考吃光，或被服务端内容策略拦截", False),
     "schema": ("输出未通过 Schema 校验", False),
     "parse": ("输出不是合法 JSON", False),
     "blocked": ("目标地址被本地安全策略拒绝", False),

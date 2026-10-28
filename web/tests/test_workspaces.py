@@ -85,6 +85,13 @@ def main():
         persisted = json.loads(reg_file.read_text(encoding="utf-8"))
         check(persisted["current"] == str(a), "自愈结果必须落盘，否则下次启动又回到死路径")
         check("current_replaced" not in persisted, "current_replaced 只用于本次响应，不该写进注册表")
+        # ★ 自愈写盘只能写注册表本身：`_i_workspaces()` 会往 items 上贴 exists/images/loose…
+        #   这些是**算出来的**快照。写回去的下场是「注册表被上次的扫描结果污染」——
+        #   images 越写越旧、exists 变成过期快照（目录删了卡片还显示在）。实测踩过。
+        junk = {"exists", "is_workspace", "images", "loose", "yuan", "has_output", "updated_text"}
+        leaked = [sorted(junk & set(it)) for it in persisted["items"]]
+        check(all(not x for x in leaked), "自愈写盘把计算字段写进了注册表：%s" % leaked)
+        check(not (junk & set(persisted)), "响应级字段漏进了注册表根部：%s" % sorted(junk & set(persisted)))
 
         print("[2] current 指向未登记的死目录 → 不许凭空变成一张卡片")
         reg_file.write_text(json.dumps({
@@ -128,6 +135,24 @@ def main():
         check(persisted["current"] == str(a), "prune 后 current 应指向活着的项目")
         r2 = app.prune_workspaces()
         check(r2["removed"] == [], "已清理干净后再跑一次应无事可做，实际 %s" % r2["removed"])
+
+        print("[5] 根路径跳转必须带住 ?ws=（书签/深链否则会静默打开别的剧）")
+        # 实测：`/?ws=<剧目录>` 是深链唯一写法，而 307 到 /studio/ 时若丢掉 query，
+        # 前端只能退回注册表的 current —— 用户以为打开 A，看到的却是 B。
+        try:
+            from fastapi.testclient import TestClient
+        except Exception as exc:  # noqa: BLE001
+            print("     跳过（本环境没有 httpx/TestClient：%s）" % type(exc).__name__)
+        else:
+            # 访问守卫按 client.host 判本机：TestClient 默认 host 是 "testclient"（会被 403）。
+            # 用 base_url 指到 127.0.0.1 就能被认成回环（与 test_llm_e2e.py 同一写法）。
+            c = TestClient(app.app, base_url="http://127.0.0.1")
+            r = c.get("/?ws=D%3A%5C%E5%89%A7%5C%E5%89%A7A", follow_redirects=False)
+            loc = r.headers.get("location") or ""
+            check(r.status_code in (307, 308), "根路径应是重定向，实际 %s" % r.status_code)
+            check("?ws=" in loc, "重定向丢了查询串：%s" % loc)
+            r2 = c.get("/", follow_redirects=False)
+            check("?" not in (r2.headers.get("location") or ""), "没有查询串时不该硬拼 ?")
     finally:
         paths.REGISTRY_FILE = real_registry
         os.environ.pop("SOLODRAMA_SCAN_ROOTS", None)

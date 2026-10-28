@@ -142,6 +142,7 @@ class OpenAICompatible(BaseProvider):
 
         msg = (choices[0] or {}).get("message") or {}
         text = _content_of(msg)
+        finish = str((choices[0] or {}).get("finish_reason") or "")
         u = data.get("usage") or {}
         usage = {
             "input_tokens": u.get("prompt_tokens"),
@@ -149,8 +150,25 @@ class OpenAICompatible(BaseProvider):
             "total_tokens": u.get("total_tokens"),
             "raw": {k: v for k, v in u.items() if k in ("prompt_tokens", "completion_tokens", "total_tokens")} or None,
         }
+        # ★ 空 content 必须给出可执行的下一步，不能落到「输出不是合法 JSON」。
+        #   实测 DeepSeek 的 flash / v4-pro 都是推理模型：max_tokens=16 时思考就吃掉全部额度，
+        #   HTTP 200、usage 有值、content 为 ""。这两种原因下一步完全不同：
+        #     额度不足 → 调大 max_tokens；被拦截 → 改提示词/换模型。
+        if not text.strip():
+            done = int(u.get("completion_tokens") or 0)
+            if finish == "length":
+                raise LLMError("truncated",
+                               "输出被 max_tokens 截断：已用 %d tokens 但 content 为空"
+                               "（推理模型的思考过程也计入额度，请把 max_tokens 调大）" % done)
+            if finish == "content_filter":
+                raise LLMError("empty", "服务端内容策略拦截了输出（finish_reason=content_filter）")
+            raise LLMError("empty", "模型返回空内容（finish_reason=%s，已用 %d tokens）"
+                                    % (finish or "未提供", done))
         return ProviderResult(text=text, model=str(data.get("model") or model or self.model),
-                              usage=usage, raw_status=200)
+                              usage=usage, raw_status=200,
+                              # finish_reason 带回去：自由文本用途可能「有内容但被截断」，
+                              # 由上层决定是否提示，不在适配器里一刀切丢掉。
+                              extra={"finish_reason": finish} if finish else {})
 
     def list_models(self, timeout_s=None) -> list:
         url = self.base + "/models"

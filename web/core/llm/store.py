@@ -65,9 +65,13 @@ PRESETS = [
     },
     {
         "id": "preset-deepseek", "name": "DeepSeek", "kind": "openai",
-        "base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-chat",
-        "models": ["deepseek-chat"], "capabilities": ["json"], "local": False,
-        "env_var": "DEEPSEEK_API_KEY", "note": "OpenAI 兼容通道",
+        "base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-flash",
+        "models": ["deepseek-flash", "deepseek-v4-pro"], "capabilities": ["json"], "local": False,
+        "env_var": "DEEPSEEK_API_KEY",
+        "note": "OpenAI 兼容通道。★ 模型 id 只认 deepseek-flash / deepseek-v4-pro —— "
+                "deepseek-v4.1-flash 之类是平台侧别名，API 会 400。两者都是**推理模型**："
+                "思考过程也计入 max_tokens，额度给小了会「HTTP 200 但 content 为空」，"
+                "所以探测与生成都得留足额度（见 errors.KINDS 的 truncated / empty）。",
     },
     {
         "id": "preset-mock", "name": "离线演练（Mock）", "kind": "mock",
