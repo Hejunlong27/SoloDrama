@@ -348,9 +348,57 @@ def get_purpose(pid: str) -> dict:
     out["provider_id"] = bound.get("provider_id") or ""
     out["provider_name"] = prov.get("name") or ""
     out["bound"] = bool(bound.get("provider_id"))
+    out["auto"] = False
+    if not out["provider_id"]:
+        # 没显式绑定 → 走同一套自动选路（与 list_purposes 同一个函数，
+        # 保证「界面说会用谁」和「网关实际用了谁」永远一致）。
+        picked = auto_provider(pid, cfg)
+        if picked:
+            out["provider_id"] = picked.get("id") or ""
+            out["provider_name"] = picked.get("name") or ""
+            out["auto"] = True
     # ready 与 list_purposes 同口径：绑定 + 提供商启用
     out["ready"] = bool(bound.get("provider_id") and prov.get("enabled"))
     return out
+
+
+def key_ready(prov: dict) -> bool:
+    """这个提供商现在能不能真的发请求：有 Key，或本地/演练（不需要 Key）。"""
+    kind = str(prov.get("kind") or "")
+    if kind in ("ollama", "mock"):
+        return True
+    return bool(resolve_key(prov)) or bool(prov.get("local"))
+
+
+def auto_provider(spec_id: str, cfg: dict | None = None) -> dict:
+    """给某个用途挑一个能跑起来的提供商（用户没显式绑定时的兜底）。
+
+    为什么需要：新用户只加了一个提供商，却要手动给每个用途逐个绑定，
+    否则每次生成都报「用途 X 还没有绑定提供商」。10 个用途要绑 10 次，
+    这不是配置，是刁难。**显式绑定永远优先**，这只是兜底。
+
+    排序：有 Key 的云端 > 本地已部署 > 离线演练（Mock）。
+    Mock 排最后——它能跑通链路，但输出是假的，不该抢在真模型前面。
+    """
+    spec = templates.PURPOSE_MAP.get(spec_id)
+    if not spec:
+        return {}
+    cfg = cfg if cfg is not None else load_config()
+    need = list(spec.get("requires") or [])
+    best, best_rank = None, 0
+    for prov in cfg.get("providers") or []:
+        if not prov.get("enabled", True):
+            continue
+        have = list(prov.get("capabilities") or [])
+        if any(c not in have for c in need):
+            continue
+        if not key_ready(prov):
+            continue
+        kind = str(prov.get("kind") or "")
+        rank = 1 if kind == "mock" else (2 if prov.get("local") else 3)
+        if rank > best_rank:
+            best, best_rank = prov, rank
+    return best or {}
 
 
 def list_purposes() -> list:
@@ -360,6 +408,8 @@ def list_purposes() -> list:
     for spec in templates.PURPOSES:
         bound = (cfg.get("purposes") or {}).get(spec["id"]) or {}
         p = provs.get(bound.get("provider_id")) or {}
+        explicit = bool(bound.get("provider_id") and p.get("enabled"))
+        picked = {} if explicit else auto_provider(spec["id"], cfg)
         out.append({
             **spec,
             "provider_id": bound.get("provider_id") or "",
@@ -368,7 +418,11 @@ def list_purposes() -> list:
             "temperature": bound.get("temperature"),
             "max_tokens": bound.get("max_tokens"),
             "bound": bool(bound.get("provider_id")),
-            "ready": bool(bound.get("provider_id") and p.get("enabled")),
+            # 自动选路：界面要能显示「未指定 → 实际会用谁」，否则用户不知道钱花在哪
+            "auto_provider_id": picked.get("id") or "",
+            "auto_provider_name": picked.get("name") or "",
+            "auto": bool(picked),
+            "ready": bool(explicit or picked),
         })
     return out
 

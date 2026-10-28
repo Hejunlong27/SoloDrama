@@ -436,14 +436,43 @@ def _rh_verdict(payload: Any, what: str) -> dict:
             "next": "确认工作流 ID 属于这个账号；或到 RunningHub 网页打开该工作流确认它还在"}
 
 
+# 探测只发一句 1 token 的话。它是**连通性体检**，不是内容生成：
+# 内容一律走 gateway.complete(purpose) + stages/creation/prompts/*.md 原文，
+# 这里不绕开网关做创作，只验证「地址 + Key + 模型名 + 网络」四件事能不能通。
+_LLM_PROBE_MSG = [{"role": "user", "content": "只回复：可用"}]
+_LLM_PROBE_TIMEOUT = 20.0
+_LLM_PROBE_MAX = 2          # 最多实测两个提供商：多测一个就多一次计费
+
+_LLM_NEXT = {
+    "auth": "Key 无效或已过期：回控制台重新复制一次（不同站点/平台之间的 Key 不通用）",
+    "model_not_found": "模型名不被这个 Key 接受：核对默认模型；base_url 少了 /v1 也会这样",
+    "quota": "账户余额或额度不足，充值后再点测试",
+    "rate_limit": "被限流了，等一分钟再点测试",
+    "timeout": "超时：多为网络或代理问题；本地服务请确认端口已监听",
+    "network": "连不上端点：检查 base_url 是否要带 /v1、以及本机网络/代理",
+    "protocol": "端点不像 OpenAI 兼容接口：地址应指向 /v1，而不是控制台首页",
+    "blocked": "地址被本地安全策略拒绝（只允许 http/https 与常见端口）",
+    "config": "提供商配置不完整：补上 base_url 与默认模型",
+}
+
+
 def _test_llm() -> dict:
+    """大模型通道体检：**真的发一次最小请求**。
+
+    为什么不能只看「有没有 Key」：Key 过期、模型改名、base_url 少了 /v1、
+    代理把请求拦下来，这四种情况的配置看起来都是「齐了」，但一用就失败。
+    产品必须能区分「配置齐了」和「真的能调」，否则用户会在写剧本时才发现。
+    """
     try:
+        from .llm import providers as llm_providers
         from .llm import store as llm_store
+        from .llm.errors import LLMError
     except Exception as e:      # noqa: BLE001
         return {"ok": False, "reason": "import", "detail": "读不到模型配置（%s）" % type(e).__name__,
                 "next": "到 AI 模型中心检查提供商配置"}
+
     allprovs = llm_store.list_providers() or []
-    provs = [p for p in allprovs if p.get("enabled", True)]
+    provs = [x for x in allprovs if x.get("enabled", True)]
     if not allprovs:
         return {"ok": False, "reason": "no_provider", "detail": "还没添加任何模型提供商",
                 "next": "到 AI 模型中心添加一个 OpenAI 兼容服务（DeepSeek / 通义 / 本地 Ollama 都行）"}
@@ -451,15 +480,63 @@ def _test_llm() -> dict:
         return {"ok": False, "reason": "all_disabled",
                 "detail": "有 %d 个提供商，但都处于停用状态" % len(allprovs),
                 "next": "到 AI 模型中心启用其中一个，或新建一个"}
-    ready = [p for p in provs if (p.get("key_status") or {}).get("has_key") or
-             (p.get("kind") or p.get("type")) in ("ollama", "mock")]
+
+    ready = [x for x in provs if _prov_has_key(x)]
     if not ready:
+        no_key = [x.get("name") or x.get("id") for x in provs]
         return {"ok": False, "reason": "no_key",
-                "detail": "%d 个提供商都没有可用 Key" % len(provs),
-                "next": "在 AI 模型中心填入 Key（只进不出），再点一次测试"}
-    return {"ok": True, "reason": "ok", "detail": "%d 个提供商可用" % len(ready),
-            "providers": [{"id": p.get("id"), "name": p.get("name"), "model": p.get("model")} for p in ready],
-            "next": ""}
+                "detail": "%d 个提供商都没有可用 Key（%s）" % (len(provs), "、".join(no_key[:3])),
+                "next": "在 AI 模型中心填入 Key（只进不出、不回显），再点一次测试"}
+
+    probes = []
+    for x in ready[:_LLM_PROBE_MAX]:
+        pid = x.get("id")
+        name = x.get("name") or pid
+        try:
+            cfg = llm_store.get_provider(pid, with_key=True)
+        except Exception as e:      # noqa: BLE001
+            probes.append({"id": pid, "name": name, "ok": False, "kind": "config",
+                           "detail": "读不到该提供商的完整配置（%s）" % type(e).__name__,
+                           "next": _LLM_NEXT["config"]})
+            continue
+        model = str(cfg.get("default_model") or "")
+        started = time.time()
+        try:
+            prov = llm_providers.build(cfg, cfg.get("_key") or "")
+            res = prov.chat(_LLM_PROBE_MSG, model=model or None, max_tokens=8,
+                            timeout_s=_LLM_PROBE_TIMEOUT)
+        except LLMError as e:
+            probes.append({"id": pid, "name": name, "model": model or "(未填)",
+                           "ok": False, "kind": e.kind, "status": e.status,
+                           "detail": e.text, "next": _LLM_NEXT.get(e.kind, "按提示修正后重试"),
+                           "ms": int((time.time() - started) * 1000)})
+            continue
+        except Exception as e:      # noqa: BLE001
+            probes.append({"id": pid, "name": name, "model": model or "(未填)",
+                           "ok": False, "kind": "exception",
+                           "detail": "%s: %s" % (type(e).__name__, str(e)[:120]),
+                           "next": "把这段原文发给开发者", "ms": int((time.time() - started) * 1000)})
+            continue
+        got = str(getattr(res, "text", "") or "").strip()
+        probes.append({"id": pid, "name": name, "model": model or "(未填)", "ok": True,
+                       "detail": "可调用" + ("（回包「%s」）" % got[:16] if got else ""),
+                       "ms": int((time.time() - started) * 1000)})
+
+    good = [x for x in probes if x["ok"]]
+    if good:
+        tail_txt = ""
+        bad = [x for x in probes if not x["ok"]]
+        if bad:
+            tail_txt = "；%s 不可用：%s" % (bad[0].get("name"), bad[0].get("detail"))
+        return {"ok": True, "reason": "ok",
+                "detail": "%s 可调用 · 实测 %d/%d" % (good[0].get("name"), len(good), len(probes)) + tail_txt,
+                "providers": probes, "next": (bad[0].get("next") or "") if bad else ""}
+
+    first = probes[0] if probes else {}
+    return {"ok": False, "reason": first.get("kind") or "probe_failed",
+            "detail": "%s：%s" % (first.get("name") or "提供商", first.get("detail") or "实测失败"),
+            "next": first.get("next") or "按提示修正后重试",
+            "providers": probes}
 
 
 TESTERS = {"comfyui": _test_comfyui, "runninghub": _test_runninghub, "llm": _test_llm}
@@ -514,13 +591,31 @@ def overview() -> dict:
     }
 
 
+def _prov_has_key(p: dict) -> bool:
+    """提供商有没有可用凭据。
+
+    ⚠️ 坑：`store.public_provider()` 会 `out.update(key_status(prov))`，也就是把
+    `{"has_key": ...}` **摊平**到顶层，而不是留在 `key_status` 里。读
+    `p["key_status"]["has_key"]` 恒为 None → 界面永远显示「缺 Key」，
+    用户填了 Key 也被告知没填。这里两种形态都兼容。
+    """
+    # 顺序要紧：本地/演练类别**根本不需要 Key**，必须先判，
+    # 否则会被顶层 has_key=False 一票否决（表现为「mock 也说没 Key」）。
+    if (p.get("kind") or p.get("type")) in ("ollama", "mock"):
+        return True
+    ks = p.get("key_status")
+    if isinstance(ks, dict) and "has_key" in ks:
+        return bool(ks.get("has_key"))
+    return bool(p.get("has_key"))
+
+
 def _llm_providers() -> list:
     """给界面看的最小集合：谁配了、什么模型、有没有 Key。读不到就空列表，不抛。"""
     try:
         from .llm import store as llm_store
         return [{"id": p.get("id"), "name": p.get("name") or p.get("id"),
                  "model": p.get("default_model") or "",
-                 "kind": p.get("kind"), "has_key": bool((p.get("key_status") or {}).get("has_key")),
+                 "kind": p.get("kind"), "has_key": _prov_has_key(p),
                  "enabled": p.get("enabled", True)}
                 for p in (llm_store.list_providers() or [])]
     except Exception:      # noqa: BLE001

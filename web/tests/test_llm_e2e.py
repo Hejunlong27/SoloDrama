@@ -229,10 +229,20 @@ def main() -> int:
         gen = [p for p in r.json()["items"] if p["id"] == "script.generate"][0]
         check(gen["bound"] is False, "初始应为未绑定")
 
+        # ★ 契约变更（2026-10-28）：未显式绑定不再直接报 config，而是**自动选路**。
+        #   旧行为要求新用户手动绑定 10 个用途，否则每次生成都失败——那不是配置，是刁难。
+        #   这里守住三条：① 不能 500；② 不能因「没绑定」失败；③ 状态要如实标为自动。
         r = c.post("/api/studio/script/generate?ws=%s" % ws.as_posix(), json={"ep": 1, "confirm": True})
-        check(r.status_code == 200, "未绑定时应返回业务失败而非 500")
-        check(r.json().get("ok") is False and r.json()["error"]["kind"] == "config",
-              "未绑定应报 config：%r" % (r.json().get("error"),))
+        check(r.status_code == 200, "未绑定时应返回业务结果而非 500")
+        _b = r.json()
+        _err = _b.get("error") or {}
+        check(not (_b.get("ok") is False and _err.get("kind") == "config"),
+              "未绑定时不应再要求手动绑定（应自动选路）：%r" % (_err,))
+        _gen = [p for p in c.get("/api/llm/purposes").json()["items"]
+                if p["id"] == "script.generate"][0]
+        check(_gen["auto"] is True and _gen["ready"] is True,
+              "未显式绑定时应标记为自动选路且可用：%r" % ({k: _gen.get(k) for k in
+                                                     ("auto", "ready", "bound", "auto_provider_id")},))
 
         r = c.post("/api/llm/purposes/script.generate", json={"provider_id": "fake"})
         check(r.status_code == 200, "绑定应成功：%s" % r.text[:160])

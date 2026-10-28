@@ -35,8 +35,12 @@ function cardLlm(it) {
     + '<div class="card-b">'
     + '<div class="small muted" style="margin-bottom:12px">' + esc(it.doc) + '</div>'
     + kv([
-      ['提供商', (provs.length ? provs.map((p) => (p.name || p.id) + '（' + (p.model || '未填模型')
-        + (p.has_key ? '' : ' · 缺 Key') + (p.enabled === false ? ' · 已停用' : '') + '）').join('；') : '还没有'), false],
+      /* 只放名字：把「（模型 · 缺 Key · 已停用）」全塞进一行会折成两行半，
+         模型名正好被拆在换行处（出现「mock / -episode」这种断词）。 */
+      ['提供商', (provs.length ? provs.map((p) => esc(p.name || p.id)
+        + (p.enabled === false ? '（停用）' : (p.has_key ? '' : '（缺 Key）'))).join('；') : '还没有'), false],
+      ['在用模型', (provs.filter((p) => p.enabled !== false).length
+        ? esc(provs.filter((p) => p.enabled !== false)[0].model || '未填') : '—')],
       ['接入方式', 'OpenAI 兼容 / Ollama（地址 + Key + 模型名）'],
       ['最近验证', it.last_test ? dt(it.last_test) : '从未验证']
     ])
@@ -66,7 +70,7 @@ function cardComfy(it) {
     + '<span class="tiny dim" style="margin-left:auto">'
     + (it.last_test ? esc(ago(it.last_test)) + '前验证' : '还没验证过') + '</span></div>'
     + '<div id="cResult" style="margin-top:10px">' + resultBox(it) + '</div>'
-    + '</div><div class="card-foot"><span class="tiny dim">保存后会注入 <span class="mono">COMFYUI_URL</span>，'
+    + '</div><div class="card-foot"><span class="tiny dim">保存后出图器会自动用这个地址（不需要你设环境变量），'
     + '所有出图脚本自动生效——不需要你在终端设环境变量。</span></div></section>';
 }
 
@@ -156,10 +160,12 @@ export async function render(ctx) {
     + '<section class="card"><div class="card-h"><h3>注入关系</h3>'
     + '<span class="card-sub">界面填一次，子进程自动带上</span></div><div class="card-b">'
     + kv([
-      ['出图地址', '→ COMFYUI_URL'],
-      ['RH Key', '→ RUNNINGHUB_API_KEY'],
-      ['RH 站点', '→ RUNNINGHUB_BASE_URL'],
-      ['大模型', '→ 内部网关（不注入环境变量）']
+      /* 不写环境变量名：界面对用户只讲「会发生什么」。
+         变量名属于实现细节，写出来只会让人以为要自己去设。 */
+      ['出图地址', '出图任务启动时自动带上'],
+      ['RH Key', '出片任务自动带上，不回显'],
+      ['RH 站点', '与 Key 一起带上'],
+      ['大模型', '走内部网关，子进程不接触 Key']
     ])
     + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('lock', 14) + '</span><div>'
     + '配置文件在 <span class="mono">' + esc(ov.store || 'web/var/connections.json') + '</span>，'

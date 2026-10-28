@@ -1,7 +1,7 @@
 /* 工作台：全局视图（不依赖当前项目也可用） */
 import { api } from '../api.js';
 import { S, loadRunning } from '../store.js';
-import { esc, icon, stateEl, dot, money, badge, stamp, emptyBox, toast } from '../ui.js';
+import { esc, icon, stateEl, dot, money, badge, stamp, emptyBox, toast, ago } from '../ui.js';
 
 function kpi(label, value, note) {
   return '<div class="kpi"><div class="kpi-k">' + esc(label) + '</div>'
@@ -144,7 +144,7 @@ export async function render(ctx) {
       + '<button class="btn quiet" data-go="tasks">打开任务中心</button></div>')
     + '</div></section>'
 
-    + channelCard(ctx, setup, providers, purposes)
+    + channelCard(ctx, setup, providers, purposes, conn)
     + (overRefs.length ? '' : '');
 
   return {
@@ -165,32 +165,27 @@ export async function render(ctx) {
           });
         };
       });
-      const probe = root.querySelector('#btnComfyProbe');
-      if (probe) probe.onclick = async () => {
-        probe.disabled = true;
-        probe.innerHTML = '<span class="spinner"></span>检测中';
-        try {
-          const r = await api.run({ spec_id: 'diag.comfy', params: {}, ws: ctx.ws, timeout: 30 });
-          const txt = (r.stdout || r.friendly || '').trim();
-          const okRun = r.rc === 0;
-          toast(okRun ? 'ComfyUI 在线' : 'ComfyUI 未连通（退出码 ' + r.rc + '）', okRun ? 'ok' : 'bad');
-          import('../ui.js').then((m) => m.openDrawer({
-            title: 'ComfyUI 体检',
-            html: '<div class="stack"><div class="alert ' + (okRun ? 'info' : 'warn')
-              + '"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-              + '退出码 ' + esc(r.rc) + ' · 耗时 ' + esc(r.elapsed) + 's · 命令 <span class="mono">'
-              + esc(r.argv_display || 'comfy_client.py --check') + '</span></div></div>'
-              + '<pre class="log" style="max-height:50vh;white-space:pre-wrap">' + esc(txt || '（无输出）') + '</pre></div>',
-            foot: '<span class="spacer"></span><button class="btn quiet" data-close="drawer">关闭</button>',
-            mount: (rr) => m.paintIcons(rr)
-          }));
-        } catch (e) {
-          toast('检测失败：' + (e.detail || e.message), 'bad');
-        } finally {
-          probe.disabled = false;
-          probe.textContent = '检测';
-        }
-      };
+      /* 检测走「连接中心」同一条只读探测（读 system_stats，0 费用）。
+         以前这里跑 diag.comfy 拿原始日志，和工作台的接入状态是两套口径：
+         同一个 ComfyUI，卡片说「未确认」、抽屉说「在线」，用户没法判断。
+         现在只有一条链路，结果直接写进后端（last_test / last_detail），刷新即显示。 */
+      root.querySelectorAll('[data-probe]').forEach((b) => {
+        b.onclick = async () => {
+          const kind = b.dataset.probe;
+          b.disabled = true;
+          b.innerHTML = '<span class="spinner"></span>';
+          try {
+            const r = await api.testConnection(kind);
+            toast(r.ok ? '已连接：' + (r.detail || '') : ((r.detail || '探测失败') + (r.next ? ' · ' + r.next : '')),
+              r.ok ? 'ok' : 'bad');
+            ctx.refresh();
+          } catch (e) {
+            toast('探测失败：' + (e.detail || e.message), 'bad');
+            b.disabled = false;
+            b.textContent = '检测';
+          }
+        };
+      });
 
       const d = root.querySelector('#btnDiscoverWb');
       if (d) d.onclick = async () => {
@@ -211,43 +206,61 @@ export async function render(ctx) {
 /* ---------- 接入状态（LLM / 本地出图 / 云端出片） ----------
    只报「配置状态 + 已做过的检测结果」，不在打开页面时主动联网探测：
    探测要有明确触发（点「检测」跑 diag.comfy，0 费用；RunningHub 的真实请求需 --live，控制台不自动发）。 */
-function channelCard(ctx, setup, providers, purposes) {
+function channelCard(ctx, setup, providers, purposes, conn) {
+  /* 口径统一：机器级通道（大模型 / 本地出图 / 云端出片）只认「连接中心」，
+     项目级要求（工作流 API）才认 G-0。以前两套各算一套，会出现
+     「连接中心显示已连接、工作台显示未确认」的自相矛盾，用户不知道该信哪个。 */
   const items = (setup && setup.items) || [];
-  const get = (k) => {
-    const it = items.find((x) => x.key === k);
-    return it || {};
-  };
-  const img = get('image_model');
-  const vid = get('video_model');
-  const acc = get('account');
-  const wfApi = get('workflow_api');
-  const accDetail = (acc.detail && typeof acc.detail === 'object') ? acc.detail : {};
+  const wfApi = items.find((x) => x.key === 'workflow_api') || {};
+  const byKind = {};
+  ((conn && conn.items) || []).forEach((i) => { byKind[i.kind] = i; });
 
-  const ready = purposes.filter((p) => p.ready).length;
-  const llmTone = providers.length ? (ready ? 'done' : 'todo') : 'todo';
-  const llmText = providers.length
-    ? (providers.length + ' 个提供商 · ' + ready + '/' + purposes.length + ' 用途就绪')
-    : '还没有配置任何模型端点';
+  const on = (providers || []).filter((p) => p.enabled !== false);
+  const ready = (purposes || []).filter((p) => p.ready).length;
+  const llmExtra = on.length
+    ? (on.length + ' 个提供商 · ' + ready + '/' + (purposes || []).length + ' 用途就绪')
+    : ((providers || []).length ? '已配置但全部停用' : '还没有配置任何模型端点');
 
   const row = (tone, name, text, action) => '<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line)">'
-    + '<i class="dot ' + tone + '"></i><span class="small" style="width:96px">' + esc(name) + '</span>'
+    + '<i class="dot ' + tone + '"></i><span class="small" style="width:88px;flex:none">' + esc(name) + '</span>'
     + '<span class="tiny muted flex1">' + text + '</span>'
     + (action || '') + '</div>';
 
+  /* 机器级通道：三态分明。未探测 ≠ 不可用，所以文案不能写成「失败」。 */
+  const chan = (kind, name, fallback, action) => {
+    const it = byKind[kind] || {};
+    const ok = it.last_ok === true;
+    const bad = it.last_ok === false;
+    const tone = ok ? 'done' : bad ? 'fail' : 'todo';
+    let text;
+    if (ok) {
+      text = esc(it.last_detail || '已连接')
+        + (it.last_test ? ' <span class="dim">· ' + esc(ago(it.last_test)) + '前</span>' : '');
+    } else if (bad) {
+      text = esc(it.last_detail || '探测失败')
+        + (it.last_next ? ' <span class="dim">· ' + esc(it.last_next) + '</span>' : '');
+    } else {
+      text = esc(fallback) + ' <span class="dim">· 未探测，去连接中心点一次测试</span>';
+    }
+    return row(tone, name, text, action);
+  };
+
   return '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>接入状态</h3>'
-    + '<span class="card-sub">配置来自 G-0 九项与 AI 模型中心；连通性需显式检测</span>'
-    + '<span class="spacer"></span><button class="btn ghost sm" data-go="models">模型配置</button></div>'
+    + '<span class="card-sub">机器级通道看「连接中心」，项目级要求看 G-0</span>'
+    + '<span class="spacer"></span><button class="btn ghost sm" data-go="connections">连接中心</button></div>'
     + '<div class="card-b">'
-    + row(llmTone, 'LLM 网关', esc(llmText),
-      providers.length ? '<span class="badge outline">已配置</span>'
-        : '<button class="btn quiet sm" data-go="models">去配置</button>')
-    + row(img.ok ? 'done' : 'todo', '本地出图', esc(img.label || '未确认'))
-    + row(vid.ok ? 'done' : 'todo', '云端出片', esc(vid.label || '未确认')
-      + (accDetail.alias ? ' · <span class="mono">' + esc(accDetail.alias) + '</span>' : ''))
-    + row(wfApi.ok ? 'done' : 'todo', '工作流 API', esc((wfApi.detail && wfApi.detail.ref) || '未确认'))
-    + row('todo', 'ComfyUI 连通', '点右侧按钮跑一次本地体检（0 费用，不联网外部）',
-      '<button class="btn quiet sm" id="btnComfyProbe">检测</button>')
+    + chan('llm', '大模型', llmExtra,
+      '<button class="btn quiet sm" data-go="' + (on.length ? 'connections' : 'models') + '">'
+      + (on.length ? '连接中心' : '去配置') + '</button>')
+    + chan('comfyui', '本地出图', 'ComfyUI 未验证', '<button class="btn quiet sm" data-probe="comfyui">检测</button>')
+    + chan('runninghub', '云端出片', 'RunningHub 未验证', '<button class="btn quiet sm" data-go="connections">连接中心</button>')
+    + (ctx.ws
+      ? row(wfApi.ok ? 'done' : 'todo', '工作流 API',
+        esc((wfApi.detail && wfApi.detail.ref) || '未确认（项目级要求）'),
+        '<button class="btn quiet sm" data-go="settings">系统设置</button>')
+      : row('todo', '工作流 API', '未选项目 <span class="dim">· 工作流 ID 是项目级配置</span>',
+        '<button class="btn quiet sm" data-go="projects">选项目</button>'))
     + '</div>'
-    + '<div class="card-foot"><span class="tiny dim">RunningHub 的真实请求会用你的账号计费，'
-    + '控制台不会在打开页面时自动发；如需验证请到「分镜与视频」用「小样 1 段」。</span></div></section>';
+    + '<div class="card-foot"><span class="tiny dim">探测一律只读：ComfyUI 读 system_stats，'
+    + 'RunningHub 查账户余额，都不产生任务、不花钱。真实出片才会计费。</span></div></section>';
 }

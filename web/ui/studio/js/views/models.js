@@ -71,7 +71,7 @@ export async function render(ctx) {
 
     + '<div class="grid g4" style="margin-bottom:14px">'
     + kpi('已配置提供商', String(providers.length), providers.length ? '可用 ' + providers.filter((p) => p.enabled).length + ' 个' : '还没有配置')
-    + kpi('已绑定用途', ready + ' / ' + plist.length, ready ? '可直接调用' : '先绑定提供商')
+    + kpi('可用用途', ready + ' / ' + plist.length, ready ? '含自动选路，可直接调用' : '先加一个提供商')
     + kpi('提示词模板', String((tpls.items || []).length), '来自仓库 stages/creation/prompts')
     + kpi('调用存储', '本机', (meta.store_dir || '').split(/[\\/]/).slice(-2).join('/'))
     + '</div>'
@@ -415,7 +415,10 @@ function purposesTab(purposes, providers) {
       + '<td><select class="select" data-pprov="' + esc(p.id) + '">' + opts(p.provider_id) + '</select></td>'
       + '<td><select class="select" data-pmodel="' + esc(p.id) + '">'
       + (mopts || '<option value="">—</option>') + '</select></td>'
-      + '<td>' + (p.ready ? badge('ok', '就绪') : (p.bound ? badge('warn', '提供商已停用') : badge('muted', '未绑定')))
+      + '<td>' + (p.auto
+        ? badge('ok', '自动：' + (p.auto_provider_name || '已选路'))
+        : (p.ready ? badge('ok', '就绪')
+          : (p.bound ? badge('warn', '提供商已停用') : badge('muted', '不可用'))))
       + '</td>'
       + '<td><button class="btn quiet sm" data-psave="' + esc(p.id) + '">保存</button>'
       + (prov && prov.default_model && p.model !== prov.default_model
@@ -429,8 +432,9 @@ function purposesTab(purposes, providers) {
     + '<th style="width:200px">用途</th><th>说明</th><th style="width:180px">提供商</th>'
     + '<th style="width:170px">模型</th><th style="width:90px">状态</th><th style="width:120px"></th>'
     + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
-    + '<div class="card-foot"><span class="tiny dim">绑定后即可在「创作中心」用该用途生成剧本正文；'
-    + '未绑定时接口会明确报「还没有绑定提供商」，不会静默失败。</span></div></section>';
+    + '<div class="card-foot"><span class="tiny dim">不指定时按「有 Key 的云端 > 本地模型 > 离线演练」'
+    + '自动选路，状态列会标出实际用的是谁；显式绑定永远优先。一个能跑的服务都没有时，'
+    + '接口会明确报「没有可用提供商」，不会静默失败。</span></div></section>';
 }
 
 async function savePurpose(ctx, root, pid, useDefault) {

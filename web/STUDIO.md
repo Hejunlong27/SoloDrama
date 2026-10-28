@@ -92,13 +92,13 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 项目管理    | 登记、扫描本机、搜索/筛选/排序、打开、**新建项目**（调 `creation.py scaffold`，建完自动登记）              | `/api/workspaces*`、`/api/projects/create`                                                                                                  |
 | 项目详情    | 11 环节判据、集数规划、产物目录、G-0 九项、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
 | 创作中心    | S1–S5 完成度（引擎 probes）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
-| 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
+| 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
 | 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**出片**（计费五步）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
 | 发行中心    | 发布版剧集/封面/文案/发布清单/版权资料的存在性核对                                                | `/api/artifacts`、`/api/file`、`release_check`（未接入，见 §7）                                                                                     |
 | 任务中心    | 排队/运行/成功/失败/待确认、日志 SSE、退出码语义、安全重试、取消                                       | `/api/jobs*`、`/api/jobs/{id}/stream`、`/api/jobs/{id}/cancel`                                                                               |
 | 成本中心    | 台账逐次尝试、按阶段/按集、失败不计费、**LLM 用量独立分栏**（不折算点数）                                  | `/api/studio/cost`、`/api/llm/usage`                                                                                                        |
-| AI 模型中心 | 提供商 CRUD、连接测试、用途路由、提示词模板、调用记录                                              | `/api/llm/*`                                                                                                                               |
+| AI 模型中心 | 提供商 CRUD、连接测试、用途路由（**未绑定时自动选路**）、提示词模板、调用记录                              | `/api/llm/*`                                                                                                                               |
 | 系统设置    | 环境自检、G-0 九项、能力清单（哪些没接+原因）、审计                                               | `/api/studio/env`、`/api/studio/setup`、`/api/studio/capabilities`、`/api/audit`                                                              |
 
 设计纪律：**所有数字都来自后端**。没有数据的就显示「未知 / 不可得」，不填 0、不编进度。
@@ -276,6 +276,20 @@ python web/tools/verify_llm_loop.py
 - **ComfyUI / RunningHub 的"连接状态"**：页面只显示**配置状态**（来自 G-0 九项）；  
   真正的连通性要显式点「检测」（ComfyUI，0 费用）或在「分镜与视频」跑「小样 1 段」（RunningHub，计费）。  
   打开页面时**不会**自动联网探测。
+- **`store.public_provider()` 会把 `key_status` 摊平到顶层**：它做的是
+  `out.update(key_status(prov))`，所以 `has_key` 在**顶层**，`p["key_status"]["has_key"]` 恒为 None。
+  读错的表现是「填了 Key 界面仍说缺 Key」。判定统一走 `connections._prov_has_key()`。
+- **用途未显式绑定 → 自动选路**（`store.auto_provider()`）：按「有 Key 的云端 > 本地模型 > 离线演练」
+  挑一个，排序里 Mock 永远最后（能跑通但输出是假的，不该抢在真模型前面）。
+  `list_purposes()` 与 `get_purpose()` **共用同一个函数**，否则会出现「界面说用 A、网关实际用 B」。
+  显式绑定仍最优先；`bound=False` 但 `auto=True` 表示「用户没指定，系统代选」。
+- **大模型探测是真发请求**（1 token 级）：只看「有没有 Key」区分不出 Key 过期 / 模型改名 /
+  base_url 少 `/v1` / 代理拦截——这四种配置看起来都齐。失败按 `core/llm/errors.KINDS` 分类给下一步；
+  `test_connections.py` 里同时守正例（Mock 返回）与负例（端口拒绝 → network/timeout）。
+- **散图是只读视图，不归档**：真实项目的图常直接丢在剧目录根下，而资产页只读
+  `04-资产/{characters,scenes,props}` → 打开是空的。`artifacts.loose_images()` 扫根目录 + 一层子目录，
+  跳过 `04-资产`/`06-提示词`/`07-成片`/`09-发行` 与工程目录，**只报告位置**。
+  移动用户文件属破坏性操作，产品里不自动做。
 - **资产出图的前置是「资产提示词 md」，不是 ComfyUI**：引擎的 `gen_assets_local.py` / `gen_asset*.py`
   **没有命令行参数**，只认环境变量 `SOLODRAMA_ASSET_MD`；缺了会在解析 `--check` 之前就 rc=1，
   看起来像「ComfyUI 没开」，其实是缺文件。资产中心会在打开时自动探测

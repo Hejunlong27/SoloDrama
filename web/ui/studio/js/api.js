@@ -82,6 +82,7 @@ export const api = {
   mediaInfo: (ws, rel) => get('/api/studio/media-info', { ws, rel }),
   prompt: (ws, shot) => get('/api/studio/prompt', { ws, shot }),
   assetMd: (ws) => get('/api/studio/asset-md', { ws }),
+  loose: (ws) => get('/api/artifacts/loose', { ws }),
   connections: () => get('/api/connections'),
   saveConnection: (kind, body) => post('/api/connections/' + encodeURIComponent(kind), body),
   testConnection: (kind) => post('/api/connections/' + encodeURIComponent(kind) + '/test', {}),

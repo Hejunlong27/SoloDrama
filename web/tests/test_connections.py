@@ -11,6 +11,12 @@
 3. **注入必须真的落到子进程环境**：`runner.base_env()` 要带上
    `COMFYUI_URL` / `RUNNINGHUB_API_KEY` / `RUNNINGHUB_BASE_URL`。
    没注入的话，界面显示"已连接"，出图脚本仍然报「未设置环境变量」。
+4. **凭据判定要认「摊平」形态**：`store.public_provider()` 把 `key_status` 摊平到顶层，
+   读 `p["key_status"]["has_key"]` 恒为 None → 用户填了 Key 仍被告知「缺 Key」。
+5. **用途不绑定也要能跑**：新用户只加了一个提供商，却要手动绑 10 个用途，
+   否则每次生成都报「还没有绑定提供商」。自动选路一旦失效，产品等于不可用。
+6. **探测必须真发请求**：只看「有没有 Key」区分不出「Key 过期 / 模型改名 /
+   base_url 少了 /v1 / 代理拦截」——这四种配置看起来都是齐的。
 
 全部用临时目录，不碰真实配置。
 """
@@ -69,6 +75,40 @@ class Sandbox:
             else:
                 os.environ[k] = v
         return False
+
+
+class LlmSandbox:
+    """把 `core.llm.store` 的配置指到临时目录（模型配置是真实机器状态，不能直接改）。"""
+
+    def __enter__(self):
+        from core.llm import store as S
+        self.S = S
+        self.tmp = Path(tempfile.mkdtemp(prefix="llm-"))
+        self._cfg, self._keys = S.CONFIG_FILE, S.KEYS_FILE
+        S.CONFIG_FILE = self.tmp / "config.json"
+        S.KEYS_FILE = self.tmp / "keys.json"
+        return self
+
+    def __exit__(self, *exc):
+        self.S.CONFIG_FILE, self.S.KEYS_FILE = self._cfg, self._keys
+        return False
+
+    def add(self, **kw):
+        self.S.upsert_provider(kw)
+
+    def set_enabled(self, pid, val):
+        cfg = self.S.load_config()
+        p = [x for x in cfg["providers"] if x.get("id") == pid][0]
+        pl = {k: p.get(k) for k in ("id", "name", "kind", "base_url", "default_model",
+                                    "models", "capabilities", "local", "timeout_s",
+                                    "max_retries", "env_var")}
+        pl["enabled"] = val
+        self.S.upsert_provider(pl)
+
+
+def _mock(sb, enabled=True):
+    sb.add(id="m1", name="离线演练（Mock）", kind="mock", default_model="mock-episode",
+           models=["mock-episode"], capabilities=["json"], enabled=enabled)
 
 
 def test_hint():
@@ -144,12 +184,93 @@ def test_site_and_unknown():
 
 def test_llm_no_key_is_explicit():
     section("6 大模型未接通时必须给原因")
-    with Sandbox():
+    with Sandbox(), LlmSandbox():
         r = CONN.test("llm")
         check(r["ok"] is False, "没有可用提供商时 ok 必须为 False")
         check(r["reason"] in ("no_provider", "all_disabled", "no_key"),
               "reason 必须是可解释的枚举，实际 %r" % r["reason"])
         check(bool(r.get("next")), "失败必须给下一步")
+
+
+def test_prov_has_key_shapes():
+    section("7 凭据判定要兼容「摊平」形态（曾导致填了 Key 仍显示缺 Key）")
+    check(CONN._prov_has_key({"kind": "openai", "has_key": True}), "顶层 has_key=True 必须认")
+    check(not CONN._prov_has_key({"kind": "openai", "has_key": False}), "顶层 has_key=False 必须认")
+    check(CONN._prov_has_key({"kind": "openai", "key_status": {"has_key": True}}), "嵌套形态也要兼容")
+    check(CONN._prov_has_key({"kind": "mock", "has_key": False}), "Mock 不需要 Key")
+    check(CONN._prov_has_key({"kind": "ollama"}), "Ollama 不需要 Key")
+    # 回归：真的走一遍 store 的输出形态
+    with LlmSandbox() as sb:
+        sb.add(id="d1", name="DeepSeek", kind="openai", base_url="https://api.deepseek.com/v1",
+               default_model="deepseek-chat", models=["deepseek-chat"], enabled=True,
+               api_key="sk-test-not-real-0001")
+        pub = sb.S.list_providers()[0]
+        check(pub.get("key_status") is None,
+              "store 应把 key_status 摊平（若将来改回嵌套，这里会提醒同步改 _prov_has_key）")
+        check(CONN._prov_has_key(pub) is True, "填了 Key 之后必须判定为有凭据")
+        blob = json.dumps(pub, ensure_ascii=False)
+        check("sk-test-not-real-0001" not in blob, "提供商视图不能含明文 Key")
+
+
+def test_auto_provider():
+    section("8 自动选路：真模型优先于演练，且尊重能力与停用")
+    with LlmSandbox() as sb:
+        _mock(sb)
+        check(sb.S.auto_provider("script.generate").get("id") == "m1", "只有 Mock 时应选 Mock")
+        sb.add(id="d1", name="DeepSeek", kind="openai", base_url="https://api.deepseek.com/v1",
+               default_model="deepseek-chat", models=["deepseek-chat"], enabled=True,
+               api_key="sk-test-not-real-0002")
+        check(sb.S.auto_provider("script.generate").get("id") == "d1", "真模型应优先于 Mock")
+        sb.set_enabled("d1", False)
+        check(sb.S.auto_provider("script.generate").get("id") == "m1", "真模型停用后应回落到 Mock")
+        # 没有 Key 的云端不能被选中（否则「就绪」却一用就 401）
+        sb.add(id="n1", name="无 Key 的云端", kind="openai",
+               base_url="https://api.example.com/v1", default_model="x", enabled=True)
+        sb.set_enabled("d1", False)
+        check(sb.S.auto_provider("script.generate").get("id") != "n1", "没 Key 的云端不能被自动选中")
+        # 能力不满足 → 不选
+        sb.S.templates.PURPOSE_MAP["__t_vision__"] = {"id": "__t_vision__", "label": "t",
+                                                      "requires": ["vision"]}
+        try:
+            check(sb.S.auto_provider("__t_vision__") == {}, "能力不满足时不应自动选路")
+        finally:
+            sb.S.templates.PURPOSE_MAP.pop("__t_vision__", None)
+
+
+def test_purposes_auto_ready():
+    section("9 用途未显式绑定也应就绪，且与网关取到同一个提供商")
+    with LlmSandbox() as sb:
+        _mock(sb)
+        items = sb.S.list_purposes()
+        check(bool(items), "应有用途定义")
+        check(all(x["ready"] for x in items), "全部用途应因自动选路而就绪")
+        check(all(x["auto"] for x in items), "应标记为自动")
+        check(not any(x["bound"] for x in items), "bound 必须仍为 False：自动 ≠ 用户显式绑定")
+        g = sb.S.get_purpose("script.generate")
+        check(g["provider_id"] == "m1", "网关取到的 provider 应为自动选中的那个")
+        check(g["auto"] is True, "get_purpose 应标明这是自动选路")
+
+
+def test_llm_probe_calls_model():
+    section("10 大模型探测必须真的发一次请求")
+    # ★ 必须同时沙箱 connections：`test()` 会把 last_ok/last_detail 写回连接配置。
+    #   只沙箱模型配置的话，假探针结果会污染真实机器的「大模型：未接通」。
+    with Sandbox(), LlmSandbox() as sb:
+        _mock(sb)
+        r = CONN.test("llm")
+        check(r["ok"] is True, "Mock 应被真实调用并通过，实际 %r" % (r.get("reason"),))
+        probes = r.get("providers") or []
+        check(bool(probes) and probes[0]["ok"] is True, "应返回逐提供商的实测结果")
+        # 负例：地址能解析但端口没人监听 → 必须是 network/timeout，且给下一步
+        sb.set_enabled("m1", False)
+        sb.add(id="bad", name="连不上的端点", kind="openai", base_url="http://127.0.0.1:9/v1",
+               default_model="x", models=["x"], enabled=True, local=True, trust_env=False,
+               api_key="sk-test-not-real-0003")
+        r2 = CONN.test("llm")
+        check(r2["ok"] is False, "连不上时 ok 必须为 False")
+        kinds = {x.get("kind") for x in (r2.get("providers") or [])}
+        check(bool(kinds & {"network", "timeout"}), "应归类为 network/timeout，实际 %s" % kinds)
+        check(bool(r2.get("next")), "失败必须给下一步")
 
 
 def main() -> int:
@@ -162,6 +283,10 @@ def main() -> int:
     test_env_injection()
     test_site_and_unknown()
     test_llm_no_key_is_explicit()
+    test_prov_has_key_shapes()
+    test_auto_provider()
+    test_purposes_auto_ready()
+    test_llm_probe_calls_model()
     print("\n" + "-" * 60)
     if FAILS:
         print("[NG] %d 项未通过" % len(FAILS))

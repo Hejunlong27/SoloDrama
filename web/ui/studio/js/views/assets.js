@@ -12,22 +12,39 @@ const TABS = [
   { key: 'characters', label: '角色', dir: '04-资产/characters' },
   { key: 'scenes', label: '场景', dir: '04-资产/scenes' },
   { key: 'props', label: '道具', dir: '04-资产/props' },
-  { key: 'refs', label: '参考图', dir: '06-提示词/refs_h3' }
+  { key: 'refs', label: '参考图', dir: '06-提示词/refs_h3' },
+  /* 散图：真实项目的图常在根目录，只看 04-资产/ 会显示「空」。
+     这里只读扫描（不移动文件），给用户一个「我的图都在这」的落点。 */
+  { key: 'loose', label: '散图', dir: '', loose: true }
 ];
 
-let tab = 'characters';
+/* 页签放在 URL 里（#/assets?tab=loose）：刷新、后退、分享链接都不丢当前页签。
+   与 AI 模型中心保持同一套写法，避免「这页记得住、那页记不住」。 */
+function currentTab() {
+  const m = String(location.hash || '').match(/[?&]tab=([a-z]+)/);
+  const k = m ? m[1] : 'characters';
+  return TABS.some((t) => t.key === k) ? k : 'characters';
+}
 
 export async function render(ctx) {
-  const [ov, dirData, md] = await Promise.all([
+  const tab = currentTab();
+  /* 散图清单**总是取**（不只是切到散图页签时）：
+     KPI 上要能写「另有 N 张未归档」，否则用户看到「角色资产 0」会以为图丢了。 */
+  const [ov, dirData, md, looseAll] = await Promise.all([
     api.overview(ctx.ws).catch((e) => ({ ok: false, error: e.detail || e.message })),
-    api.artifacts(ctx.ws, (TABS.find((t) => t.key === tab) || TABS[0]).dir)
-      .catch((e) => ({ ok: false, error: e.detail || e.message, items: [] })),
-    api.assetMd(ctx.ws).catch(() => ({ items: [], suggested: '', note: '' }))
+    (TABS.find((t) => t.key === tab) || TABS[0]).loose
+      ? Promise.resolve({ items: [], groups: [] })
+      : api.artifacts(ctx.ws, (TABS.find((t) => t.key === tab) || TABS[0]).dir)
+        .catch((e) => ({ ok: false, error: e.detail || e.message, items: [] })),
+    api.assetMd(ctx.ws).catch(() => ({ items: [], suggested: '', note: '' })),
+    api.loose(ctx.ws).catch(() => ({ items: [], groups: [] }))
   ]);
 
   const a = (ov && ov.assets) || {};
   const refsOver = (ov && ov.refs_over) || [];
-  const items = (dirData.items || []).filter((it) => !it.dir && it.kind === 'image');
+  const dirDataFinal = tab === 'loose' ? looseAll : dirData;
+  const looseN = (looseAll.items || []).length;
+  const items = (dirDataFinal.items || []).filter((it) => !it.dir && it.kind === 'image');
 
   const tiles = items.map((it) => (
     '<div class="mtile" data-img="' + esc(it.rel) + '" data-name="' + esc(it.name) + '" style="cursor:pointer">'
@@ -35,9 +52,15 @@ export async function render(ctx) {
     + '<div class="mtile-cap"><span class="mono">' + esc(it.name) + '</span></div></div>'
   )).join('') || '<div class="placeholder" style="grid-column:1/-1">'
     + '<div class="ph-icon">' + icon('image', 22) + '</div>'
-    + '这个目录里还没有图片（或目录不存在：<span class="mono">'
-    + esc((TABS.find((t) => t.key === tab) || {}).dir) + '</span>）'
-    + '<div class="tiny dim" style="margin-top:8px">用右上角「出图…」生成（本地￥0 / 云端计费）。</div></div>';
+    + (tab === 'loose'
+      ? '标准目录之外没有散图（根目录与一层子目录都看过了）'
+      : ('这个目录里还没有图片（或目录不存在：<span class="mono">'
+        + esc((TABS.find((t) => t.key === tab) || {}).dir) + '</span>）'))
+    + '<div class="tiny dim" style="margin-top:8px">'
+    + (tab === 'loose'
+      ? '把图移到 <span class="mono">04-资产/characters|scenes|props</span> 就会出现在对应分页里。'
+      : '用右上角「出图…」生成（本地￥0 / 云端计费）。')
+    + '</div></div>';
 
   const missChars = (a.missing_characters || []).slice(0, 24);
   const missScenes = (a.missing_scenes || []).slice(0, 24);
@@ -68,20 +91,25 @@ export async function render(ctx) {
 
     + '<div class="grid g4" style="margin-bottom:16px">'
     + '<div class="kpi"><div class="kpi-k">角色资产</div><div class="kpi-v">' + (a.char_generated || 0) + '</div>'
-    + '<div class="kpi-n">缺口 ' + missChars.length + ' 个</div></div>'
+    + '<div class="kpi-n">缺口 ' + missChars.length + ' 个'
+    + ((!a.char_generated && looseN) ? ' · <span class="dim">另有 ' + looseN + ' 张未归档（见散图）</span>' : '')
+    + '</div></div>'
     + '<div class="kpi"><div class="kpi-k">场景资产</div><div class="kpi-v">' + (a.scene_generated || 0) + '</div>'
     + '<div class="kpi-n">缺口 ' + missScenes.length + ' 个</div></div>'
     + '<div class="kpi"><div class="kpi-k">本地出图产物</div><div class="kpi-v">' + (a.local_generated || 0) + '</div>'
     + '<div class="kpi-n">￥0 · 占 GPU</div></div>'
-    + '<div class="kpi"><div class="kpi-k">参考图超限</div><div class="kpi-v">' + refsOver.length + '</div>'
-    + '<div class="kpi-n">上限 5760px</div></div>'
     + '</div>'
 
     + '<div class="tabs">'
     + TABS.map((t) => '<button class="tab' + (tab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">'
       + t.label + '</button>').join('')
     + '<span class="spacer"></span><span class="tiny dim mono">'
-    + esc((TABS.find((t) => t.key === tab) || {}).dir || '') + '</span>'
+    + (tab === 'loose'
+      ? (items.length
+        ? esc(items.length + ' 张 · ' + (dirDataFinal.groups || [])
+          .map((g) => g.where.replace('（根目录）', '根目录') + ' ' + g.count).join(' · ') + (dirDataFinal.truncated ? ' · 仅显示前 ' + dirDataFinal.limit : ''))
+        : '根目录 + 一层子目录（只读）')
+      : esc((TABS.find((t) => t.key === tab) || {}).dir || '')) + '</span>'
     + '</div>'
 
     + '<section class="card" style="margin-bottom:16px"><div class="card-b">'
@@ -125,7 +153,10 @@ export async function render(ctx) {
     mount: (root) => {
       paintIcons(root);
       root.querySelectorAll('[data-tab]').forEach((b) => {
-        b.onclick = () => { tab = b.dataset.tab; ctx.refresh(); };
+        b.onclick = () => {
+          if (b.dataset.tab === tab) return;
+          location.hash = '#/assets?tab=' + b.dataset.tab;
+        };
       });
       root.querySelectorAll('[data-img]').forEach((el) => {
         el.onclick = () => {

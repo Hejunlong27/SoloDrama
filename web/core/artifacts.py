@@ -122,6 +122,74 @@ def is_servable(p: Path) -> bool:
     return p.suffix.lower() in MEDIA_TYPES or p.suffix.lower() in TEXT_TYPES
 
 
+# 已经在标准位置、由资产页专门展示的目录（散图扫描要跳过，否则同一张图出现两次）
+_STD_ASSET_DIRS = ("04-资产", "06-提示词")
+# 工程/产物目录：里面有图也不是「用户资产」，扫进来只会让人误判
+_SKIP_LOOSE_DIRS = {".git", "__pycache__", "node_modules", "logs", "db", "tools",
+                    "workflows", "video-pipeline", "07-成片", "08-成片", "09-发行"}
+
+
+def loose_images(ws, *, limit: int = 80) -> dict:
+    """标准目录之外的图片（根目录 + 一层子目录）。**只读，不移动任何文件**。
+
+    为什么需要它：真实项目常常把图直接丢在剧目录根下（"六月.png"、"加油站.png"），
+    而资产页只读 `04-资产/{characters,scenes,props}` → 用户打开资产中心是**空的**，
+    明明有几十张图却显示「还没有图片」。这不是数据缺失，是视图太窄。
+
+    为什么不自动归档：移动用户文件属于破坏性操作。这里只报告位置，归档由用户决定。
+    """
+    root = safe_root(ws)
+    items, groups, truncated = [], {}, False
+
+    def add(p: Path) -> None:
+        nonlocal truncated
+        if len(items) >= limit:
+            truncated = True
+            return
+        if not p.is_file() or kind_of(p) != "image" or not is_servable(p):
+            return
+        try:
+            st = p.stat()
+            rel = p.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            return
+        where = "" if p.parent == root else p.parent.relative_to(root).as_posix()
+        label = where or "（根目录）"
+        items.append({"name": p.name, "rel": rel, "where": where, "kind": "image",
+                      "bytes": int(st.st_size), "mtime": int(st.st_mtime), "servable": True})
+        groups[label] = groups.get(label, 0) + 1
+
+    try:
+        for p in sorted(root.iterdir(), key=lambda x: x.name.lower()):
+            add(p)
+    except OSError:
+        pass
+
+    try:
+        subs = [d for d in sorted(root.iterdir(), key=lambda x: x.name.lower())
+                if d.is_dir() and not d.name.startswith(".")
+                and d.name not in _SKIP_LOOSE_DIRS
+                and d.name not in _STD_ASSET_DIRS]
+    except OSError:
+        subs = []
+    for d in subs:
+        try:
+            for p in sorted(d.iterdir(), key=lambda x: x.name.lower()):
+                add(p)
+        except OSError:
+            continue
+
+    return {
+        "ws": str(root),
+        "items": items,
+        "groups": [{"where": k, "count": v} for k, v in
+                   sorted(groups.items(), key=lambda kv: -kv[1])],
+        "truncated": truncated,
+        "limit": limit,
+        "note": "只读扫描：图片仍在原位。归档请自行移到 04-资产/，本页不会动你的文件",
+    }
+
+
 def list_dir(ws, rel: str = "", *, limit: int = LIST_MAX_ITEMS, extra_roots=()) -> dict:
     """列出工作区内某个目录（默认工作区根）。只返回可服务文件的元信息。"""
     # ★ root 必须在这里算好：下面每一项的 rel 都要**相对工作区根**返回，

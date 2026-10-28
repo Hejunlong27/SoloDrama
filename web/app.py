@@ -659,6 +659,16 @@ def studio_asset_md(ws: str = Query(...)):
     return studio.asset_mds(str(_require_ws(ws)))
 
 
+@app.get("/api/artifacts/loose")
+def artifacts_loose(ws: str = Query(...)):
+    """标准资产目录之外的图片（只读）。
+
+    真实项目的图常在剧目录根下，资产页只读 `04-资产/` 会显示「空」——
+    用户会以为产品不认识他的文件。这里只报告位置，不做任何移动。
+    """
+    return artifacts.loose_images(str(_require_ws(ws)))
+
+
 @app.get("/api/artifacts")
 def api_artifacts(ws: str = Query(...), dir: str = Query(default="")):
     w = str(_require_ws(ws))
