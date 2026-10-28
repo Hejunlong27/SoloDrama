@@ -34,8 +34,9 @@ WHITELIST = {
 EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\U0001F1E6-\U0001F1FF\uFE0F\u20E3]")
 EXTERNAL_RE = re.compile(r"""(?:src|href)\s*=\s*["']https?://|@import\s+url\(\s*["']?https?://""")
 
-VIEWS = ["workbench", "projects", "overview", "creation", "assets",
-         "storyboard", "post", "release", "tasks", "cost", "models", "settings"]
+VIEWS = ["workbench", "projects", "overview", "pipeline", "creation", "assets",
+         "storyboard", "post", "release", "tasks", "cost", "models", "generators",
+         "connections", "health", "settings"]
 
 
 def check(cond, msg):

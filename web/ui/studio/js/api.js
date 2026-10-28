@@ -69,6 +69,10 @@ export const api = {
   prune: () => post('/api/workspaces/prune', {}),
 
   generators: (ws) => get('/api/generators', { ws }),
+  healthChecks: (ws) => get('/api/health/checks', { ws }),
+  healthFix: (body) => post('/api/health/fix', body),
+  healthFixes: (limit) => get('/api/health/fixes', { limit }),
+
   pipeline: (ws, budget) => get('/api/pipeline/plan', { ws, budget }),
   pipelineRun: (body) => post('/api/pipeline/run', body),
   setRhWorkflow: (body) => post('/api/generators/rh', body),

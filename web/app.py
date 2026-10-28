@@ -25,8 +25,9 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, commands as CMD, connections, generators, inventory,
-                    jobs, paths, pipeline, reader, runner, studio, ux)
+from core import (adapters, artifacts, commands as CMD, connections, generators,
+                    health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
+                    studio, ux)
 from core.llm import drafts as llm_drafts, gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
@@ -215,6 +216,33 @@ def health():
         "readonly": READONLY_MODE,
         "locks": jobs.lock_status(),
     }
+
+
+@app.get("/api/health/checks")
+def health_checks(ws: str = Query(default="")):
+    """环境体检（现算，不读缓存）。只读：跑 env_check + 探本地目录写入。
+
+    ⚠ 函数名不能叫 `health`：本文件上面已有 `/api/health` 的处理函数 `health()`，
+    同名会在模块级覆盖 `core.health` 模块（和 pipeline 那次同一个坑）。
+    """
+    return health_mod.collect(str(ws or "").strip() or None)
+
+
+@app.post("/api/health/fix")
+def health_run_fix(payload: dict = Body(...)):
+    """执行一个修复动作。只接受体检清单里标了 auto 的 id，命令由服务端现算。"""
+    _write_guard()
+    fid = str(payload.get("id") or "").strip()
+    if not fid:
+        raise HTTPException(status_code=400, detail="缺少要修复的项 id")
+    ws = str(payload.get("ws") or "").strip() or None
+    return health_mod.fix(fid, ws)
+
+
+@app.get("/api/health/fixes")
+def health_fixes(limit: int = 30):
+    """修复历史（谁在什么时候改了什么、复检过没过）。"""
+    return health_mod.history(limit)
 
 
 @app.get("/api/workspaces")

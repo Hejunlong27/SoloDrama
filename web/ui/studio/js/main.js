@@ -18,7 +18,8 @@ const NAV = [
       { key: 'cost', label: '成本中心', ico: 'coins' },
       { key: 'models', label: 'AI 模型中心', ico: 'cpu' },
       { key: 'generators', label: '生成通道', ico: 'spark' },
-      { key: 'connections', label: '连接中心', ico: 'plug' }
+      { key: 'connections', label: '连接中心', ico: 'plug' },
+      { key: 'health', label: '环境体检', ico: 'check' }
     ]
   },
   {
@@ -52,6 +53,7 @@ const VIEWS = {
   models: () => import('./views/models.js'),
   generators: () => import('./views/generators.js'),
   connections: () => import('./views/connections.js'),
+  health: () => import('./views/health.js'),
   settings: () => import('./views/settings.js')
 };
 

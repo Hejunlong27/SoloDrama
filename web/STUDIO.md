@@ -101,7 +101,8 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 任务中心    | 排队/运行/成功/失败/待确认、日志 SSE、退出码语义、安全重试、取消                                       | `/api/jobs*`、`/api/jobs/{id}/stream`、`/api/jobs/{id}/cancel`                                                                               |
 | 成本中心    | 台账逐次尝试、按阶段/按集、失败不计费、**LLM 用量独立分栏**（不折算点数）                                  | `/api/studio/cost`、`/api/llm/usage`                                                                                                        |
 | AI 模型中心 | 提供商 CRUD、连接测试、用途路由（**未绑定时自动选路**）、提示词模板、调用记录                              | `/api/llm/*`                                                                                                                               |
-| 系统设置    | 环境自检、G-0 九项、能力清单（哪些没接+原因）、审计                                               | `/api/studio/env`、`/api/studio/setup`、`/api/studio/capabilities`、`/api/audit`                                                              |
+| 环境体检 | **15 项体检**（运行时 / Python 依赖 / 外部程序 / 本机服务 / 数据目录 / 配置 / 完整性），每项标清「能不能自动修」：能的三类可**一键修复并自动复检**，其余只给可复制命令或跳转页面；底部有修复留痕 | `/api/health/checks`（现算）、`POST /api/health/fix`（服务端白名单）、`/api/health/fixes` |
+| 系统设置    | 环境自检（可跳「环境体检」一键修）、G-0 九项、能力清单（哪些没接+原因）、审计                                               | `/api/studio/env`、`/api/studio/setup`、`/api/studio/capabilities`、`/api/audit`                                                              |
 
 设计纪律：**所有数字都来自后端**。没有数据的就显示「未知 / 不可得」，不填 0、不编进度。
 
@@ -254,7 +255,7 @@ HEADER 优先沿用**已有正式剧本的六行**（保住人工写的视觉锚
 ## 6. 测试
 
 ```bash
-# 离线单元/契约（默认 venv 即可；共 37 个文件）
+# 离线单元/契约（默认 venv 即可；共 38 个文件）
 for t in $(find stages tools web -name "test_*.py" -not -path "*__pycache__*"); do
   python "$t" || echo "FAILED $t"; done
 
@@ -267,7 +268,7 @@ python web/tools/verify_llm_loop.py
 
 本轮实测结果（2026-10-28）：
 
-- **37 个测试文件全绿**（引擎 23 + web 14）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
+- **38 个测试文件全绿**（引擎 23 + web 15）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
   `test_inventory.py` 补 `[5] 散图口径`。
 - 新增 `test_workspaces.py` 的动因：真实登记表里 `current` 指着已删除的目录，四个用例分别守住
   「死路径自愈并落盘」「未登记的死 current 不许变卡片」「全盘皆死时置空」「prune 只清注册表」。
@@ -449,3 +450,45 @@ python comfy_local_video.py --workflow 新工作流.json --check         # ④ �
 `/api/pipeline/plan` + `/api/pipeline/run`。⚠ 踩过的坑：旧路由的处理函数曾叫 `pipeline`，
 **在模块级覆盖了 `core.pipeline` 模块**，导致新接口 500 —— 已改名 `legacy_pipeline`，
 以后新增同名模块时先 grep 函数名。
+
+---
+
+## 11. 环境体检 / 一键修复
+
+真源 `web/core/health.py`；页面 `#/health`（全局）。诊断复用 `tools/env_check.py --json`
+（**用引擎解释器跑**，口径和出片一致），外加三项 Studio 自己的检查：运行时目录是否可写、
+引擎解释器是否被配置指到空文件、配置项是否落在连接中心。
+
+### 11.1 为什么只自动修三类
+
+| 类型 | 动作 | 为什么能自动 |
+| --- | --- | --- |
+| `pip` | `python -m pip install <锁定版本>` | 只装进**引擎解释器**，不动系统 Python；`requirements.txt` 里有精确版本 |
+| `mkdir` | 建 `web/var` / `web/var/llm` | 只建 Studio 自己的运行时目录，不碰项目文件 |
+| `config` | 清掉 `configs/settings.json` 里指向空文件的 `python` | 先备份；清掉后自动回落到本机默认 venv |
+
+**不能自动的**一律标 `manual` / `page`，并说清原因（这是这个功能的关键）：
+
+* `winget install ffmpeg` —— 要弹 UAC，Studio 不去替你点授权框；
+* 启动 ComfyUI —— 独立 GUI 进程，Studio 不拉起外部进程；
+* 填 Key —— 只能人来给（且不该走环境变量：填一次进连接中心，之后所有命令自动带上）；
+* manifest 不符 —— 是「仓库被改过」，不是「环境缺东西」，清错方向的自动修复更危险。
+
+把这几类混进「全部修复」的结果是：按钮转两圈、然后什么也没变。**假装修好比没有按钮更糟。**
+
+### 11.2 三条纪律
+
+1. **动作白名单在服务端**：接口只接受 `fix_id`，命令由 `_fix_spec()` 现算；前端传不进一条命令。
+2. **复检才是结论**：`pip` 退出码 0 只说明 pip 没崩。修完必重跑 `collect()` 取同一项，
+   不过就返回 `ok=false` + 「命令跑完了，但这一项复检仍未通过」。
+3. **留痕**：每次修复追加一行到 `web/var/health-fixes.jsonl`（时间 / id / 命令 / rc / 复检结果 / 耗时），
+   页面底部可直接看到「上次改了什么、过没过」。
+
+### 11.3 踩过的坑
+
+* **体检不能有副作用**：`_writable()` 一开始用「建个探针文件再删」判断可写，结果 `mkdir` 顺手把目录建了，
+  `dir.var` 永远判「通过」，一键修复按钮等于摆设。现在改成「存在 + `os.access(W_OK)`」，建目录留给修复动作。
+* **`launcher.py` 会覆盖 `SOLODRAMA_PYTHON`**：它只接受「装了 Pillow/httpx」的解释器（避免一启动就一片红），
+  所以想复现「缺依赖」现场必须直接 `python -m uvicorn app:app` 起。
+* **`web/var` 里没有 `health-fixes.jsonl` 时 `history()` 返回空**，不报错 —— 页面显示「还没有修复记录」。
+

@@ -49,7 +49,8 @@ export async function render(ctx) {
 
   const html = ''
     + '<div class="page-head"><div><h1 class="page-title">系统设置</h1>'
-    + '<div class="page-sub">只读为主：通道与工作流配置请在终端修改（避免绕过门禁）</div></div>'
+    + '<div class="page-sub">只读为主：通道与工作流配置请在终端修改（避免绕过门禁）。'
+    + '缺依赖 / 目录不可写这类问题去「环境体检」一键修</div></div>'
     + '<div class="page-actions"><button class="btn quiet" id="btnEnvCheck">'
     + icon('refresh', 14) + ' 重新检查</button></div></div>'
 
@@ -57,7 +58,10 @@ export async function render(ctx) {
     + '<section class="card"><div class="card-h"><h3>环境</h3>'
     + '<span class="card-sub">零网络 · 缺一即停</span></div>'
     + '<div class="card-b">' + envHtml + '</div>'
-    + '<div class="card-foot">' + stamp('tools/env_check.py --json · 30 秒缓存') + '</div></section>'
+    + '<div class="card-foot"><div class="row" style="justify-content:space-between;align-items:center">'
+    + stamp('tools/env_check.py --json · 30 秒缓存')
+    + '<button class="btn quiet sm" id="btnHealth">' + icon('check', 12)
+    + ' 环境体检 / 一键修复</button></div></div></section>'
 
     + '<section class="card"><div class="card-h"><h3>控制台</h3></div><div class="card-b">'
     + kv([
@@ -104,6 +108,8 @@ export async function render(ctx) {
         catch (e) { toast('检查失败：' + (e.detail || e.message), 'bad'); }
         finally { b.disabled = false; }
       };
+      const hb = root.querySelector('#btnHealth');
+      if (hb) hb.onclick = () => { location.hash = '#/health'; };
       paintIcons(root);
       loadAudit(root);
     }
