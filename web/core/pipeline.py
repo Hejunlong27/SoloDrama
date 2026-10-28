@@ -50,7 +50,7 @@ STAGE_MAP = {
 
 # 明确「要人」的环节：给出该去的页面，而不是让人对着灰按钮猜
 MANUAL_HINT = {
-    "S3": ("资产设计", "asset", "画风/角色差异化需要人判断，去「资产中心」确认设定卡"),
+    "S3": ("资产设计", "assets", "画风/角色差异化需要人判断，去「资产中心」确认设定卡"),
     "S7": ("发行资料准备", "release", "封面/文案/版权资料要人过一遍，去「发行中心」"),
     "S11": ("定稿输出", "release", "发布版命名与导出要人确认，去「发行中心」"),
 }
@@ -168,16 +168,20 @@ def plan(ws: str, *, budget: float = 0.0) -> dict:
 
 
 def run(ws: str, *, budget: float = 0.0, until: str = "", max_steps: int = 6,
-        dry_run: bool = True) -> dict:
+        dry_run: bool = True, only: str = "") -> dict:
     """按计划推进。默认 dry_run=True：只回报「会跑什么」，不动手。
 
     `until` 给环节 id（如 S5）表示「跑到这一步之前停下」（含该步）。
+    `only`  给环节 id 表示「只跑这一步」，其余一律不碰 —— 页面每一行的「运行此步」用它，
+            否则点 S10 会把前面 9 步一起跑一遍。
     `max_steps` 兜底，防止一次点下去跑飞。
     """
     ws = str(ws)
     steps = plan(ws, budget=budget)["stages"]
     ran, skipped = [], []
     for st in steps:
+        if only and st["id"] != only:
+            continue                      # 只跑指定环节；不算「跳过」，免得日志里刷一堆噪音
         if st["state"] == "done" and st["action"] != "manual":
             skipped.append({"id": st["id"], "why": "已完成"})
             continue

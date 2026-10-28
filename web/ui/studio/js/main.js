@@ -2,7 +2,7 @@
    main.js —— 应用外壳：路由 / 侧栏 / 顶栏 / 视图装载
    视图按路由**动态加载**（每个页面一个模块），避免单文件膨胀，也让单页故障不影响外壳。
    ============================================================ */
-import { api } from './api.js';
+import { api, clearCache } from './api.js';
 import { esc, icon, paintIcons, errorCard, openDrawer, closeDrawer, closeModal, skeleton, toast } from './ui.js';
 import {
   S, loadProjects, loadCaps, loadHealth, loadRunning, project as currentProject,
@@ -58,6 +58,66 @@ const VIEWS = {
 };
 
 let renderSeq = 0;
+
+/* ---------- 顶部进度条 ----------
+   只在「真的慢」时出现：200ms 内渲染完就不闪。快请求闪一下比没有更烦。 */
+let barTimer = 0;
+let barShown = false;
+
+function loadStart() {
+  const bar = document.getElementById('loadbar');
+  if (!bar) return;
+  barShown = false;
+  bar.classList.remove('done', 'on');
+  clearTimeout(barTimer);
+  barTimer = setTimeout(() => {
+    barShown = true;
+    bar.classList.add('on');
+  }, 200);
+}
+
+function loadEnd() {
+  const bar = document.getElementById('loadbar');
+  clearTimeout(barTimer);
+  if (!bar || !barShown) return;
+  bar.classList.remove('on');
+  bar.classList.add('done');
+  setTimeout(() => bar.classList.remove('done'), 420);
+  barShown = false;
+}
+
+/* ---------- 预取 ----------
+   首屏画完、浏览器空闲时，把「一定会用到但很贵」的几项先取回来
+   （workflow / setup 背后各是一次 Python 子进程，0.5s 起）。
+   只取 4 个、且都在 idle 阶段，不会和首屏抢带宽。 */
+let prefetched = '';
+
+function prefetch(ws) {
+  if (!ws || prefetched === ws) return;
+  prefetched = ws;
+  const warm = () => {
+    api.workflow(ws).catch(() => {});
+    api.setup(ws).catch(() => {});
+    api.capabilities().catch(() => {});
+  };
+  if (window.requestIdleCallback) window.requestIdleCallback(warm, { timeout: 2500 });
+  else setTimeout(warm, 800);
+}
+
+/* ---------- 鼠标流动 ----------
+   指针在主按钮上移动时，把坐标写进 CSS 变量，由 ::after 的径向高光跟随。
+   只对 .btn.primary 生效：高频小按钮上做跟随会让人手忙，也白耗性能。 */
+function bindPointerFlow() {
+  document.addEventListener('pointermove', (e) => {
+    const t = e.target;
+    const b = t && t.closest ? t.closest('.btn.primary') : null;
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    b.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
+    b.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+  }, { passive: true });
+}
 
 function parseRoute() {
   const h = (location.hash || '#/workbench').replace(/^#\/?/, '');
@@ -140,8 +200,14 @@ async function render(force) {
   const seq = ++renderSeq;
   const route = parseRoute();
   const view = document.getElementById('view');
+  const prevRoute = view.dataset.route || '';
+
+  /* 强制刷新 = 用户点了刷新按钮，必须绕过缓存拿真数据；
+     普通切页则走 api.js 的短缓存（12s 内不重复起子进程）。 */
+  if (force) clearCache();
 
   if (PROJECT_ROUTES.indexOf(route) >= 0 && !S.ws) {
+    endLoad();
     view.innerHTML = noProject(route);
     bindNoProject(view);
     renderNav(route);
@@ -151,6 +217,7 @@ async function render(force) {
 
   view.innerHTML = skeleton(3);
   renderNav(route);
+  loadStart();
 
   let mod;
   try {
@@ -161,14 +228,22 @@ async function render(force) {
     paintIcons(view);
     if (out.mount) out.mount(view, ctx());
     view.scrollTop = 0;
+    /* 只在「换了模块」时播入场：同页刷新再滑一次会像卡了一下 */
+    view.dataset.route = route;
+    if (prevRoute !== route) {
+      view.classList.remove('view-in');
+      void view.offsetWidth;                        /* 强制重排，让动画能重播 */
+      view.classList.add('view-in');
+    }
   } catch (err) {
     if (seq !== renderSeq) return;
     console.error('[studio]', route, err);
     view.innerHTML = errorCard(err, '重新加载');
     const btn = view.querySelector('[data-retry]');
     if (btn) btn.onclick = () => render(true);
+  } finally {
+    if (seq === renderSeq) loadEnd();
   }
-  if (force) { /* 强制刷新时不改缓存，仅重绘 */ }
   renderTop();
 }
 
@@ -293,14 +368,15 @@ async function boot() {
     b.onclick = () => (b.dataset.close === 'drawer' ? closeDrawer() : closeModal());
   });
   window.addEventListener('hashchange', () => render());
+  bindPointerFlow();
 
   setWs(initialWs(), { pushUrl: true });
   paintIcons(document);
 
   try {
-    await loadCaps();
-    await loadProjects();
-    await loadHealth();
+    /* 首屏三项互不依赖（caps / 项目清单 / 服务健康）→ 并行，别串成 3 个 RTT。
+       running 依赖 projects 定出的 S.ws，所以留在后面。 */
+    await Promise.all([loadCaps(), loadProjects(), loadHealth()]);
     await loadRunning();
   } catch (err) {
     document.getElementById('view').innerHTML = errorCard(err, '重新连接');
@@ -309,7 +385,7 @@ async function boot() {
     return;
   }
   if (!location.hash) location.hash = '#/workbench';
-  render();
+  render().then(() => prefetch(S.ws));
 }
 
 boot();

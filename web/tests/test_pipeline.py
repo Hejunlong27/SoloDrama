@@ -96,6 +96,15 @@ def main():
         check(all(x.get("rc") is None for x in r["ran"]), "dry_run 不得真的执行（rc 应为 None）")
         check("S2" not in ids, "S2 被前置挡住，不该出现在已跑列表")
         check(any(x["id"] == "S2" for x in r["skipped"]), "S2 应出现在 skipped 里并说明原因")
+
+        print("[5] only= 只跑指定环节：点 S4 不能把前面几步一起跑")
+        pipeline.STAGE_MAP = m
+        r2 = pipeline.run("/tmp/ws", budget=100, only="S4", max_steps=1, dry_run=True)
+        ids2 = [x["id"] for x in r2["ran"]]
+        check(ids2 == ["S4"], "应只跑 S4，实际 %s" % ids2)
+        check(r2["skipped"] == [], "only 模式下不该把其它环节记成 skipped（会刷噪音），实际 %s" % r2["skipped"])
+        r3 = pipeline.run("/tmp/ws", budget=100, only="S3", max_steps=1, dry_run=True)
+        check(r3["ran"] == [], "S3 是需人工，only 到它应什么都不跑，实际 %s" % [x["id"] for x in r3["ran"]])
     finally:
         pipeline.adapters.workflow_status = real_wf
         pipeline.adapters.norm_workflow = real_norm

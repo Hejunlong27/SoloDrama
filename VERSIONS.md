@@ -1,6 +1,13 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-10-29 更新（V0.7.20 · 可读性 / 动效 / 打开速度）**：用户反馈「按钮太小、字太小、切换没动效、模块打开慢」，并要求先装个设计类 skill 再做。已装 `ui-design-library`（Emil Kowalski 的动效准则）与 `ui-design-system`，按前者的规矩落地，不是凭感觉调数值。
+  ① **字号**：正文 13→15、元信息 11→12、小标题 14→16、页面标题 20→24、KPI 26→32；`--row-h` 36→44、`--top-h` 56→60、`--nav-w` 232→252。**不做等比 ×1.15** —— 那样「都变大了」但主次更糊，层级要靠差值。全部走 `tokens.css`，一处改完全局生效（此前只有 6 处硬编码 10px，这轮一并清到 12px）。
+  ② **按钮**：`.btn` 30→36、`.lg` 36→44、`.sm` 24→30、`.icon` 28→36，新增 `.btn.stage`（34px）。**流水线 11 行每行补按钮**：可自动→「运行此步」，需人工/被挡→「打开页面 / 去补齐」；配套 `/api/pipeline/run` 新增 `only=<Sx>`（**只跑这一条**，否则点 S10 会把前 9 步跑一遍）。顺带修 `MANUAL_HINT` 里 S3 的 page 写成 `asset`（前端路由是 `assets`，点了会落空）—— 这个字段此前从未被消费，接上按钮才暴露。
+  ③ **动效**（四条规矩：只动 transform/opacity、入场 ease-out、高频 ≤120ms、reduced-motion 全关）：视图切换 6px 上移 + 淡入 180ms；卡片首层错峰 30/60ms；按钮 `:active` 下压 1px；主按钮按指针位置做径向高光（`--mx/--my`，即「鼠标流动」，只给主按钮——高频小按钮上做跟随会让人手忙）；顶部进度条**延迟 200ms 才亮**（快请求闪一下比不闪更烦）。
+  ④ **速度**：慢的根因是每个重接口都起 Python 子进程（workflow 0.5s、setup 0.5s、env 1.3s）。三层处理：后端 TTL（12s/20s/60s）、前端 `api.js` 只读重接口短缓存（**写操作后整体 clear**）、首屏三项改 `Promise.all` + `requestIdleCallback` 预取。实测：项目详情 970→5ms、生成通道 669→4ms、环境体检 1281→2ms；前端用 fetch 计数验证「连续三次调用只发 1 次请求，写后第一次读必发」。
+  ⑤ **放大字号暴露的两个真缺陷**：设置页长路径顶穿卡片（环境行是 flex，span 不收缩；`.kv` 又写死 `max-width:720px`）→ 改两列栅格 + `minmax(0,1fr)` + `overflow-wrap:anywhere`，≤1500px 环境项改上下排；`nth-of-type` 错峰在混排容器上会失效（无功能影响，已记录）。
+  ⑥ **测试**：`test_studio_assets` 新增第 7/8 组（可读性下限、动效与缓存纪律：TTL 表不许出现 `/api/jobs`、`@keyframes` 只许 transform/opacity、必须能 reduced-motion）；`test_pipeline` 新增第 5 组（`only=` 只跑指定环节）。全量 38 个 0 失败。
 - **2026-10-29 更新（V0.7.19 · 项目图标：竖屏画幅 + 播放）**：用户要「给项目生成一个 logo，用于项目图标」。此前侧栏是 `SD` 文字占位、浏览器标签是默认图标（全站无 favicon），这一轮把图标做成可复现的资产链。
   ① **真源 `tools/make_logo.py`**：几何（`FRAME = (18,6,28,52,7)`、`PLAY`）与配色（`AMBER #E0A458` / `INK #171A1F`）都在文件头常量里，改完跑一遍即重出 12 个文件，避免「改了 SVG 忘了 PNG」。产物进 `web/ui/studio/img/`：`logo.svg`、`logo-mark.svg`、`logo-mark-light.svg`、`logo-square.svg`、`logo-maskable.svg`、`icon-192/512.png`、`icon-maskable-512.png`、`apple-touch-icon.png`、`favicon-16/32.png`、`favicon.ico`（Pillow 打包 16/32/48/64）。
   ② **图形语言**：竖屏画幅（28×52，9:16）里挖一个播放三角 —— 短剧的本体是竖屏，不是加个播放键。三角用 `fill-rule="evenodd"` **挖空**，不是再叠一个琥珀三角：后者换底色就露补丁，而且 PNG 边缘会出现色差。

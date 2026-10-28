@@ -28,7 +28,15 @@ export const q = qs;
 
 async function request(path, opts) {
   const o = opts || {};
-  const init = { method: o.method || 'GET', headers: {} };
+  const method = o.method || 'GET';
+  const isGet = method === 'GET';
+  const base = path.split('?')[0];
+  const ttl = isGet ? ttlOf(base) : 0;
+  if (ttl > 0) {
+    const hit = CACHE.get(path);
+    if (hit && (Date.now() - hit.at) < ttl) return hit.data;
+  }
+  const init = { method, headers: {} };
   if (o.body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(o.body);
@@ -51,7 +59,42 @@ async function request(path, opts) {
       res.status, typeof detail === 'string' ? detail : JSON.stringify(detail)
     );
   }
+  if (ttl > 0) CACHE.set(path, { at: Date.now(), data });
+  // 写操作一定改了状态：整体作废，别让下一次读拿到旧快照
+  if (!isGet) CACHE.clear();
   return data;
+}
+
+/* ---------- 读缓存：让「切模块」不用每次等子进程 ----------
+   为什么只缓存这几个：它们背后是**启动 Python 子进程**（workflow / setup / env）或
+   探测外部服务（generators / connections），单次要 0.5–1.3 秒；而 jobs、任务日志这类
+   秒级变化的数据**绝不能缓存**，否则看起来像「点了没反应」。
+
+   失效策略：任何写操作（POST/DELETE）成功后整体清空一次。
+   所以「点完按钮还看到旧数据」不会发生；定时刷新由页面上的刷新按钮 + ctx.refresh 负责。 */
+const TTL = {
+  '/api/studio/workflow': 12000,
+  '/api/studio/setup': 20000,
+  '/api/studio/env': 60000,
+  '/api/generators': 15000,
+  '/api/connections': 15000,
+  '/api/workspaces': 10000,
+  '/api/artifacts': 8000,
+  '/api/artifacts/loose': 8000,
+  '/api/studio/cost': 8000,
+  '/api/studio/capabilities': 60000,
+  '/api/llm/providers': 12000,
+  '/api/llm/purposes': 12000,
+  '/api/health': 10000,
+};
+const CACHE = new Map();
+
+function ttlOf(path) {
+  return TTL[path] || 0;
+}
+
+export function clearCache() {
+  CACHE.clear();
 }
 
 export const get = (path, params) => request(path + (params ? '?' + qs(params) : ''));

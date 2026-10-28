@@ -85,12 +85,12 @@ def run_json(script_key: str, args: list, ws, *, timeout: int = 90, ttl: int = 0
 # ---------------------------------------------------------------------------
 def workflow_status(ws) -> dict:
     """S1–S11 流程状态（唯一真源：workflow.py，带 probes 判据）。"""
-    return run_json("workflow", ["status", "--workspace", ws, "--json"], ws, ttl=5)
+    return run_json("workflow", ["status", "--workspace", ws, "--json"], ws, ttl=12)
 
 
 def setup_show(ws) -> dict:
     """开工前置九项（G-0）。"""
-    return run_json("setup", ["show", "--workspace", ws, "--json"], ws, ttl=10)
+    return run_json("setup", ["show", "--workspace", ws, "--json"], ws, ttl=20)
 
 
 def style_status(ws) -> dict:
@@ -108,7 +108,7 @@ def drama_status(ws) -> dict:
 
 def env_check() -> dict:
     """环境自检（零网络）。不依赖工作区。"""
-    return run_json("env", ["--json"], None, ttl=30)
+    return run_json("env", ["--json"], None, ttl=60)
 
 
 def cost_ledger(ws, *, balance: bool = False) -> dict:

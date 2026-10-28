@@ -817,6 +817,7 @@ def api_pipeline_run(payload: dict = Body(...)):
     ws = str(_require_ws(payload.get("ws")))
     budget = float(payload.get("budget") or 0)
     until = str(payload.get("until") or "").strip()
+    only = str(payload.get("only") or "").strip()
     try:
         max_steps = int(payload.get("max_steps") or 6)
     except (TypeError, ValueError):
@@ -824,7 +825,7 @@ def api_pipeline_run(payload: dict = Body(...)):
     dry_run = payload.get("dry_run", True)
     if not dry_run:
         _write_guard()
-    return pipeline.run(ws, budget=budget, until=until,
+    return pipeline.run(ws, budget=budget, until=until, only=only,
                         max_steps=max(1, min(max_steps, 12)), dry_run=bool(dry_run))
 
 

@@ -19,9 +19,11 @@ export async function render(ctx) {
   const envHtml = envRows
     ? envRows.map((it) => {
       const ok = it.ok !== false && it.status !== 'fail';
-      return '<div class="row" style="padding:5px 0"><span class="state ' + (ok ? 'done' : 'fail') + '">'
+      /* 用两列栅格而不是 flex：解释器路径很长，flex 里 span 不肯收缩，
+         字号一放大就顶穿卡片边界（实测 2026-10-29）。minmax(0,1fr) + overflow-wrap 才能换行。 */
+      return '<div class="env-row"><span class="state ' + (ok ? 'done' : 'fail') + '">'
         + '<i class="dot ' + (ok ? 'done' : 'fail') + '"></i>' + esc(it.name || it.key || '—') + '</span>'
-        + '<span class="tiny dim mono">' + esc(String(it.detail || it.version || it.value || '')) + '</span></div>';
+        + '<span class="env-detail mono">' + esc(String(it.detail || it.version || it.value || '')) + '</span></div>';
     }).join('')
     : (env && env.ok
       ? '<pre class="log" style="max-height:180px">' + esc(JSON.stringify(env.data, null, 2).slice(0, 3000)) + '</pre>'

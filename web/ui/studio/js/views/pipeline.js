@@ -8,18 +8,42 @@ const ACT_TONE = { auto: 'ok', ask: 'warn', blocked: 'bad', manual: 'outline' };
 const ACT_TEXT = { auto: '可自动', ask: '需确认', blocked: '被前置挡住', manual: '需人工' };
 const ST_TEXT = { done: '已完成', current: '进行中', todo: '未开始' };
 
+/* 环节 → 该去哪一页（后端只给「需人工」的环节带 page，其余给兜底） */
+const PAGE_OF = {
+  S1: 'creation', S2: 'creation', S3: 'assets', S4: 'assets',
+  S5: 'storyboard', S6: 'storyboard', S7: 'release',
+  S8: 'post', S9: 'post', S10: 'post', S11: 'release'
+};
+
+/* 每一行都给一个**能点的大按钮**：
+   可自动 → 「运行此步」（只跑这一条，不会把前面几步一起跑）；
+   需人工/被挡 → 「打开」直接跳到该干的页面。
+   之前这一列是纯文字，用户看完还得自己去找页面 —— 这就是「每步都要点一下」的由来。 */
+function actionCell(s) {
+  if (s.action === 'auto') {
+    return '<button class="btn primary stage" data-run="' + esc(s.id) + '">'
+      + icon('play', 13) + ' 运行此步</button>';
+  }
+  const page = s.page || PAGE_OF[s.id] || 'overview';
+  const manual = s.action === 'manual';
+  return '<button class="btn quiet stage" data-go="' + esc(page) + '">'
+    + icon(manual ? 'external' : 'alert', 13) + ' ' + (manual ? '打开页面' : '去补齐') + '</button>';
+}
+
 function stageRow(s) {
   const tone = ACT_TONE[s.action] || 'outline';
   const blk = (s.blocked || []).length
-    ? '<div class="tiny dim" style="margin-top:3px">缺：' + esc(s.blocked.slice(0, 3).join('、')) + '</div>' : '';
-  return '<tr>'
+    ? '<div class="tiny dim" style="margin-top:4px">缺：' + esc(s.blocked.slice(0, 3).join('、')) + '</div>' : '';
+  return '<tr data-stage="' + esc(s.id) + '">'
     + '<td class="mono">' + esc(s.id) + '</td>'
-    + '<td><div class="row gap8"><span>' + esc(s.name) + '</span>'
-    + badge(ST_TEXT[s.state] === '已完成' ? 'ok' : 'outline', ST_TEXT[s.state] || s.state) + '</div></td>'
+    + '<td><div class="row gap8"><span>' + esc(s.name) + '</span></div>'
+    + '<div class="row-sub">' + (ST_TEXT[s.state] || s.state) + '</div></td>'
     + '<td>' + badge(tone, ACT_TEXT[s.action] || s.action)
-    + '<div class="tiny dim" style="margin-top:3px">' + esc(s.action_text || '') + '</div></td>'
-    + '<td class="small dim" style="max-width:420px">' + esc(s.detail || '') + blk + '</td>'
-    + '<td class="right mono tiny dim">' + esc(s.cmd || '—') + '</td>'
+    + '<div class="tiny dim" style="margin-top:4px">' + esc(s.action_text || '') + '</div></td>'
+    + '<td class="small dim" style="max-width:460px">' + esc(s.detail || '') + blk
+    + (s.cmd ? '<div class="tiny dim mono" style="margin-top:3px;opacity:.7">' + esc(s.cmd) + '</div>' : '')
+    + '</td>'
+    + '<td class="right">' + actionCell(s) + '</td>'
     + '</tr>';
 }
 
@@ -55,8 +79,9 @@ export async function render(ctx) {
         + '<span class="spacer"></span><span class="tiny dim">预计花费 ' + (d.est_total || 0) + ' / 预算 '
         + (d.budget || 0) + ' RH币</span></div>'
         + '<section class="card"><div class="card-b tight"><div class="table-wrap">'
-        + '<table class="tb"><thead><tr><th style="width:6%">环节</th><th style="width:16%">名称</th>'
-        + '<th style="width:13%">动作</th><th>说明</th><th class="right">命令</th></tr></thead><tbody>'
+        + '<table class="tb"><thead><tr><th style="width:7%">环节</th><th style="width:17%">名称</th>'
+        + '<th style="width:14%">状态</th><th>说明</th>'
+        + '<th class="right" style="width:132px">操作</th></tr></thead><tbody>'
         + (d.stages || []).map(stageRow).join('')
         + '</tbody></table></div></div></section>')
 
@@ -86,6 +111,33 @@ export async function render(ctx) {
           + '<div class="card-b">' + (rows || '<div class="tiny dim">没有可自动执行的环节</div>')
           + (skip ? '<div style="margin-top:10px">' + skip + '</div>' : '') + '</div></section>';
       };
+      root.querySelectorAll('[data-run]').forEach((b) => {
+        b.onclick = async () => {
+          const sid = b.dataset.run;
+          b.disabled = true;
+          try {
+            const r = await api.pipelineRun({
+              ws: ctx.ws, budget: Number(budgetEl.value) || 0,
+              dry_run: false, only: sid, max_steps: 1
+            });
+            paint(r);
+            const row = root.querySelector('[data-stage="' + sid + '"]');
+            if (row) {
+              const old = row.querySelector('.badge');
+              if (old && r.ok) { old.className = 'badge ok'; old.textContent = '已完成'; }
+              const cell = row.querySelector('[data-run]');
+              if (cell && r.ok) { cell.textContent = '已跑完'; cell.disabled = true; }
+            }
+            toast(r.ok ? sid + ' 已执行' : sid + ' 中途停下，原因见下方', r.ok ? 'ok' : 'warn');
+          } catch (e) {
+            toast('运行失败：' + ((e && (e.detail || e.message)) || e), 'bad');
+            b.disabled = false;
+          }
+        };
+      });
+      root.querySelectorAll('[data-go]').forEach((b) => {
+        b.onclick = () => ctx.navigate(b.dataset.go);
+      });
       root.querySelector('#btnPlan').onclick = async () => {
         try { await ctx.refresh(); toast('已重新计算'); } catch (e) { /* ignore */ }
       };
