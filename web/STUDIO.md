@@ -253,7 +253,7 @@ HEADER 优先沿用**已有正式剧本的六行**（保住人工写的视觉锚
 ## 6. 测试
 
 ```bash
-# 离线单元/契约（默认 venv 即可；共 35 个文件）
+# 离线单元/契约（默认 venv 即可；共 36 个文件）
 for t in $(find stages tools web -name "test_*.py" -not -path "*__pycache__*"); do
   python "$t" || echo "FAILED $t"; done
 
@@ -266,7 +266,7 @@ python web/tools/verify_llm_loop.py
 
 本轮实测结果（2026-10-28）：
 
-- **35 个测试文件全绿**（引擎 22 + web 13）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
+- **36 个测试文件全绿**（引擎 23 + web 13）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
   `test_inventory.py` 补 `[5] 散图口径`。
 - 新增 `test_workspaces.py` 的动因：真实登记表里 `current` 指着已删除的目录，四个用例分别守住
   「死路径自愈并落盘」「未登记的死 current 不许变卡片」「全盘皆死时置空」「prune 只清注册表」。
@@ -384,7 +384,35 @@ python web/tools/verify_llm_loop.py
 * 节点映射写在文件头的 `NODE_*` 常量里（也可用环境变量覆盖）：换工作流必须逐个核对，
   否则会出现「提交成功但参数没生效」——这类错最贵。
 
-### 9.3 已知限制
+### 9.3 怎么换工作流（不用改代码）
+
+本地这条通道是**数据驱动**的，三层都能改，按需选一层：
+
+| 层 | 放哪 | 改法 | 适合 |
+| --- | --- | --- | --- |
+| 工作流 JSON | `stages/video/comfyui/workflow_h3_local.json` | 直接替换文件；或 `--workflow <路径>`；或环境变量 `COMFYUI_VIDEO_WORKFLOW` | 换一整套流程 |
+| 节点映射 | 同目录同名 sidecar `workflow_h3_local.map.json` | 改 JSON 里的 id；或 `--map <路径>`；或环境变量 `COMFYUI_VIDEO_NODE_*` | 换了工作流后改参数落点 |
+| 单次参数 | 命令行 / 页面 | `--steps / --seconds / --mp / --aspect / --seed` | 只这一次不一样 |
+
+**不需要把工作流上传到 ComfyUI**：这两个文件是 ComfyUI 的「API 格式」JSON，脚本直接
+POST 给 `/prompt`。参考图才需要上传（脚本自动做，走 `/upload/image`）。
+
+换工作流的四步（都能在「生成通道 / 任务中心」里点，也能命令行）：
+
+```bash
+cd stages/video/comfyui
+python comfy_local_video.py --workflow 新工作流.json --list-nodes   # ① 看节点 id 与建议角色
+# ② 复制 workflow_h3_local.map.json → 新工作流.map.json，按输出改 id
+python comfy_local_video.py --workflow 新工作流.json --map-check     # ③ 离线校验（不占 GPU）
+python comfy_local_video.py --workflow 新工作流.json --check         # ④ 在线体检（节点类 + 模型文件）
+```
+
+对应命令：`video.workflow.nodes`（①）、`video.workflow.mapcheck`（③）、`video.local.check`（④）。
+`--map-check` 的价值：**映射 id 写错时脚本照样能提交、GPU 照样跑，参数却全落空** ——
+这条能在花 GPU 之前 100% 抓出来。非 API 格式（界面直接导出的带 `nodes/links`）也会被挡住并提示
+「用导出 API 格式」。
+
+### 9.4 已知限制
 
 * **第三方加速节点会随版本变签名**。本机 `SolAttnMiniMax` 的 `execute()` 比云端版本多一个必填
   `selection` 参数，拿云端导出的工作流直接跑会在该节点 `TypeError`。`--check` 只能核对「节点存不存在」，

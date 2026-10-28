@@ -1,0 +1,10 @@
+{
+  "_comment": "workflow_h3_local.json 的节点映射（改这里的 id，不要改 comfy_local_video.py）。换工作流时复制本文件为 <新工作流>.map.json 再改 id；用 --list-nodes 查 id，用 --map-check 校验。",
+  "prompt": "30",
+  "images": ["24"],
+  "seconds": "15",
+  "steps": "9",
+  "seed": "10",
+  "aspect": "14",
+  "prefix": "4"
+}

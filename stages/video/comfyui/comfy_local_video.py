@@ -2,36 +2,43 @@
 # -*- coding: utf-8 -*-
 """comfy_local_video.py —— 用**本机 ComfyUI** 出视频（H3 图生视频，￥0）
 
-为什么单独一个客户端
---------------------
-出图那套（`stages/assets/comfyui/comfy_client.py`）取的是 `SaveImage` 的 `images`，
-而视频走 `VHS_VideoCombine` 的 `gifs`，还要多两步：**上传参考图**、**从 /view 下载 mp4**。
-硬塞进图片客户端会让两边都难读，所以这里独立一份，纪律与出图完全一致：
+工作流怎么设定（三层，改哪层都行）
+----------------------------------
+1. **工作流 JSON**：默认 `stages/video/comfyui/workflow_h3_local.json`（本机在用的
+   「minimax 多参(4步采样)」）。要换就换文件，或 `--workflow <路径>`，或环境变量
+   `COMFYUI_VIDEO_WORKFLOW`。**不需要上传到 ComfyUI**：这两份文件是 ComfyUI 的
+   "API 格式" JSON，由本脚本直接 POST 给 `/prompt`。
+2. **节点映射**：默认读**同名 sidecar** `workflow_h3_local.map.json`
+   （约定：`<工作流文件名去掉 .json>.map.json`）。换一份工作流时，把映射文件放在它旁边
+   同名前缀即可，**不用改代码**。优先级：`--map` > sidecar > 环境变量 > 内置默认。
+3. **单次覆盖**：`--steps / --seconds / --mp / --aspect / --seed` 只影响这一次；
+   不传就**沿用工作流里的原值**（不覆盖别人调好的 0.6MP / 16:9）。
 
-  * 纯标准库（urllib），不引第三方依赖；
-  * 默认 **dry-run**：只打印将要覆盖的槽位，不占 GPU；
-  * `--check` 先把「节点类 / 模型文件 / 参考图」逐项核对完再允许提交 ——
-    否则要等模型加载失败才发现少文件，白等几分钟显存。
+换工作流的标准动作（4 步）
+--------------------------
+    # ① 看清这份工作流里都有哪些节点（离线，不连 ComfyUI）
+    python comfy_local_video.py --workflow 新工作流.json --list-nodes
+    # ② 照着输出写一份 新工作流.map.json（或复制旧的改 id）
+    # ③ 离线校验映射对不对（节点在不在、类型对不对）
+    python comfy_local_video.py --workflow 新工作流.json --map-check
+    # ④ 在线体检（ComfyUI 在线 + 节点类 + 模型文件），再真跑一条短的
+    python comfy_local_video.py --workflow 新工作流.json --check
 
-★ 工作流与模型的口径
---------------------
-`workflow_h3_local.json` 是**本机实装**的 H3 图生视频图（30 节点）。它由云端同名工作流
-移植而来，只换了 4 个模型文件名（RH 侧用 int8/fp16 变体，本机是 qwen3vl int4 + fl2va
-pruned w4a8 + video_vae int8），节点图与连线一模一样。换模型必须同时改这里与环境变量映射，
-否则 `--check` 会直接告诉你哪个文件不存在。
+为什么要有 `--map-check`：第三方节点**随版本变签名**（本机 `SolAttnMiniMax` 就比云端
+版本多一个必填 `selection`），`--check` 只能查「节点存不存在」，签名兼容性只能真跑才发现；
+但「映射写错节点 id」是能提前 100% 抓出来的，那是最常见的错。
 
 用法
 ----
-  python comfy_local_video.py --check
-  python comfy_local_video.py --prompt "..." --ref a.png --seconds 4 --out out/
-  python comfy_local_video.py --prompt "..." --ref a.png --seconds 4 --out out/ --submit
+    python comfy_local_video.py --check
+    python comfy_local_video.py --prompt "..." --ref a.png --out out/
+    python comfy_local_video.py --prompt "..." --ref a.png --out out/ --submit
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import sys
 import time
 import urllib.error
@@ -50,16 +57,74 @@ COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 DEFAULT_WORKFLOW = os.environ.get(
     "COMFYUI_VIDEO_WORKFLOW", os.path.join(HERE, "workflow_h3_local.json"))
 
-# 节点映射：与 workflow_h3_local.json 对齐（换工作流必须同步改这里）
-# ★ 映射对应「minimax 多参(4步采样)」这份工作流（26 节点，Sol 加速节点保留、steps=4）。
-#   换工作流必须逐个核对，否则会出现「提交成功但参数没生效」（最贵的那种错：钱花了、片不对）。
-NODE_PROMPT = os.environ.get("COMFYUI_VIDEO_NODE_PROMPT", "30")      # PrimitiveStringMultiline
-NODE_IMAGES = os.environ.get("COMFYUI_VIDEO_NODE_IMAGES", "24").split(",")   # LoadImage（多参工作流只吃 1 张）
-NODE_SECONDS = os.environ.get("COMFYUI_VIDEO_NODE_SECONDS", "15")    # PrimitiveFloat（秒）
-NODE_STEPS = os.environ.get("COMFYUI_VIDEO_NODE_STEPS", "9")         # BasicScheduler.steps
-NODE_SEED = os.environ.get("COMFYUI_VIDEO_NODE_SEED", "10")          # Seed (rgthree) → RandomNoise
-NODE_ASPECT = os.environ.get("COMFYUI_VIDEO_NODE_ASPECT", "14")      # ResolutionSelector
-NODE_PREFIX = os.environ.get("COMFYUI_VIDEO_NODE_PREFIX", "4")       # SaveVideo.filename_prefix
+# ---------------------------------------------------------------------------
+# 节点映射的角色表
+# ---------------------------------------------------------------------------
+# `expect` 只用于 --map-check 的**类型提醒**：同角色常有多个等价节点（如种子既可以是
+# Seed (rgthree) 也可以是 RandomNoise），所以按「允许集合」判定，不做唯一绑定。
+MAP_ROLES = {
+    "prompt":  {"env": "COMFYUI_VIDEO_NODE_PROMPT",  "default": "30",
+                "hint": "提示词（多行字符串）",
+                "expect": ("PrimitiveStringMultiline", "PrimitiveString", "String Literal")},
+    "images":  {"env": "COMFYUI_VIDEO_NODE_IMAGES",  "default": "24",
+                "hint": "参考图（加载图像）。多参工作流可能不止一个槽位，用逗号分隔",
+                "expect": ("LoadImage", "LoadImageMask")},
+    "seconds": {"env": "COMFYUI_VIDEO_NODE_SECONDS", "default": "15",
+                "hint": "时长秒数（浮点），下游用 17n+5 公式换算帧数",
+                "expect": ("PrimitiveFloat", "PrimitiveInt", "INTConstant", "Float")},
+    "steps":   {"env": "COMFYUI_VIDEO_NODE_STEPS",   "default": "9",
+                "hint": "采样步数（4 步 turbo LoRA 就填 4）",
+                "expect": ("BasicScheduler", "KSampler", "KSamplerAdvanced")},
+    "seed":    {"env": "COMFYUI_VIDEO_NODE_SEED",    "default": "10",
+                "hint": "种子",
+                "expect": ("Seed (rgthree)", "RandomNoise", "PrimitiveInt", "INTConstant")},
+    "aspect":  {"env": "COMFYUI_VIDEO_NODE_ASPECT",  "default": "14",
+                "hint": "分辨率：aspect_ratio + megapixels",
+                "expect": ("ResolutionSelector", "EmptyLatentImage", "EmptyMiniMaxH3LatentAV")},
+    "prefix":  {"env": "COMFYUI_VIDEO_NODE_PREFIX",  "default": "4",
+                "hint": "产物文件名前缀（保存视频节点）",
+                "expect": ("SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP", "SaveWEBM")},
+}
+MAP_KEYS = ("prompt", "images", "seconds", "steps", "seed", "aspect", "prefix")
+
+
+def sidecar_for(workflow_path: str) -> str:
+    """约定：`xxx.json` 的映射放 `xxx.map.json`（同目录）。"""
+    p = str(workflow_path or DEFAULT_WORKFLOW)
+    base = p[:-5] if p.lower().endswith(".json") else p
+    return base + ".map.json"
+
+
+def _builtin_map() -> dict:
+    out = {}
+    for role, spec in MAP_ROLES.items():
+        raw = os.environ.get(spec["env"], spec["default"])
+        out[role] = [x.strip() for x in raw.split(",") if x.strip()] if role == "images" else raw
+    return out
+
+
+def load_map(workflow_path: str, map_path: str = "") -> tuple:
+    """返回 (映射, 来源说明)。优先级：--map > sidecar > 内置(含环境变量)。"""
+    cand = []
+    if map_path:
+        cand.append((map_path, "命令行 --map"))
+    sc = sidecar_for(workflow_path)
+    if os.path.isfile(sc):
+        cand.append((sc, "同名 sidecar"))
+    for path, why in cand:
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                d = json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit("[FAIL] 读不了映射文件 %s（%s）" % (path, type(exc).__name__))
+        if not isinstance(d, dict):
+            raise SystemExit("[FAIL] 映射文件必须是对象：%s" % path)
+        # 允许只写部分 role，其余落回内置
+        base = _builtin_map()
+        base.update({k: v for k, v in d.items() if k in MAP_KEYS})
+        return base, "%s（%s）" % (path, why)
+    env_used = any(os.environ.get(s["env"]) for s in MAP_ROLES.values())
+    return _builtin_map(), ("环境变量 COMFYUI_VIDEO_NODE_*" if env_used else "脚本内置默认")
 
 
 # ---------------------------------------------------------------------------
@@ -98,30 +163,102 @@ def upload_image(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 工作流校验：**提交前**就把缺失项说清楚
+# 工作流 + 映射
 # ---------------------------------------------------------------------------
 MODEL_NODES = {
-    "UNETLoader": ("unet_name", "unet_name"),
-    "CLIPLoader": ("clip_name", "clip_name"),
-    "VAELoader": ("vae_name", "vae_name"),
-    "LoraLoaderModelOnly": ("lora_name", "lora_name"),
-    "LoraLoaderBypassModelOnly": ("lora_name", "lora_name"),
+    "UNETLoader": "unet_name",
+    "CLIPLoader": "clip_name",
+    "VAELoader": "vae_name",
+    "LoraLoaderModelOnly": "lora_name",
+    "LoraLoaderBypassModelOnly": "lora_name",
 }
-# 本地模型清单来自 /object_info，键名与上面一致
-INFO_KEY = {"unet_name": "UNETLoader", "clip_name": "CLIPLoader",
-            "vae_name": "VAELoader", "lora_name": "LoraLoaderModelOnly"}
 
 
 def load_workflow(path: str = "") -> dict:
     p = path or DEFAULT_WORKFLOW
     with open(p, encoding="utf-8") as fh:
         wf = json.load(fh)
-    if not isinstance(wf, dict) or "class_type" in wf:
-        raise SystemExit("[FAIL] 工作流必须是 API 格式（{nodeId: {class_type, inputs}}）")
+    # ★ 必须整份都是 API 格式（每个值都是带 class_type 的节点）。只查顶层 dict 是不够的：
+    #   ComfyUI 界面导出的 workflow 是 {"nodes": [...], "links": [...]}，同样是 dict，
+    #   放过去会在后面报一堆「节点 id 不存在」，把人引到映射上 —— 真因是导出方式错了。
+    if (not isinstance(wf, dict) or not wf
+            or any(not isinstance(v, dict) or "class_type" not in v for v in wf.values())):
+        raise SystemExit("[FAIL] 工作流必须是 API 格式（{nodeId: {class_type, inputs}}），"
+                         "不是 ComfyUI 界面导出的 workflow（那种带 nodes/links 数组，"
+                         "需要在 ComfyUI 里用「导出 API 格式」再存一份）")
     return wf
 
 
-def check(workflow_path: str = "") -> int:
+def list_nodes(workflow_path: str = "") -> int:
+    """列出工作流里的节点，并给出「这个节点适合当什么角色」的建议。离线，不连 ComfyUI。"""
+    wf = load_workflow(workflow_path)
+    m, src = load_map(workflow_path)
+    used = {}
+    for role, v in m.items():
+        for nid in (v if isinstance(v, list) else [v]):
+            used[str(nid)] = role
+    print("工作流: %s（%d 节点）" % (workflow_path or DEFAULT_WORKFLOW, len(wf)))
+    print("映射  : %s" % src)
+    print()
+    print("%-5s %-42s %-11s %s" % ("id", "class_type", "当前角色", "可选参数"))
+    for nid in sorted(wf, key=lambda x: int(x) if str(x).isdigit() else 9999):
+        node = wf[nid]
+        cls = node.get("class_type")
+        plain = [k for k, v in (node.get("inputs") or {}).items() if not isinstance(v, (list, dict))]
+        role = used.get(str(nid), "")
+        if not role:
+            for r, spec in MAP_ROLES.items():
+                if cls in spec["expect"]:
+                    role = "（可作 %s）" % r
+                    break
+        print("%-5s %-42s %-11s %s" % (nid, cls, role, ", ".join(plain[:6])))
+    print("\n把上面合适的 id 写进映射文件：")
+    print("  %s" % sidecar_for(workflow_path))
+    print('  {"prompt": "30", "images": ["24"], "seconds": "15", "steps": "9",'
+          ' "seed": "10", "aspect": "14", "prefix": "4"}')
+    return 0
+
+
+def map_check(workflow_path: str = "", map_path: str = "") -> int:
+    """离线校验映射：节点在不在、类型对不对。**不连 ComfyUI、不占 GPU。**"""
+    wf = load_workflow(workflow_path)
+    m, src = load_map(workflow_path, map_path)
+    print("工作流: %s（%d 节点）" % (workflow_path or DEFAULT_WORKFLOW, len(wf)))
+    print("映射  : %s" % src)
+    print()
+    bad = 0
+    for role in MAP_KEYS:
+        spec = MAP_ROLES[role]
+        raw = m.get(role)
+        ids = raw if isinstance(raw, list) else [raw]
+        ids = [str(x) for x in ids if str(x).strip()]
+        if not ids:
+            print("  [NG] %-8s 未配置" % role)
+            bad += 1
+            continue
+        for nid in ids:
+            node = wf.get(nid)
+            if not node:
+                print("  [NG] %-8s #%s 在工作流里不存在（%s）" % (role, nid, spec["hint"]))
+                bad += 1
+                continue
+            cls = node.get("class_type")
+            ok = cls in spec["expect"]
+            print("  %s %-8s #%-4s %-38s %s" % ("[OK]" if ok else "[? ]", role, nid, cls,
+                                               "" if ok else "（预期 %s 之一，仍可继续但请确认）"
+                                               % "/".join(spec["expect"])))
+    print()
+    if bad:
+        print("[FAIL] 有 %d 处必须修（节点 id 对不上，提交后参数不会生效）" % bad)
+        return 2
+    print("[OK] 映射可用。下一步：--check（在线体检节点类与模型文件），再 --submit 真跑一条短的。")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 在线体检
+# ---------------------------------------------------------------------------
+def check(workflow_path: str = "", map_path: str = "") -> int:
     print("ComfyUI : %s" % COMFY)
     try:
         st = http_json(COMFY + "/system_stats", timeout=10)
@@ -134,7 +271,9 @@ def check(workflow_path: str = "") -> int:
         (st.get("system") or {}).get("comfyui_version"), dev.get("name") or "?", vram))
 
     wf = load_workflow(workflow_path)
+    m, src = load_map(workflow_path, map_path)
     print("工作流  : %s（%d 节点）" % (workflow_path or DEFAULT_WORKFLOW, len(wf)))
+    print("映射    : %s" % src)
 
     oi = http_json(COMFY + "/object_info", timeout=60)
     miss_cls = sorted({v.get("class_type") for v in wf.values()} - set(oi))
@@ -147,29 +286,37 @@ def check(workflow_path: str = "") -> int:
     miss_models = []
     for nid, node in wf.items():
         cls = node.get("class_type")
-        if cls not in MODEL_NODES:
+        field = MODEL_NODES.get(cls)
+        if not field:
             continue
-        field, info_key = MODEL_NODES[cls]
         want = (node.get("inputs") or {}).get(field)
         if not want:
             continue
+        node_key = {"unet_name": "UNETLoader", "clip_name": "CLIPLoader",
+                    "vae_name": "VAELoader", "lora_name": "LoraLoaderModelOnly"}[field]
         try:
-            have = oi[INFO_KEY[info_key]]["input"]["required"][info_key][0]
+            have = oi[node_key]["input"]["required"][field][0]
         except Exception:  # noqa: BLE001
             have = []
-        # VAELoader 有多个节点，用 VAELoader 自己的清单
-        if cls == "VAELoader":
-            have = oi["VAELoader"]["input"]["required"]["vae_name"][0]
         if want not in have:
             miss_models.append("#%s %s = %s" % (nid, cls, want))
     if miss_models:
         print("[FAIL] 缺模型文件：")
-        for m in miss_models:
-            print("       %s" % m)
+        for mm in miss_models:
+            print("       %s" % mm)
     else:
         print("[OK] 模型文件齐全（unet / clip / vae / lora 逐项核对）")
 
-    ok = not miss_cls and not miss_models
+    # 映射的节点 id 也顺手核一遍（离线逻辑复用）
+    map_bad = 0
+    for role in MAP_KEYS:
+        raw = m.get(role)
+        for nid in (raw if isinstance(raw, list) else [raw]):
+            if str(nid).strip() and str(nid) not in wf:
+                print("[FAIL] 映射 %s 指向 #%s，但工作流里没有这个节点" % (role, nid))
+                map_bad += 1
+
+    ok = not miss_cls and not miss_models and not map_bad
     print("\n%s" % ("可以提交（--submit 会真的占 GPU 出片）" if ok else "先补齐上面的缺失项"))
     return 0 if ok else 2
 
@@ -178,38 +325,58 @@ def check(workflow_path: str = "") -> int:
 # 覆盖槽位
 # ---------------------------------------------------------------------------
 def frames_for(seconds: float) -> int:
-    """H3 的帧数约束：length = 17n + 5（与工作流里 ComfyMathExpression 的公式同源）。
-
-    工作流内部节点 131 会按秒数算一次；这里先算出来只为**打印预期帧数**，
-    真正的提交值仍由节点公式决定，避免两处算法打架。
-    """
-    import math
+    """H3 帧数约束：length = 17n + 5（与工作流里 ComfyMathExpression 的公式同源）。"""
     n = max(5, round(float(seconds) * 24))
     return n + (5 - (n % 17)) % 17
 
 
-def apply_nodes(wf: dict, *, prompt: str, ref_names: list, seconds: float,
-                steps: int, seed: int, aspect: str, mp: float, prefix: str) -> dict:
+def _roles(m: dict, role: str) -> list:
+    raw = m.get(role)
+    return [str(x) for x in (raw if isinstance(raw, list) else [raw]) if str(x).strip()]
+
+
+def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, steps: int,
+                seed: int, aspect: str, mp, prefix: str) -> dict:
     wf = json.loads(json.dumps(wf))          # 深拷贝，避免污染模板
-    wf[NODE_PROMPT]["inputs"]["value"] = prompt
+
+    ids = _roles(m, "prompt")
+    if ids and ids[0] in wf:
+        wf[ids[0]]["inputs"]["value"] = prompt
+
     # 参考图按序铺到每个 LoadImage 槽位；不够就循环复用第一张
-    for i, nid in enumerate([n for n in NODE_IMAGES if n in wf]):
+    for i, nid in enumerate([x for x in _roles(m, "images") if x in wf]):
         wf[nid]["inputs"]["image"] = ref_names[i % len(ref_names)]
-    # ★ None / 空串 = 「沿用工作流原值」。不传就别覆盖 —— 否则会把工作流里调好的
+
+    # ★ None / 空串 = 「沿用工作流原值」：不传就别覆盖，否则会把工作流里调好的
     #   分辨率/时长冲成代码默认值，用户会以为「换了个工作流结果画质变差了」。
-    if seconds is not None and NODE_SECONDS in wf:
-        wf[NODE_SECONDS]["inputs"]["value"] = float(seconds)
-    if NODE_STEPS in wf:
-        wf[NODE_STEPS]["inputs"]["value"] = int(steps)
-    if NODE_SEED in wf:
-        wf[NODE_SEED]["inputs"]["noise_seed"] = int(seed)
-    if NODE_ASPECT in wf:
+    ids = _roles(m, "seconds")
+    if ids and ids[0] in wf and seconds is not None:
+        wf[ids[0]]["inputs"]["value"] = float(seconds)
+
+    ids = _roles(m, "steps")
+    if ids and ids[0] in wf:
+        ins = wf[ids[0]]["inputs"]
+        ins["steps" if "steps" in ins else "value"] = int(steps)
+
+    ids = _roles(m, "seed")
+    if ids and ids[0] in wf:
+        ins = wf[ids[0]]["inputs"]
+        if "noise_seed" in ins:
+            ins["noise_seed"] = int(seed)
+        else:
+            ins["seed" if "seed" in ins else "value"] = int(seed)
+
+    ids = _roles(m, "aspect")
+    if ids and ids[0] in wf:
+        ins = wf[ids[0]]["inputs"]
         if aspect:
-            wf[NODE_ASPECT]["inputs"]["aspect_ratio"] = aspect
+            ins["aspect_ratio"] = aspect
         if mp is not None:
-            wf[NODE_ASPECT]["inputs"]["megapixels"] = float(mp)
-    if NODE_PREFIX in wf:
-        wf[NODE_PREFIX]["inputs"]["filename_prefix"] = prefix
+            ins["megapixels"] = float(mp)
+
+    ids = _roles(m, "prefix")
+    if ids and ids[0] in wf:
+        wf[ids[0]]["inputs"]["filename_prefix"] = prefix
     return wf
 
 
@@ -247,8 +414,8 @@ def submit_and_wait(wf: dict, *, timeout_min: float) -> dict:
             raise SystemExit("[FAIL] 任务失败：%s" % json.dumps(item.get("status"), ensure_ascii=False)[:500])
         if int(time.time() - t0) % 30 < 4:
             print("  已等 %ds…" % int(time.time() - t0))
-    raise SystemExit("[FAIL] 超时（%s，最后错误：%s；可先在 ComfyUI 队列面板看是否卡住）"
-                     % (last or "无", timeout_min))
+    raise SystemExit("[FAIL] 超时（最后错误：%s；可先在 ComfyUI 队列面板看是否卡住）"
+                     % (last or "无"))
 
 
 def download(f: dict, out_dir: str, name: str) -> str:
@@ -266,23 +433,30 @@ def download(f: dict, out_dir: str, name: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="本地 ComfyUI 出视频（H3，￥0，默认干跑）")
     ap.add_argument("--workflow", default="", help="API 格式工作流 JSON（默认本目录 workflow_h3_local.json）")
+    ap.add_argument("--map", default="", help="节点映射 JSON（默认读同名 sidecar <工作流>.map.json）")
+    ap.add_argument("--list-nodes", action="store_true", help="列出工作流节点与建议角色（离线）")
+    ap.add_argument("--map-check", action="store_true", help="离线校验映射（节点在不在/类型对不对）")
+    ap.add_argument("--check", action="store_true", help="在线体检（ComfyUI + 节点类 + 模型文件）")
     ap.add_argument("--prompt", default="", help="镜头提示词（自然语言长句，可含 subject_definitions）")
     ap.add_argument("--ref", action="append", default=[], help="参考图路径（可多次；不足会循环复用第一张）")
     ap.add_argument("--seconds", type=float, default=None, help="时长（秒）；不给就沿用工作流里的值")
-    ap.add_argument("--steps", type=int, default=4, help="采样步数（配套 4 步 turbo LoRA，默认 4）")
+    ap.add_argument("--steps", type=int, default=None, help="采样步数；不给就沿用工作流里的值")
     ap.add_argument("--seed", type=int, default=-1, help="种子；-1 随机")
     ap.add_argument("--aspect", default="", help="画幅；不给就沿用工作流里的值")
     ap.add_argument("--mp", type=float, default=None, help="百万像素；不给就沿用工作流里的值（8G 卡可降到 0.3-0.4）")
     ap.add_argument("--prefix", default="h3local", help="ComfyUI 侧文件名前缀")
-    ap.add_argument("--out", default="", help="产物落盘目录（必填，除了 --check）")
+    ap.add_argument("--out", default="", help="产物落盘目录（必填，除了体检类命令）")
     ap.add_argument("--name", default="", help="落盘文件名（默认 <prefix>_<seed>.mp4）")
     ap.add_argument("--submit", action="store_true", help="真的提交（占 GPU；不花钱）")
     ap.add_argument("--timeout-min", type=float, default=20.0, help="轮询超时（分钟）")
-    ap.add_argument("--check", action="store_true", help="只体检：ComfyUI 在线 + 节点/模型齐全")
     a = ap.parse_args()
 
+    if a.list_nodes:
+        return list_nodes(a.workflow)
+    if a.map_check:
+        return map_check(a.workflow, a.map)
     if a.check:
-        return check(a.workflow)
+        return check(a.workflow, a.map)
 
     if not a.prompt.strip():
         print("[FAIL] 缺 --prompt")
@@ -290,24 +464,37 @@ def main() -> int:
     if not a.out:
         print("[FAIL] 缺 --out（产物目录）")
         return 2
+
     seed = a.seed if a.seed >= 0 else int(time.time()) % 2_000_000_000
     wf = load_workflow(a.workflow)
+    m, src = load_map(a.workflow, a.map)
 
-    # 「不传就沿用工作流原值」：这里把生效值读出来给人看，避免以为改过了
-    sec = a.seconds
-    if sec is None:
-        sec = float((wf.get(NODE_SECONDS) or {}).get("inputs", {}).get("value") or 0) or None
-    asp = a.aspect or str((wf.get(NODE_ASPECT) or {}).get("inputs", {}).get("aspect_ratio") or "")
-    mp = a.mp
-    if mp is None:
-        mp = (wf.get(NODE_ASPECT) or {}).get("inputs", {}).get("megapixels")
+    def _wfv(role, field, cast=None):
+        ids = _roles(m, role)
+        if not ids or ids[0] not in wf:
+            return None
+        v = wf[ids[0]].get("inputs", {}).get(field)
+        if v is None or v == "":
+            return None
+        try:
+            return cast(v) if cast else v
+        except (TypeError, ValueError):
+            return None
+
+    # 步数/时长：不传就沿用工作流原值
+    steps = a.steps if a.steps is not None else (_wfv("steps", "steps", int)
+                                                 or _wfv("steps", "value", int) or 4)
+    sec = a.seconds if a.seconds is not None else _wfv("seconds", "value", float)
+    asp = a.aspect or str(_wfv("aspect", "aspect_ratio") or "")
+    mp = a.mp if a.mp is not None else _wfv("aspect", "megapixels", float)
 
     print("工作流  : %s" % (a.workflow or DEFAULT_WORKFLOW))
+    print("映射    : %s" % src)
     if sec:
         print("时长    : %.1fs ≈ %d 帧（17n+5 对齐）" % (sec, frames_for(sec)))
     else:
         print("时长    : 沿用工作流原值")
-    print("画幅    : %s @ %sMP｜步数 %d｜种子 %d" % (asp or "沿用原值", mp, a.steps, seed))
+    print("画幅    : %s @ %sMP｜步数 %d｜种子 %d" % (asp or "沿用原值", mp, steps, seed))
     print("参考图  : %s" % ("、".join(os.path.basename(p) for p in a.ref) or "（无）"))
 
     if not a.ref:
@@ -315,11 +502,11 @@ def main() -> int:
 
     if not a.submit:
         print("\n★ DRY-RUN：未提交，未占 GPU。加 --submit 才真的出片。")
-        print("  将要覆盖的槽位：prompt=#%s  images=%s  seconds=#%s  steps=#%s  seed=#%s"
-              % (NODE_PROMPT, ",".join(NODE_IMAGES), NODE_SECONDS, NODE_STEPS, NODE_SEED))
+        print("  将覆盖：prompt=%s  images=%s  seconds=%s  steps=%s  seed=%s"
+              % (m.get("prompt"), m.get("images"), m.get("seconds"), m.get("steps"), m.get("seed")))
         return 0
 
-    if check(a.workflow) != 0:
+    if check(a.workflow, a.map) != 0:
         return 2
 
     names = []
@@ -331,8 +518,8 @@ def main() -> int:
     if names:
         print("参考图已上传: %s" % "、".join(names))
 
-    wf = apply_nodes(wf, prompt=a.prompt, ref_names=names or [""], seconds=a.seconds,
-                     steps=a.steps, seed=seed, aspect=a.aspect, mp=a.mp, prefix=a.prefix)
+    wf = apply_nodes(wf, m, prompt=a.prompt, ref_names=names or [""], seconds=a.seconds,
+                     steps=steps, seed=seed, aspect=a.aspect, mp=a.mp, prefix=a.prefix)
     res = submit_and_wait(wf, timeout_min=a.timeout_min)
     files = res["files"] or []
     if not files:
