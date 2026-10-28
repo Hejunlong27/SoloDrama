@@ -68,6 +68,9 @@ export const api = {
   register: (ws, title) => post('/api/workspaces', { path: ws, title }),
   prune: () => post('/api/workspaces/prune', {}),
 
+  generators: (ws) => get('/api/generators', { ws }),
+  setRhWorkflow: (body) => post('/api/generators/rh', body),
+
   capabilities: () => get('/api/studio/capabilities'),
   overview: (ws) => get('/api/studio/overview', { ws }),
   workflow: (ws) => get('/api/studio/workflow', { ws }),

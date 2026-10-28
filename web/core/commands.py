@@ -42,6 +42,9 @@ SCRIPTS = {
     "layout": paths.STAGES_DIR / "_layout.py",
     "tools": paths.TOOLS_DIR / "cli.py",
     "comfy_check": paths.COMIFY_SCRIPTS / "comfy_client.py",
+    # ★ 2026-10-29：视频本地出片（H3，￥0）与 RH 工作流出图（t2i / i2i 双工作流）
+    "comfy_video": paths.STAGES_DIR / "video" / "comfyui" / "comfy_local_video.py",
+    "gen_rh_wf": paths.PROD_SCRIPTS / "gen_assets_rh_workflow.py",
     # ★ Studio 阶段新增（只读）：流程状态 / 开工前置 / 环境自检 / 剧本连续性
     "workflow": paths.PROD_SCRIPTS / "workflow.py",
     "setup": paths.PROD_SCRIPTS / "project_setup.py",
@@ -507,6 +510,24 @@ _add(_c("assets.check", "6 资产", "ComfyUI 在线体检", "drama",
         env={"SOLODRAMA_ASSET_MD": "asset_md"},
         help="只体检 ComfyUI 是否在线，不出图。",
         agent="不在线就告诉我怎么启动（ComfyUI 桌面版需手动启动 8188 端口）。"))
+_add(_c("assets.rh_wf", "6 资产", "云端工作流出图（文生图/图生图，★计费）", "gen_rh_wf",
+        billing=PAID, danger=DANGER,
+        flags={"--md": "md", "--only": "only", "--ratio": "ratio",
+               "--mode": "mode", "--ref": "ref"},
+        bools={"--submit": "submit", "--force": "force"},
+        params=[Param("md", "资产提示词 md", "str", required=True,
+                      placeholder="<工作区>/04-资产/资产提示词.md"),
+                Param("only", "只做这些", "str", placeholder="char_01,char_02"),
+                Param("ratio", "画幅", "str", default="16:9"),
+                Param("mode", "模式", "enum", default="t2i", choices=["t2i", "i2i"]),
+                Param("ref", "参考图路径", "str", placeholder="i2i 必填，如 04-资产/characters/xxx.png"),
+                Param("submit", "确认提交（★计费）", "bool", default=False),
+                Param("force", "已生成的也重跑（重复计费）", "bool", default=False)],
+        resources=["RH"],
+        help="走 RunningHub「工作流」通道（nodeInfoList）。★ 文生图与图生图是**两套工作流**："
+             "t2i 用 image_providers[active].id，i2i 用 id_i2i 且必须给 --ref（先上传再喂给加载图像节点）。"
+             "默认干跑。",
+        agent="先干跑列出清单与将用的工作流 ID；i2i 要确认参考图路径存在，等我明确确认后再 --submit。"))
 _add(_c("assets.rh", "6 资产", "云端出图（★计费）", "drama",
         argv=["assets", "--engine", "rh"], billing=PAID, danger=DANGER,
         flags={"--kind": "kind", "--only": "only"}, bools={"--submit": "submit", "--force": "force"},
@@ -589,6 +610,28 @@ _add(_c("ingest.check", "9 入门口禁", "入 data/ 生成端门禁（G7）", "
         agent="按缺陷类型分组列出（缺 <d> / 槽位超限 / duration 不一致），每类给出最小修法；本命令挡在计费之前，必须过。"))
 
 # ===== 环节 10 出片 ========================================================
+_add(_c("video.local", "10 出片", "本地出视频（H3，￥0，默认干跑）", "comfy_video",
+        billing=GPU, danger=WRITE,
+        flags={"--prompt": "prompt", "--ref": "ref", "--seconds": "seconds",
+               "--mp": "mp", "--steps": "steps", "--out": "out"},
+        bools={"--submit": "submit"},
+        params=[Param("prompt", "镜头提示词", "str",
+                      placeholder="自然语言长句；可含 subject_definitions"),
+                Param("ref", "参考图路径", "str", placeholder="图生视频建议给，否则人物一致性不保证"),
+                Param("seconds", "时长（秒）", "str", placeholder="留空 = 沿用工作流原值"),
+                Param("mp", "百万像素", "str", placeholder="留空 = 沿用原值；8G 卡可填 0.3-0.4"),
+                Param("steps", "采样步数", "str", default="4"),
+                Param("out", "产物目录", "str", placeholder="<工作区>/video-pipeline/output/local-video"),
+                Param("submit", "真的出片（占 GPU，不花钱）", "bool", default=False)],
+        resources=["GPU"],
+        help="走本机 ComfyUI 的 H3 图生视频工作流（stages/video/comfyui/workflow_h3_local.json）。"
+             "默认干跑；本机需 ComfyUI 在 8188 运行。先跑「本地视频体检」确认节点与模型齐全。",
+        agent="先干跑给我看时长/帧数/槽位；确认后加 --submit。出片前先体检。"))
+_add(_c("video.local.check", "10 出片", "本地视频体检", "comfy_video",
+        argv=["--check"], mode="sync", danger=READ, billing=GPU,
+        resources=["GPU"],
+        help="逐项核对：ComfyUI 在线 + 工作流里每个节点类可用 + 每个模型文件存在。不占 GPU 出片。",
+        agent="缺什么直接说缺哪个文件/节点；ComfyUI 没开就提示启动 8188。"))
 _add(_c("video.plan", "10 出片", "出片计划与成本预估（G3）", "drama",
         argv=["video", "plan"], mode="sync", danger=READ, gate="G3",
         flags={"--limit": "limit", "--only": "only"},

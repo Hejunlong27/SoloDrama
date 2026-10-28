@@ -216,22 +216,43 @@ def _size(p: pathlib.Path) -> tuple:
 # ---------------------------------------------------------------------------
 # 提交
 # ---------------------------------------------------------------------------
-def provider_or_die():
+def workflow_id_for(prov: dict, mode: str) -> str:
+    """按模式取工作流 ID。
+
+    ★ 文生图与图生图是**两个不同的工作流**（图生图多一个 LoadImage 输入节点），
+      绝不能用同一个 id 硬套：拿 t2i 工作流去传参考图，平台要么忽略参考图
+      （出来还是纯文生图，白花钱），要么直接报节点不存在。
+      配置口径：`id` = 文生图；`id_i2i` = 图生图（也兼容 `i2i.id`）。
+    """
+    if mode == 'i2i':
+        return str(prov.get('id_i2i') or (prov.get('i2i') or {}).get('id') or '').strip()
+    return str(prov.get('id') or '').strip()
+
+
+def provider_or_die(mode: str = 't2i'):
     name = C.ACTIVE_IMAGE_PROVIDER
     prov = (C.IMAGE_PROVIDERS or {}).get(name) or {}
     if not prov:
         raise SystemExit('[FAIL] config.local.json 里没有 image_providers["%s"]' % name)
-    if not str(prov.get('id') or '').strip():
-        raise SystemExit('[FAIL] 生图工作流 ID 未填：config.local.json 的 '
-                         'image_providers["%s"].id（kind=%s）\n'
-                         '       本项目的「Qwen image2.1 角色设定卡」工作流 ID 需先在该工作流页面'
-                         '运行一次，平台才会生成 API 快照。' % (name, prov.get('kind', 'workflow')))
+    wid = workflow_id_for(prov, mode)
+    if not wid:
+        key = 'id_i2i' if mode == 'i2i' else 'id'
+        raise SystemExit('[FAIL] %s 工作流 ID 未填：config.local.json 的 '
+                         'image_providers["%s"].%s（kind=%s）\n'
+                         '       工作流 ID 需先在该工作流页面运行一次，平台才会生成 API 快照。'
+                         % ('图生图' if mode == 'i2i' else '文生图', name, key,
+                            prov.get('kind', 'workflow')))
     if not (prov.get('nodes') or {}).get('prompt', {}).get('nodeId'):
         raise SystemExit('[FAIL] image_providers["%s"].nodes.prompt.nodeId 未配' % name)
+    if mode == 'i2i' and not (prov.get('nodes') or {}).get('image', {}).get('nodeId'):
+        raise SystemExit('[FAIL] 图生图缺参考图节点：image_providers["%s"].nodes.image.nodeId 未配\n'
+                         '       图生图工作流里必须有一个「加载图像」节点，把上传得到的文件名喂给它。'
+                         % name)
     return name, prov
 
 
-def build_nodes(prov: dict, prompt: str, ratio: str) -> list:
+def build_nodes(prov: dict, prompt: str, ratio: str, mode: str = 't2i',
+                image_name: str = '') -> list:
     nodes = prov.get('nodes') or {}
     pairs = []
     n = nodes.get('prompt')
@@ -242,6 +263,10 @@ def build_nodes(prov: dict, prompt: str, ratio: str) -> list:
         vm = n.get('value_map')
         val = vm.get(ratio, ratio) if isinstance(vm, dict) else ratio
         pairs.append((n['nodeId'], n.get('fieldName') or 'aspect_ratio', val))
+    # 图生图：把平台上传后拿到的文件名喂给「加载图像」节点
+    n = nodes.get('image')
+    if mode == 'i2i' and n and n.get('nodeId') and image_name:
+        pairs.append((n['nodeId'], n.get('fieldName') or 'image', image_name))
     return RunningHubClient.build_node_list(pairs)
 
 
@@ -259,19 +284,40 @@ def base_url() -> str:
 
 
 async def generate(sel: list, ratio: str, submit: bool, timeout_min: float,
-                   resume_task: str | None, force: bool) -> int:
-    pname, prov = provider_or_die()
+                   resume_task: str | None, force: bool, mode: str = 't2i',
+                   refs: list | None = None) -> int:
+    refs = [r for r in (refs or []) if str(r or '').strip()]
+    pname, prov = provider_or_die(mode)
     kind0 = (prov.get('kind') or 'workflow').lower()
+    wid = workflow_id_for(prov, mode)
     ledger = RunLedger(VP, cny_per_rh_coin=C.RH_CNY_PER_COIN)
 
     print('站点        : %s' % base_url())
-    print('生图通道    : image_providers["%s"]  kind=%s  id=%s' % (pname, kind0, prov.get('id')))
+    print('生图通道    : image_providers["%s"]  kind=%s' % (pname, kind0))
+    print('模式        : %s（%s）' % (mode, '图生图 · 带参考图' if mode == 'i2i' else '文生图 · 纯提示词'))
+    print('工作流 ID   : %s' % wid)
     print('画幅        : %s' % ratio)
+    if refs:
+        print('参考图      : %s' % '、'.join(pathlib.Path(r).name for r in refs))
     print()
 
     rc = 0
     ok = fail = skip = 0
     async with RunningHubClient(C.RUNNINGHUB_API_KEY, base_url(), C.HTTP_TIMEOUT) as client:
+        # ★ 图生图必须先上传参考图：nodeInfoList 里要的是**平台文件名**，不是本地路径。
+        #   一次任务只传一次（同一批资产共用同一张参考图），避免重复上传。
+        ref_name = ''
+        if mode == 'i2i':
+            if not refs:
+                print('[FAIL] --mode i2i 必须给 --ref <参考图路径>')
+                return 2
+            up = await client.upload_file(refs[0])
+            ref_name = str(up.get('fileName') or '')
+            if not ref_name:
+                print('[FAIL] 上传参考图后没拿到 fileName，无法喂给节点')
+                return 2
+            print('参考图已上传: %s -> %s' % (pathlib.Path(refs[0]).name, ref_name))
+            print()
         for it in sel:
             kind, key, no, name = it['kind'], it['key'], it['section'], it['name']
             var = it['variants'][0] if it['variants'] else None
@@ -302,12 +348,13 @@ async def generate(sel: list, ratio: str, submit: bool, timeout_min: float,
                 skip += 1
                 continue
 
-            node_list = build_nodes(prov, prompt, ratio)
+            node_list = build_nodes(prov, prompt, ratio, mode, ref_name)
             snap = WS / 'docs' / ('asset-wf-nodeinfo-%s.json' % key)
             snap.parent.mkdir(parents=True, exist_ok=True)
             snap.write_text(json.dumps({
-                'provider': pname, 'kind': kind0, 'id': prov.get('id'), 'key': key,
-                'section': no, 'name': name, 'nodeInfoList': node_list,
+                'provider': pname, 'kind': kind0, 'mode': mode, 'id': wid, 'key': key,
+                'section': no, 'name': name, 'ref': ref_name or None,
+                'nodeInfoList': node_list,
             }, ensure_ascii=False, indent=2), encoding='utf-8')
 
             if not submit and not resume_task:
@@ -318,7 +365,7 @@ async def generate(sel: list, ratio: str, submit: bool, timeout_min: float,
             task_id = resume_task
             if not task_id:
                 try:
-                    task_id = await client.create_task(kind0, prov.get('id'), node_list,
+                    task_id = await client.create_task(kind0, wid, node_list,
                                                        prov.get('instance_type'))
                 except RunningHubError as e:
                     print('  [FAIL] 提交失败: %s' % e.short)
@@ -423,6 +470,10 @@ def main() -> int:
                     help='md 里没有「# 一、角色资产库」这类章节标题时的兜底分类')
     ap.add_argument('--only', default=None, help='只做这些（key / 名字 / 节号，逗号分隔）')
     ap.add_argument('--ratio', default='16:9', help='画幅裸值，默认 16:9（会按 config 的 value_map 映射）')
+    ap.add_argument('--mode', choices=('t2i', 'i2i'), default='t2i',
+                    help='t2i=文生图（纯提示词）｜i2i=图生图（必须先 --ref 给参考图，走另一套工作流）')
+    ap.add_argument('--ref', action='append', default=[],
+                    help='参考图路径（i2i 必填；多次给则取第一张上传）')
     ap.add_argument('--list', action='store_true', help='只列出解析到的资产与缺口，不提交')
     ap.add_argument('--force', action='store_true', help='已生成过的也重跑（会重复计费）')
     ap.add_argument('--submit', action='store_true', help='★ 真的提交（每张计费一次）')
@@ -452,6 +503,11 @@ def main() -> int:
         items = keep
 
     if args.list:
+        try:
+            _n, _p = provider_or_die(args.mode)
+            print('模式: %s ｜ 工作流 ID: %s' % (args.mode, workflow_id_for(_p, args.mode)))
+        except SystemExit as _e:
+            print('[WARN] %s' % _e)
         print('%-10s %-6s %-30s %-8s %s' % ('key', 'kind', '名字', '提示词', '已生成'))
         print('-' * 88)
         for it in items:
@@ -470,7 +526,7 @@ def main() -> int:
               '请通过 drama.py 调用或先 setx）')
         return 2
     return asyncio.run(generate(items, args.ratio, args.submit, args.timeout_min,
-                                args.resume_task, args.force))
+                                args.resume_task, args.force, args.mode, args.ref))
 
 
 if __name__ == '__main__':

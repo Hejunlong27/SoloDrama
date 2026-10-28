@@ -25,8 +25,8 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, commands as CMD, connections, inventory, jobs, paths,
-                    reader, runner, studio, ux)
+from core import (adapters, artifacts, commands as CMD, connections, generators, inventory,
+                    jobs, paths, reader, runner, studio, ux)
 from core.llm import drafts as llm_drafts, gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
@@ -715,6 +715,68 @@ def connections_test(kind: str):
 def studio_asset_md(ws: str = Query(...)):
     """候选「资产提示词 md」（出图命令要把它注入 SOLODRAMA_ASSET_MD）。"""
     return studio.asset_mds(str(_require_ws(ws)))
+
+
+@app.post("/api/generators/rh")
+def api_generators_rh(payload: dict = Body(...)):
+    """把「云端工作流出图」的四个关键值写进项目配置（t2i / i2i 分开）。
+
+    为什么需要它：`config.local.json` 里 `image_providers` 的节点映射手写极易出错，
+    而**写错的表现是「提交成功、钱扣了、图不对」**。这里只接受四个最小必要值，
+    并做三件事：① 只改这一条 provider，其余键原样保留；② 写前备份；
+    ③ 图生图必须同时给参考图节点，否则拒绝（不然就是白花钱）。
+    """
+    _write_guard()
+    ws = _require_ws(payload.get("ws"))
+    name = str(payload.get("provider") or "studio").strip()[:40] or "studio"
+    t2i = str(payload.get("t2i_id") or "").strip()
+    i2i = str(payload.get("i2i_id") or "").strip()
+    prompt_node = str(payload.get("prompt_node") or "").strip()
+    image_node = str(payload.get("image_node") or "").strip()
+    if not prompt_node.isdigit():
+        raise HTTPException(status_code=400, detail="提示词节点必须是数字节点 id")
+    if i2i and not image_node.isdigit():
+        raise HTTPException(status_code=400,
+                            detail="填了图生图工作流就必须给「加载图像」节点 id，否则参考图不会被用上")
+    if not (t2i or i2i):
+        raise HTTPException(status_code=400, detail="至少要填一个工作流 ID（文生图或图生图）")
+
+    cfg_path = ws / "video-pipeline" / "config.local.json"
+    cfg = paths.read_json(cfg_path, default=None) or {}
+    if not isinstance(cfg, dict):
+        raise HTTPException(status_code=400, detail="config.local.json 不是对象，拒绝覆盖")
+    bak = None
+    if cfg_path.is_file():
+        bak = cfg_path.with_suffix(".json.bak_%d" % int(time.time()))
+        bak.write_text(cfg_path.read_text(encoding="utf-8"), encoding="utf-8")
+    provs = cfg.setdefault("image_providers", {})
+    cur = provs.get(name) if isinstance(provs.get(name), dict) else {}
+    nodes = dict(cur.get("nodes") or {})
+    nodes["prompt"] = {"nodeId": prompt_node, "fieldName": (nodes.get("prompt") or {}).get("fieldName", "value")}
+    if image_node.isdigit():
+        nodes["image"] = {"nodeId": image_node, "fieldName": (nodes.get("image") or {}).get("fieldName", "image")}
+    item = dict(cur)
+    item.update({"kind": cur.get("kind") or "workflow",
+                 "id": t2i or cur.get("id", ""),
+                 "id_i2i": i2i or cur.get("id_i2i", ""),
+                 "nodes": nodes})
+    provs[name] = item
+    cfg["active_image_provider"] = name
+    paths.write_json(cfg_path, cfg)
+    reader.clear_cache()
+    generators._CACHE.clear()
+    return {"ok": True, "config_path": str(cfg_path), "provider": name,
+            "backup": str(bak) if bak else "",
+            **generators.channels(str(ws))}
+
+
+@app.get("/api/generators")
+def api_generators(ws: str = Query(default="")):
+    """图像 / 视频 生成通道台账：能用哪条、缺什么、花不花钱。
+
+    只读，不提交任务、不写配置；ComfyUI 只访问 /system_stats 与 /object_info。
+    """
+    return generators.channels(str(ws or "").strip() or None)
 
 
 @app.get("/api/artifacts/loose")

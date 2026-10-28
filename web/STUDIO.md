@@ -93,6 +93,7 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 项目详情    | 11 环节判据、集数规划、产物目录、G-0 九项、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
 | 创作中心    | S1–S5 完成度（引擎 probes）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
 | 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
+| 生成通道 | **图像 / 视频** 各条通道的真实状态（本地 ComfyUI ｜ RunningHub 工作流）、**文生图与图生图分开登记**、缺什么/下一步、￥0 还是计费；可在此写入云端工作流 ID 与节点（写前备份） | `/api/generators`（只读探测）、`POST /api/generators/rh`（写项目 `config.local.json`） |
 | 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**出片**（计费五步）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
 | 发行中心    | 发布版剧集/封面/文案/发布清单/版权资料的存在性核对                                                | `/api/artifacts`、`/api/file`、`release_check`（未接入，见 §7）                                                                                     |
@@ -252,7 +253,7 @@ HEADER 优先沿用**已有正式剧本的六行**（保住人工写的视觉锚
 ## 6. 测试
 
 ```bash
-# 离线单元/契约（默认 venv 即可；共 34 个文件）
+# 离线单元/契约（默认 venv 即可；共 35 个文件）
 for t in $(find stages tools web -name "test_*.py" -not -path "*__pycache__*"); do
   python "$t" || echo "FAILED $t"; done
 
@@ -265,7 +266,7 @@ python web/tools/verify_llm_loop.py
 
 本轮实测结果（2026-10-28）：
 
-- **34 个测试文件全绿**（引擎 22 + web 12）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
+- **35 个测试文件全绿**（引擎 22 + web 13）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
   `test_inventory.py` 补 `[5] 散图口径`。
 - 新增 `test_workspaces.py` 的动因：真实登记表里 `current` 指着已删除的目录，四个用例分别守住
   「死路径自愈并落盘」「未登记的死 current 不许变卡片」「全盘皆死时置空」「prune 只清注册表」。
@@ -341,3 +342,53 @@ python web/tools/verify_llm_loop.py
   `images` 越写越旧，`exists` 变成过期快照（目录删了卡片还显示在）。统一走 `_registry_clean()`。
 - **推理模型的「空回包」不是网络问题**：`finish_reason=length` 说明额度被思考吃光；
   报 `parse`（输出不是合法 JSON）会把人带偏到提示词上。见 §4.2.1。
+
+
+---
+
+## 9. 生成通道（图像 / 视频）
+
+> 台账真源：`web/core/generators.py`；本机模板在 `stages/assets/comfyui/` 与 `stages/video/comfyui/`。
+> 状态全部**现算**（ComfyUI 在线 + 工作流节点类 + 模型文件 + 项目 `config.local.json`），不存快照。
+
+| 通道 | 引擎 | 模式 | 工作流 / 配置 | 成本 |
+| --- | --- | --- | --- | --- |
+| `image.local.t2i` | 本地 ComfyUI | 文生图 | `stages/assets/comfyui/workflow_qwen_image21.json`（Qwen-Image 2.1 int8 + 4step turbo） | ￥0 |
+| `image.local.i2i` | 本地 ComfyUI | 图生图 | **未内置**（现用工作流是纯文生图，没有加载图像节点） | ￥0 |
+| `image.rh.t2i` | RH 工作流 | 文生图 | `image_providers[active].id` + `nodes.prompt.nodeId` | 按点数 |
+| `image.rh.i2i` | RH 工作流 | 图生图 | `image_providers[active].id_i2i` + `nodes.image.nodeId` | 按点数 |
+| `video.local.i2v` | 本地 ComfyUI | 图生视频 | `stages/video/comfyui/workflow_h3_local.json`（MiniMax H3 多参 · 4 步） | ￥0 |
+| `video.rh.workflow` | RH 工作流 | 图生视频 | `h3.id` + `h3.nodes` | 27 RH币/任务 + 1 币/秒 |
+
+### 9.1 为什么文生图与图生图必须分成两条
+
+图生图比文生图**多一个「加载图像」节点**，是另一份工作流。用一个 id 硬套的后果不是报错，而是
+**静默忽略参考图**：钱扣了、图还是纯文生图。所以：
+
+* 两个 id 各取各的（`id` / `id_i2i`），**互不兜底**；
+* 图生图必须先上传参考图，把返回的**平台文件名**写进 `nodes.image` 指定的节点；
+* 缺 `nodes.image.nodeId` 时状态直接判「待配置」，不允许提交。
+
+界面「生成通道」页有「配置云端工作流」按钮，四个输入框写进项目配置，**写前自动备份**，
+只改 `image_providers` 这一条，其余键原样保留。
+
+### 9.2 本地出片（H3）的实测口径
+
+* 工作流来自「Minimax 多参（4 步采样）」：`Cobijada_H3_Hybrid…int8` + `qwen3vl_32b_minimax_h3_int4` +
+  `minimax_h3_video_vae_int8` + `qwen3vl` 文本编码 + `lightx2v turbo 4step` LoRA（strength 0.75），
+  **`SolAttnMiniMax` 加速节点保留**，`BasicScheduler.steps = 4`。
+* 实测（RTX 4060 8G，ComfyUI 0.42.1，空闲显存仅 0.6G）：5 秒 / 16:9 / 0.6MP → **283 秒 / 2.0 MB /
+  1056×608 / 24fps / 124 帧**，画面与人脸正常。耗时主要在**冷加载**（unet 走 offload），不是采样。
+* 客户端 `stages/video/comfyui/comfy_local_video.py`：`--check` 先核对节点类与模型文件，
+  默认 dry-run；`--seconds / --mp / --aspect` **不传就沿用工作流原值**（不要把别人调好的 0.6MP 冲掉）。
+* 节点映射写在文件头的 `NODE_*` 常量里（也可用环境变量覆盖）：换工作流必须逐个核对，
+  否则会出现「提交成功但参数没生效」——这类错最贵。
+
+### 9.3 已知限制
+
+* **第三方加速节点会随版本变签名**。本机 `SolAttnMiniMax` 的 `execute()` 比云端版本多一个必填
+  `selection` 参数，拿云端导出的工作流直接跑会在该节点 `TypeError`。`--check` 只能核对「节点存不存在」，
+  **签名兼容性只能运行时发现** —— 所以第一次跑新工作流先用最短时长 + 最低分辨率试。
+* 8G 卡跑 H3 时显存会很紧（实测空闲 0.6G 也能出，但慢）；`--mp` 降到 0.3–0.4 可快一些。
+* 本地图生图（Qwen-Image）尚未内置：需要一份带 `LoadImage` 的图生图工作流，放到
+  `stages/assets/comfyui/` 并登记节点映射后才可用（页面会如实标「不支持」）。
