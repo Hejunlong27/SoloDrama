@@ -27,7 +27,7 @@ function toneText(it) {
 
 /* ---------- 三张卡 ---------- */
 function cardLlm(it) {
-  const provs = it.fields && it.fields.providers ? it.fields.providers : null;
+  const provs = it.providers || [];
   return '<section class="card" id="card-llm"><div class="card-h">'
     + '<span class="state ' + tone(it) + '"><i class="dot ' + tone(it) + '"></i>' + esc(toneText(it)) + '</span>'
     + '<h3>大模型</h3><span class="card-sub">剧本 / 分镜 / 文案的生成能力</span>'
@@ -35,8 +35,8 @@ function cardLlm(it) {
     + '<div class="card-b">'
     + '<div class="small muted" style="margin-bottom:12px">' + esc(it.doc) + '</div>'
     + kv([
-      ['已配置提供商', (provs && provs.length ? provs.map((p) => p.name || p.id).join('、')
-        : (it.has_key ? '有可用 Key' : '还没有')), false],
+      ['提供商', (provs.length ? provs.map((p) => (p.name || p.id) + '（' + (p.model || '未填模型')
+        + (p.has_key ? '' : ' · 缺 Key') + (p.enabled === false ? ' · 已停用' : '') + '）').join('；') : '还没有'), false],
       ['接入方式', 'OpenAI 兼容 / Ollama（地址 + Key + 模型名）'],
       ['最近验证', it.last_test ? dt(it.last_test) : '从未验证']
     ])
@@ -45,7 +45,9 @@ function cardLlm(it) {
       + esc(it.last_detail) + (it.last_next ? '<br><span class="tiny dim">下一步：' + esc(it.last_next) + '</span>' : '')
       + '</div></div>' : '')
     + '</div><div class="card-foot"><span class="tiny dim">模型在这里只做「有没有」，'
-    + '具体哪个用途用哪个模型去 <b>AI 模型中心 → 用途路由</b>。</span></div></section>';
+    + '具体哪个用途用哪个模型去 <b>AI 模型中心 → 用途路由</b>。</span>'
+    + '<span class="spacer"></span><button class="btn quiet" data-go="models">'
+    + icon('external', 13) + ' 去 AI 模型中心</button></div></section>';
 }
 
 function cardComfy(it) {
@@ -92,7 +94,7 @@ function cardRh(it) {
       + '" placeholder="' + (isApp ? '从 AI 应用页面 URL 取 webappId' : 'RunningHub 工作流 ID') + '" spellcheck="false">')
     + field('rKey', 'API Key',
       '<input class="input" id="rKey" type="password" autocomplete="off" spellcheck="false" placeholder="'
-      + esc(it.has_key ? '已保存 ' + it.key_hint + '（留空 = 不修改）' : '粘贴 API Key') + '">',
+      + esc(it.has_key ? '已保存 ' + it.key_hint + '，留空不改' : '粘贴 API Key') + '">',
       it.has_key ? '当前来源：' + ({ file: '连接中心保存的', env: '进程环境变量', registry: 'Windows 用户变量' }[it.key_source] || '未知')
         + '。留空保存不会清掉它。' : 'Key 只存本机 web/var/，接口不回显明文。')
     + '<div class="row" style="gap:8px;margin-top:4px">'
@@ -154,10 +156,10 @@ export async function render(ctx) {
     + '<section class="card"><div class="card-h"><h3>注入关系</h3>'
     + '<span class="card-sub">界面填一次，子进程自动带上</span></div><div class="card-b">'
     + kv([
-      ['ComfyUI 地址 →', 'COMFYUI_URL'],
-      ['RunningHub Key →', 'RUNNINGHUB_API_KEY'],
-      ['RunningHub 站点 →', 'RUNNINGHUB_BASE_URL'],
-      ['大模型 →', '走内部网关，不注入环境变量']
+      ['出图地址', '→ COMFYUI_URL'],
+      ['RH Key', '→ RUNNINGHUB_API_KEY'],
+      ['RH 站点', '→ RUNNINGHUB_BASE_URL'],
+      ['大模型', '→ 内部网关（不注入环境变量）']
     ])
     + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('lock', 14) + '</span><div>'
     + '配置文件在 <span class="mono">' + esc(ov.store || 'web/var/connections.json') + '</span>，'
@@ -168,6 +170,9 @@ export async function render(ctx) {
     html,
     mount: (root) => {
       paintIcons(root);
+      root.querySelectorAll('[data-go]').forEach((b) => {
+        b.onclick = () => { if (ctx && ctx.navigate) ctx.navigate(b.dataset.go); };
+      });
       mountComfy(ctx, root);
       mountRh(ctx, root);
       const all = root.querySelector('#testAll');

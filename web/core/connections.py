@@ -91,18 +91,35 @@ def load() -> dict:
     return out
 
 
+def _invalidate(cfg: dict, kind: str) -> None:
+    """配置一改，旧探测结果就作废。
+
+    为什么必须作废：用户把地址从 8188 改成 9000，界面还挂着「已连接（2 分钟前）」，
+    他会相信一个已经不存在的状态。宁可回到「待验证」。
+    """
+    cur = cfg.get(kind)
+    if isinstance(cur, dict):
+        for k in ("last_ok", "last_detail", "last_next", "last_test"):
+            cur.pop(k, None)
+
+
 def save(patch: dict) -> dict:
-    """合并保存（只允许已知键；密钥单独落盘）。"""
+    """合并保存（只允许已知键；密钥单独落盘）。改了就作废旧探测结果。"""
     cfg = load()
     for k in KINDS:
         cur = patch.get(k)
         if not isinstance(cur, dict):
             continue
+        changed = False
         for kk, vv in cur.items():
             if kk in ("api_key", "key", "apiKey"):
                 continue
             if kk in DEFAULTS.get(k, {}) or kk in ("model", "note", "label"):
+                if cfg[k].get(kk) != vv:
+                    changed = True
                 cfg[k][kk] = vv
+        if changed:
+            _invalidate(cfg, k)
     _write(CFG_PATH, cfg)
     return cfg
 
@@ -119,6 +136,12 @@ def set_key(kind: str, key: str | None) -> None:
     else:
         d[kind] = str(key).strip()
     _write(KEY_PATH, d)
+    try:                       # 换 Key / 清 Key 同样让旧结论失效
+        cfg = load()
+        _invalidate(cfg, kind)
+        _write(CFG_PATH, cfg)
+    except Exception:          # noqa: BLE001
+        pass
 
 
 ENV_NAMES = {"runninghub": "RUNNINGHUB_API_KEY", "llm": "", "comfyui": ""}
@@ -287,7 +310,10 @@ def _test_comfyui() -> dict:
         return {"ok": False, "reason": "not_comfyui",
                 "detail": "返回的不是 ComfyUI 的 system_stats", "next": "确认地址指向 ComfyUI 根路径"}
     info = _gpu_of(payload)
-    return {"ok": True, "reason": "ok", "detail": "ComfyUI 在线",
+    bits = [b for b in (info.get("version") and "v" + info["version"], info.get("device")) if b]
+    if info.get("vram_free_gb"):
+        bits.append("空闲 %.1fG / %.1fG" % (info["vram_free_gb"], info.get("vram_total_gb") or 0))
+    return {"ok": True, "reason": "ok", "detail": "ComfyUI 在线" + (" · " + " · ".join(bits) if bits else ""),
             "comfyui": dict(info, base_url=base),
             "next": ""}
 
@@ -416,10 +442,15 @@ def _test_llm() -> dict:
     except Exception as e:      # noqa: BLE001
         return {"ok": False, "reason": "import", "detail": "读不到模型配置（%s）" % type(e).__name__,
                 "next": "到 AI 模型中心检查提供商配置"}
-    provs = [p for p in (llm_store.list_providers() or []) if p.get("enabled", True)]
-    if not provs:
+    allprovs = llm_store.list_providers() or []
+    provs = [p for p in allprovs if p.get("enabled", True)]
+    if not allprovs:
         return {"ok": False, "reason": "no_provider", "detail": "还没添加任何模型提供商",
                 "next": "到 AI 模型中心添加一个 OpenAI 兼容服务（DeepSeek / 通义 / 本地 Ollama 都行）"}
+    if not provs:
+        return {"ok": False, "reason": "all_disabled",
+                "detail": "有 %d 个提供商，但都处于停用状态" % len(allprovs),
+                "next": "到 AI 模型中心启用其中一个，或新建一个"}
     ready = [p for p in provs if (p.get("key_status") or {}).get("has_key") or
              (p.get("kind") or p.get("type")) in ("ollama", "mock")]
     if not ready:
@@ -472,6 +503,7 @@ def overview() -> dict:
             "last_detail": c.get("last_detail") or "",
             "last_next": c.get("last_next") or "",
             "doc": _DOC.get(kind, ""),
+            "providers": _llm_providers() if kind == "llm" else None,
         })
     return {
         "ok": True,
@@ -480,6 +512,19 @@ def overview() -> dict:
         "store": str(CFG_PATH),
         "note": "连接是机器级配置：同一台机器上的所有项目共用。Key 只存本机，接口不回显明文。",
     }
+
+
+def _llm_providers() -> list:
+    """给界面看的最小集合：谁配了、什么模型、有没有 Key。读不到就空列表，不抛。"""
+    try:
+        from .llm import store as llm_store
+        return [{"id": p.get("id"), "name": p.get("name") or p.get("id"),
+                 "model": p.get("default_model") or "",
+                 "kind": p.get("kind"), "has_key": bool((p.get("key_status") or {}).get("has_key")),
+                 "enabled": p.get("enabled", True)}
+                for p in (llm_store.list_providers() or [])]
+    except Exception:      # noqa: BLE001
+        return []
 
 
 _DOC = {
