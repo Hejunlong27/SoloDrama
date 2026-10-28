@@ -225,18 +225,40 @@ def _account_state(image: dict, video: dict, acct: dict) -> dict:
     """第 9 项：账号 API Key（花谁的额度）。登记指纹，**真跑前比对**。"""
     chans = _channels(image, video)
     rh = [c for c in chans if c in RH_KINDS]
-    if not rh:
-        return {"ok": True, "required": False, "alias": None, "fingerprint": None,
-                "source": None, "site": None, "missing": [],
-                "note": "无云端计费通道，不花任何账号额度"}
     acct = acct or {}
+    # ★ 2026-10-22（用户明确要求「开工前需要把 API key 确定下来」）：本项不再因为
+    #   "通道全在本地"就自动判通过（旧行为 required=False 直接 ok，等于从没问过）。
+    #   两种合法终态，都必须显式拍板：
+    #     ① 登记真实账号：别名 + Key 指纹 + 站点（有 cloud 通道时是唯一合法态）；
+    #     ② 声明不需要 Key：--account none --account-none-reason "<理由>"，理由入单留痕。
+    #   "没问过" ≠ "不需要" —— 含糊即未确认（退出码 4）。
+    alias = str(acct.get("alias") or "").strip()
+    if alias.lower() in ("none", "no", "n/a", "-", "无需"):
+        _live0 = live_key()
+        if rh:
+            return {"ok": False, "required": True, "alias": "none", "fingerprint": None,
+                    "source": None, "site": None, "drift": "",
+                    "live_fingerprint": _live0.get("fingerprint"), "note": "",
+                    "missing": ["通道里有 %s，不能声明「不需要 API Key」——"
+                                "必须登记真实账号（--account <别名>）" % "/".join(rh)]}
+        if not str(acct.get("no_key_reason") or "").strip():
+            return {"ok": False, "required": True, "alias": "none", "fingerprint": None,
+                    "source": None, "site": None, "drift": "",
+                    "live_fingerprint": _live0.get("fingerprint"), "note": "",
+                    "missing": ["声明「不需要 API Key」必须写理由"
+                                "（--account none --account-none-reason \"全本地，无云端通道\"）"]}
+        return {"ok": True, "required": True, "alias": "none", "fingerprint": None,
+                "source": None, "site": None, "drift": "",
+                "live_fingerprint": _live0.get("fingerprint"), "missing": [],
+                "note": "已显式声明不需要 API Key：%s" % acct.get("no_key_reason")}
     missing = []
-    if not acct.get("alias"):
-        missing.append("未指定账号（--account <别名>）")
+    if not alias:
+        missing.append("未指定账号：--account <别名>；若本项目确实不需要 Key，"
+                       "用 --account none --account-none-reason \"<理由>\" 显式声明")
     if not acct.get("key_fingerprint"):
         missing.append("未读到 API Key（%s）" % " / ".join(KEY_ENV_NAMES))
-    if not acct.get("site"):
-        missing.append("缺站点（--site）")
+    if not acct.get("site") and rh:
+        missing.append("缺站点（--site https://www.runninghub.ai 或 .cn）")
     drift = ""
     live = live_key()
     if live["fingerprint"] and acct.get("key_fingerprint") \
@@ -266,7 +288,7 @@ def _blank() -> dict:
                          "comfy_url": None, "comfy_workflow": None,
                          "site": None, "confirmed": None},
         "account": {"alias": None, "key_source": None, "key_fingerprint": None,
-                    "site": None, "confirmed": None},
+                    "site": None, "confirmed": None, "no_key_reason": None},
         "pipeline": {"enabled": None, "budget_cap_coins": None,
                      "budget_cap_cny": None, "eta_minutes": None},
         "history": [],
@@ -544,7 +566,9 @@ def render(st: dict) -> str:
     L.append("%s6 工作流 API  : %s" % (mark(wa["ok"]), wa_txt))
 
     ac = it["account"]
-    if not ac.get("required"):
+    if ac["ok"] and str(ac.get("alias") or "").lower() == "none":
+        ac_txt = "不需要 API Key —— %s" % (ac.get("note") or "已显式声明")
+    elif not ac.get("required"):
         ac_txt = "无需 —— %s" % ac.get("note", "")
     elif ac["ok"]:
         ac_txt = "%s｜%s｜%s" % (ac.get("alias"), ac.get("fingerprint"), ac.get("source"))
@@ -803,9 +827,24 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
                 wa["site"] = _s.strip().rstrip("/")
 
     # ⑦ 账号 API Key（只登记「用哪个账号」+ 指纹，Key 本体永不落盘）
+    # ★ 2026-10-22：`--account none` 是**合法终态**（声明本项目不需要 Key），
+    #   但必须带理由；这条分支不做任何环境读取，只留痕。
     ac = d["account"]
-    if getattr(a, "account", None) or getattr(a, "account_source", None):
-        alias = str(getattr(a, "account", None) or "").strip() or "未命名账号"
+    _acct_flag = str(getattr(a, "account", None) or "").strip()
+    if _acct_flag.lower() in ("none", "no", "n/a", "-", "无需"):
+        reason = str(getattr(a, "account_none_reason", None) or "").strip()
+        if not reason:
+            msgs.append("[BLOCK] 声明「不需要 API Key」必须写理由："
+                        "--account none --account-none-reason \"全本地，无云端通道\"")
+            return EXIT_WAIT_CONFIRM, msgs
+        _note(d, "account.alias", ac.get("alias"), "none")
+        _note(d, "account.no_key_reason", ac.get("no_key_reason"), reason)
+        ac.update({"alias": "none", "key_source": None, "key_fingerprint": None,
+                   "site": None, "no_key_reason": reason,
+                   "confirmed": True, "confirmed_at": _now()})
+        msgs.append("[OK] 账号 = 不需要 API Key（理由：%s）" % reason)
+    elif _acct_flag or getattr(a, "account_source", None):
+        alias = _acct_flag or "未命名账号"
         src_flag = getattr(a, "account_source", None)
         names = (src_flag,) if src_flag else KEY_ENV_NAMES
         key, src = _read_env_value(names)
@@ -819,6 +858,7 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
         _note(d, "account.key_fingerprint", ac.get("key_fingerprint"), fp)
         ac.update({"alias": alias, "key_source": src, "key_fingerprint": fp,
                    "site": (site.strip().rstrip("/") or wa.get("site")),
+                   "no_key_reason": None,
                    "confirmed": True, "confirmed_at": _now()})
         msgs.append("[OK] 账号 = %s（指纹 %s，来源 %s）" % (alias, fp, src))
 
@@ -1029,7 +1069,10 @@ def main() -> int:
     q.add_argument("--site", default=None,
                    help="站点：%s" % " / ".join(KNOWN_SITES))
     q.add_argument("--account", default=None,
-                   help="账号别名（花谁的额度）；用当前环境 Key 登记指纹，Key 本体不落盘")
+                   help="账号别名（花谁的额度）；用当前环境 Key 登记指纹，Key 本体不落盘。"
+                        "本项目确实不需要 Key 时写 none，并配 --account-none-reason")
+    q.add_argument("--account-none-reason", dest="account_none_reason", default=None,
+                   help="配合 --account none：说明为什么本项目不需要 API Key（必填，入单留痕）")
     q.add_argument("--account-source", dest="account_source", default=None,
                    help="从哪个环境变量读 Key（默认 %s）" % " / ".join(KEY_ENV_NAMES))
     q.add_argument("--resolution", default=None, help="交付画幅，如 1080x1920")

@@ -7,7 +7,7 @@ upscale.py —— 高清放大（Topaz Video 本地 AI 超分）· 短剧流水�
 ------------
 H3 出片是 1440x832。这个尺寸在手机竖屏/大屏播放时不够看，而**烧字幕会重编码**：
 如果先烧字幕再放大，字幕会跟着被"AI 重绘"（描边发糊、字被当成纹理处理）。
-⇒ 正确顺序是【合并母版 → 放大到 2K → 再问要不要字幕 → 在 2K 上烧字幕】。
+⇒ 正确顺序是【合并母版 → 放大到交付分辨率 → 再问要不要字幕 → 在放大版上烧字幕】。
 本脚本负责中间那一步，产出 <ep>_master_2k.mp4，字幕管线接着拿它当母版。
 
 它跟 Topaz 官方 GUI 的关系
@@ -36,7 +36,7 @@ GUI 导出时内部就是在调它。本脚本复刻 GUI 的命令行，因此**
 
 用法
 ----
-    python scripts/upscale.py --ep ep03                 # 放大 ep03 母版到 2K
+    python scripts/upscale.py --ep ep03                 # 放大 ep03 母版到目标分辨率
     python scripts/upscale.py --ep ep03 --dry-run       # 只打印将要执行的命令与预计耗时
     python scripts/upscale.py --ep ep03 --verify-only   # 只对已有产物做断言
     python scripts/upscale.py --ep ep03 --force         # 忽略缓存重跑
@@ -145,6 +145,43 @@ EXE_SUFFIX = ".exe"
 FFMPEG_NAME = "ffmpeg" + EXE_SUFFIX
 FFPROBE_NAME = "ffprobe" + EXE_SUFFIX
 
+# ---------------------------------------------------------------------------
+# ★ 2026-10-22：放大产物的名字必须**如实**反映分辨率
+# ---------------------------------------------------------------------------
+# 事故：竖屏项目按 `target = {1080, 1920}` 放大，产物却叫 `<ep>_master_2k.mp4` ——
+#   实际是 **1080P**，名字里却写着 2K（2K 通常指 2560×1440）。同一个人隔一周看目录，
+#   会以为"已经出过 2K 版了"，用户也是照这个名字提出"不要 2K，要 1080P"。
+#   ⇒ 新名 `<ep>_master_<W>x<H>.mp4`（如 ep03_master_1080x1920.mp4），名字自带分辨率。
+#   旧名 `_master_2k` 继续**可读**（老项目不必迁移），但不再产出。
+MASTER_UP_SUFFIX = "_master_%dx%d.mp4"
+LEGACY_UP_SUFFIXES = ("_master_2k.mp4",)      # 只读回退，不写
+
+
+def upscaled_path(subs_dir, ep, size=None):
+    """该集放大母版的路径：新名优先，旧名（_master_2k）回退；都没有则返回新名。
+
+    `size` 给了就按该分辨率组名（如 (1080,1920)）；不给则先扫目录里任何
+    `<ep>_master_<W>x<H>.mp4`，再退 `_master_2k.mp4`。
+    """
+    import glob as _glob
+    if size:
+        p = os.path.join(subs_dir, ep + MASTER_UP_SUFFIX % (int(size[0]), int(size[1])))
+        if os.path.isfile(p):
+            return p
+    hits = sorted(_glob.glob(os.path.join(subs_dir, ep + "_master_*x*.mp4")))
+    hits = [h for h in hits if os.path.basename(h) != "%s_master.mp4" % ep]
+    if hits:
+        return max(hits, key=os.path.getmtime)
+    for suf in LEGACY_UP_SUFFIXES:
+        p = os.path.join(subs_dir, ep + suf)
+        if os.path.isfile(p):
+            return p
+    if size:
+        return os.path.join(subs_dir, ep + MASTER_UP_SUFFIX % (int(size[0]), int(size[1])))
+    return os.path.join(subs_dir, ep + (LEGACY_UP_SUFFIXES[0] if not size else
+                                        MASTER_UP_SUFFIX % (1080, 1920)))
+
+
 # 模型定义目录（*.json）的候选位置；权重目录（*.tz3）另行全盘探测
 MODEL_DIR_CANDIDATES = [
     r"C:\ProgramData\Topaz Labs LLC\Topaz Video\models",
@@ -249,7 +286,7 @@ DEFAULT_CONFIG = {
         "min_frame_gain_lap": 1.05,
         "flush_warn": True,
     },
-    # 只用于 --dry-run 的耗时预估（实测值，RTX 4060 Laptop 跑 prob-4 到 2K）
+    # 只用于 --dry-run 的耗时预估（实测值，RTX 4060 Laptop 跑 prob-4 放大一集）
     "perf": {"expected_fps": 8.2},
 }
 
@@ -317,7 +354,7 @@ def detect_toolchain(cfg):
             ddir = found
     if not ddir or not _has_weights(ddir):
         problems.append("找不到 Topaz 模型权重目录（内含 *.tz3）。"
-                        "通常是模型被挪到了别的盘 —— 见 docs/高清放大-2K-实测与操作手册.md")
+                        "通常是模型被挪到了别的盘 —— 见 stages/production/references/hd-upscale-case-2560x1480.md")
 
     return {
         "install_dir": install,
@@ -551,8 +588,7 @@ def sample_frames(tools, path, times, outdir):
     got = {}
     for i, t in enumerate(times):
         dst = os.path.join(outdir, "_up_s_%d.png" % i)
-        if os.path.exists(dst):
-            os.remove(dst)
+        # 不预删旧样张：ffmpeg `-y` 本来就覆盖写，而删除会计入 safe-delete 预算
         subprocess.run([tools["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
                         "-ss", "%.3f" % t, "-i", path, "-frames:v", "1", dst],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -642,7 +678,7 @@ def verify(tools, cfg, src_path, dst_path, tmpdir, do_sharpness=True):
                 lan_png = os.path.join(tmpdir, "_up_lan_%.3f.png" % t)
                 im.save(lan_png)
                 row["lanczos"] = frame_metrics(lan_png)
-                os.remove(lan_png)
+                _safe_remove(lan_png)
             except Exception as e:
                 row["lanczos"] = {"error": str(e)}
         rows.append(row)
@@ -741,7 +777,16 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
                     allow_flat=False, sample=0.0, out_path=None):
     subs_dir = os.path.join(out_dir_of(ws), "subs", ep)
     src = os.path.join(subs_dir, "%s_master.mp4" % ep)
-    dst = out_path or os.path.join(subs_dir, "%s_master_2k.mp4" % ep)
+    # ★ 2026-10-22：产物名如实写分辨率（<ep>_master_1080x1920.mp4），不再叫 _master_2k
+    _sz = None
+    try:
+        _t = (target_override or cfg.get("target") or {})
+        if str(_t.get("mode")) == "exact" and _t.get("width") and _t.get("height"):
+            _sz = (int(_t["width"]), int(_t["height"]))
+    except (TypeError, ValueError):
+        _sz = None
+    dst = out_path or (os.path.join(subs_dir, ep + MASTER_UP_SUFFIX % _sz) if _sz
+                       else upscaled_path(subs_dir, ep))
     # 自定义输出（测速样片）时，报告也写到旁边去，绝不覆盖正式产物的 <ep>_upscale.json
     report_path = (dst + ".json") if out_path else os.path.join(
         subs_dir, "%s_upscale.json" % ep)
@@ -907,7 +952,7 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
     _cleanup(tmpdir + "_src")
     if sample_src and os.path.exists(sample_src):
         # 样片源留着没意义（下一条命令就是另一套参数），但报告里保留它是哪一段
-        os.remove(sample_src)
+        _safe_remove(sample_src)
     # 测速模式下额外给出「整集 / 30·60·90 分钟剧」的外推，省得每次口算
     if sample and result.get("avg_fps"):
         fps = result["avg_fps"]
@@ -932,10 +977,37 @@ def _cleanup(d):
         for n in os.listdir(d):
             p = os.path.join(d, n)
             if os.path.isfile(p):
-                os.remove(p)
+                _safe_remove(p)
         os.rmdir(d)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------- 删除预算
+# ★ 2026-10-22（实跑排障）：宿主环境的 safe-delete 钩子按【会话/轮次】累计删除数量
+#   计数（阈值 50），批量跑 30 集时必炸：
+#     `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":50,"threshold":50,...}`
+#   表现为「Topaz 已经 100% 完成，进程却被杀，成片没出来」——实测 ep28/ep29/ep30 全中。
+#   旧实现在每集末尾 `_cleanup(tmpdir)` + 逐帧删样张，30 集 = 100+ 次删除。
+#   改法：**自我设额**（默认 30，留足余量给宿主其他删除），用完即停，不再抛给钩子；
+#   剩余临时文件留在 <ws>/output/subs/<ep>/_up_tmp，不影响交付，需要时人工清理。
+DELETE_BUDGET = int(os.environ.get("SOLODRAMA_DELETE_BUDGET") or 30)
+_deleted = 0
+
+
+def _safe_remove(path):
+    """在预算内删除一个文件；超预算或无权限则跳过（返回是否删掉）。"""
+    global _deleted
+    if not path or _deleted >= DELETE_BUDGET:
+        return False
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+            _deleted += 1
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def _hint(problems):
@@ -945,6 +1017,14 @@ def _hint(problems):
             "\n  修法：① 打开一次 Topaz Video 图形界面，用该模型跑一次导出（权重会自动下载）；"
             "\n        ② 或在 video-pipeline/config.upscale.json 的 tool.install_dir / "
             "tool.model_dir / tool.model_data_dir 里写死路径。")
+
+
+def canon_ep(s):
+    """集号规范化为 `epNN`（两位）；与 subtitle.py 同一口径（`26` / `EP26` 都接受）。"""
+    m = re.match(r"(?:ep)?\s*0*(\d{1,4})$", str(s or "").strip(), re.I)
+    if not m:
+        raise SystemExit("--ep 无法识别：%r（要 epNN 或纯数字，例如 ep03 / 3）" % s)
+    return "ep%02d" % int(m.group(1))
 
 
 def main():
@@ -967,6 +1047,7 @@ def main():
     ap.add_argument("--allow-flat", action="store_true", help="自检未过也保留产物")
     ap.add_argument("--json", action="store_true", help="机器可读输出")
     args = ap.parse_args()
+    args.ep = canon_ep(args.ep)          # 26 / EP26 / ep026 → ep26
 
     from pathlib import Path
     if args.workspace:

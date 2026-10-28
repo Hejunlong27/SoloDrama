@@ -79,7 +79,7 @@ python stages/production/scripts/drama.py --workspace "<ws>" bgm plan --ep ep01 
 
 | 输入 | 来源 | 说明 |
 |---|---|---|
-| 成片时长 | 优先 ffprobe `_master_2k.mp4`，否则 `h3_prompts.json` 的 `duration` 求和 | 决定段的时间线终点 |
+| 成片时长 | 优先 ffprobe 放大母版 `_master_<W>x<H>.mp4`（旧名 `_master_2k` 仍识别），否则 `h3_prompts.json` 的 `duration` 求和 | 决定段的时间线终点 |
 | 情绪 | `--mood`，缺省从 `blueprint.json` 的题材推断 | `tension / suspense / revenge / warm / sad / epic` |
 | 增益 / 淡入淡出 | 情绪默认表（见库 README） | 短剧口径：BGM 常年在 **-22 dB** 附近 |
 | 声音归属 | `project-setup.json` 的 `video_options.voice` | `voice=h3` 时 ducking **必须开** |

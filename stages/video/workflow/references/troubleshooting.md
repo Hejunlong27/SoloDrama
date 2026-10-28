@@ -56,3 +56,32 @@
 
 **原因**：工作区解析失败（`.workspace` 指针不存在且未给 --workspace）时兜底到 `~/video-pipeline-workspace`，**不应**落到 Skill 包；若真发现产物在 `<skill>/` 下，说明手动改过配置。
 **处理**：`configure.py init --workspace <正确路径>` 重写指针；把误生成的 data/output 移走；doctor 会 warn「工作区在 Skill 包内」。
+
+## 12. 画面里多出不属于本镜的人 / 景，或角色串味
+
+**原因**：`nodeInfoList` 是**覆盖表**不是完整表 —— 工作流里没被本项目覆盖的图片槽位，
+平台会沿用工作流里保存的那张图。H3 的 `MiniMaxH3ReferenceToVideo` 有 `ref_image_0…5`
+六个槽位，项目只覆盖 3 个，另外 3 个一直在送遗留参考图（同时把显存吃到 6 路参考图的量，
+是 OOM 的帮凶）。
+
+**先确诊**：
+
+```bash
+python main.py --workspace "<ws>/video-pipeline" --probe
+```
+
+看输出里有没有 `← 图片槽·未使用（提交时填占位图顶掉）`。末尾那行
+`图片槽位合计 6 个 ｜ 本项目覆盖 3 ｜ 未使用 3` 就是结论。
+
+**处理**：
+
+1. 正常情况下引擎会自动把未使用槽位填 1024×1024 中性灰占位图，**不需要手工干预**。
+   运行日志开头会有 `图片槽位：工作流 N 个 ｜ 本项目覆盖 M ｜ 未使用 K`。
+2. 若日志里是 `图片槽位：未探测` 或出现 `⚠ 图片槽位探测失败`，说明只读接口没通 ——
+   此时未使用槽位会沿用工作流里的图。先解决连通性，或用
+   `h3.unused_slots.discover=false` + `slot_ids: ["146","160","161"]` 手工兜。
+3. 若 `--probe` 显示「未使用」数量比预期多，通常是 `config.local.json` 的 `nodes` 漏了
+   `slots[]` 里的某一项。
+4. 想确认顶替真的生效：`--dry-run` 的 `nodeInfoList` 里，未使用槽位的 `fieldValue`
+   应该是占位图（`slot_blank_1024.png` 或 上传后的 URL），**绝不能是**某个
+   `cb955bf6….png` / `3fce2ed5….png` 之类的十六进制文件名。

@@ -11,6 +11,13 @@
     "max_text_width_pct": 70,
     "_vertical_hint": "竖屏注意：字号会被「文本框宽 ÷ max_line_chars」反向压住，否则按高度百分比算出的字号会撑出安全区（1088x1920 上 zh 从 129px 压到 47px）。想让竖屏字号更大，请调小各语言的 max_line_chars（例如 16 → 12，字号可回到 63px），不要把安全区放宽。自测：python scripts/test_safe_area.py"
   },
+  "placement": {
+    "_desc": "★ 字幕纵向落点（V0.7.6 起默认「视觉中心 6:4」，移植自 vidpure）。anchor=ratio 时把文字块**中心**放在 anchor_top × 画面高 处，用 \\an5\\pos 逐条定位 ⇒ 一行与两行字幕中心同线，且换分辨率不漂移；anchor=pixel 退回旧行为（各语言 margin_v_pct 距底，仍受 safe_area.min_bottom_px 约束）。",
+    "anchor": "ratio",
+    "anchor_top": 0.6,
+    "_ratio_hint": "0.6 = 距顶 6 : 距底 4。常见取值：0.55 更靠中、0.65 更靠下。安全区更严时会被自动上顶（qa_safe_area 的 anchor_clamped）。想放在画面底部 UI 之上而不挡人物胸口，先试 0.62–0.66。",
+    "_pixel_hint": "想恢复旧口径：{\"anchor\": \"pixel\"} —— 此时纵向位置由各语言 margin_v_pct 与 safe_area.min_bottom_px 取大者决定。"
+  },
   "tools": {
     "ffmpeg": "ffmpeg",
     "ffprobe": "ffprobe",
@@ -81,7 +88,7 @@
       "max_lines": 2,
       "max_cue_chars": 84,
       "cps_ok": [
-        6.0,
+        3.0,
         22.0
       ],
       "cps_hard_max": 26.0,
@@ -91,7 +98,8 @@
       "break_punct": ".,!?;:…—",
       "forbid_line_start": ".,!?;:)]}»…—",
       "forbid_line_end": "([{«",
-      "strip_chars": " "
+      "strip_chars": " ",
+      "_cps_note": "下限 3.0（原 6.0）—— 字幕停留时间含前后停顿，23 字台词铺在 6.2s 上就是 3.7 字/秒；低于下限只做参考计数，不报警（V0.7.6）"
     }
   },
   "audio": {

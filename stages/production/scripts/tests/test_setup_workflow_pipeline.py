@@ -77,7 +77,11 @@ class Base(unittest.TestCase):
     def full_setup(self, **over):
         kw = dict(style="live_action", episodes=30, ep_seconds=60,
                   image_model="local_comfyui", video_model="closed_source",
-                  resolution="1080x1920", pipeline="on", budget_coins=9000)
+                  resolution="1080x1920", pipeline="on", budget_coins=9000,
+                  # ★ 2026-10-22（用户要求 API Key 开工前必须确定）：账号不再"无云通道就免问"，
+                  #   纯本地项目必须显式声明 none + 理由。夹具统一带上。
+                  account="none",
+                  account_none_reason="测试：全本地/闭源，无云端通道")
         kw.update(over)
         return self.set_rc(**kw)
 
@@ -93,8 +97,10 @@ class TestProjectSetup(Base):
         st = PS.collect(self.ws)
         self.assertFalse(st["ok"])
         # 功能选项有实测默认值（4 步 / 0.8MP / h3 / 并发 2），默认即合规 → 不算缺项
-        self.assertEqual(len(st["missing"]), 6)
+        # ★ 2026-10-22：账号 Key 改为**恒必填**（不再因"无云通道"自动免项），空工作区缺 7 项
+        self.assertEqual(len(st["missing"]), 7)
         self.assertNotIn("video_options", st["missing"])
+        self.assertIn("account", st["missing"])
 
     def test_02_full_ok(self):
         self.assertEqual(self.full_setup(), 0)
@@ -194,6 +200,23 @@ class TestWorkflow(Base):
         s3 = next(r for r in ev["stages"] if r["id"] == "S3")
         self.assertTrue(s3["by_manual"])
 
+    def test_26b_s6_counts_distinct_shots_not_files(self):
+        """★ 2026-10-22（对账）：S6 判据按**镜头**去重，不按文件数。
+
+        现场：本项目 240 个镜头在多个批次里各留一份 final.mp4（返工没删旧批次），
+        旧实现数出 284 个文件 ⇒ 「≥240 达标」，实际缺镜也看不出来。
+        """
+        for batch in ("20261021_203211", "20261021_215735"):
+            for i in (1, 2):
+                self.touch("07-成片/%s/ep01_sc0%d/final.mp4" % (batch, i))
+        self.touch("06-提示词/data/shots.json",
+                   json.dumps([{"shot_id": "ep01_sc01"}, {"shot_id": "ep01_sc02"}]))
+        rows = WF.probe_stage(self.ws, WF.STAGES[5], 
+                              {"episodes": 1, "shots": 2})["rows"]
+        s6 = next(r for r in rows if "分段" in r["label"])
+        self.assertEqual(s6["found"], 2, "两批次各两份共 4 个文件，但只有 2 个镜头")
+        self.assertTrue(s6["ok"])
+
     def test_27_brace_glob(self):
         self.touch("04-资产/characters/char_01.png")
         ev = WF.evaluate(self.ws)
@@ -238,7 +261,8 @@ class TestPipeline(Base):
     def test_40_forecast_setup_missing(self):
         f = PL.forecast(self.ws)
         self.assertFalse(f["setup_ok"])
-        self.assertEqual(len(f["setup_missing"]), 6)
+        # ★ 2026-10-22：账号 Key 改为恒必填，空工作区缺 7 项（原 6）
+        self.assertEqual(len(f["setup_missing"]), 7)
 
     def test_41_forecast_budget(self):
         self.full_setup(episodes=10, budget_coins=9000)
@@ -400,13 +424,45 @@ class TestWorkflowApiAndAccount(Base):
         quiet(PS.apply_set, self.ws, ns(video_model="runninghub",
                                         video_workflow_id="wf_test_001"))
 
-    def test_80_not_required_without_cloud(self):
-        self.full_setup(video_model="closed_source")
+    def test_80_account_always_required_without_cloud(self):
+        """★ 2026-10-22（用户要求）：没有云端通道也**必须把 Key 这件事定下来**。
+
+        旧口径：无 RunningHub 通道 ⇒ `account.required=False` 直接通过（等于从没问过）。
+        新口径：两种合法终态，都必须显式拍板 ——
+          ① 登记真实账号；② `--account none --account-none-reason "..."` 声明不需要。
+        """
+        # ① 没声明 → 缺项（不是"无需"）
+        self.full_setup(account=None, account_none_reason=None)
         it = PS.collect(self.ws)["items"]
-        self.assertFalse(it["workflow_api"]["required"])
-        self.assertTrue(it["workflow_api"]["ok"])
-        self.assertFalse(it["account"]["required"])
+        self.assertFalse(it["workflow_api"]["required"], "工作流 API 仍按通道条件化")
+        self.assertTrue(it["account"]["required"], "账号必须恒为必填项")
+        self.assertFalse(it["account"]["ok"])
+        self.assertTrue(any("none" in m for m in it["account"]["missing"]))
+
+        # ② 声明 none 但不给理由 → 仍不通过
+        self.full_setup(account="none", account_none_reason=None)
+        it = PS.collect(self.ws)["items"]
+        self.assertFalse(it["account"]["ok"])
+        self.assertTrue(any("理由" in m for m in it["account"]["missing"]))
+
+        # ③ 声明 none + 理由 → 通过，且理由入单留痕
+        self.assertEqual(self.full_setup(account="none",
+                                         account_none_reason="全本地，无云端通道"), 0)
+        it = PS.collect(self.ws)["items"]
         self.assertTrue(it["account"]["ok"])
+        self.assertEqual(it["account"]["alias"], "none")
+        self.assertIn("全本地", it["account"]["note"])
+        ok, msg = PS.require(self.ws)
+        self.assertTrue(ok, msg)
+        self.assertIn("9/9", msg)
+
+    def test_80b_declaring_none_with_cloud_channel_is_rejected(self):
+        """有 RunningHub 通道时必须登记真实账号 —— "不需要 Key" 是非法声明。"""
+        self.full_setup(video_model="runninghub", video_workflow_id="wf_test_001",
+                        account="none", account_none_reason="想偷懒")
+        it = PS.collect(self.ws)["items"]
+        self.assertFalse(it["account"]["ok"])
+        self.assertTrue(any("不能声明" in m for m in it["account"]["missing"]))
 
     def test_81_rh_without_workflow_missing(self):
         quiet(PS.apply_set, self.ws, ns(video_model="runninghub",

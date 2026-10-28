@@ -215,6 +215,22 @@ def list_jobs(ws=None, limit=50) -> list:
     return [_row_to_job(r) for r in rows]
 
 
+def record_audit(ws, spec_id, argv=None, exit_code=None, estimate="", note="", actor="studio") -> None:
+    """写一条审计（Studio 的写操作也留痕：谁、对哪个工作区、做了什么、结果如何）。
+
+    与作业路径共用同一张 `audit` 表，所以前端「审计」卡片能一起看到。
+    """
+    try:
+        with _conn() as c:
+            c.execute("""INSERT INTO audit(ts, ws, spec_id, argv, exit_code, estimate, note, actor)
+                         VALUES(?,?,?,?,?,?,?,?)""",
+                      (time.time(), str(ws or ""), str(spec_id or ""),
+                       json.dumps(argv or [], ensure_ascii=False),
+                       exit_code, estimate or "", note or "", actor))
+    except sqlite3.Error:
+        pass  # 审计失败不能阻塞业务
+
+
 def audit_log(limit=100) -> list:
     with _conn() as c:
         rows = c.execute("SELECT * FROM audit ORDER BY ts DESC LIMIT ?", (int(limit),)).fetchall()
@@ -292,12 +308,26 @@ def _execute(job: dict, tokens: list) -> None:
         def on_line(line):
             append_event(job["id"], "log", line)
 
+        # 有些引擎脚本**只认环境变量**（如 gen_assets_local.py 要 SOLODRAMA_ASSET_MD）。
+        # 命令自己声明了 env 映射，这里在 fork 前解析好注入，浏览器永远碰不到命令拼接。
+        extra_env = None
+        try:
+            from . import commands as _CMD          # 延迟导入，避免与 app 的导入顺序耦合
+            _c = _CMD.get(spec)
+            if _c is not None:
+                extra_env = _c.env_for(job.get("values") or {})
+        except Exception:                            # noqa: BLE001
+            extra_env = None
+
         # run_stream 内部会 Popen；为支持取消，这里自行启动并注册句柄。
-        p = runner._popen(argv, ws=job["ws"])
+        p = runner._popen(argv, ws=job["ws"], extra_env=extra_env)
         proc_holder["pid"] = p.pid
         _RUNNING_JOBS[job["id"]] = p.pid
         with open(log_path, "w", encoding="utf-8", newline="") as fh:
             fh.write("# job %s\n# cmd %s\n" % (job["id"], " ".join(argv)))
+            if extra_env:
+                # 只记键名，不记值（值可能是路径，但保持日志干净）
+                fh.write("# env %s\n" % ", ".join(sorted(extra_env)))
             for raw in p.stdout:                                  # type: ignore[union-attr]
                 line = runner.mask_text(raw.rstrip("\r\n"))
                 fh.write(line + "\n")

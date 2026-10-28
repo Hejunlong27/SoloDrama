@@ -38,7 +38,8 @@ ffprobe -v error -select_streams v:0 -count_frames \
   母版（无字幕）→ A 图
   成片（有字幕）→ B 图
 比较：
-  字幕带（y ≥ H - MarginV - 2.6×Fontsize）的像素差异  vs  画面其余部分的差异
+  字幕带（ratio 模式 = 中心 y ± 块高/2 ± 0.8×Fontsize；pixel 模式 = y ≥ H - MarginV - 2.6×Fontsize）
+  的像素差异  vs  画面其余部分的差异
   字幕带内的【近白像素】数量变化
 判据：
   字幕带差异 ≫ 画面其余差异（局部性）  且  近白像素显著增加（白字黑边真的画上了）
@@ -96,8 +97,20 @@ ffprobe -v error -select_streams v:0 -count_frames \
 （200px 在 1080×1920 上是 10.4%，在 2560×1440 上只有 7.8%）。
 ⇒ 配置存像素，实现取「配置百分比边距」与「安全区下限」的**较大值**，任何画布都满足。
 
-**怎么断言**：`qa_safe_area(ass_path, cfg)` **回读写好的 ASS**，从 `PlayResX/Y` 与
-`Default` 样式行的 `MarginL/MarginR/MarginV` 算出实际几何再判 —— 断言看**产物**，不看意图。
+**★ V0.7.6 起纵向位置改了判法**：默认落点是**视觉中心 6:4**（文字块中心在 `0.6×高`，
+用 `\an5\pos` 逐条写进 Dialogue）。所以断言不能只看样式 `MarginV`（ratio 模式下它就是 0），
+必须分模式：
+
+| 模式 | 位置写在哪 | 判据 |
+|---|---|---|
+| `ratio`（默认） | 每条 Dialogue 的 `{\an5\pos(x,y)}` | ①文字块**下沿**距底 ≥ `min_bottom_px`；②所有条目 y **相同**且等于设计值 `round(anchor_top×H)`（容 1px）；③文字块上沿不出画面 |
+| `pixel`（旧） | 样式 `MarginV` | 距底 ≥ `min_bottom_px` |
+
+②「所有条目 y 相同」这一条是 6:4 的**本质断言** —— 它同时证明了「没有漏写 `\pos`」
+和「折行不会让字幕上下浮动」。
+
+**怎么断言**：`qa_safe_area(ass_path, cfg)` **回读写好的 ASS**，先认出用的是哪种模式，
+再按上表取实际几何 —— 断言看**产物**，不看意图。
 `--stage ass` 与"烧录前按实际分辨率重写 ASS"两处都会调用；不通过直接 `SystemExit`，不出片。
 
 **★ 竖屏陷阱（必读）**：字号若只按**高度**百分比算，竖屏 1088×1920 会得到 129px，

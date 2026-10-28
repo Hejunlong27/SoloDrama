@@ -1,8 +1,14 @@
 # 高清放大（Topaz Video 本地 AI 超分）
 
 > 首次实测：2026-09-21，《七大姑催婚》ep03，1440×832 → 2560×1480。
-> 引擎：本 Skill 的 `scripts/upscale.py`。项目侧完整手册：
-> `<workspace>/docs/高清放大-2K-实测与操作手册-2026-09-21.md`（实测手册落工作区 docs/）
+> 引擎：本阶段 `scripts/upscale.py`。完整实测手册（同一实验的 245 行长文）在
+> **`stages/production/references/hd-upscale-case-2560x1480.md`** —— 那份是仓内真源，
+> 不要再到工作区 `docs/` 里找（旧版这里指向 `<workspace>/docs/高清放大-2K-…md`，路径早已不存在）。
+>
+> ⚠️ 关于「2K」：`2560×1480` 是**那次横屏案例的目标分辨率**，不是固定档位。
+> 放大目标由 `<ws>/video-pipeline/config.upscale.json` 的 `target` 决定；
+> 竖屏项目是 `1080×1920`（1080P），产物名 `<ep>_master_1080x1920.mp4`。
+> 2026-10-22 之前产物叫 `<ep>_master_2k.mp4`（名不副实），旧名仍可读回。
 
 ## 1. 什么时候用它
 

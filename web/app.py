@@ -14,21 +14,94 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import os
+import re
 import time
+import urllib.parse
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import commands as CMD
-from core import inventory, jobs, paths, reader, runner, ux
+from core import (adapters, artifacts, commands as CMD, connections, inventory, jobs, paths,
+                    reader, runner, studio, ux)
+from core.llm import drafts as llm_drafts, gateway as llm_gateway, store as llm_store
+from core.llm import templates as llm_templates
+from core.llm.errors import LLMError
 
-app = FastAPI(title="SoloDrama 控制台", version="0.1.0",
+# ★ 静态资源的 MIME 必须显式钉住：Windows 上 mimetypes 会读注册表，
+#   历史机器可能把 .js 报成 text/plain —— 浏览器会拒绝加载 ES module。
+for _ext, _type in ((".js", "text/javascript"), (".mjs", "text/javascript"),
+                    (".css", "text/css"), (".svg", "image/svg+xml"),
+                    (".json", "application/json"), (".woff2", "font/woff2")):
+    mimetypes.add_type(_type, _ext)
+
+app = FastAPI(title="SoloDrama 控制台", version="0.2.0",
               description="AI 短剧批量生产引擎的本地操控台（观察者 + 调度者）")
 
 READONLY_MODE = os.environ.get("SOLODRAMA_CONSOLE_READONLY", "") not in ("", "0", "false")
+
+# ---------------------------------------------------------------------------
+# 访问保护（Studio 阶段新增）
+# ---------------------------------------------------------------------------
+# 策略（默认值见 web/STUDIO.md「配置」一节）：
+#   * 只允许回环 Host（127.0.0.1 / localhost / ::1）访问；其它 Host 一律 403 —— 防 DNS rebinding；
+#   * 跨站来源的**写请求**拒绝（Origin / Sec-Fetch-Site 双判据）；
+#   * 非本机客户端（局域网）必须带 `X-Console-Token`，且服务端必须配置了
+#     `SOLODRAMA_CONSOLE_TOKEN`；没配 token 就**不允许**局域网访问（宁可不可用，也不裸奔）。
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+_ALLOWED_HOSTS = set(LOOPBACK_HOSTS)
+for _h in (os.environ.get("SOLODRAMA_CONSOLE_ALLOWED_HOSTS") or "").split(","):
+    if _h.strip():
+        _ALLOWED_HOSTS.add(_h.strip().lower())
+
+CONSOLE_TOKEN = (os.environ.get("SOLODRAMA_CONSOLE_TOKEN") or "").strip()
+
+
+def _is_loopback(host: str) -> bool:
+    h = (host or "").strip().lower()
+    return h in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+def _host_ok(host: str) -> bool:
+    return (host or "").split(":")[0].strip().lower() in _ALLOWED_HOSTS
+
+
+def _origin_ok(request) -> bool:
+    """写请求的来源校验：无 Origin（同源导航/命令行）放行，跨站一律拒绝。"""
+    origin = request.headers.get("origin")
+    if origin:
+        try:
+            from urllib.parse import urlparse
+            oh = (urlparse(origin).hostname or "").lower()
+        except ValueError:
+            return False
+        if not _host_ok(oh):
+            return False
+    site = (request.headers.get("sec-fetch-site") or "").lower()
+    if site and site not in ("same-origin", "none"):
+        return False
+    return True
+
+
+@app.middleware("http")
+async def _access_guard(request, call_next):
+    host = request.headers.get("host") or ""
+    if not _host_ok(host):
+        return JSONResponse({"detail": "Host 不被允许（仅限本机访问）"}, status_code=403)
+    client = getattr(request.client, "host", "") or ""
+    if not _is_loopback(client):
+        # 局域网/远程：必须显式开启 token，否则一律拒绝
+        if not CONSOLE_TOKEN:
+            return JSONResponse({"detail": "非本机访问已禁用（未配置 SOLODRAMA_CONSOLE_TOKEN）"},
+                                status_code=403)
+        if request.headers.get("x-console-token") != CONSOLE_TOKEN:
+            return JSONResponse({"detail": "缺少或错误的访问令牌"}, status_code=401)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not _origin_ok(request):
+        return JSONResponse({"detail": "跨站请求被拒绝"}, status_code=403)
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +207,76 @@ def register_workspace(payload: dict = Body(...)):
     return _i_workspaces()
 
 
+@app.post("/api/projects/create")
+def project_create(payload: dict = Body(...)):
+    """新建剧项目：调用引擎真实的脚手架（`creation.py scaffold`），然后自动登记。
+
+    ★ 为什么不能走 `/api/run`：那条路要求 `ws` 已存在，而脚手架本身就是**建目录**。
+    安全：只读模式拦截；目标必须是绝对路径；已存在且非空的目录一律拒绝（不覆盖任何东西）。
+    """
+    _write_guard()
+    target = str(payload.get("target") or "").strip()
+    slug = str(payload.get("slug") or "").strip().lower()
+    title = str(payload.get("title") or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="缺少目标目录")
+    p = Path(target).expanduser()
+    if not p.is_absolute():
+        raise HTTPException(status_code=400, detail="目标目录必须是绝对路径（如 D:/剧本/我的新剧）")
+    p = Path(os.path.normpath(str(p)))
+    if p.exists():
+        if not p.is_dir():
+            raise HTTPException(status_code=400, detail="目标路径已存在且不是目录")
+        if any(p.iterdir()):
+            raise HTTPException(status_code=409,
+                                detail="目标目录已存在且非空；请换一个空目录，控制台不覆盖已有文件")
+    if not re.match(r"^[a-z0-9][a-z0-9_-]{1,40}$", slug):
+        raise HTTPException(status_code=400, detail="短标识只允许小写字母/数字/连字符，2-40 位")
+    if not title:
+        raise HTTPException(status_code=400, detail="缺少剧名")
+    if any(ch in title for ch in "\r\n\t"):
+        raise HTTPException(status_code=400, detail="剧名不允许换行")
+
+    try:
+        ep = int(payload.get("ep") or 30)
+        sec = int(payload.get("sec") or 60)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="集数/秒数必须是整数") from None
+    if not (1 <= ep <= 200):
+        raise HTTPException(status_code=400, detail="集数应在 1-200")
+    if sec not in (60, 70, 90):
+        raise HTTPException(status_code=400, detail="单集秒数只支持 60 / 70 / 90")
+    platform = str(payload.get("platform") or "ReelShort").strip()[:40] or "ReelShort"
+
+    cmd = CMD.get("project.scaffold")
+    values = {"target": str(p), "slug": slug, "title": title,
+              "platform": platform, "ep": ep, "sec": sec}
+    argv = cmd.build_argv(values, None)
+    res = runner.run_stream(argv, ws=None, timeout=180)
+    ok = res["rc"] == 0
+    text = runner.mask_text("\n".join(res["lines"][-200:]))
+
+    registered = False
+    if ok and p.is_dir():
+        reg = _registry()
+        if not any(it["path"] == str(p) for it in reg["items"]):
+            reg["items"].insert(0, {"path": str(p), "title": title, "added_at": time.time()})
+        reg["current"] = str(p)
+        paths.write_json(paths.REGISTRY_FILE, reg)
+        reader.clear_cache()
+        registered = True
+
+    jobs.record_audit(str(p), "project.scaffold", ["--workspace", str(p), "--slug", slug],
+                      res["rc"], note=title, actor="studio")
+    return {
+        "ok": ok, "rc": res["rc"], "elapsed": res["elapsed"],
+        "argv_display": " ".join(str(a) for a in argv[1:]),
+        "stdout": text,
+        "friendly": None if ok else ux.friendly_error(res["rc"], text),
+        "target": str(p), "title": title, "registered": registered,
+    }
+
+
 @app.post("/api/workspaces/current")
 def set_current(payload: dict = Body(...)):
     p = _require_ws(payload.get("path"))
@@ -170,9 +313,16 @@ def task_detail(task_id: str, ws: str = Query(...)):
 
 @app.get("/api/episodes")
 def episodes(ws: str = Query(...)):
+    """按集汇总（真源：<out>/<批次>/summary.json 的 shots[]，跨批次按镜头去重）。
+
+    ★ 2026-10-22 修复：旧实现读 `drama.py status --json` 的 `batch["shots"]`，
+      而该字段并不存在（batches 只给 totals/usage/elapsed/fuse），因此**恒返回空数组**。
+    """
     w = str(_require_ws(ws))
-    st = reader.status(w).get("data") or {}
-    return {"items": ux.episodes(st, None)}
+    items = studio.episodes(w)
+    for e in items:
+        e["state_text"] = {"done": "已完成", "doing": "进行中", "fail": "有失败", "todo": "还没开始"}[e["state"]]
+    return {"items": items, "count": len(items)}
 
 
 @app.get("/api/glossary")
@@ -279,7 +429,8 @@ def run_sync(payload: dict = Body(...)):
         return JSONResponse({"mode": "job", "job": job}, status_code=202)
 
     t0 = time.time()
-    res = runner.run_stream(argv, ws=w, timeout=int(payload.get("timeout") or 180))
+    res = runner.run_stream(argv, ws=w, timeout=int(payload.get("timeout") or 180),
+                            extra_env=cmd.env_for(values))
     out = {
         "mode": "sync",
         "spec_id": cmd.id, "title": cmd.title,
@@ -379,6 +530,421 @@ async def stream_all(after: int = Query(default=0)):
 
 
 # ---------------------------------------------------------------------------
+# Studio 只读接口（结构化优先；拿不到 JSON 时返回明确原因，不伪造数据）
+# ---------------------------------------------------------------------------
+CAPABILITIES = {
+    "workflow": {"ok": True, "source": "workflow.py status --json（S1–S11 + probes）"},
+    "episodes": {"ok": True, "source": "<out>/<批次>/summary.json 的 shots[]（跨批次按镜头去重）"},
+    "shots": {"ok": True, "source": "同上，含每镜产物与错误"},
+    "artifacts": {"ok": True, "source": "工作区相对路径白名单"},
+    "media": {"ok": True, "source": "本地文件流（Range 支持，仅媒体 6 类）"},
+    "cost": {"ok": True, "source": "ledger/runs/*.json 的 attempts[].usage"},
+    "env": {"ok": True, "source": "tools/env_check.py --json"},
+    "setup": {"ok": True, "source": "project_setup.py show --json（G-0 九项）"},
+    "storyboard_edit": {"ok": False, "reason": "分镜与提示词由创作阶段产出，控制台只读展示，不提供在线编辑"},
+    "script_edit": {"ok": False, "reason": "剧本正文由 AI 助手按四段法产出并落 03-剧本/，控制台不提供编辑器"},
+    "bgm": {"ok": False, "reason": "bgm.py 尚未纳入命令白名单（需先补白名单与门禁口径）"},
+    "character_audit": {"ok": False, "reason": "character_design.py 尚未纳入命令白名单"},
+    "release_check": {"ok": False, "reason": "release_check.py 会写 09-发行/release-manifest.json，属写操作，下一批接入"},
+    "release_export": {"ok": False, "reason": "release_export.py 尚未纳入命令白名单（默认干跑，需二次确认）"},
+    "llm": {"ok": True, "source": "core/llm 统一网关（OpenAI 兼容 / Ollama；Key 只在后端）"},
+    "llm_script_draft": {"ok": True, "source": "script.generate → 草稿 → 人工编辑 → confirm 落 03-剧本/"},
+    "llm_usage": {"ok": True, "source": "web/var/llm/usage.jsonl（供应商返回的 usage，金额缺失即未知）"},
+    "llm_stream": {"ok": False, "reason": "网关当前为非流式：SSE 逐字返回需要异步链路，下一批做"},
+    "multi_user": {"ok": False, "reason": "当前只有「只读模式」，没有账号与权限体系"},
+}
+
+
+@app.get("/api/studio/capabilities")
+def studio_capabilities():
+    return {"items": CAPABILITIES, "readonly": READONLY_MODE}
+
+
+@app.post("/api/studio/refresh")
+def studio_refresh(ws: str = Query(default="")):
+    studio.clear_cache()
+    reader.clear_cache()
+    return {"ok": True, "at": time.time()}
+
+
+@app.get("/api/studio/overview")
+def studio_overview(ws: str = Query(...)):
+    return studio.overview(str(_require_ws(ws)))
+
+
+@app.get("/api/studio/workflow")
+def studio_workflow(ws: str = Query(...)):
+    return adapters.norm_workflow(adapters.workflow_status(str(_require_ws(ws))))
+
+
+@app.get("/api/studio/setup")
+def studio_setup(ws: str = Query(...)):
+    return adapters.norm_setup(adapters.setup_show(str(_require_ws(ws))))
+
+
+@app.get("/api/studio/shots")
+def studio_shots(ws: str = Query(...), ep: str = Query(default="")):
+    w = str(_require_ws(ws))
+    data = studio.shots(w)
+    if ep:
+        data = dict(data)
+        data["items"] = [s for s in data["items"] if s["shot_id"].startswith(ep + "_")]
+    return data
+
+
+@app.get("/api/studio/episodes")
+def studio_episodes(ws: str = Query(...)):
+    w = str(_require_ws(ws))
+    items = studio.episodes(w)
+    for e in items:
+        e["state_text"] = {"done": "已完成", "doing": "进行中", "fail": "有失败", "todo": "还没开始"}[e["state"]]
+    return {"items": items, "count": len(items)}
+
+
+@app.get("/api/studio/prompt")
+def studio_prompt(ws: str = Query(...), shot: str = Query(...)):
+    return studio.prompt_of(str(_require_ws(ws)), shot)
+
+
+@app.get("/api/studio/cost")
+def studio_cost(ws: str = Query(...)):
+    return studio.cost(str(_require_ws(ws)))
+
+
+@app.get("/api/studio/env")
+def studio_env():
+    res = adapters.env_check()
+    return {"ok": res.get("ok"), "rc": res.get("rc"),
+            "data": res.get("data"), "reason": res.get("reason"),
+            "text_tail": res.get("text_tail") if not res.get("ok") else ""}
+
+
+# ---------------------------------------------------------------------------
+# 连接中心：LLM / ComfyUI / RunningHub 的配置、注入与只读探测
+# 纪律：保存是写操作但不计费；测试一律只读（0 费用），不产生作业。
+# ---------------------------------------------------------------------------
+@app.get("/api/connections")
+def connections_overview():
+    return connections.overview()
+
+
+@app.post("/api/connections/{kind}")
+def connections_save(kind: str, payload: dict = Body(...)):
+    k = str(kind or "").strip().lower()
+    if k not in connections.KINDS:
+        raise HTTPException(status_code=404, detail="未知通道：%s" % kind)
+    if READONLY_MODE:
+        raise HTTPException(status_code=403, detail="只读模式（demo）：连接配置不可修改")
+    body = payload or {}
+    patch = {k: {kk: vv for kk, vv in body.items() if kk not in ("api_key", "key", "apiKey")}}
+    connections.save(patch)
+    key = body.get("api_key")
+    if key is not None:
+        # 空串 = 清除；未传 = 保持不变。避免「只改地址」把 Key 抹掉。
+        connections.set_key(k, key if str(key).strip() else None)
+    return connections.overview()
+
+
+@app.post("/api/connections/{kind}/test")
+def connections_test(kind: str):
+    k = str(kind or "").strip().lower()
+    if k not in connections.KINDS:
+        raise HTTPException(status_code=404, detail="未知通道：%s" % kind)
+    return connections.test(k)
+
+
+@app.get("/api/studio/asset-md")
+def studio_asset_md(ws: str = Query(...)):
+    """候选「资产提示词 md」（出图命令要把它注入 SOLODRAMA_ASSET_MD）。"""
+    return studio.asset_mds(str(_require_ws(ws)))
+
+
+@app.get("/api/artifacts")
+def api_artifacts(ws: str = Query(...), dir: str = Query(default="")):
+    w = str(_require_ws(ws))
+    try:
+        data = artifacts.list_dir(w, dir)
+    except artifacts.PathDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    for it in data["items"]:
+        if it["servable"]:
+            it["url"] = "/media?ws=%s&rel=%s" % (urllib.parse.quote(w), urllib.parse.quote(it["rel"]))
+    return data
+
+
+@app.get("/api/file")
+def api_file(ws: str = Query(...), rel: str = Query(...)):
+    w = str(_require_ws(ws))
+    try:
+        data = artifacts.read_text(w, rel)
+    except artifacts.PathDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    data["text"] = runner.mask_text(data.get("text") or "")
+    return data
+
+
+@app.get("/api/studio/media-info")
+def api_media_info(ws: str = Query(...), rel: str = Query(...)):
+    return studio.media_info(str(_require_ws(ws)), rel)
+
+
+@app.get("/media")
+def media_stream(request: Request, ws: str = Query(...), rel: str = Query(...)):
+    """媒体流（支持 Range）。
+
+    安全：只服务工作区内的 6 类媒体扩展名；路径经 `artifacts.safe_rel` 做 realpath 校验。
+    """
+    w = str(_require_ws(ws))
+    try:
+        p = artifacts.safe_rel(w, rel)
+        mt = artifacts.media_type(p)
+    except artifacts.PathDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    size = p.stat().st_size
+    mtime = int(p.stat().st_mtime)
+    etag = '"%d-%d"' % (mtime, size)
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    rng = artifacts.parse_range(request.headers.get("range") or "", size)
+    common = {"Accept-Ranges": "bytes", "ETag": etag, "Cache-Control": "private, max-age=60"}
+    if rng is None:
+        return StreamingResponse(artifacts.iter_range(p, 0, size - 1), media_type=mt,
+                                 headers={**common, "Content-Length": str(size)})
+    start, end = rng
+    if end < start:
+        return Response(status_code=416, headers={"Content-Range": "bytes */%d" % size})
+    return StreamingResponse(artifacts.iter_range(p, start, end), status_code=206,
+                             media_type=mt,
+                             headers={**common,
+                                      "Content-Range": "bytes %d-%d/%d" % (start, end, size),
+                                      "Content-Length": str(end - start + 1)})
+
+
+# ---------------------------------------------------------------------------
+# LLM 服务层：AI 模型中心 + 创作闭环
+# ---------------------------------------------------------------------------
+# 安全口径（与引擎的计费门禁同构）：
+#   * 所有写操作先过只读模式；跨站写请求已由 `_access_guard` 拦掉；
+#   * **会产生真实调用的接口必须带 confirm**（否则 428），与 /api/run 的计费确认同一种表达；
+#   * Key 只进不出：任何响应里都不出现明文，只给 has_key / key_hint。
+def _write_guard():
+    if READONLY_MODE:
+        raise HTTPException(status_code=403,
+                            detail="只读模式：写操作被拒绝（SOLODRAMA_CONSOLE_READONLY=1）")
+
+
+def _llm_err(exc: LLMError, status=400):
+    raise HTTPException(status_code=status,
+                        detail={"kind": exc.kind, "message": exc.text, "retryable": exc.retryable})
+
+
+@app.get("/api/llm/meta")
+def llm_meta():
+    cfg = llm_store.load_config()
+    return {
+        "kinds": llm_store.KINDS,
+        "capabilities": llm_store.CAPABILITIES,
+        "presets": llm_store.PRESETS,
+        "store_dir": str(llm_store.LLM_DIR),
+        "provider_count": len(cfg.get("providers") or []),
+        "purpose_count": len(llm_templates.PURPOSES),
+        "template_count": len(llm_templates.TEMPLATES),
+        "readonly": READONLY_MODE,
+        "note": "Key 只存在后端：环境变量优先，其次本机保险箱；接口只回打码状态",
+    }
+
+
+@app.get("/api/llm/providers")
+def llm_providers():
+    return {"items": llm_store.list_providers(), "readonly": READONLY_MODE}
+
+
+@app.post("/api/llm/providers")
+def llm_provider_save(payload: dict = Body(...)):
+    _write_guard()
+    try:
+        prov = llm_store.upsert_provider(payload)
+    except LLMError as exc:
+        _llm_err(exc)
+    jobs.record_audit(payload.get("ws") or "", "llm.provider.save", [prov["id"], prov["kind"]], 0,
+                      note=prov["name"], actor="studio")
+    return {"ok": True, "provider": prov}
+
+
+@app.delete("/api/llm/providers/{pid}")
+def llm_provider_delete(pid: str, ws: str = Query(default="")):
+    _write_guard()
+    try:
+        out = llm_store.delete_provider(pid)
+    except LLMError as exc:
+        _llm_err(exc, 404)
+    jobs.record_audit(ws, "llm.provider.delete", [pid], 0, actor="studio")
+    return out
+
+
+@app.post("/api/llm/providers/{pid}/test")
+def llm_provider_test(pid: str, deep: int = Query(default=0), confirm: int = Query(default=0)):
+    """连接测试：默认只读模型列表（0 费用）；deep=1 会做一次最小生成，需 confirm=1。"""
+    _write_guard()
+    if deep and not confirm:
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "「最小生成测试」会向端点发起一次真实调用（可能产生少量费用）",
+            "cmd": "llm.test", "args": {"provider_id": pid, "deep": True},
+        })
+    return llm_gateway.get_gateway().test_provider(pid, deep=bool(deep))
+
+
+@app.get("/api/llm/purposes")
+def llm_purposes():
+    return {"items": llm_store.list_purposes(), "readonly": READONLY_MODE}
+
+
+@app.post("/api/llm/purposes/{pid}")
+def llm_purpose_save(pid: str, payload: dict = Body(...)):
+    _write_guard()
+    try:
+        out = llm_store.set_purpose(pid, payload or {})
+    except LLMError as exc:
+        _llm_err(exc, 404 if exc.kind == "not_found" else 400)
+    return {"ok": True, "purpose": out}
+
+
+@app.get("/api/llm/templates")
+def llm_templates_list():
+    items = []
+    for t in llm_templates.all_templates():
+        items.append({k: v for k, v in t.items() if k != "body"})
+    return {"items": items}
+
+
+@app.get("/api/llm/templates/{tid}")
+def llm_template_one(tid: str):
+    d = llm_templates.describe(tid)
+    if not d.get("ok"):
+        raise HTTPException(status_code=404, detail="模板不存在或正文缺失：%s" % tid)
+    return d
+
+
+@app.post("/api/llm/preview")
+def llm_preview(payload: dict = Body(...)):
+    """只渲染提示词，不调用模型、不计费。"""
+    try:
+        return llm_gateway.get_gateway().preview(payload.get("purpose") or "", payload.get("variables") or {})
+    except LLMError as exc:
+        _llm_err(exc, 404 if exc.kind == "not_found" else 400)
+    except KeyError:
+        _llm_err(LLMError("not_found", "未知模板"))
+
+
+@app.post("/api/llm/complete")
+def llm_complete(payload: dict = Body(...)):
+    """直接调用（可能计费）。必须显式 confirm。"""
+    _write_guard()
+    if not payload.get("confirm"):
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "该调用会向所选模型发起真实请求，可能产生费用",
+            "cmd": "llm.complete", "args": {"purpose": payload.get("purpose")},
+        })
+    res = llm_gateway.get_gateway().complete(
+        payload.get("purpose") or "", payload.get("variables") or {},
+        provider_id=payload.get("provider_id") or None,
+        model=payload.get("model") or None,
+    )
+    jobs.record_audit(payload.get("ws") or "", "llm.complete",
+                      [payload.get("purpose") or ""], 0 if res.get("ok") else 1,
+                      estimate="LLM 调用（金额见用量）", actor="studio")
+    return res
+
+
+@app.get("/api/llm/usage")
+def llm_usage(limit: int = Query(default=100), purpose: str = Query(default=None),
+              provider: str = Query(default=None)):
+    return llm_gateway.get_gateway().usage(limit=limit, purpose=purpose, provider=provider)
+
+
+# ---- 创作闭环：剧本草稿 -----------------------------------------------------
+@app.get("/api/studio/script/gates")
+def script_gates(ws: str = Query(...)):
+    return llm_drafts.gates(str(_require_ws(ws)))
+
+
+@app.get("/api/studio/script/context")
+def script_context(ws: str = Query(...), ep: int = Query(...)):
+    try:
+        return llm_drafts.context(str(_require_ws(ws)), int(ep))
+    except LLMError as exc:
+        _llm_err(exc)
+
+
+@app.get("/api/studio/drafts")
+def drafts_list(ws: str = Query(...)):
+    return llm_drafts.list_drafts(str(_require_ws(ws)))
+
+
+@app.get("/api/studio/drafts/{did}")
+def drafts_get(did: str, ws: str = Query(...)):
+    try:
+        return llm_drafts.get_draft(str(_require_ws(ws)), did)
+    except LLMError as exc:
+        _llm_err(exc, 404)
+
+
+@app.post("/api/studio/drafts/{did}/save")
+def drafts_save(did: str, payload: dict = Body(...), ws: str = Query(...)):
+    _write_guard()
+    try:
+        return llm_drafts.update_draft(str(_require_ws(ws)), did, payload or {})
+    except LLMError as exc:
+        _llm_err(exc, 404 if exc.kind == "not_found" else 400)
+
+
+@app.post("/api/studio/drafts/{did}/confirm")
+def drafts_confirm(did: str, payload: dict = Body(default=None), ws: str = Query(...)):
+    _write_guard()
+    body = payload or {}
+    if not body.get("confirm"):
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "确认后会把草稿写成正式剧本（03-剧本/ep_NN.md）；已有文件会被备份后覆盖",
+            "cmd": "llm.script.confirm", "args": {"draft_id": did},
+        })
+    try:
+        return llm_drafts.confirm(str(_require_ws(ws)), did,
+                                  overwrite=bool(body.get("overwrite")),
+                                  expected_sha=body.get("expected_sha") or None,
+                                  allow_simulated=bool(body.get("allow_simulated")))
+    except LLMError as exc:
+        _llm_err(exc, 404 if exc.kind == "not_found" else 400)
+
+
+@app.post("/api/studio/script/generate")
+def script_generate(payload: dict = Body(...), ws: str = Query(...)):
+    _write_guard()
+    if not payload.get("confirm"):
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "生成剧本正文会向所选模型发起真实请求，可能产生费用",
+            "cmd": "llm.script.generate", "args": {"ep": payload.get("ep")},
+        })
+    w = str(_require_ws(ws))
+    try:
+        res = llm_drafts.generate(w, int(payload.get("ep") or 0),
+                                  gateway=llm_gateway.get_gateway(),
+                                  provider_id=payload.get("provider_id") or None,
+                                  model=payload.get("model") or None,
+                                  timeout_s=payload.get("timeout_s") or None)
+    except LLMError as exc:
+        _llm_err(exc)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="集号不合法") from None
+    return res
+
+
+# ---------------------------------------------------------------------------
 # 启动钩子与静态资源
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
@@ -392,7 +958,12 @@ UI_DIR = paths.WEB_DIR / "ui"
 if UI_DIR.is_dir():
     app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 
+# Studio（新工作台）：独立目录、独立样式与 ES module，删掉 /studio 即回滚，旧的两张脸不受影响
+STUDIO_DIR = UI_DIR / "studio"
+if STUDIO_DIR.is_dir():
+    app.mount("/studio", StaticFiles(directory=str(STUDIO_DIR), html=True), name="studio")
+
 
 @app.get("/")
 def root():
-    return RedirectResponse("/ui/")
+    return RedirectResponse("/studio/" if STUDIO_DIR.is_dir() else "/ui/")

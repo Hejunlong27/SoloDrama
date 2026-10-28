@@ -17,6 +17,35 @@
 | 输出链接 | `results[].url` 约 24 小时有效 → 必须落盘（引擎已做） |
 | 失败原因 | 查询响应里的 `failedReason`（引擎会截断到 200 字符落盘） |
 
+## 一之二、`nodeInfoList` 是「覆盖表」，不是「完整表」★
+
+这是本项目踩过的最大一个隐性坑，必须写在契约层：
+
+> **只发要改的节点。没发的节点 = 平台沿用工作流里保存的那个值，不是空值。**
+
+后果：工作流的 `MiniMaxH3ReferenceToVideo` 有 `ref_image_0…5` 六个 LoadImage 槽位，
+本项目只覆盖 3 个（角色 1 + 场景 2）—— 另外 3 个槽位从头到尾都在送工作流里遗留的那张图。
+观众看到的是「画面里多出不属于本镜的人/景」，机器侧看到的是「6 路参考图把显存吃满」
+（`OOM_RETRY` 的注释「12 秒 + 6 路参考图在 24G 实例必 OOM」就是这 6 路）。
+
+因此引擎在提交前做**槽位卫生**（`pipeline.make_slot_guard`）：
+
+| 步骤 | 做法 | 成本 |
+|---|---|---|
+| 发现 | 每次运行调一次 `getJsonApiFormat` 拿完整 prompt 图，挑出全部图片槽（`LoadImage*` 或 fieldName 为 `image*`） | 只读，免费，不排队 |
+| 比对 | 与 `config.local.json` 的 `nodes` 覆盖集合做差集 | — |
+| 处置 | 差集里的槽位显式写占位图（1024×1024 中性灰），**顶掉**工作流里的残留图 | 占位图上传一次后被 20h 缓存复用 |
+
+配置在 `h3.unused_slots` / `image_providers.<名字>.unused_slots`：`mode`（blank/empty/keep）、
+`discover`、`slot_ids`（手工补充）、`value_form`（url/fileName）。
+
+**`value_form` 为什么默认 `url`**：本项目历史 30 集的 `char_ref`/`scene_ref` 提交的就是
+`download_url`（见各批次 `refs_used.json` 的 `submitted`）并成功出片 —— 这是唯一有大批量
+实证的形态。上传接口同时给了 `fileName`（`openapi/<sha256>.png`），只认文件名的工作流
+把 `value_form` 改成 `fileName` 即可。
+
+`--probe` 会逐行标注「图片槽·已覆盖 / 图片槽·未使用（提交时填占位图顶掉）」，并给合计。
+
 ## 二、待实测契约（代码已做容错，跑一次即可坐实）
 
 | # | 待确认项 | 现状 | 怎么验证 |

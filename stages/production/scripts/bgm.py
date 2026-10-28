@@ -129,6 +129,18 @@ def shared_lib_dir() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[1] / "assets" / "bgm"
 
 
+def canon_ep(s):
+    """集号规范化为 `epNN`（两位）；与 subtitle.py 同一口径（`26` / `EP26` 都接受）。
+
+    ★ 2026-10-22：`--ep 26` 曾能通过校验，但拼出来的计划/产物路径是 `subs/26/...`，
+      与 `subs/ep26/` 不是同一处 —— 不报错、只是"什么都没找到"。
+    """
+    m = re.match(r"(?:ep)?\s*0*(\d{1,4})$", str(s or "").strip(), re.I)
+    if not m:
+        raise SystemExit("--ep 无法识别：%r（要 epNN 或纯数字，例如 ep03 / 3）" % s)
+    return "ep%02d" % int(m.group(1))
+
+
 def subs_dir(ws: pathlib.Path, ep: str) -> pathlib.Path:
     return L.out_dir(ws) / "subs" / ep
 
@@ -282,9 +294,20 @@ def _data_dirs(ws: pathlib.Path) -> list:
     return uniq
 
 
+def _hi_res_names(ep: str) -> list:
+    """放大母版的候选名：新名（带分辨率）优先，旧名 `_master_2k` 兜底。
+
+    ★ 2026-10-22：放大产物名从 `<ep>_master_2k.mp4` 改为 `<ep>_master_<W>x<H>.mp4`
+      （竖屏 1080P 却叫 2k 是歧义源）。老项目不迁移，所以读取要按"新→旧"两级找。
+    """
+    d = ["%s_master_1080x1920.mp4" % ep, "%s_master_1440x2560.mp4" % ep,
+         "%s_master_2160x3840.mp4" % ep]
+    return d + ["%s_master_2k.mp4" % ep]
+
+
 def ep_duration(ws: pathlib.Path, ep: str) -> float:
     """整集成片时长：优先 ffprobe 母版；否则按 `h3_prompts.json` 的 duration 求和。"""
-    for name in ("%s_master_2k.mp4" % ep, "%s_master.mp4" % ep, "%s_subbed.mp4" % ep):
+    for name in _hi_res_names(ep) + ["%s_master.mp4" % ep, "%s_subbed.mp4" % ep]:
         p = subs_dir(ws, ep) / name
         if p.is_file():
             got = _probe(p)
@@ -383,10 +406,12 @@ def _recent_usage(ws: pathlib.Path) -> dict:
 
 
 def make_plan(ws: pathlib.Path, ep: str, mood: str = None, track_id: str = None,
-              gain_db: float = None, segments: int = 1) -> dict:
+              gain_db: float = None, segments: int = 1, force_gain: bool = False) -> dict:
     """生成铺排计划：默认整集一首、淡入淡出、开 ducking。
 
     `segments` > 1 时按等分切段（第二段起用同一首曲的不同起点），便于后续人工改成多首。
+    `gain_db` 是**显式指定增益**；`force_gain=True` 时同时写 `gain_locked`，表示
+    「我知道它超出推荐区间，就按我说的来」——否则 `plan` 不会把它落盘（见 cmd_plan）。
     """
     lib = load_library(ws)
     total = ep_duration(ws, ep)
@@ -442,6 +467,12 @@ def make_plan(ws: pathlib.Path, ep: str, mood: str = None, track_id: str = None,
                          "fade_out": dflt["fade_out"],
                          "loop": bool(track.get("loop", True)),
                          "note": "整集铺底" if n == 1 else "第 %d/%d 段" % (i + 1, n)})
+    # ★ 2026-10-22：显式指定增益时一并**锁定**，否则 mix 阶段的 sync_plan_gain
+    #   会按库里实测响度把它改回去 —— 于是「plan 里写 -3 dB、实际混的是 -14.6 dB」，
+    #   而 `plan` 打印的门禁还在按 -3 dB 报错。锁定后两边口径一致。
+    if force_gain and gain_db is not None:
+        for _s in segs:
+            _s["gain_locked"] = True
     return {"ep": ep, "total_s": total, "voice": ep_voice(ws), "mood": mood,
             # ★ threshold 从 0.05 提到 0.15：短剧人声几乎连续，0.05(-26dBFS) 会在整集
             #   持续压缩，BGM 被压到听不见（实测片尾无对白处才抬 13dB，有对白处几乎为零）。
@@ -512,14 +543,19 @@ def check_plan(ws: pathlib.Path, plan: dict) -> list:
             out.append({"level": "warn", "code": "B008", "msg": "第 %d 段没写 gain_db" % i})
         elif lu is not None:
             final = lu + g
+            # ★ 2026-10-22：`gain_locked` = 用户显式指定并确认过（plan --force-gain）。
+            #   此时不拦，只提示 —— 否则会出现「plan 报 FAIL、mix 却照混」的口径矛盾：
+            #   实测 ep29/ep30 日志里 `[FAIL] B009 -20.4 LUFS 过高` 紧跟着 `[OK] 已混音`。
+            _lvl = "warn" if s.get("gain_locked") else "hard"
+            _pre = "（增益已锁定，按指定值执行）" if s.get("gain_locked") else ""
             if final > BED_LUFS_MAX:
-                out.append({"level": "hard", "code": "B009",
-                            "msg": "第 %d 段最终铺底 %.1f LUFS 过高（> %.0f），会压住对白"
+                out.append({"level": _lvl, "code": "B009",
+                            "msg": _pre + "第 %d 段最终铺底 %.1f LUFS 过高（> %.0f），会压住对白"
                                    "（原曲 %.1f LUFS + 增益 %.1f dB）"
                                    % (i, final, BED_LUFS_MAX, lu, g)})
             elif final < BED_LUFS_MIN:
-                out.append({"level": "hard", "code": "B014",
-                            "msg": "第 %d 段最终铺底 %.1f LUFS 过低（< %.0f），基本听不见"
+                out.append({"level": _lvl, "code": "B014",
+                            "msg": _pre + "第 %d 段最终铺底 %.1f LUFS 过低（< %.0f），基本听不见"
                                    "（原曲 %.1f LUFS + 增益 %.1f dB）"
                                    % (i, final, BED_LUFS_MIN, lu, g)})
         elif g > -6:
@@ -602,13 +638,13 @@ def build_mix_cmd(ws: pathlib.Path, plan: dict, base: pathlib.Path, out: pathlib
 
 
 def target_video(ws: pathlib.Path, ep: str) -> pathlib.Path:
-    """混哪一条：优先 2K 母版（字幕烧在它上面），其次带字幕成片，再次 1440 母版。"""
+    """混哪一条：优先放大母版（字幕烧在它上面），其次带字幕成片，再次拼接母版。"""
     d = subs_dir(ws, ep)
-    for name in ("%s_master_2k.mp4" % ep, "%s_subbed.mp4" % ep, "%s_master.mp4" % ep):
+    for name in _hi_res_names(ep) + ["%s_subbed.mp4" % ep, "%s_master.mp4" % ep]:
         p = d / name
         if p.is_file():
             return p
-    return d / ("%s_master_2k.mp4" % ep)
+    return d / _hi_res_names(ep)[0]
 
 
 def sync_plan_gain(ws: pathlib.Path, plan: dict) -> list:
@@ -809,9 +845,26 @@ def cmd_library(a) -> int:
 def cmd_plan(a) -> int:
     ws = _ws(a.workspace)
     plan = make_plan(ws, a.ep, mood=a.mood, track_id=a.track, gain_db=a.gain_db,
-                     segments=a.segments)
+                     segments=a.segments, force_gain=bool(getattr(a, "force_gain", False)))
     issues = check_plan(ws, plan)
     print(render_plan(plan, issues))
+    hard = [i for i in issues if i["level"] == "hard"]
+    if hard:
+        # ★ 2026-10-22：**不写一个自己门禁都过不了的计划**。
+        #   旧行为是照样落盘 → `bgm check` 永远返回 2，而 `mix` 又会在
+        #   sync_plan_gain 里把增益改掉后偷偷成功，三方口径各不相同。
+        #   这里给出建议值 + 两种正确姿势（调增益 / 显式锁定）。
+        _lu = [t.get("loudness_lufs") for t in load_library(ws)["tracks"]
+               if str(t.get("id")) in {str(s.get("track")) for s in plan.get("segments") or []}]
+        _lu = [float(x) for x in _lu if x is not None]
+        print("\n[FAIL] 计划未通过门禁，**没有写盘**：")
+        for i in hard[:4]:
+            print("  - %s" % i["msg"])
+        if _lu:
+            print("  建议：--gain-db %.1f（按实测响度把铺底压到 %.0f LUFS）"
+                  % (TARGET_BED_LUFS - max(_lu), TARGET_BED_LUFS))
+        print("  若确实要按指定增益执行：加 --force-gain（会写 gain_locked，门禁降为提示）")
+        return EXIT_NOT_READY
     if not a.apply:
         print("\n（干跑：未写盘。加 --apply 写 %s）" % plan_path(ws, a.ep))
         return 0 if plan.get("segments") else EXIT_NOT_READY
@@ -835,10 +888,19 @@ def cmd_check(a) -> int:
     except (OSError, json.JSONDecodeError, ValueError) as e:
         print("[FAIL] 计划文件无法解析：%s" % e)
         return EXIT_NOT_READY
+    # ★ 2026-10-22（对账）：`check` 必须和 `mix` 看**同一份增益**。
+    #   旧实现直接读盘上的 gain_db，而 mix 会先跑 sync_plan_gain 按库里实测响度校正
+    #   ⇒ 同一份计划出现「check 报 FAIL、mix 却成功」（实测 ep29：check 说 -3.0dB 会压对白，
+    #   mix 实际用 -14.6dB）。这里先做同样的校正（只改内存对象，不写盘），再判门禁；
+    #   校正过时明确提示一句，避免"数字怎么变了"的困惑。
+    notes = sync_plan_gain(ws, plan)
     issues = check_plan(ws, plan)
     hard = [i for i in issues if i["level"] == "hard"]
+    for n in notes:
+        print("[i] %s（本次判定按校正后的值；写盘请重跑 plan --apply）" % n)
     if a.json:
-        print(json.dumps({"ok": not hard, "issues": issues}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": not hard, "issues": issues, "gain_notes": notes},
+                         ensure_ascii=False, indent=2))
     else:
         print(render_plan(plan, issues))
     return 0 if not hard else EXIT_NOT_READY
@@ -940,6 +1002,8 @@ def main() -> int:
     q.add_argument("--mood", default=None, help="情绪：%s" % "/".join(MOOD_DEFAULTS))
     q.add_argument("--track", default=None, help="指定曲目 id（默认按情绪取第一条）")
     q.add_argument("--gain-db", dest="gain_db", type=float, default=None)
+    q.add_argument("--force-gain", dest="force_gain", action="store_true",
+                   help="按 --gain-db 强制执行（写 gain_locked，门禁降为提示）")
     q.add_argument("--segments", type=int, default=1, help="等分成几段（默认 1 = 整集一首）")
     q.add_argument("--apply", action="store_true")
 
@@ -959,6 +1023,8 @@ def main() -> int:
     q.add_argument("--json", action="store_true")
 
     a = ap.parse_args()
+    if getattr(a, "ep", None):
+        a.ep = canon_ep(a.ep)            # 26 / EP26 / ep026 → ep26
     fn = {"library": cmd_library, "plan": cmd_plan, "check": cmd_check,
           "mix": cmd_mix, "credits": cmd_credits}.get(a.cmd)
     if not fn:

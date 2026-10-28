@@ -140,7 +140,7 @@ WorkBuddy 创作会话
 ├── output/
 │   ├── <batch>/<shot_id>/final.mp4 + state.json + summary.json     ← 出片层状态（原 schema 不动）
 │   ├── assets/characters|scenes/…                                  ← 资产参考图
-│   └── subs/<ep>/…（master.mp4 / master_2k.mp4 / .ass / cues.json / report.json / 样张）
+│   └── subs/<ep>/…（master.mp4 / master_<W>x<H>.mp4 / .ass / cues.json / report.json / 样张）
 │
 │ ⑤ drama assemble --ep N   【拼接+2K，跑完即停 → 问询】
 │ ⑥ drama subtitle --ep N --stage render  【用户确认后烧录】

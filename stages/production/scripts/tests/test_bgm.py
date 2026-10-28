@@ -366,8 +366,62 @@ class TestLoudnessGate(Base):
         B.sync_plan_gain(self.ws, plan)
         self.assertEqual(plan["segments"][0]["gain_db"], -22.0)
 
+    def test_76_check_and_mix_read_the_same_gain(self):
+        """★ 2026-10-22（对账）：`check` 与 `mix` 必须看同一份增益。
+
+        现场：盘上的计划写 `gain_db=-3`（用户手工指定的旧值），mix 会按库里实测响度
+        校正成 -14.6 再混；旧 `cmd_check` 却直接读盘上那份 ⇒ 同一集出现
+        「check 报 FAIL（-20.4 LUFS 会压对白）、mix 却成功」。现在 check 也做同样的
+        校正（只改内存不写盘），两边必须一致。
+        """
+        self.lib([self.track("tension_low_01", loudness_lufs=-17.4, gain_db=-14.6)])
+        self.touch_audio()
+        master = self.touch_master()
+        master.write_bytes(b"\x00" * 64)          # 干跑只校验存在性，不需要真视频
+        plan = {
+            "ep": "ep01", "total_s": 60.0, "voice": "h3",
+            "ducking": {"enabled": True, "threshold": 0.15, "ratio": 4,
+                        "attack": 20, "release": 300},
+            "segments": [{"track": "tension_low_01", "start": 0.0, "end": 60.0,
+                          "gain_db": -3.0, "fade_in": 1.5, "fade_out": 2.5, "loop": True}],
+        }
+        write(B.plan_path(self.ws, "ep01"), plan)
+
+        rc, out = quiet(B.cmd_check, argparse.Namespace(
+            workspace=str(self.ws), ep="ep01", json=False))
+        self.assertEqual(rc, 0, "check 应按校正后的 -14.6dB 判定通过，输出：%s" % out[-300:])
+        self.assertNotIn("B009", out)
+        self.assertIn("-14.6", out)
+
+        res = B.mix_episode(self.ws, json.loads(
+            B.plan_path(self.ws, "ep01").read_text(encoding="utf-8")), apply=False)
+        self.assertTrue(res.get("ok"), res.get("error"))
+        self.assertIn("volume=-14.6dB", res["cmd"], "mix 也应用同一个 -14.6dB")
+
 
 class TestSelectionAndCredits(Base):
+    def test_77_hi_res_name_prefers_resolution(self):
+        """★ 2026-10-22：放大母版正名 `<ep>_master_1080x1920.mp4` 优先于旧名 `_master_2k`。
+
+        旧名把 1080P 写成 2k，是"以为已经出过 2K"的歧义源。两者同时存在时必须用新名
+        （可能是不同分辨率的两次产物，取带真实分辨率的那份）。
+        """
+        d = self.subs
+        (d / "ep01_master.mp4").write_bytes(b"\x00" * 8)
+        (d / "ep01_master_2k.mp4").write_bytes(b"\x00" * 8)
+        new = d / "ep01_master_1080x1920.mp4"
+        new.write_bytes(b"\x00" * 8)
+        self.assertEqual(B.target_video(self.ws, "ep01"), new)
+        self.assertEqual(B._hi_res_names("ep01")[0], "ep01_master_1080x1920.mp4")
+
+    def test_78_legacy_2k_still_readable(self):
+        """老项目不迁移：只有 `_master_2k` 时仍要能读回。"""
+        d = self.subs
+        (d / "ep01_master.mp4").write_bytes(b"\x00" * 8)
+        legacy = d / "ep01_master_2k.mp4"
+        legacy.write_bytes(b"\x00" * 8)
+        self.assertEqual(B.target_video(self.ws, "ep01"), legacy)
+
     def test_60_lru_avoids_repeating_last_track(self):
         """相邻集不重复：ep01 用过 A 之后，ep02 应优先选从未用过的 B。"""
         self.lib([self.track("tension_a"), self.track("tension_b")])

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -210,7 +211,14 @@ class UploadCache:
             cached = self._data.get(key)
             if cached and (time.time() - cached["at"]) < self.ttl_seconds:
                 return cached
-            up = await client.upload_file(str(p))
+            # ★ 2026-10-22（实跑排障）：上传必须**包在重试里**。
+            #   `_request` 已把 httpx 的 ReadError/WriteError 等判为 retriable，
+            #   但这里从来没有重试循环 —— 瞬时读错直接把整镜判死。
+            #   实测台账 8 条 `上传文件网络异常: ReadError:` 全部因此白跑
+            #   （参考图通常几十 KB~几 MB，重试一次基本就过）。
+            up = await retry_async(lambda: client.upload_file(str(p)),
+                                   max_retry=3, backoff=(2, 6, 15),
+                                   label="上传参考图 %s" % p.name)
             self._data[key] = {"url": up["download_url"], "at": time.time(),
                                "fileName": up.get("fileName")}
             return self._data[key]
@@ -273,6 +281,265 @@ def _join_values(values: Sequence[str], multi: bool) -> Optional[str]:
 
 
 # ===========================================================================
+# 图片槽位卫生（2026-10-22 新增）
+# ===========================================================================
+# 事故：H3 工作流（MiniMaxH3ReferenceToVideo）有 ref_image_0…5 共 6 个 LoadImage
+#   槽位，本项目只覆盖其中 3 个（char_ref 1 + scene_ref 2）。**没发送的槽位不会
+#   变空 —— 平台沿用工作流里保存的那张图**，于是每次出片都白送 3 张残留参考图：
+#     · 画面被污染（多出不属于本镜的人物/景物，角色串味）
+#     · 显存被白吃（注释里「12 秒 + 6 路参考图在 24G 实例必 OOM」就是这 6 路）
+#   旧代码的注释曾断言「不发 = 沿用内置默认，安全」—— 这句判断是错的，已删。
+#
+# 对策：提交前把「工作流有、本项目不覆盖」的图片槽位**显式顶掉**。
+#   顶成什么：默认一张 1024×1024 中性灰占位图（无信息量，对生成几乎无影响）。
+#   尺寸取 1024 而不是 1×1/64×64：有些工作流对 ref_image 有尺寸下限，
+#   正方形又不会与任何画幅冲突；纯色 PNG 压缩后只有几 KB，上传几乎零成本。
+#   为什么不传空字符串：ComfyUI 的 LoadImage 会把 "" 当文件名 → Invalid image file。
+SLOT_BLANK_PX = 1024
+IMAGE_SLOT_CLASSES = ("LoadImage", "LoadImages", "LoadImageMask", "ImageLoad")
+
+
+def is_image_slot(node: Dict[str, Any]) -> bool:
+    """判断一条「可填节点」是否为图片输入槽。
+
+    优先看 classType（workflow 通道能拿到）；AI 应用通道没有 classType，
+    退化为按字段名判（image / image1…6 / imageUrls）。
+    """
+    ct = str(node.get("classType") or node.get("class_type") or "")
+    if any(k in ct for k in IMAGE_SLOT_CLASSES):
+        return True
+    fn = str(node.get("fieldName") or "")
+    # image / images / image1 / image_6 / imageUrls —— AI 应用通道的常见写法都在内
+    return bool(re.match(r"^image(s|_?\d+|_?urls?)?$", fn, re.I))
+
+
+def image_slot_nodes(nodes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """从 client.get_nodes() 的可填节点里挑出所有图片槽（按 nodeId 去重）。"""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for n in nodes or []:
+        if not isinstance(n, dict) or not is_image_slot(n):
+            continue
+        nid = str(n.get("nodeId") or "").strip()
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        out.append({"nodeId": nid,
+                    "fieldName": str(n.get("fieldName") or "image"),
+                    "default": n.get("fieldValue"),
+                    "classType": str(n.get("classType") or "")})
+    return out
+
+
+def covered_slot_ids(nodes_cfg: Dict[str, Any]) -> set:
+    """配置里声明覆盖的槽位 nodeId 集合（含 slots[] 与单节点两种形态）。"""
+    out = set()
+    for spec in (nodes_cfg or {}).values():
+        if not isinstance(spec, dict):
+            continue
+        nid = str(spec.get("nodeId") or "").strip()
+        if nid:
+            out.add(nid)
+        for s in (spec.get("slots") or []):
+            if isinstance(s, dict) and str(s.get("nodeId") or "").strip():
+                out.add(str(s["nodeId"]).strip())
+    return out
+
+
+def placeholder_png(path: Path, px: int = SLOT_BLANK_PX, gray: int = 128) -> Path:
+    """生成中性灰占位图（幂等：已存在就直接复用）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and path.stat().st_size > 0:
+        return path
+    Image.new("RGB", (px, px), (gray, gray, gray)).save(path, format="PNG")
+    return path
+
+
+@dataclass
+class SlotGuard:
+    """未使用图片槽位的处置计划。
+
+    三种模式：
+      blank（默认）→ 上传一张中性灰图，填进未使用槽位（安全，绝不带残留图）
+      empty        → 传空字符串（省一次上传，但 LoadImage 可能报 Invalid image file）
+      keep         → 保留工作流默认值（**危险**，必须写 reason；仅供确知残留图无害时用）
+    """
+    mode: str = "blank"
+    value_form: str = "url"                             # url（默认，与项目既有参考图一致）| fileName
+    unused: List[Dict[str, Any]] = field(default_factory=list)
+    ghost: List[str] = field(default_factory=list)      # 配置指向、工作流里不存在的槽位
+    covered: List[str] = field(default_factory=list)    # 配置里声明的全部 nodeId
+    covered_images: int = 0                             # 其中**图片类**槽位有几个
+    total: int = 0
+    blank_file: str = ""                                # 上传后的文件名（LoadImage.image 要它）
+    blank_url: str = ""                                 # 上传后的 download_url（数组型输入要它）
+    probed: bool = False
+
+    def fill_pairs(self) -> List[tuple]:
+        """未使用槽位的填充三元组（keep 模式或没图时返回空）。
+
+        值形态默认 `url`：本项目历史 30 集的 char_ref/scene_ref 提交的就是
+        download_url（见各批次 `refs_used.json` 的 `submitted`），平台能把 URL
+        落到 LoadImage 上 —— 这是唯一有大批量实证的形态，所以占位图跟它一致。
+        `value_form="fileName"`（形如 openapi/<sha>.png）作为备选，给只认文件名的
+        工作流用；两种值都在这里备好，切换只改配置。
+        """
+        if not self.unused or self.mode == "keep":
+            return []
+        if self.mode == "blank" and not (self.blank_file or self.blank_url):
+            return []
+        out: List[tuple] = []
+        for s in self.unused:
+            if self.mode == "empty":
+                val = ""
+            elif self.value_form == "fileName":
+                val = self.blank_file or self.blank_url
+            else:
+                val = self.blank_url or self.blank_file
+            out.append((s["nodeId"], s.get("fieldName") or "image", val))
+        return out
+
+    def summary(self) -> str:
+        if not self.probed:
+            return "图片槽位：未探测（unused_slots.discover=false 或该通道无图片输入）"
+        if not self.total:
+            return "图片槽位：工作流里没有图片输入槽（无需处置）"
+        head = ("图片槽位：工作流 %d 个 ｜ 本项目覆盖 %d ｜ 未使用 %d"
+                % (self.total, self.covered_images, len(self.unused)))
+        if self.unused:
+            ids = ", ".join(str(s["nodeId"]) for s in self.unused)
+            act = {"blank": "→ 填中性灰占位图顶掉（不顶就会沿用工作流里的残留图）",
+                   "empty": "→ 传空字符串（若报 Invalid image file 请改 mode=blank）",
+                   "keep": "→ ⚠ 保留工作流默认值，残留图会被当参考送进生成"}.get(
+                       self.mode, "→ 未知模式")
+            head += "\n  未使用槽位 [%s] %s" % (ids, act)
+        if self.ghost:
+            head += ("\n  ⚠ 配置指向的槽位在工作流里不存在：[%s] —— 工作流可能被改过，"
+                     "这些映射已失效" % ", ".join(self.ghost))
+        return head
+
+
+def _slot_cfg(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """取某通道的 unused_slots 配置（缺省即 blank + 自动发现）。"""
+    got = (spec or {}).get("unused_slots")
+    cfg = dict(got) if isinstance(got, dict) else {}
+    cfg.setdefault("mode", "blank")
+    cfg.setdefault("discover", True)
+    cfg.setdefault("slot_ids", [])
+    cfg.setdefault("reason", "")
+    cfg.setdefault("value_form", "url")
+    mode = str(cfg["mode"]).lower()
+    if mode not in ("blank", "empty", "keep"):
+        raise RunningHubError(
+            "unused_slots.mode='%s' 非法（只认 blank / empty / keep）" % cfg["mode"],
+            retriable=False)
+    if mode == "keep" and not str(cfg.get("reason") or "").strip():
+        raise RunningHubError(
+            "unused_slots.mode=keep 必须写 reason：保留工作流里的残留参考图会把"
+            "不属于本镜的人物/景物带进画面，确认无害才允许", retriable=False)
+    return cfg
+
+
+def _slot_cache_path(cache_dir: Path, key: str) -> Path:
+    return Path(cache_dir) / ("slots_%s.json" % re.sub(r"[^\w.-]+", "_", key))
+
+
+def _read_slot_cache(path: Path) -> Optional[List[Dict[str, Any]]]:
+    try:
+        got = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    nodes = got.get("nodes") if isinstance(got, dict) else None
+    return list(nodes) if isinstance(nodes, list) else None
+
+
+def _write_slot_cache(path: Path, kind: str, target_id: Any,
+                      nodes: Sequence[Dict[str, Any]]) -> None:
+    """把探测到的图片槽位落一份缓存。
+
+    用途：`--dry-run` 不联网，但预演最该看清「哪几个槽位会被顶掉」，
+    所以真实运行顺手写缓存，预演时读它。缓存只是**观测快照**，不是判据 ——
+    真实运行每次重新探测，避免工作流被改后还按旧快照办事。
+    """
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(
+            {"kind": kind, "target_id": str(target_id),
+             "probed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+             "nodes": list(nodes)}, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+async def make_slot_guard(ctx: "ShotContext", spec: Dict[str, Any], nodes_cfg: Dict[str, Any],
+                          kind: str, target_id: Any, cache_dir: Path,
+                          label: str = "", key: str = "h3") -> SlotGuard:
+    """构建某个通道（H3 / 图片模型）的槽位处置计划。
+
+    探测走 client.get_nodes()（只读、不计费），每次运行只拉一次并落缓存；
+    `--dry-run` 不联网，读上次缓存（没有就明确提示，不假装做过）。
+    探测失败不致命：退化为「只按配置发送」，并说明后果 ——
+    宁可少一层防护，也不让整批跑不起来。
+    """
+    cfg = _slot_cfg(spec)
+    covered = covered_slot_ids(nodes_cfg)
+    guard = SlotGuard(mode=cfg["mode"], value_form=str(cfg["value_form"]),
+                      covered=sorted(covered))
+    cache = _slot_cache_path(cache_dir, key)
+    manual = [str(i).strip() for i in (cfg.get("slot_ids") or []) if str(i).strip()]
+
+    nodes: Optional[List[Dict[str, Any]]] = None
+    if cfg.get("discover") and target_id:
+        if getattr(ctx, "dry_run", False):
+            nodes = _read_slot_cache(cache)
+            if nodes is None:
+                ctx.log("  · %s 图片槽位：预演不联网，本地也没有缓存快照 → 未能预演槽位顶替"
+                        "（先真实跑一次或跑 --probe 会生成缓存）" % (label or key))
+        else:
+            try:
+                nodes = await ctx.client.get_nodes(kind, str(target_id))
+                _write_slot_cache(cache, kind, target_id, nodes)
+            except Exception as e:                                   # noqa: BLE001
+                ctx.log("  ⚠ %s 图片槽位探测失败（%s）—— 本轮只按配置发送，"
+                        "未使用的槽位会沿用工作流里保存的图" % (label or key, e))
+                nodes = None
+
+    if nodes is None:
+        # 没探测到：只按手工补充的槽位处置（不能再靠发现）
+        guard.unused = [{"nodeId": i, "fieldName": "image"} for i in manual]
+        guard.total = len(covered) + len(guard.unused)
+        guard.probed = bool(guard.unused)
+    else:
+        slots = image_slot_nodes(nodes)
+        guard.total = len(slots)
+        guard.probed = True
+        guard.unused = [s for s in slots if s["nodeId"] not in covered]
+        guard.covered_images = len(slots) - len(guard.unused)
+        # ghost：配置指向了工作流里不存在的 nodeId（工作流被改过的信号）
+        all_ids = {str(n.get("nodeId")) for n in nodes if isinstance(n, dict)}
+        guard.ghost = sorted(i for i in covered if all_ids and i not in all_ids)
+        have = {s["nodeId"] for s in guard.unused}
+        for i in manual:                       # 手工补充（发现不到时也能兜）
+            if i not in covered and i not in have:
+                guard.unused.append({"nodeId": i, "fieldName": "image"})
+                have.add(i)
+
+    if guard.mode == "blank" and guard.unused:
+        png = placeholder_png(Path(cache_dir) / ("slot_blank_%d.png" % SLOT_BLANK_PX))
+        if getattr(ctx, "dry_run", False):
+            guard.blank_file = "[将上传] %s" % png.name
+            guard.blank_url = "[将上传] %s" % png.name
+        else:
+            # ★ 必须用 detail：LoadImage.image 收的是**上传后的文件名**，不是 URL
+            #   （get_or_upload 只给 download_url，直接塞进 image 字段会找不到文件）
+            detail = await ctx.uploads.get_or_upload_detail(ctx.client, png)
+            guard.blank_file = str(detail.get("fileName") or "")
+            guard.blank_url = str(detail.get("url") or "")
+    return guard
+
+
+# ===========================================================================
 # 运行时上下文
 # ===========================================================================
 class CtxBase:
@@ -303,6 +570,13 @@ class ShotContext:
     pending: Any = None
     # 本次运行归属的账号标识（多账号混跑时用于回溯；反馈 P0-4 第②条）
     account: str = ""
+    # ★ 2026-10-22：未使用图片槽位的处置计划，main.py 在运行开始时构建一次，全 shot 共用。
+    #   key = "h3" / "image"。为空时退化为旧行为（只按配置发送）。
+    slot_guards: Dict[str, "SlotGuard"] = field(default_factory=dict)
+
+    def slot_fill(self, key: str) -> List[tuple]:
+        g = self.slot_guards.get(key)
+        return g.fill_pairs() if g else []
 
     def log(self, msg: str) -> None:
         self.logger.log_sync(msg)
@@ -415,7 +689,8 @@ def _check_status(result: Dict[str, Any], tag: str) -> None:
 # 图片 Provider：RunningHub
 # ===========================================================================
 def build_image_node_list(prov: Dict[str, Any], *, prompt: str, ratio: Optional[str],
-                          char_values: List[str], scene_values: List[str]) -> List[Dict[str, Any]]:
+                          char_values: List[str], scene_values: List[str],
+                          slot_fill: Optional[Sequence[tuple]] = None) -> List[Dict[str, Any]]:
     """按模型注册表的 nodes 映射拼 nodeInfoList（图生图：提示词 + 角色图 + 场景图）。"""
     nodes = prov.get("nodes") or {}
     pairs: List[tuple] = []
@@ -450,6 +725,7 @@ def build_image_node_list(prov: Dict[str, Any], *, prompt: str, ratio: Optional[
             if joined:
                 pairs.append((n.get("nodeId"), n.get("fieldName"), joined))
 
+    pairs += list(slot_fill or [])          # 未使用槽位 → 占位图（顶掉工作流残留图）
     return RunningHubClient.build_node_list(pairs)
 
 
@@ -474,7 +750,8 @@ class RunningHubImageProvider:
             # 说明：参考图快照由流水线阶段④统一写 refs_used.json，这里只需解析出可提交值
             node_list = build_image_node_list(
                 self.prov, prompt=req.prompt, ratio=req.ratio,
-                char_values=char_values, scene_values=scene_values)
+                char_values=char_values, scene_values=scene_values,
+                slot_fill=ctx.slot_fill("image"))
 
         if ctx.dry_run:
             ctx.log(f"    [DRY-RUN] 图片 nodeInfoList = {json.dumps(node_list, ensure_ascii=False)}")
@@ -521,7 +798,8 @@ def get_image_provider() -> ImageProvider:
 # ===========================================================================
 def build_h3_node_list(*, prompt: str, frame_url: Optional[str], char_values: List[str],
                        scene_values: List[str], grid_url: Optional[str],
-                       duration: Any, ratio: Optional[str]) -> List[Dict[str, Any]]:
+                       duration: Any, ratio: Optional[str],
+                       slot_fill: Optional[Sequence[tuple]] = None) -> List[Dict[str, Any]]:
     """组装 H3 nodeInfoList。配置里 nodeId 为空的节点自动跳过。
 
     ★ 支持两种节点形态（2026-09-18 新增，为「本地 RH 接口版」这类工作流而改）：
@@ -535,8 +813,12 @@ def build_h3_node_list(*, prompt: str, frame_url: Optional[str], char_values: Li
                                 {"nodeId": "49", "fieldName": "image"},
                                 ... §共 N 个]}
     适用：H3「本地RH接口版」/对应 AI 应用有 6 个各自独立的 LoadImage（image1..image6）。
-    第 i 个参考图落到第 i 个槽位；参考图少于槽位时，后面的槽位**不发送**
-    （实测：不发 = 沿用工作流内置默认，安全，不会塞进多余角色）。
+    第 i 个参考图落到第 i 个槽位。
+
+    ⚠ 2026-10-22 更正：参考图少于槽位时，**后面没发送的槽位不是"空"** ——
+      平台沿用工作流里保存的那张图（实测会把残留的人脸/场景当参考送进生成）。
+      所以调用方必须传 `slot_fill`（由 make_slot_guard 生成）把未使用槽位显式顶掉。
+      `slot_fill=None` 只用于「已经确认工作流没有多余图片槽位」的场景。
     """
     nodes = C.H3.get("nodes") or {}
 
@@ -603,6 +885,7 @@ def build_h3_node_list(*, prompt: str, frame_url: Optional[str], char_values: Li
         if isinstance(spec, dict) and spec.get("nodeId") and spec.get("fieldName"):
             pairs.append((spec.get("nodeId"), spec.get("fieldName"),
                           None if spec.get("value") is None else str(spec.get("value"))))
+    pairs += list(slot_fill or [])          # 未使用槽位 → 占位图（顶掉工作流残留图）
     return RunningHubClient.build_node_list(pairs)
 
 
@@ -857,7 +1140,8 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
             return build_h3_node_list(
                 prompt=str(h3.get("prompt")), frame_url=frame_url,
                 char_values=char_values, scene_values=scene_values, grid_url=grid_url,
-                duration=duration, ratio=h3.get("ratio") or shot.get("ratio"))
+                duration=duration, ratio=h3.get("ratio") or shot.get("ratio"),
+                slot_fill=ctx.slot_fill("h3"))
 
         if ctx.dry_run:
             node_list = _nodes_for(h3.get("duration"))

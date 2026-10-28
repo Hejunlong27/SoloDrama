@@ -51,10 +51,14 @@ import _layout as L                                                      # noqa:
 # 源文件候选：**越靠前越接近可发布**
 #   ① 已编码发布版（1080p / hd / final / pub）—— 平台规格已达标，优先
 #   ② 烧录字幕成片（_subbed）—— 内容已完整，规格可能仍是中间分辨率
-#   ③ 2K 母版 → ④ 母版
+#   ③ 放大母版 → ④ 母版
+# ★ 2026-10-22：放大母版的正名是 `<ep>_master_<W>x<H>.mp4`（如 _master_1080x1920）；
+#   旧名 `_master_2k` 继续识别（老项目不迁移），且**排在正名之后** —— 两者同时存在时
+#   优先用带真实分辨率的那份。
 SOURCE_PREFERENCE = (
     ("encoded", re.compile(r"(1080p|2160p|_1080|_hd$|_hd_|_final|_pub\b|_publish)", re.I)),
     ("subbed", re.compile(r"_subbed", re.I)),
+    ("master_res", re.compile(r"_master_\d{3,4}x\d{3,4}", re.I)),
     ("master_2k", re.compile(r"_master_2k", re.I)),
     ("master", re.compile(r"_master", re.I)),
 )

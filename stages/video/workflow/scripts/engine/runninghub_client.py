@@ -244,15 +244,27 @@ class RunningHubClient:
     # ---------- 提交任务 ----------
     @staticmethod
     def build_node_list(pairs: Sequence[tuple]) -> List[Dict[str, str]]:
-        """把 [(nodeId, fieldName, value), ...] 转成官方 nodeInfoList（自动丢弃空节点）。"""
+        """把 [(nodeId, fieldName, value), ...] 转成官方 nodeInfoList（自动丢弃空节点）。
+
+        ★ 2026-10-22：按 (nodeId, fieldName) 去重，**先到先得**。
+          为什么：同一次提交里同一个槽位出现两次，平台行为没有保证（可能后者生效、
+          可能报错）。槽位卫生会在末尾追加「未使用槽位 → 占位图」，而真实参考图
+          在前，所以先到先得能保证「配置值永远优先于填充值」。
+          注意 value="" 是**有意发送的空值**（mode=empty），不能被当成空节点丢掉。
+        """
         out: List[Dict[str, str]] = []
+        seen: set = set()
         for item in pairs:
             node_id, field_name, value = item
             if node_id in (None, "") or field_name in (None, ""):
                 continue
             if value is None:
                 continue
-            out.append({"nodeId": str(node_id), "fieldName": str(field_name),
+            key = (str(node_id), str(field_name))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"nodeId": key[0], "fieldName": key[1],
                         "fieldValue": value if isinstance(value, str)
                         else json.dumps(value, ensure_ascii=False)})
         return out

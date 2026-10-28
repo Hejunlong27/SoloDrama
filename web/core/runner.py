@@ -110,7 +110,7 @@ def mask_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 # 环境与执行
 # ---------------------------------------------------------------------------
-def base_env(ws=None) -> dict:
+def base_env(ws=None, extra=None) -> dict:
     """构造子进程环境：工作区 + UTF-8 + 引擎目录指针。
 
     ★ `SOLODRAMA_WORKSPACE` 必须由本层显式注入 —— 引擎 CLI 没有 `--workspace` 全局参数。
@@ -120,6 +120,15 @@ def base_env(ws=None) -> dict:
     env["PYTHONIOENCODING"] = "utf-8"
     env.setdefault("SOLODRAMA_PYTHON", paths.engine_python())
     env.setdefault("RUNNINGHUB_BASE_URL", "https://www.runninghub.ai")
+    # 连接中心（web/var/connections.json）里存的地址/Key 在这里注入。
+    # 顺序很重要：先给默认值，再让用户保存的连接覆盖，最后 extra（命令级参数）覆盖两者。
+    try:
+        from . import connections as _CONN
+        for _k, _v in (_CONN.env_for() or {}).items():
+            if _v not in (None, ""):
+                env[str(_k)] = str(_v)
+    except Exception:  # noqa: BLE001
+        pass
     if ws:
         w = str(Path(ws).expanduser().resolve())
         env["SOLODRAMA_WORKSPACE"] = w
@@ -130,10 +139,13 @@ def base_env(ws=None) -> dict:
                 env["VIDEO_PIPELINE_WORKSPACE"] = str(lay.engine_root(w))
             except Exception:  # noqa: BLE001
                 pass
+    for k, v in (extra or {}).items():
+        if v not in (None, ""):
+            env[str(k)] = str(v)
     return env
 
 
-def _popen(argv, ws=None, cwd=None):
+def _popen(argv, ws=None, cwd=None, extra_env=None):
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -146,18 +158,18 @@ def _popen(argv, ws=None, cwd=None):
         errors="replace",
         bufsize=1,
         cwd=str(cwd or paths.REPO_ROOT),
-        env=base_env(ws),
+        env=base_env(ws, extra_env),
         **kwargs,
     )
 
 
-def run_stream(argv, ws=None, cwd=None, on_line=None, timeout=None):
+def run_stream(argv, ws=None, cwd=None, on_line=None, timeout=None, extra_env=None):
     """流式执行；返回 dict(rc, lines, elapsed)。
 
     `on_line(str)` 每行回调一次（作业层用来入库 + 推送 SSE）。
     """
     t0 = time.time()
-    proc = _popen(argv, ws=ws, cwd=cwd)
+    proc = _popen(argv, ws=ws, cwd=cwd, extra_env=extra_env)
     lines = []
     try:
         for raw in proc.stdout:                                  # type: ignore[union-attr]
@@ -182,9 +194,9 @@ def run_stream(argv, ws=None, cwd=None, on_line=None, timeout=None):
     return {"rc": proc.returncode, "lines": lines, "elapsed": round(time.time() - t0, 1)}
 
 
-def capture(argv, ws=None, timeout=120) -> tuple:
+def capture(argv, ws=None, timeout=120, extra_env=None) -> tuple:
     """一次性捕获（用于只读聚合）。返回 (rc, stdout, stderr合并)。"""
-    r = run_stream(argv, ws=ws, timeout=timeout)
+    r = run_stream(argv, ws=ws, timeout=timeout, extra_env=extra_env)
     return r["rc"], "\n".join(r["lines"]), r["elapsed"]
 
 

@@ -119,6 +119,19 @@ def main() -> int:
               L.release_episode_name(1) == "Episode01.mp4" and L.release_episode_name(40) == "Episode40.mp4",
               L.release_episode_name(40))
         check("≥100 集自动加位", L.release_episode_name(100) == "Episode100.mp4", L.release_episode_name(100))
+
+        # ---- 8. 放大母版正名优先（★ 2026-10-22） ----
+        # 旧名 `_master_2k` 把 1080P 写成 2k；两者同时存在时必须选带真实分辨率的那份。
+        ws4 = pathlib.Path(tmp) / "proj4"
+        (ws4 / "07-成片" / "subs" / "ep07").mkdir(parents=True, exist_ok=True)
+        d7 = ws4 / "07-成片" / "subs" / "ep07"
+        (d7 / "ep07_master.mp4").write_bytes(b"\x00" * 32)
+        (d7 / "ep07_master_2k.mp4").write_bytes(b"\x00" * 32)
+        (d7 / "ep07_master_1080x1920.mp4").write_bytes(b"\x00" * 32)
+        rc, out = run(ws4, "--all")
+        src = next((p["src"] for p in out.get("plans", []) if "Episode07" in p["dst"]), "")
+        check("放大母版优先取带分辨率的新名（_master_1080x1920）",
+              "1080x1920" in src, src)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

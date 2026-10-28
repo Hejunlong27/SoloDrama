@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 
-from . import paths, runner
+from . import jsonout, paths, runner
 
 _CACHE: dict = {}
 
@@ -72,41 +72,14 @@ def workspace_info(ws) -> dict:
 # 引擎 CLI（只读）
 # ---------------------------------------------------------------------------
 def _extract_json(text):
-    """从 CLI 输出里抽 JSON。
+    """从 CLI 输出里抽 JSON（实现已收编到 `core/jsonout.py`，本函数保留为兼容别名）。
 
-    ★ 实测两个坑（2026-10-17）：
-      ① `drama.py style status --json` / `models status --json` 会把子脚本输出以
-         `  | ` 前缀逐行回显（run_cmd 的人读格式），JSON 不是纯 stdout；
-      ② 人读区里还有**行内**小 JSON（如 `执行依据: {"workflow_id": "..."}`），
-         按「首个 { 到末个 }」切片会切到它，报 `Extra data`。
-    ⇒ 做法：先剥行首标记，再对每个 `{` 位置做 `raw_decode`，取**最大的**顶层字典。
+    ★ 历史坑（2026-10-17）：
+      ① `drama.py style status --json` 会把子脚本输出以 `  | ` 前缀逐行回显；
+      ② 人读区里还有**行内**小 JSON，按「首个 { 到末个 }」切片会报 Extra data。
+    现在统一由 `jsonout.extract_json` 处理：剥行首标记 → 每个 `{` raw_decode → 取跨度最大者。
     """
-    import json  # noqa: PLC0415
-    import re  # noqa: PLC0415
-
-    cleaned = "\n".join(re.sub(r"^\s*\|[ ]?", "", ln) for ln in (text or "").splitlines())
-    dec = json.JSONDecoder()
-    for src in (cleaned, text or ""):
-        best = None
-        best_span = -1
-        idx = 0
-        while True:
-            k = src.find("{", idx)
-            if k < 0:
-                break
-            try:
-                obj, end = dec.raw_decode(src[k:])
-            except ValueError:
-                idx = k + 1
-                continue
-            # ★ 取「跨度最大」的候选 —— 才是外层包裹对象；
-            #   按 key 数量取会误选嵌套的模型条目（实测踩过）。
-            if isinstance(obj, dict) and end > best_span:
-                best, best_span = obj, end
-            idx = k + 1
-        if best is not None:
-            return best
-    return None
+    return jsonout.extract_json(text)
 
 
 def _cli_json(args: list, ws, ttl=4, timeout=120):

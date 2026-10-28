@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SoloDrama Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div class="shell" id="shell">
+
+  <aside class="nav">
+    <div class="brand">
+      <div class="brand-mark">SD</div>
+      <div>
+        <div class="brand-name">SoloDrama</div>
+        <div class="brand-sub">STUDIO 0.2</div>
+      </div>
+    </div>
+    <div class="nav-scroll" id="nav" role="navigation" aria-label="主导航"></div>
+    <div class="nav-foot">
+      <button class="btn ghost sm" id="btnCollapse" title="折叠侧栏（窄屏自动折叠）">
+        <span data-ico="collapse"></span><span class="nav-text">折叠</span>
+      </button>
+      <span class="spacer"></span>
+      <a class="btn ghost sm" href="../advanced.html" title="旧版开发者视图（命令面板 / 审计）">
+        <span data-ico="terminal"></span>
+      </a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="proj-switch" id="projSwitch" title="切换剧项目">
+        <i class="dot todo proj-dot" id="projDot"></i>
+        <span class="proj-name" id="projName">未选择项目</span>
+        <span class="proj-meta" id="projMeta"></span>
+        <span data-ico="chevron"></span>
+      </button>
+
+      <div class="health" id="health"></div>
+      <span class="spacer"></span>
+      <span class="badge warn hide" id="roBadge" title="只读模式下所有写操作被拒绝">只读模式</span>
+      <span class="badge outline" id="engineBadge" title="引擎解释器">引擎</span>
+      <button class="btn ghost icon" id="btnRefresh" title="重新读取（清缓存）">
+        <span data-ico="refresh"></span>
+      </button>
+    </header>
+
+    <main class="content" id="view" tabindex="-1"></main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-h">
+    <h3 id="drawerTitle">详情</h3>
+    <span class="spacer"></span>
+    <button class="btn ghost icon" data-close="drawer" title="关闭">
+      <span data-ico="close"></span>
+    </button>
+  </div>
+  <div class="drawer-b" id="drawerBody"></div>
+  <div class="drawer-f" id="drawerFoot"></div>
+</aside>
+
+<div class="modal" id="modal" aria-hidden="true" role="dialog" aria-modal="true">
+  <div class="modal-h">
+    <span id="modalIcon" data-ico="alert"></span>
+    <h3 id="modalTitle">确认</h3>
+    <span class="spacer"></span>
+    <button class="btn ghost icon" data-close="modal" title="关闭">
+      <span data-ico="close"></span>
+    </button>
+  </div>
+  <div class="modal-b" id="modalBody"></div>
+  <div class="modal-f" id="modalFoot"></div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

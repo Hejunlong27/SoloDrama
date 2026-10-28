@@ -124,14 +124,16 @@ STAGES: list = [
         "id": "S6", "name": "视频生成", "dir": "film", "kind": "auto",
         "what": "按确认的视频通道批量出片（★计费）；失败一律 --resume 续跑，不重提",
         "probes": [
-            {"label": "分段成片", "glob": "**/final.mp4", "min": "shots"},
+            {"label": "分段成片", "glob": "**/final.mp4", "min": "shots", "count": "parent"},
         ],
         "commands": [
             "drama.py video plan（免费预估）",
             "drama.py video run --yes --concurrency 2（先 --limit 1 出小样）",
             "drama.py video run --yes --resume <批次>（续跑不重复扣费）",
         ],
-        "note": "并发实测建议 2：标称 ≤5，实际 5 会 421 排队。",
+        "note": "并发实测建议 2：标称 ≤5，实际 5 会 421 排队。"
+                "判据按**镜头**去重（count=parent）：同一镜在多个批次里各有 final.mp4 只算一个，"
+                "否则返工留下的旧批次会把缺口盖住。",
     },
     {
         "id": "S7", "name": "发行资料准备", "dir": "release", "kind": "agent",
@@ -162,11 +164,13 @@ STAGES: list = [
         "id": "S9", "name": "视频放大", "dir": "film", "kind": "auto",
         "what": "竖屏 1080P 交付硬要求：源 0.8MP 必须超分（Topaz tvai_up）",
         "probes": [
-            {"label": "放大母版", "glob": "**/*_master_2k.mp4", "min": "episodes",
-             "alt": ["**/*1080p*.mp4", "**/*_up*.mp4"]},
+            {"label": "放大母版", "glob": "**/*_master_[0-9]*x[0-9]*.mp4", "min": "episodes",
+             "alt": ["**/*_master_2k.mp4", "**/*1080p*.mp4", "**/*_up*.mp4"]},
         ],
         "commands": ["subtitle.py --workspace <ws> --ep epNN --stage upscale"],
-        "note": "源比例 ≠ 目标比例时先按高度放大再上下对称裁，别直接拉伸（会横向变形）。",
+        "note": "正名是 `<ep>_master_<W>x<H>.mp4`（竖屏 1080P → _master_1080x1920.mp4）；"
+                "旧名 `_master_2k.mp4` 仍识别（老项目不迁移）。"
+                "源比例 ≠ 目标比例时先按高度放大再上下对称裁，别直接拉伸（会横向变形）。",
     },
     {
         "id": "S10", "name": "音频与字幕", "dir": "film", "kind": "auto",
@@ -178,11 +182,13 @@ STAGES: list = [
         "commands": [
             "drama.py bgm plan --ep epNN --apply（情绪→增益/淡入淡出→ducking）",
             "drama.py bgm check --ep epNN（版权/覆盖/增益门禁）",
-            "subtitle.py --workspace <ws> --ep epNN --stage ass --sync-from asr（若可用）",
-            "subtitle.py --workspace <ws> --ep epNN --stage render（会自动混 BGM）",
+            "subtitle.py --workspace <ws> --ep epNN --stage align"
+            "（真对齐：CTC + whisper 校时；估算档会自动重建）",
+            "subtitle.py --workspace <ws> --ep epNN --stage render（会自动混 BGM 并烧字幕）",
         ],
         "note": "分工写死：画面与同期声归 H3（提示词里显式禁配乐），BGM 归后期。"
-                "烧录必须显式 -map 0:v -map 0:a?；输出体积 < 源 10% 视为失败。",
+                "字幕时间必须来自真对齐（report 的 align_methods 里不许留 script_estimate）；"
+                "渲染完按「帧数与底片一致 + 渲染自检检出字幕带」判成功，不看退出码。",
     },
     {
         "id": "S11", "name": "定稿输出", "dir": "release", "kind": "auto",
@@ -343,6 +349,19 @@ def probe_stage(ws: pathlib.Path, st: dict, ctx: dict) -> dict:
                 seen.add(k)
                 uniq.append(f)
         files = uniq
+        # ★ 2026-10-22（对账）：`count: "parent"` = 按**父目录名**去重后再计数。
+        #   为什么要这个：S6 的判据是「分段成片 ≥ 镜头数(240)」，而 `**/final.mp4` 会把
+        #   **每个批次目录**里的同名镜头都算一遍 —— 实测本项目 240 个镜头数出 284 个文件
+        #   （返工时新批次没删旧的），于是 20 个镜头没出也能"达标"。
+        #   镜头是唯一单位，同一个 shot 的多份产物只算一个。
+        if p.get("count") == "parent":
+            seen2, uniq2 = set(), []
+            for f in files:
+                k = f.parent.name.lower()
+                if k not in seen2:
+                    seen2.add(k)
+                    uniq2.append(f)
+            files = uniq2
         need = _resolve_min(p.get("min", 1), ctx)
         ok = len(files) >= need
         ok_all = ok_all and ok

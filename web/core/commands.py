@@ -42,6 +42,11 @@ SCRIPTS = {
     "layout": paths.STAGES_DIR / "_layout.py",
     "tools": paths.TOOLS_DIR / "cli.py",
     "comfy_check": paths.COMIFY_SCRIPTS / "comfy_client.py",
+    # ★ Studio 阶段新增（只读）：流程状态 / 开工前置 / 环境自检 / 剧本连续性
+    "workflow": paths.PROD_SCRIPTS / "workflow.py",
+    "setup": paths.PROD_SCRIPTS / "project_setup.py",
+    "env_check": paths.TOOLS_DIR / "env_check.py",
+    "continuity": paths.PROD_SCRIPTS / "script_continuity.py",
 }
 
 # 计费口径
@@ -85,7 +90,7 @@ class Param:
 class Command:
     def __init__(self, cid, group, title, script, script_key="", argv=(), params=(), flags=None,
                  bools=None, gate=None, billing=FREE, danger=READ, mode="job",
-                 help="", agent="", resources=()):
+                 help="", agent="", resources=(), env=None):
         self.id = cid
         self.group = group
         self.title = title
@@ -102,6 +107,19 @@ class Command:
         self.help = help
         self.agent = agent
         self.resources = list(resources)
+        # env: {环境变量名: 参数名} —— 有些引擎脚本**只认环境变量**（如 gen_assets_local.py 要
+        # SOLODRAMA_ASSET_MD），没有对应的命令行参数。这里声明映射，执行时由 runner 注入，
+        # 既不改引擎，也不让浏览器拼任何命令。
+        self.env = dict(env or {})
+
+    def env_for(self, values: dict) -> dict:
+        """把参数解析成要注入子进程的环境变量（空值不注入）。"""
+        out = {}
+        for env_name, key in self.env.items():
+            v = (values or {}).get(key)
+            if v not in (None, "", False):
+                out[str(env_name)] = str(v)
+        return out
 
     # -- 校验 --------------------------------------------------------------
     def validate(self, values: dict) -> dict:
@@ -237,6 +255,10 @@ WS_FLAG = {
     "prepare_refs": ("--workspace", "suffix"),
     "subtitle": ("--workspace", "suffix"),
     "upscale": ("--workspace", "suffix"),
+    "workflow": ("--workspace", "suffix"),
+    "setup": ("--workspace", "suffix"),
+    "continuity": ("--workspace", "suffix"),
+    # ★ env_check.py 没有 --workspace 参数（它只查解释器/ffmpeg/依赖），刻意不登记
 }
 
 
@@ -469,12 +491,20 @@ _add(_c("assets.local", "6 资产", "本地出图（￥0，默认干跑）", "dr
         params=[Param("kind", "类型", "enum", default="all", choices=["all", "char", "scene", "prop"]),
                 Param("only", "只做这些", "str", placeholder="char_01,char_02"),
                 Param("submit", "真的出图（占 GPU，不花钱）", "bool", default=False),
-                Param("force", "已生成的也重跑", "bool", default=False)],
+                Param("force", "已生成的也重跑", "bool", default=False),
+                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str",
+                      placeholder="<工作区>/04-资产/资产提示词.md")],
         resources=["GPU"],
-        help="默认干跑只列清单；--submit 才动 GPU。本机需 ComfyUI 在 8188 运行。",
+        env={"SOLODRAMA_ASSET_MD": "asset_md"},
+        help="默认干跑只列清单；--submit 才动 GPU。本机需 ComfyUI 在 8188 运行；"
+             "asset_md 不填时引擎会报「未设置 SOLODRAMA_ASSET_MD」。",
         agent="先干跑给我看清单与缺口；我确认后再加 --submit。出图前请确认本机 ComfyUI 是否在线。"))
 _add(_c("assets.check", "6 资产", "ComfyUI 在线体检", "drama",
         argv=["assets", "--engine", "local", "--check"], mode="sync", danger=READ,
+        # ★ 体检也要 asset_md：gen_assets_local.py 在解析 --check 之前就会检查
+        #   SOLODRAMA_ASSET_MD，缺了会直接 rc=1（看上去像「ComfyUI 没开」，其实是缺提示词文件）。
+        params=[Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
+        env={"SOLODRAMA_ASSET_MD": "asset_md"},
         help="只体检 ComfyUI 是否在线，不出图。",
         agent="不在线就告诉我怎么启动（ComfyUI 桌面版需手动启动 8188 端口）。"))
 _add(_c("assets.rh", "6 资产", "云端出图（★计费）", "drama",
@@ -483,21 +513,27 @@ _add(_c("assets.rh", "6 资产", "云端出图（★计费）", "drama",
         params=[Param("kind", "类型", "enum", default="all", choices=["all", "char", "scene", "prop"]),
                 Param("only", "只做这些", "str"),
                 Param("submit", "确认提交（★计费）", "bool", default=False),
-                Param("force", "已生成的也重跑（重复计费）", "bool", default=False)],
+                Param("force", "已生成的也重跑（重复计费）", "bool", default=False),
+                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
         resources=["RH"],
+        env={"SOLODRAMA_ASSET_MD": "asset_md"},
         help="人物约 27 RH币/张、场景约 $0.01/张；必须先过 G1 计费确认。",
         agent="先干跑列出清单、单价与合计金额，等我明确确认后再加 --submit；未确认前不要提交任何计费请求。"))
 _add(_c("assets.gen_char", "6 资产", "云端角色资产出图", "drama",
         argv=["assets", "--engine", "rh", "--kind", "char"], billing=PAID, danger=DANGER,
         flags={"--only": "only"}, bools={"--submit": "submit"},
-        params=[Param("only", "只做这些", "str"), Param("submit", "确认提交", "bool", default=False)],
-        resources=["RH"], help="与云端出图同通道，仅限定人物。",
+        params=[Param("only", "只做这些", "str"), Param("submit", "确认提交", "bool", default=False),
+                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
+        resources=["RH"], env={"SOLODRAMA_ASSET_MD": "asset_md"},
+        help="与云端出图同通道，仅限定人物。",
         agent="先给清单与金额，等我确认。"))
 _add(_c("assets.gen_scene", "6 资产", "云端场景资产出图", "drama",
         argv=["assets", "--engine", "rh", "--kind", "scene"], billing=PAID, danger=DANGER,
         flags={"--only": "only"}, bools={"--submit": "submit"},
-        params=[Param("only", "只做这些", "str"), Param("submit", "确认提交", "bool", default=False)],
-        resources=["RH"], help="与云端出图同通道，仅限定场景。",
+        params=[Param("only", "只做这些", "str"), Param("submit", "确认提交", "bool", default=False),
+                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
+        resources=["RH"], env={"SOLODRAMA_ASSET_MD": "asset_md"},
+        help="与云端出图同通道，仅限定场景。",
         agent="先给清单与金额，等我确认。"))
 
 # ===== 环节 7 参考图 =======================================================
@@ -689,6 +725,46 @@ _add(_c("diag.comfy", "诊断", "本地 ComfyUI 在线体检", "comfy_check",
 _add(_c("diag.guide", "诊断", "打印速查（drama.py guide）", "drama",
         argv=["guide"], mode="sync", danger=READ, help="命令速查全文。",
         agent="把速查整理成「常用五条命令」。"))
+
+
+# ===== 流程门禁（Studio：G10 顺序校验，只读） ==============================
+_add(_c("workflow.list", "S 流程门禁", "11 环节清单（含完成判据）", "workflow",
+        argv=["list"], mode="sync", danger=READ,
+        help="打印 S1–S11 的顺序、类型（内容/自动/校验）与产物判据。",
+        agent="把 11 环节按顺序列成表，标出哪些必须人工产出、哪些可自动跑。"))
+_add(_c("workflow.status", "S 流程门禁", "流程状态（JSON）", "workflow",
+        argv=["status", "--json"], mode="sync", danger=READ,
+        help="各环节完成情况 + 当前应做哪一环（判据来自产物 probes，不靠勾选）。",
+        agent="只报「当前环节 + 卡在哪一项判据」，不要复述整张表。"))
+_add(_c("workflow.check", "S 流程门禁", "前置环节校验（G10）", "workflow",
+        argv=["check"], mode="sync", danger=READ, gate="G10",
+        flags={"--stage": "stage"},
+        params=[Param("stage", "目标环节", "enum", required=True,
+                      choices=["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11"])],
+        help="前置环节未完成 → 退出码 4（不是程序错误，是顺序门禁）。",
+        agent="退出码 4 时列出阻塞环节与其缺的判据，不要建议跳步。"))
+
+# ===== 开工前置（G-0 九项，只读） ==========================================
+_add(_c("setup.show", "G-0 开工前置", "九项确认单（JSON）", "setup",
+        argv=["show", "--json"], mode="sync", danger=READ,
+        help="画风 / 集数 / 分辨率 / 出图通道 / 出片通道 / 工作流 API / 账号 / 视频参数 / 流水线预算。",
+        agent="列出未通过的项与缺什么，按「先画风再其余」的顺序给补齐步骤。"))
+_add(_c("setup.require", "G-0 开工前置", "开工门禁", "setup",
+        argv=["require"], mode="sync", danger=READ, gate="G-0",
+        help="九项未齐 → 退出码 4，不许开工。",
+        agent="未过就说明缺哪几项，并强调不能跳步。"))
+
+# ===== 环境自检（零网络） ==================================================
+_add(_c("env.check", "诊断", "环境自检（JSON，零网络）", "env_check",
+        argv=["--json"], mode="sync", danger=READ,
+        help="Python / Pillow / ffmpeg / ffprobe 是否齐备，缺一即停。",
+        agent="按「缺什么 + 怎么装」两列报告，不要贴整段 JSON。"))
+
+# ===== 剧本连续性（5.5 五锚，只读） ========================================
+_add(_c("script.continuity", "5 台词审计", "五锚连续性门禁（JSON）", "continuity",
+        argv=["--all", "--json"], mode="sync", danger=READ,
+        help="剧本 ↔ 分镜 ↔ 提示词的台词指纹、单句上限、总时长（E006/E009）。",
+        agent="按错误码分组列出，并指出要改哪一集的哪一句。"))
 
 
 def catalog(ws=None) -> list:

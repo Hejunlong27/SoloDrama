@@ -64,6 +64,37 @@ HTTP_TIMEOUT: float = 60.0
 
 
 # ==============================================================================
+# [1.5] 图片槽位卫生 —— 防止工作流里的「残留参考图」被当成输入
+# ==============================================================================
+# 背景（2026-10-22 实测）：RunningHub 提交只发「要改的节点」。工作流里**没有覆盖**
+#   的图片槽位不会变空 —— 平台沿用工作流里保存的那张图。实测 H3 工作流有 6 个
+#   LoadImage（MiniMaxH3ReferenceToVideo 的 ref_image_0…5），本项目只覆盖 3 个，
+#   另外 3 个每镜都在送同一张遗留图 ⇒ 画面被污染（多出不属于本镜的人物/景物），
+#   并白吃显存（6 路参考图在 24G 实例上采样阶段必 OOM）。
+#
+# 处置模式（mode）：
+#   blank   默认。上传一张 1024×1024 中性灰图填进未使用槽位（无信息量，最安全）
+#   empty   传空字符串。省一次上传，但 ComfyUI 的 LoadImage 可能报 Invalid image file
+#   keep    保留工作流默认值。**危险**，必须写 reason；只有确知残留图无害才允许
+#
+# discover=True 时每次运行会调一次只读接口拉工作流节点清单，自动找出全部图片槽位
+#   （免费、不排队），并把快照落到 <工作区>/slots_*.json 供 --dry-run 用。
+# discover=False 时用 slot_ids 手工指定，例如 ["146", "160", "161"]。
+#
+# value_form：占位图提交成什么形态
+#   url       默认。download_url —— 本项目历史 30 集的 char_ref/scene_ref 就是这个形态
+#             （见各批次 refs_used.json 的 submitted），是唯一有大批量实证的做法
+#   fileName  形如 openapi/<sha256>.png。只给「只认文件名」的工作流用
+SLOT_HYGIENE: dict = {
+    "mode": "blank",
+    "discover": True,
+    "slot_ids": [],
+    "reason": "",
+    "value_form": "url",
+}
+
+
+# ==============================================================================
 # [2] 图片模型注册表 —— 「选择香蕉 / GPT / 即梦」就是切换 ACTIVE_IMAGE_PROVIDER
 # ==============================================================================
 # nodes 里每个键的含义：
@@ -85,6 +116,7 @@ IMAGE_PROVIDERS: dict = {
         "kind": "workflow",       # workflow = 自建 ComfyUI 工作流 | ai-app = RunningHub AI 应用
         "id": "",                 # TODO[3] 填香蕉的 workflowId（若 kind=ai-app 则填 webappId）
         "instance_type": "default",
+        "unused_slots": dict(SLOT_HYGIENE),   # 未使用图片槽位的处置，见 [1.5]
         "nodes": {
             # TODO[3] 用 python main.py --probe 打印后回填下面 4 行
             "prompt":    {"nodeId": "", "fieldName": "text"},         # TODO 不确定是 text 还是 prompt
@@ -98,6 +130,7 @@ IMAGE_PROVIDERS: dict = {
         "kind": "workflow",       # 若 GPT 图像是 RunningHub 的 AI 应用，改成 "ai-app"
         "id": "",                 # TODO 填 GPT 图像工作流 ID
         "instance_type": "default",
+        "unused_slots": dict(SLOT_HYGIENE),   # 未使用图片槽位的处置，见 [1.5]
         "nodes": {
             "prompt":    {"nodeId": "", "fieldName": "text"},         # TODO
             "ratio":     {"nodeId": "", "fieldName": "aspectRatio"},  # TODO
@@ -110,6 +143,7 @@ IMAGE_PROVIDERS: dict = {
         "kind": "workflow",
         "id": "",                 # TODO 填即梦工作流 ID
         "instance_type": "default",
+        "unused_slots": dict(SLOT_HYGIENE),   # 未使用图片槽位的处置，见 [1.5]
         "nodes": {
             "prompt":    {"nodeId": "", "fieldName": "text"},         # TODO
             "ratio":     {"nodeId": "", "fieldName": "aspectRatio"},  # TODO
@@ -130,6 +164,11 @@ H3: dict = {
     "kind": "workflow",           # 你自己的 H3 工作流 -> workflow
     "id": "",                     # TODO[4] 填 H3 workflowId
     "instance_type": "default",
+
+    # ★ 2026-10-22 新增：未使用图片槽位的处置（见 [1.5]）
+    #   本项目只覆盖 char_ref + scene_ref 的槽位；工作流里剩下的 LoadImage 槽位
+    #   如果不顶掉，平台会沿用工作流里保存的图（实测 6 个槽只覆盖 3 个）。
+    "unused_slots": dict(SLOT_HYGIENE),
 
     # 首帧图取哪张： "cell_01" = 九宫格裁出的第 01 格 | "grid_raw" = 整张九宫格原图
     # 依据你的 H3 工作流实际接收什么来定。默认 cell_01（更像"首帧"）。
@@ -384,6 +423,41 @@ def _validate_nodes(where: str, nodes: Any) -> None:
             node.pop("multi", None)
 
 
+def _validate_slots(where: str, cfg: Any) -> None:
+    """校验 unused_slots 段（见 [1.5]）。非法只警告并回退默认，不拦住整个运行。"""
+    if cfg is None:
+        return
+    if not isinstance(cfg, dict):
+        _warn(f"{where}.unused_slots 应为对象，已忽略")
+        return
+    mode = str(cfg.get("mode") or "blank").lower()
+    if mode not in ("blank", "empty", "keep"):
+        _warn(f"{where}.unused_slots.mode='{cfg.get('mode')}' 非法（blank/empty/keep），"
+              "已回退 blank")
+        cfg["mode"] = "blank"
+    if cfg.get("mode") == "keep" and not str(cfg.get("reason") or "").strip():
+        # 不静默放行：保留工作流残留图会把不属于本镜的人物带进画面，
+        # 必须写清为什么可以。这里回退 blank 而不是崩掉整批。
+        _warn(f"{where}.unused_slots 用了 mode=keep 但没写 reason ——"
+              "保留工作流里的残留参考图会污染画面，已回退 blank")
+        cfg["mode"] = "blank"
+    if "discover" in cfg and not isinstance(cfg["discover"], bool):
+        cfg["discover"] = True
+    vf = str(cfg.get("value_form") or "url").lower()
+    if vf not in ("url", "filename"):
+        _warn(f"{where}.unused_slots.value_form='{cfg.get('value_form')}' 非法"
+              "（url/fileName），已回退 url")
+        vf = "url"
+    cfg["value_form"] = vf
+    ids = cfg.get("slot_ids")
+    if ids is not None and not isinstance(ids, list):
+        _warn(f"{where}.unused_slots.slot_ids 应为数组，已忽略")
+        cfg["slot_ids"] = []
+    elif isinstance(ids, list):
+        cfg["slot_ids"] = [str(x).strip() for x in ids
+                           if x is not None and str(x).strip()]
+
+
 def _coerce(key: str, value: Any) -> Any:
     """把 JSON 值转换成 config.py 里对应变量的 Python 类型；非法返回 _INVALID 哨兵。"""
     if key == "RETRY_BACKOFF":
@@ -490,6 +564,7 @@ def apply_overlay(path) -> list:
                               "（可选 workflow/ai-app），已忽略该字段")
                         pcfg.pop("kind", None)
                     _validate_nodes(f"image_providers.{pname}", pcfg.get("nodes"))
+                    _validate_slots(f"image_providers.{pname}", pcfg.get("unused_slots"))
             elif target == "H3":
                 if coerced.get("kind") not in (None, "workflow", "ai-app"):
                     _warn(f"h3.kind='{coerced.get('kind')}' 非法（可选 workflow/ai-app），已忽略该字段")
@@ -498,6 +573,8 @@ def apply_overlay(path) -> list:
                     _warn(f"h3.frame_source='{coerced.get('frame_source')}' 非法"
                           "（可选 cell_01/grid_raw），已忽略该字段")
                     coerced.pop("frame_source", None)
+                _validate_nodes("h3", coerced.get("nodes"))
+                _validate_slots("h3", coerced.get("unused_slots"))
                 _validate_nodes("h3", coerced.get("nodes"))
         elif target == "RUNNINGHUB_API_KEY":
             if os.getenv("RUNNINGHUB_API_KEY"):

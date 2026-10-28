@@ -35,6 +35,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -47,8 +48,8 @@ from runninghub_client import (
 )
 from pipeline import (
     ImageRequest, Logger, ShotContext, UploadCache, _record_run,
-    ST_FAILED, ST_PENDING, ST_SKIPPED, ST_SUCCESS,
-    get_image_provider, process_shot,
+    ST_FAILED, ST_PENDING, ST_RUNNING, ST_SKIPPED, ST_SUCCESS,
+    covered_slot_ids, get_image_provider, image_slot_nodes, make_slot_guard, process_shot,
 )
 from run_ledger import RunLedger
 
@@ -137,10 +138,43 @@ class StateStore:
             self._write_sync()
 
     def _write_sync(self) -> None:
+        """原子落盘。★ 2026-10-22（实跑排障）修两处并发缺陷。
+
+        事故现场（日报 395 条任务里 21 条失败）：
+            `[Errno 13] Permission denied: '...\\20261021_220116\\state.json'`
+            `[WinError 32] 另一个程序正在使用此文件: '...\\state.json'`
+        两个成因：
+          ① 临时文件名是**固定**的 `state.json.tmp`。批次目录被两个进程共用时
+             （实测同批次既有 AI 站又有 CN 站各起一个引擎），A 刚写完 tmp、B 也在写
+             同一个 tmp，A 的 `os.replace` 就会撞上 B 的句柄 ⇒ 权限/占用错误。
+             改为「PID + 线程号」唯一临时名，彻底消除互相踩踏。
+          ② Windows 上目标文件被任何进程以非共享方式打开时 `os.replace` 会失败，
+             这是瞬时状态（对方读完就释放）⇒ 加指数退避重试，而不是让整条任务失败。
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
+        tmp = self.path.with_name("%s.%d.%d.tmp"
+                                  % (self.path.name, os.getpid(), threading.get_ident()))
         tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, self.path)     # 原子替换
+        last = None
+        for attempt in range(6):
+            try:
+                os.replace(tmp, self.path)     # 原子替换
+                return
+            except (PermissionError, OSError) as exc:      # WinError 32/5/19 都归到这里
+                last = exc
+                time.sleep(0.05 * (2 ** attempt))          # 50/100/200/400/800ms
+        # 重试仍失败：不抛，退化为「直接覆盖写」再试一次。断点续跑信息丢一次
+        # 远好于整条镜头任务被判失败（旧行为会直接冒泡成 FAILED 并浪费已计费额度）。
+        try:
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2),
+                                 encoding="utf-8")
+        except Exception:                                   # noqa: BLE001
+            print(f"! state.json 写入失败（已忽略，续跑信息可能滞后）: {last}")
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 # ===========================================================================
@@ -261,12 +295,13 @@ async def run_probe() -> int:
         return 2
     prov = C.get_active_provider()
     targets = [(f"图片模型【{C.ACTIVE_IMAGE_PROVIDER}】{prov.get('label','')}",
-                prov.get("kind", "workflow"), prov.get("id"))]
-    targets.append(("H3 视频工作流", C.H3.get("kind", "workflow"), C.H3.get("id")))
+                prov.get("kind", "workflow"), prov.get("id"), prov.get("nodes") or {})]
+    targets.append(("H3 视频工作流", C.H3.get("kind", "workflow"), C.H3.get("id"),
+                    C.H3.get("nodes") or {}))
 
     async with RunningHubClient(C.RUNNINGHUB_API_KEY, C.RH_BASE_URL, C.HTTP_TIMEOUT,
                                 channel=C.POLL_CHANNEL) as client:
-        for label, kind, target_id in targets:
+        for label, kind, target_id, nodes_cfg in targets:
             print("\n" + "=" * 78)
             print(f"{label}   kind={kind}  id={target_id or '（未填写）'}")
             print("=" * 78)
@@ -281,6 +316,10 @@ async def run_probe() -> int:
             if not nodes:
                 print("  ! 没有拿到可编辑输入节点。可能：工作流未暴露 API 输入，或 ID 不正确。")
                 continue
+            # ★ 2026-10-22：标出每个图片槽的归属。工作流里的图片槽如果没被 nodes 覆盖，
+            #   提交时会沿用工作流里保存的图（= 残留参考图会混进生成）。
+            slots = {s["nodeId"] for s in image_slot_nodes(nodes)}
+            cov = covered_slot_ids(nodes_cfg)
             print(f"  共 {len(nodes)} 个可填节点 —— 把 nodeId / fieldName 抄进 config.py：\n")
             print(f"  {'nodeId':<12}{'fieldName':<24}{'示例值 / classType'}")
             print("  " + "-" * 74)
@@ -292,7 +331,16 @@ async def run_probe() -> int:
                 val_s = "" if val in (None, "") else str(val)
                 if len(val_s) > 48:
                     val_s = val_s[:45] + "..."
-                print(f"  {nid:<12}{fn:<24}{extra} {val_s}")
+                mark = ""
+                if nid in slots:
+                    mark = ("  ← 图片槽·已覆盖" if nid in cov
+                            else "  ← 图片槽·未使用（提交时填占位图顶掉）")
+                print(f"  {nid:<12}{fn:<24}{extra} {val_s}{mark}")
+            if slots:
+                print("\n  图片槽位合计 %d 个 ｜ 本项目覆盖 %d ｜ 未使用 %d%s"
+                      % (len(slots), len(slots & cov), len(slots - cov),
+                         "（未使用的会自动填占位图，不会沿用工作流里的残留图）"
+                         if slots - cov else ""))
     print("\n提示：nodeId 与 fieldName 回填到 <工作区>/config.local.json 的 nodes 里"
           "（或用 skill 的 configure.py apply-nodes 自动写入）。")
     return 0
@@ -515,6 +563,41 @@ async def run_pipeline(args: argparse.Namespace) -> int:
             pending=PendingDownloads(batch_dir),
             account=str(getattr(C, "ACCOUNT", "") or ""),
         )
+
+        # ★ 2026-10-22：图片槽位卫生。
+        #   工作流里「本项目没覆盖」的图片槽位，提交时如果不显式给值，平台会沿用
+        #   工作流里保存的那张图 —— 残留的人脸/场景会被当参考送进生成。
+        #   实测：H3 的 MiniMaxH3ReferenceToVideo 有 ref_image_0…5 六个槽位，
+        #   本项目只覆盖 3 个，另外 3 个一直在送同一张遗留图。
+        #   ⚠ 缓存落点 = `args._workspace`（引擎视角的工作区就是 `video-pipeline/`，
+        #     overlay、ledger 都在它下面；不要再拼一层 "video-pipeline"）。
+        slot_cache = args._workspace
+        _prov = getattr(provider, "prov", {}) or {}
+        _targets = [("h3", C.H3, C.H3.get("nodes") or {},
+                     C.H3.get("kind", "workflow"), C.H3.get("id"), "H3 视频工作流")]
+        if not getattr(args, "video_only", False):
+            _targets.insert(0, ("image", _prov, _prov.get("nodes") or {},
+                                _prov.get("kind", "workflow"), _prov.get("id"),
+                                "图片模型【%s】" % C.ACTIVE_IMAGE_PROVIDER))
+        for _key, _spec, _nodes_cfg, _kind, _tid, _label in _targets:
+            try:
+                _g = await make_slot_guard(ctx, _spec, _nodes_cfg, _kind, _tid,
+                                           slot_cache, label=_label, key=_key)
+            except RunningHubError as e:
+                await logger.log("✗ %s" % e)
+                return 4
+            ctx.slot_guards[_key] = _g
+            for _ln in _g.summary().splitlines():
+                await logger.log(_ln)
+        if any(g.ghost for g in ctx.slot_guards.values()):
+            await logger.log("⚠ 有槽位映射已失效（见上）—— 工作流可能被改过，"
+                             "请重跑 --probe 并核对 config.local.json 的 nodes")
+        if args.dry_run:
+            for _k, _g in ctx.slot_guards.items():
+                for _s in _g.unused:
+                    await logger.log("  · 预演：[%s] 槽位 %s（%s）将被顶掉，原默认=%s"
+                                     % (_k, _s["nodeId"], _s.get("classType") or "image",
+                                        truncate(_s.get("default"), 46)))
 
         if not args.dry_run:
             stats = await reconcile_inflight(ctx, shots)

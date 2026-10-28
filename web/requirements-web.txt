@@ -5,3 +5,9 @@
 
 fastapi==0.143.3
 uvicorn[standard]==0.54.0
+
+# ★ LLM 网关（web/core/llm/providers.py）需要 httpx：与引擎 requirements.txt **同一锁定版本**，
+#   避免两个 venv 之间出现协议行为差异（版本漂移会让「引擎能跑、控制台报错」很难查）。
+#   为什么不用标准库 urllib：连接池、超时语义、异常分层都不如 httpx，而 httpx 本来就是
+#   本项目既有依赖（不是新增技术选型）。
+httpx==0.28.1
