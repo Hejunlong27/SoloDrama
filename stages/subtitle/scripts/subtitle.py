@@ -1927,19 +1927,122 @@ def _try_bgm(ws, ep, base_video, disabled=False):
         os.path.basename(res["out"]), res.get("duration"))
 
 
-def stage_render(cfg, master, ass, out, soft=False):
+def stage_render(cfg, master, ass, out, soft=False, norm_vf=None):
     r = cfg["render"]
     if soft:
         run([cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
              "-i", master, "-i", ass, "-c", "copy", "-c:s", "mov_text", out])
         return out
+    # ★ 2026-10-30：归一化必须在烧字幕【之前】—— 字幕坐标按最终画布算，
+    #   crop 在前才不会让字幕跟着被裁掉一半。
     vf = "subtitles=%s" % esc_filter_path(ass)
+    if norm_vf:
+        vf = "%s,%s" % (norm_vf, vf)
     run([cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
          "-i", master, "-vf", vf,
          "-c:v", r["video_codec"], "-crf", str(r["crf"]), "-preset", r["preset"],
          "-pix_fmt", r["pix_fmt"],
          "-c:a", r["audio_codec"], "-movflags", "+faststart", out])
     return out
+
+
+# ---------------------------------------------------------------------------
+# 交付规格归一化（★ 2026-10-30）
+# ---------------------------------------------------------------------------
+# 为什么需要（平台驳回「检测到视频画面中存在黑边」）
+#   H3 出片是 672×1216（21:38 = 0.5526），不是 9:16（0.5625）；平台在 0.8MP + 32 对齐下
+#   只能给这个尺寸。整条链到交付层为了凑 1080×1920 用了 SAR 59:60（非方形像素），
+#   平台按显示比例重算时必然补边 —— 本地 cropdetect 满幅，所以自查永远查不出来。
+#   ⇒ 交付前一律 **crop-to-fill** 到精确 9:16 + SAR 1:1。绝不 pad（补边就是制造黑边）。
+DELIVERY_SPEC = {"width": 1080, "height": 1920, "sar": "1:1", "pix_fmt": "yuv420p"}
+DELIVERY_RATIO_TOL = 0.003          # 显示比例容差 0.3%
+# ★ 中间件命名刻意**不带分辨率数字**：`release_export.SOURCE_PREFERENCE` 里 `_1080`
+#   会被判成「已编码发布版」（rank 0，比 `_subbed` 还优先），于是归一化中间件会
+#   抢在带字幕的成片前面被导出 —— 那等于把「无字幕」问题原样复制一遍。
+NORM_SUFFIX = "_normdelivery.mp4"    # <ep>_normdelivery.mp4（中间件，绝不是发布版）
+
+
+def norm_filter(w, h):
+    """crop-to-fill 滤镜串。三步顺序不能换，理由见 delivery_spec.build_normalize_vf。"""
+    return ("scale=trunc(iw*sar/2)*2:ih,setsar=1,"
+            "scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,setsar=1,"
+            "crop=%d:%d,setsar=1" % (w, h, w, h))
+
+
+def spec_violations(dims, w, h, sar=None):
+    """dims=(像素宽, 像素高)。返回违规描述列表；空 = 合规。
+
+    ★ 判据是「显示比例」，不是「像素比例」—— SAR 59:60 的文件像素比是 0.5625，
+      看着完全符合，显示比例却是 0.5531，这正是黑边的来源。
+    """
+    out = []
+    pw, ph = dims
+    sn, sd = (1, 1)
+    if sar:
+        try:
+            a, b = str(sar).split(":")
+            sn, sd = int(a), int(b)
+        except (ValueError, TypeError):
+            sn, sd = (1, 1)
+    disp = pw * (float(sn) / float(sd))
+    if abs(disp / float(ph) - float(w) / h) / (float(w) / h) > DELIVERY_RATIO_TOL:
+        out.append("显示比例 %.4f（%d×%d SAR %d:%d）≠ %.4f"
+                   % (disp / ph, pw, ph, sn, sd, float(w) / h))
+    if (pw, ph) != (w, h):
+        out.append("像素尺寸 %d×%d ≠ %d×%d" % (pw, ph, w, h))
+    return out
+
+
+def _probe_sar(ffprobe, path):
+    p = subprocess.run([ffprobe, "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=sample_aspect_ratio,pix_fmt",
+                        "-of", "csv=p=0", path],
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    txt = p.stdout.decode("utf-8", "replace").strip().splitlines()
+    parts = (txt[0].split(",") if txt else [])
+    sar = parts[0].strip() if parts and parts[0] not in ("N/A", "") else None
+    fmt = parts[1].strip() if len(parts) > 1 else ""
+    return sar, fmt
+
+
+def ensure_delivery_spec(cfg, src, subs_dir, ep, *, target=None, force=False):
+    """把 src 归一化到交付规格，返回 (路径, 说明)。
+
+    已经合规就直接返回原路径（零成本复用）；不合规才重编码一次。
+    产物名 `<ep>_norm_<W>_<H>.mp4` —— 明确是**中间件**，不是发布版，
+    避免又变成「某个 1080p 文件被当成成片直接发出去」。
+    """
+    # target 既接受 (W, H) 也接受 {"width":…, "height":…}：调用方从 cfg["canvas"] 拿的是两种形状
+    if isinstance(target, (tuple, list)) and len(target) >= 2:
+        w, h = int(target[0]), int(target[1])
+    else:
+        t = target or DELIVERY_SPEC
+        w, h = int(t["width"]), int(t["height"])
+    dims = video_dims(cfg["tools"]["ffprobe"], src)
+    sar, fmt = _probe_sar(cfg["tools"]["ffprobe"], src)
+    bad = spec_violations(dims, w, h, sar)
+    if fmt and fmt != DELIVERY_SPEC["pix_fmt"]:
+        bad.append("像素格式 %s ≠ %s" % (fmt, DELIVERY_SPEC["pix_fmt"]))
+    if not bad and not force:
+        return src, "已是交付规格 %d×%d SAR 1:1（复用，不重编码）" % (w, h)
+
+    dst = os.path.join(subs_dir, ep + NORM_SUFFIX)
+    print("  规格归一化：%dx%d SAR %s → %d×%d SAR 1:1（crop-to-fill，不补边）"
+          % (dims[0], dims[1], sar or "1:1", w, h))
+    for b in bad:
+        print("    · %s" % b)
+    r = cfg["render"]
+    run([cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
+         "-i", src, "-vf", norm_filter(w, h),
+         "-c:v", r["video_codec"], "-crf", str(r["crf"]), "-preset", r["preset"],
+         "-pix_fmt", DELIVERY_SPEC["pix_fmt"],
+         "-c:a", "copy", "-movflags", "+faststart", dst])
+    got = video_dims(cfg["tools"]["ffprobe"], dst)
+    left = spec_violations(got, w, h, "1:1")
+    if left:
+        raise SystemExit("断言失败：归一化后仍不合规 —— %s" % "；".join(left))
+    print("    ⇒ %s（%d×%d）" % (os.path.basename(dst), got[0], got[1]))
+    return dst, "已归一化到 %d×%d SAR 1:1" % (w, h)
 
 
 def verify_render(cfg, master, subbed, cues, subs_dir, canvas=None):
@@ -2036,6 +2139,9 @@ def main():
                     help="放完直接烧字幕（默认跑到放大母版就停下，等用户决定要不要字幕）")
     ap.add_argument("--no-upscale", action="store_true",
                     help="关掉高清放大：仍是旧行为（1440p 母版直接烧字幕）")
+    ap.add_argument("--no-normalize", dest="no_normalize", action="store_true",
+                    help="不把成片归一化到交付规格（1080×1920 / SAR 1:1）。"
+                         "★ 默认归一化：H3 出片是 672×1216（21:38≠9:16），不归一化会被平台判「画面有黑边」")
     ap.add_argument("--lang", default=None)
     ap.add_argument("--no-bgm", dest="no_bgm", action="store_true",
                     help="不混 BGM（默认检测到 <ep>_bgm-plan.json 就自动混音；2026-10-21）")
@@ -2274,11 +2380,26 @@ def main():
         if base_video is None:
             raise SystemExit("没有可烧字幕的母版（先跑 --stage master 或 --stage upscale）")
         # ★ 画布必须等于【真的要烧的那条视频】的分辨率，否则 libass 会拉伸/偏移字幕
+        # ★ 2026-10-30：先做交付规格归一化（crop-to-fill），再按归一化结果写 ASS。
+        #   顺序不能反：ASS 的 PlayRes 一旦按 2560×4632 的放大母版写好，烧到 1080×1920
+        #   上虽然 libass 会按比例缩放，但安全区断言的口径就与实际不一致了。
+        _rewrite = False
+        if not getattr(args, "no_normalize", False):
+            # 目标一律取**交付画布**（config.subtitle.json 的 canvas），
+            # 不是放大目标 —— 放大到 2560×4632 只是为了超采样，交付仍须 1080×1920。
+            base_video, _spec_msg = ensure_delivery_spec(
+                cfg, base_video, subs_dir, args.ep,
+                target=(cfg["canvas"]["width"], cfg["canvas"]["height"]))
+            print("  ⑤.9 %s" % _spec_msg)
+            canvas = video_dims(cfg["tools"]["ffprobe"], base_video)
+            report["delivery_spec"] = {"canvas": "%dx%d" % canvas, "note": _spec_msg}
+            _rewrite = True
         real = video_dims(cfg["tools"]["ffprobe"], base_video)
-        if real != canvas:
-            print("   ⚠ 母版实际 %dx%d ≠ 预期 %dx%d，按实际分辨率重写 ASS"
-                  % (real[0], real[1], canvas[0], canvas[1]))
-            canvas = real
+        if _rewrite or real != canvas:
+            if not _rewrite:
+                print("   ⚠ 母版实际 %dx%d ≠ 预期 %dx%d，按实际分辨率重写 ASS"
+                      % (real[0], real[1], canvas[0], canvas[1]))
+                canvas = real
             info2 = write_ass(cues, cfg, ass, canvas=canvas)
             report["canvas_corrected"] = "%dx%d" % canvas
             qa2 = qa_safe_area(ass, cfg)

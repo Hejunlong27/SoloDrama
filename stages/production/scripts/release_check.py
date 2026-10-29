@@ -233,6 +233,40 @@ def main() -> int:
             warns.append("发布版集号不连续，缺 %s（连载中属正常；整季交付前须补齐）"
                          % ", ".join(L.release_episode_name(g).replace(".mp4", "") for g in gap[:10]))
 
+    # ---- 1.6 画面侧合规记录：**必须有，且必须新于成片**（★ 2026-10-30）----
+    #   为什么查记录而不是重跑检测：本脚本的约定是「零网络、零第三方依赖」，
+    #   重跑要调 ffprobe 扫全片；而 `compliance_media_check.py` 已经把结论落成 JSON。
+    #   这里只做举证核对 —— 记录存在、结论 ok、时间戳不早于最新成片（防止拿旧记录充数）。
+    #   注意：`release_export.py` 是硬拦（不合格根本不导出），本项是**二次举证**，
+    #   两者互为独立防线，任何一条被绕过都还能兜住。
+    try:
+        comp_dir = L.stage_dir(ws, "compliance")
+    except Exception:                                                      # noqa: BLE001
+        comp_dir = ws / "08-合规"
+    recs = sorted(comp_dir.glob("画面合规_*.json")) if comp_dir.is_dir() else []
+    if not recs:
+        downstream.append("缺画面侧合规记录（%s/画面合规_*.json）⇒ 跑 "
+                          "`python stages/production/scripts/compliance_media_check.py "
+                          "--workspace \"<ws>\" --all --from-source --sheet`" % comp_dir)
+    else:
+        latest = recs[-1]
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if data.get("verdict") != "ok":
+            blocked = [r for r in (data.get("results") or []) if r.get("verdict") == "blocked"]
+            fails.append("画面侧门禁未通过（%s，%d 集不合格）⇒ 修片后重跑 compliance_media_check，"
+                         "不要只重跑本检查" % (latest.name, len(blocked) or 1))
+        if eps:
+            newest_ep = max((f.stat().st_mtime for f in eps.values()), default=0)
+            try:
+                if latest.stat().st_mtime < newest_ep:
+                    warns.append("画面合规记录（%s）早于最新成片 —— 成片被替换过就该重跑门禁"
+                                 % latest.name)
+            except OSError:
+                pass
+
     # ---- 2. 版权资料：4 + 4 ----
     ai = scan_evidence(release, "ai-process", AI_PROCESS_IDS)
     src = scan_evidence(release, "source-file", SOURCE_FILE_IDS)

@@ -323,6 +323,25 @@ def _exec_release_materials(ws: pathlib.Path, setup: dict) -> int:
 
 
 def _exec_finalize(ws: pathlib.Path, setup: dict) -> int:
+    """S11 收尾：**先画面体检，再导出，最后物料验收**。
+
+    ★ 2026-10-30：体检必须在导出【之前】。此前是「先 `release_export` 再 `release_check`」，
+      而 `release_export` 只校验命名；于是「SAR 59:60 的硬凑版」和「无字幕放大母版」
+      都能先落进 `09-发行/剧集/`，等平台驳回再回滚 —— 发行目录里的文件一旦被上传就收不回来。
+      现在 `compliance_media_check --from-source` 查的是**待发布的 `_subbed` 成片**，
+      不合格直接返回 2，一个字节都不会写进发行目录。
+      `--sheet` 顺手把 12 帧拼图落到 `08-合规/抽帧/`，C4 品牌项的人审成本压到 3 秒/集。
+    """
+    gate = HERE / "compliance_media_check.py"
+    if gate.is_file():
+        rc = _run([_py(), str(gate), "--workspace", str(ws), "--all", "--from-source", "--sheet"], ws)
+        if rc:
+            print("  [BLOCK] 画面侧门禁未通过（规格/黑边/字幕），已中止导出。")
+            print("          修法见上；确认只是预览可手工跑 release_export.py --no-media-check")
+            return rc
+    else:
+        print("  [WARN] 未找到 compliance_media_check.py，画面侧门禁跳过")
+
     rc = _run([_py(), str(HERE / "release_export.py"), "--workspace", str(ws),
                "--all", "--apply"], ws)
     if rc:

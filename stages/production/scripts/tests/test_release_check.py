@@ -80,6 +80,14 @@ def build_full(ws: pathlib.Path) -> pathlib.Path:
         json.dumps({"title": "离婚后我成了首富", "tags": ["逆袭"]}, ensure_ascii=False),
         encoding="utf-8", newline="\n")
     (rel / "发布清单.md").write_text("# 发布清单\n", encoding="utf-8", newline="\n")
+    # ★ 2026-10-30：画面侧合规记录是**硬门禁**（release_export 先拦、release_check 再举证），
+    #   所以齐备的工作区必须带一份 ok 记录，否则「资料齐」也会被判下游未完成。
+    comp = ws / "08-合规"
+    comp.mkdir(parents=True, exist_ok=True)
+    (comp / "画面合规_20261030_120000.json").write_text(
+        json.dumps({"at": "2026-10-30T12:00:00+08:00", "target": "1080x1920",
+                    "verdict": "ok", "results": []}, ensure_ascii=False),
+        encoding="utf-8", newline="\n")
     (ws / "layout.json").write_text(
         json.dumps({"layout_version": 1, "engine_root": "video-pipeline", "stages": {}, "data_rel": "data", "out_rel": "output"}),
         encoding="utf-8", newline="\n")
