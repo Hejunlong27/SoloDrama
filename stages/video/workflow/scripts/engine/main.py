@@ -810,9 +810,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="临时切换图片模型（覆盖 active_image_provider，不写配置文件）")
     p.add_argument("--limit", type=int, default=None, help="只处理前 N 个分镜")
     p.add_argument("--only", default=None, help="只处理指定 shot_id，逗号分隔，如 shot_001,shot_003")
-    p.add_argument("--concurrency", type=int, default=C.CONCURRENCY,
-                   help=f"并发槽位数（★ 上限 {C.CONCURRENCY_MAX}，默认 {C.CONCURRENCY}）")
-    p.add_argument("--batch-size", type=int, default=C.BATCH_SIZE, help=f"每批分镜数（默认 {C.BATCH_SIZE}）")
+    # ★ 2026-10-30 修复：这两个 default 必须是 None。
+    #   argparse 的 default 在 build_parser() 时求值，而 config.local.json 的覆盖层
+    #   是在 parse_args() 之后由 _bootstrap() 才 apply 的 —— 写 default=C.CONCURRENCY
+    #   会让 overlay 里的 concurrency 被静默忽略（实测：overlay 写 5，实际仍按 2 跑），
+    #   而日志打印的是 C.CONCURRENCY（已是 5），比不生效更具欺骗性。
+    p.add_argument("--concurrency", type=int, default=None,
+                   help=f"并发槽位数（★ 上限 {C.CONCURRENCY_MAX}；缺省取配置，内置默认 {C.CONCURRENCY}）")
+    p.add_argument("--batch-size", type=int, default=None,
+                   help=f"每批分镜数（缺省取配置，内置默认 {C.BATCH_SIZE}）")
     p.add_argument("--strict", action="store_true", help="输入数据有问题时直接退出（非 0）")
     p.add_argument("--json", action="store_true",
                    help="以机器可读 JSON 输出（当前用于 --check；供 Agent 解析）")
@@ -824,6 +830,12 @@ def _bootstrap(args: argparse.Namespace) -> None:
     args._workspace = _resolve_workspace(args.workspace)
     for w in C.apply_overlay(args._workspace / C.OVERLAY_FILENAME):
         print(f"[WARN] {w}")
+    # ★ 2026-10-30：overlay 加载前无法确定真实缺省值（见 build_parser 的注释），
+    #   这里在 apply_overlay 之后把「用户没显式传」的参数补成配置里的值。
+    if getattr(args, "concurrency", None) is None:
+        args.concurrency = C.CONCURRENCY
+    if getattr(args, "batch_size", None) is None:
+        args.batch_size = C.BATCH_SIZE
     if args.provider:
         C.ACTIVE_IMAGE_PROVIDER = args.provider
 

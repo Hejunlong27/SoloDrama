@@ -845,8 +845,34 @@ def build_h3_node_list(*, prompt: str, frame_url: Optional[str], char_values: Li
         (node("prompt").get("nodeId"), node("prompt").get("fieldName"), prompt),
         (node("first_frame").get("nodeId"), node("first_frame").get("fieldName"), frame_url),
     ]
-    pairs += role_pairs("char_ref", char_values)
-    pairs += role_pairs("scene_ref", scene_values)
+    def _usable_slots(key: str) -> int:
+        """该角色配置里「真正会发出去」的槽位数（nodeId 非空才算）。"""
+        spec = node(key)
+        slots = spec.get("slots")
+        if isinstance(slots, list) and slots:
+            return len([s for s in slots if isinstance(s, dict) and s.get("nodeId")])
+        return 1 if spec.get("nodeId") else 0
+
+    # ★ 2026-10-29 P1 修复：scene_ref 未配槽位时，role_pairs 会为场景图生成
+    #   nodeId=None 的条目，随后被 build_node_list 当作「未配置节点」静默过滤 ——
+    #   实测 shot_001 的 scene_01 就是这么消失的，而日志仍打印「参考图匹配完成」。
+    #   这里把无处安放的场景图按「角色在前、场景在后」并入 char_ref 的取值序列。
+    char_vals = [v for v in (char_values or []) if v]
+    scene_vals = [v for v in (scene_values or []) if v]
+    if scene_vals and not _usable_slots("scene_ref") and _usable_slots("char_ref"):
+        cap = _usable_slots("char_ref")
+        merged = char_vals + scene_vals
+        if len(merged) > cap:
+            print("[WARN] 参考图 %d 张 > 可用槽位 %d 个，超出部分未发送（角色 %d / 场景 %d）：%s"
+                  % (len(merged), cap, len(char_vals), len(scene_vals), merged[cap:]))
+            merged = merged[:cap]
+        else:
+            print("[i] scene_ref 未配槽位，%d 张场景图已并入 char_ref 槽位（共 %d/%d）"
+                  % (len(scene_vals), len(merged), cap))
+        char_vals, scene_vals = merged, []
+
+    pairs += role_pairs("char_ref", char_vals)
+    pairs += role_pairs("scene_ref", scene_vals)
 
     def mapped(key: str, value: Any) -> Any:
         """按节点配置的 value_map 换值。
@@ -1072,9 +1098,14 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
                     f"{shot_id}_{len(paths):02d}）")
 
         # ---------- 整条链路是否已完成？ ----------
+        # ★ 2026-10-29 P0 修复：dry-run 也要识别「已完成」。
+        #   旧实现把 `not ctx.dry_run` 写进跳过条件，导致预演看不到已完成段（低估跳过数），
+        #   同时下面的 dry-run 分支会把 video_status 无条件写回 PENDING ——
+        #   于是「跑过一次 dry-run」就会让下一次真实 --resume 重复提交、重复扣费。
         final_mp4 = sdir / "final.mp4"
-        if (not ctx.dry_run and state.get("video_status") == ST_SUCCESS and final_mp4.is_file()):
-            ctx.log(f"[{shot_id}] ✓ 视频已存在，该分镜全部完成，跳过（不再重复上传参考图）")
+        if state.get("video_status") == ST_SUCCESS and final_mp4.is_file():
+            ctx.log(f"[{shot_id}] ✓ 视频已存在，该分镜全部完成，跳过（不再重复上传参考图）"
+                    + ("（dry-run 预览，未改状态）" if ctx.dry_run else ""))
             return ST_SUCCESS
 
         # ---------- ③ 取 H3 提示词 ----------
@@ -1147,7 +1178,9 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
             node_list = _nodes_for(h3.get("duration"))
             ctx.log(f"[{shot_id}] ⑤ [DRY-RUN] H3 nodeInfoList = "
                     f"{json.dumps(node_list, ensure_ascii=False)}")
-            await ctx.state.update(shot_id, video_status=ST_PENDING)
+            # ★ 2026-10-29 P0 修复：dry-run 绝不写状态。
+            #   旧实现 `await ctx.state.update(shot_id, video_status=ST_PENDING)` 会把已完成段
+            #   打回待跑，下一次 --resume 重新提交 = 重复扣费（每次 43 RH币/段）。
             return ST_PENDING
 
         async def _on_video_created(tid: str) -> None:
