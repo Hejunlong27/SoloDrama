@@ -46,6 +46,13 @@ import urllib.parse
 import urllib.request
 import uuid
 
+# 同目录模块：端口识别 / 槽位裁剪（引擎侧唯一实现，见 comfy_ports.py 顶部说明）
+try:
+    from comfy_ports import describe as ports_describe, prune_for_refs
+except ImportError:                                      # 缺了就降级：不裁也不报错
+    ports_describe = None
+    prune_for_refs = None
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -219,6 +226,38 @@ def list_nodes(workflow_path: str = "") -> int:
     return 0
 
 
+def list_ports(workflow_path: str = "") -> int:
+    """离线列端口：这个工作流能喂哪些值、最多接几张参考图、产物从哪出来。"""
+    if ports_describe is None:
+        print("[FAIL] 同目录缺少 comfy_ports.py，无法识别端口")
+        return 2
+    wf = load_workflow(workflow_path)
+    d = ports_describe(wf)
+    ROLE_CN = {"image": "参考图", "prompt": "提示词", "text": "文本编码", "steps": "步数",
+               "seed": "种子", "aspect": "画幅", "megapixels": "百万像素",
+               "seconds": "时长", "int": "整数", "filename": "文件名前缀"}
+    print("工作流  : %s（%d 个节点）" % (workflow_path or DEFAULT_WORKFLOW, d["node_count"]))
+    print("参考图  : 最多 %d 个槽（加载器节点 %s）"
+          % (d["capacity"], "、".join(d["slots"]) or "无"))
+    print("输出节点: %s" % ("、".join(d["outputs"]) or "未识别到（可能是纯计算图）"))
+    if d["unreachable"]:
+        print("不可达  : %s（不会被 ComfyUI 执行，可删）" % "、".join(d["unreachable"]))
+    print()
+    print("%-5s %-34s %-12s %-8s %s" % ("id", "class_type", "字段", "角色", "当前值"))
+    for p in d["ports"]:
+        print("%-5s %-34s %-12s %-8s %s"
+              % (p["node"], str(p["class_type"])[:32], p["field"],
+                 ROLE_CN.get(p["role"], p["role"]), str(p["value"])[:44]))
+    if d["groups"]:
+        print()
+        print("多槽节点（会按参考图数量自动关掉多余的）：")
+        for g in d["groups"]:
+            print("  %s %s：%s" % (g["node"], g["class_type"], "、".join(g["fields"])))
+    print()
+    print("提交时按 --ref 的张数裁剪；想先看裁完的样子：--list-ports 之后直接 --submit 会打印裁剪结果。")
+    return 0
+
+
 def map_check(workflow_path: str = "", map_path: str = "") -> int:
     """离线校验映射：节点在不在、类型对不对。**不连 ComfyUI、不占 GPU。**"""
     wf = load_workflow(workflow_path)
@@ -343,8 +382,14 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
     if ids and ids[0] in wf:
         wf[ids[0]]["inputs"]["value"] = prompt
 
-    # 参考图按序铺到每个 LoadImage 槽位；不够就循环复用第一张
-    for i, nid in enumerate([x for x in _roles(m, "images") if x in wf]):
+    # 参考图按序铺到每个 LoadImage 槽位；不够就循环复用第一张。
+    # ★ 不能只看映射里的 images：裁剪/换工作流后映射可能是旧的，没列到的加载器会带着
+    #   模板里的占位文件名提交 → ComfyUI 报「image not found」，而报错看起来像工作流坏了。
+    img_ids = [x for x in _roles(m, "images") if x in wf]
+    extra = [nid for nid, n in wf.items()
+             if str(n.get("class_type")) == "LoadImage" and nid not in img_ids]
+    img_ids += sorted(extra, key=lambda x: (0, int(x)) if str(x).isdigit() else (1, str(x)))
+    for i, nid in enumerate(img_ids):
         wf[nid]["inputs"]["image"] = ref_names[i % len(ref_names)]
 
     # ★ None / 空串 = 「沿用工作流原值」：不传就别覆盖，否则会把工作流里调好的
@@ -436,6 +481,8 @@ def main() -> int:
     ap.add_argument("--map", default="", help="节点映射 JSON（默认读同名 sidecar <工作流>.map.json）")
     ap.add_argument("--list-nodes", action="store_true", help="列出工作流节点与建议角色（离线）")
     ap.add_argument("--map-check", action="store_true", help="离线校验映射（节点在不在/类型对不对）")
+    ap.add_argument("--list-ports", action="store_true",
+                    help="离线列端口：提示词/图片槽/步数/画幅/输出，以及最多能接几张参考图")
     ap.add_argument("--check", action="store_true", help="在线体检（ComfyUI + 节点类 + 模型文件）")
     ap.add_argument("--prompt", default="", help="镜头提示词（自然语言长句，可含 subject_definitions）")
     ap.add_argument("--ref", action="append", default=[], help="参考图路径（可多次；不足会循环复用第一张）")
@@ -453,6 +500,8 @@ def main() -> int:
 
     if a.list_nodes:
         return list_nodes(a.workflow)
+    if a.list_ports:
+        return list_ports(a.workflow)
     if a.map_check:
         return map_check(a.workflow, a.map)
     if a.check:
@@ -501,6 +550,15 @@ def main() -> int:
         print("  ★ 注意：这是 H3 **图生**视频，没有参考图会跑成纯文本条件，人物一致性不保证")
 
     if not a.submit:
+        # 干跑也把「会关掉哪些槽」说清楚：这是最容易在出片后才发现的问题（串景）
+        if prune_for_refs is not None:
+            _wf2, rep = prune_for_refs(wf, len(a.ref) or None)
+            if rep.get("dropped_nodes"):
+                print("  端口裁剪：图片槽 %s → %s，将关闭节点 %s"
+                      % (rep["before"], rep["after"], "、".join(rep["dropped_nodes"])))
+            elif rep.get("before"):
+                print("  端口裁剪：图片槽 %s 个，本次用 %s 个（无需关闭）"
+                      % (rep["before"], rep.get("after")))
         print("\n★ DRY-RUN：未提交，未占 GPU。加 --submit 才真的出片。")
         print("  将覆盖：prompt=%s  images=%s  seconds=%s  steps=%s  seed=%s"
               % (m.get("prompt"), m.get("images"), m.get("seconds"), m.get("steps"), m.get("seed")))
@@ -517,6 +575,17 @@ def main() -> int:
         names.append(upload_image(p))
     if names:
         print("参考图已上传: %s" % "、".join(names))
+
+    # ★ 按实际参考图数量关掉多余槽位：6 槽工作流这次只有 2 张图时，
+    #   不裁就等于让另外 4 个槽继续拿上次的文件跑（串景 + 白占显存）。
+    if prune_for_refs is not None:
+        wf, rep = prune_for_refs(wf, len(names) or None)
+        if rep.get("dropped_nodes"):
+            print("[端口] 图片槽 %s → %s，已关闭 %d 个多余槽（节点 %s）"
+                  % (rep["before"], rep["after"], len(rep["dropped_nodes"]),
+                     "、".join(rep["dropped_nodes"])))
+        elif rep.get("before"):
+            print("[端口] 图片槽 %s 个（按参考图数量 %s 使用）" % (rep["before"], rep.get("after")))
 
     wf = apply_nodes(wf, m, prompt=a.prompt, ref_names=names or [""], seconds=a.seconds,
                      steps=steps, seed=seed, aspect=a.aspect, mp=a.mp, prefix=a.prefix)

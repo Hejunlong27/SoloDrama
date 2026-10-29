@@ -39,7 +39,8 @@ function section(kind, title, sub, items) {
     + '</tr></thead><tbody>' + body + '</tbody></table></div></div></section>';
 }
 
-export async function render(ctx) {
+export async function render(ctx, opts) {
+  const embedded = !!(opts && opts.embedded);
   const d = await api.generators(ctx.ws).catch((e) => ({ error: String(e && e.message || e) }));
   if (d.error) {
     return {
@@ -55,15 +56,18 @@ export async function render(ctx) {
   const c = d.counts || {};
   const comfy = d.comfy || {};
 
-  const html = ''
-    + '<div class="page-head"><div><h1 class="page-title">生成通道</h1>'
-    + '<div class="page-sub">图像 ' + ((c.image || {}).ready || 0) + '/' + ((c.image || {}).total || 0)
+  const acts = '<button class="btn quiet" id="btnReload">' + icon('refresh', 14) + ' 重新探测</button>'
+    + '<button class="btn quiet" id="btnRhCfg">' + icon('settings', 14) + ' 配置云端工作流</button>';
+  const summary = '图像 ' + ((c.image || {}).ready || 0) + '/' + ((c.image || {}).total || 0)
     + ' 可用 · 视频 ' + ((c.video || {}).ready || 0) + '/' + ((c.video || {}).total || 0)
-    + ' 可用 · 本地出图/出片 ￥0，云端工作流按点数计费</div></div>'
-    + '<div class="page-actions">'
-    + '<button class="btn quiet" id="btnReload">' + icon('refresh', 14) + ' 重新探测</button>'
-    + '<button class="btn quiet" id="btnRhCfg">' + icon('settings', 14) + ' 配置云端工作流</button>'
-    + '</div></div>'
+    + ' 可用 · 本地出图/出片 ￥0，云端工作流按点数计费';
+  /* 嵌入到连接中心时不再画页头（否则一个页面两个大标题），只留一行工具按钮 */
+  const html = ''
+    + (embedded
+      ? '<div class="row" style="justify-content:flex-end;gap:8px;margin-bottom:10px">' + acts + '</div>'
+      : '<div class="page-head"><div><h1 class="page-title">生成通道</h1>'
+        + '<div class="page-sub">' + summary + '</div></div>'
+        + '<div class="page-actions">' + acts + '</div></div>')
 
     + '<div class="alert ' + (comfy.online ? 'info' : 'warn') + '" style="margin-bottom:14px">'
     + '<span class="nav-ico">' + icon('cpu', 14) + '</span><div>'

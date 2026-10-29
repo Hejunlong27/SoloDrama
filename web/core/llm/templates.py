@@ -161,6 +161,12 @@ SCHEMAS = {
 # requires: 模型能力要求；template/schema 为默认绑定（可在配置里改 provider/model，但不改语义）
 PURPOSES = [
     {
+        "id": "assistant.chat", "label": "工作台助手（对话控制）", "group": "助手",
+        "template_id": "assistant-chat", "schema_id": None,
+        "requires": ["json"], "needs": "当前项目（可选）；没有项目也能回答全局问题",
+        "hint": "把一句话变成「回答 + 一个白名单动作」（跳页面 / 执行命令），动作由前端二次确认",
+    },
+    {
         "id": "script.generate", "label": "剧本正文生成", "group": "剧本",
         "template_id": "s3-script-rewrite", "schema_id": "script.episode",
         "requires": ["json"], "needs": "项目已确认诊断卡与集数规划",
@@ -211,6 +217,11 @@ PURPOSE_MAP = {p["id"]: p for p in PURPOSES}
 # ---------------------------------------------------------------------------
 # vars: 渲染时要求的变量名（缺失即报 config，不静默变成空串）
 TEMPLATES = [
+    {
+        "id": "assistant-chat", "title": "工作台助手 · 对话控制", "purpose": "assistant.chat",
+        "file": "assistant-chat.md", "format": "json", "schema_id": None,
+        "vars": ["context", "history", "message"],
+    },
     {
         "id": "s3-script-rewrite", "title": "剧本改写 · 写正文", "purpose": "script.generate",
         "file": "s3-script-rewrite.md", "format": "json", "schema_id": "script.episode",

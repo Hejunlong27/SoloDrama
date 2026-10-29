@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "source": "RHSTORY 画风库 · 服务端全量（RunningHub 官方，306 条中收录 6 条为系统默认）",
+  "note": "prompt 为官方原文，未改写。track 决定走哪条生产规格（真人 / 2D / 3D），选错会连带资产数量与单镜时长一起错。",
+  "styles": [
+    {
+      "id": "cinematic",
+      "name": "电影超写实",
+      "name_en": "Cinematic Hyper-realistic",
+      "rh_key": "cinematic",
+      "track": "live_action",
+      "tags": [
+        "真人",
+        "写实",
+        "电影感"
+      ],
+      "prompt": "真人电影写实摄影，原生相机直出，无 AI 塑料感，自然真实皮肤肌理，原生环境光影，柔和自然明暗，丁达尔效应，真实景深虚化，细腻原生材质，轻微自然噪点，真人实拍质感，色彩自然还原",
+      "prompt_en": "Extremely high image quality, cinematic lighting, top-tier photorealistic texture, 8K resolution, deep depth of field, intricate detail rendering, professional photographic composition, Tyndall effect, complex texture rendering, materials rendered down to the finest hair-fine detail."
+    },
+    {
+      "id": "magical-realism",
+      "name": "拉美魔幻现实",
+      "name_en": "Magical Realism",
+      "rh_key": "magical-realism",
+      "track": "live_action",
+      "tags": [
+        "真人",
+        "魔幻",
+        "文艺"
+      ],
+      "prompt": "Latin American magical-realist live-action look, vivid yet grounded color, poetic domestic atmosphere, warm humid light, textured everyday surfaces, subtle impossible details woven into ordinary life, calm characters accepting the strange as normal, family-memory feeling, grounded surreal warmth, no fantasy spectacle or heavy VFX.",
+      "prompt_en": "Latin American magical-realist live-action look, vivid yet grounded color, poetic domestic atmosphere, warm humid light, textured everyday surfaces, subtle impossible details woven into ordinary life, calm characters accepting the strange as normal, family-memory feeling, grounded surreal warmth, no fantasy spectacle or heavy VFX."
+    },
+    {
+      "id": "jp-youth-film",
+      "name": "日式青春胶片",
+      "name_en": "Japanese Youth Film",
+      "rh_key": "jp-youth-film",
+      "track": "live_action",
+      "tags": [
+        "真人",
+        "胶片",
+        "怀旧"
+      ],
+      "prompt": "日式青春胶片：强调胶片颗粒、年代色偏、生活化场景、旧广告牌、钨丝灯、街头烟火气和真实抓拍感，画面应有怀旧质感、轻微褪色、柔和动态模糊和时代记忆。核心描述：日式青春胶片，适合角色资产生成、风格化提示词和短片视觉统一。色彩关键词：胶片暖黄、褪色绿色、钨丝灯橙、旧照片灰调。光影关键词：自然窗光、钨丝灯、街灯反射、轻微过曝。镜头关键词：胶片抓拍、生活化中景、轻颗粒、纪实构图。环境关键词：旧街道、霓虹招牌、老式室内、年代道具。生成时必须把这些风格特征落实到角色造型、服装材质、神态动作、背景空间和整体画面气质中，而不是只写风格名称。",
+      "prompt_en": "Japanese Youth Film: Emphasizes film grain, era-specific color shifts, everyday scenes, old billboards, tungsten lighting, street-level atmosphere, and candid snapshot feel. The image should have a nostalgic texture, slight fading, soft motion blur, and a sense of period memory."
+    },
+    {
+      "id": "short-form-drama",
+      "name": "短剧风格",
+      "name_en": "Short-Form Drama",
+      "rh_key": "short-form-drama",
+      "track": "live_action",
+      "tags": [
+        "真人",
+        "短剧",
+        "强情绪"
+      ],
+      "prompt": "contemporary short-form drama live-action look, high-emotion performance, direct dramatic tension, bright but dramatic lighting, strong facial expression, simplified but believable production design, heightened emotional readability, glossy contemporary color, fast-recognizable drama atmosphere, no platform UI, no captions, no subtitles, no title cards, no poster layout.",
+      "prompt_en": "contemporary short-form drama live-action look, high-emotion performance, direct dramatic tension, bright but dramatic lighting, strong facial expression, simplified but believable production design, heightened emotional readability, glossy contemporary color, fast-recognizable drama atmosphere, no platform UI, no captions, no subtitles, no title cards, no poster layout."
+    },
+    {
+      "id": "cel-shading",
+      "name": "日式赛璐璐",
+      "name_en": "Japanese Cel Shading",
+      "rh_key": "cel-shading",
+      "track": "2d_animation",
+      "tags": [
+        "二维",
+        "动画",
+        "赛璐璐"
+      ],
+      "prompt": "日式赛璐璐，正统日系清新动画，干净利落线条，均匀自然平涂，柔和明暗分界，简约治愈日系美学，画面干净通透无 AI 糊感",
+      "prompt_en": "Japanese cel-shading style, celluloid style, classic 2D Japanese anime style, crisp line work, flat color blocks, distinct shadow boundary lines, a fresh and bright art style, possessing an extremely high simplicity and beauty."
+    },
+    {
+      "id": "cn-anime-style",
+      "name": "国漫二次元常用风格",
+      "name_en": "Common Chinese Anime/Manga Style",
+      "rh_key": "cn-anime-style",
+      "track": "2d_animation",
+      "tags": [
+        "二维",
+        "国漫",
+        "插画感"
+      ],
+      "prompt": "国漫二次元常用风格：强调角色设计感、线条节奏、色块关系、夸张轮廓、情绪化光影和插画构图，画面应有清晰主次、强记忆点和适合二创传播的视觉符号。核心描述：国漫二次元常用风格，适合角色资产生成、风格化提示词和短片视觉统一。色彩关键词：高识别主色、干净色块、情绪化渐变、角色专属配色。光影关键词：插画式主光、轮廓高光、情绪阴影、局部强调光。镜头关键词：角色海报构图、动态姿态、强剪影、视觉中心明确。环境关键词：风格化背景、符号化场景、图形化装饰、叙事道具。生成时必须把这些风格特征落实到角色造型、服装材质、神态动作、背景空间和整体画面气质中，而不是只写风格名称。",
+      "prompt_en": "Common Chinese anime/manga style: emphasizes character design sensibility, line rhythm, color block relationships, exaggerated silhouettes, emotional lighting, and illustration composition. The image should have clear primary and secondary elements, a strong memorable point, and visual symbols that encourage fan creation."
+    }
+  ],
+  "presets": {
+    "aspect": [
+      {
+        "id": "9:16",
+        "label": "竖屏 9:16（短剧默认）",
+        "hint": "抖音 / ReelShort / TikTok 的主流画幅"
+      },
+      {
+        "id": "16:9",
+        "label": "横屏 16:9",
+        "hint": "YouTube / 长视频平台"
+      },
+      {
+        "id": "1:1",
+        "label": "方形 1:1",
+        "hint": "信息流 / 封面"
+      }
+    ],
+    "resolution": [
+      {
+        "id": "720x1280",
+        "label": "720×1280（试片，最快）",
+        "mp": 0.92,
+        "aspect": "9:16"
+      },
+      {
+        "id": "1080x1920",
+        "label": "1080×1920（发布下限，推荐）",
+        "mp": 2.07,
+        "aspect": "9:16"
+      },
+      {
+        "id": "1440x2560",
+        "label": "1440×2560（2K，放大后）",
+        "mp": 3.69,
+        "aspect": "9:16"
+      },
+      {
+        "id": "1280x720",
+        "label": "1280×720（横屏试片）",
+        "mp": 0.92,
+        "aspect": "16:9"
+      },
+      {
+        "id": "1920x1080",
+        "label": "1920×1080（横屏发布）",
+        "mp": 2.07,
+        "aspect": "16:9"
+      },
+      {
+        "id": "1080x1080",
+        "label": "1080×1080（方形）",
+        "mp": 1.17,
+        "aspect": "1:1"
+      }
+    ]
+  }
+}

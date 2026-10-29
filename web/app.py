@@ -25,9 +25,10 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, commands as CMD, connections, generators,
+from core import (adapters, artifacts, assistant, comfy_store, commands as CMD,
+                    connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
-                    studio, ux)
+                    studio, styles, ux)
 from core.llm import drafts as llm_drafts, gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
@@ -311,6 +312,17 @@ def project_create(payload: dict = Body(...)):
     if sec not in (60, 70, 90):
         raise HTTPException(status_code=400, detail="单集秒数只支持 60 / 70 / 90")
     platform = str(payload.get("platform") or "ReelShort").strip()[:40] or "ReelShort"
+    # 画风与画幅：只在建项目时定一次，后面改要 reset 重确认（引擎的 G-1 门禁就是这么设计的）
+    style_id = str(payload.get("style") or "").strip()
+    track = str(payload.get("track") or "").strip()
+    resolution = str(payload.get("resolution") or "").strip()
+    if resolution and not re.match(r"^[0-9]{3,5}x[0-9]{3,5}$", resolution):
+        raise HTTPException(status_code=400, detail="分辨率要写成 WxH，例如 1080x1920")
+    if style_id and not track:
+        for it in (styles.catalog().get("styles") or []):
+            if it.get("id") == style_id:
+                track = str(it.get("track") or "")
+                break
 
     cmd = CMD.get("project.scaffold")
     values = {"target": str(p), "slug": slug, "title": title,
@@ -332,12 +344,40 @@ def project_create(payload: dict = Body(...)):
 
     jobs.record_audit(str(p), "project.scaffold", ["--workspace", str(p), "--slug", slug],
                       res["rc"], note=title, actor="studio")
+
+    # 建档后把「画风 + 交付分辨率」写进项目（走引擎自己的 setup/style 命令，不直接改文件）
+    profile = {"style": None, "resolution": None, "warnings": []}
+    if ok and p.is_dir():
+        if style_id and track:
+            a2 = [paths.engine_python(), str(CMD.SCRIPTS["drama"]), "style", "set", track,
+                  "--sub-mode", style_id, "--workspace", str(p)]
+            r2 = runner.run_stream(a2, ws=None, timeout=120)
+            # ★ 不拿退出码当结论：`project_setup` / `drama` 在「其它 G-0 项没填」时会用
+            #   rc=4 表示「等待确认」，但文件其实已经写了。所以一律**回读文件**验真。
+            plan = paths.read_json(p / "style-plan.json", default={}) or {}
+            st = plan.get("style") or {}
+            if st.get("confirmed") and st.get("sub_mode") == style_id:
+                profile["style"] = {"track": track, "id": style_id,
+                                    "name": st.get("style_name") or ""}
+            else:
+                profile["warnings"].append("画风没写上：%s" % "\n".join(r2["lines"][-3:]))
+        if resolution:
+            a3 = [paths.engine_python(), str(CMD.SCRIPTS["setup"]), "set",
+                  "--workspace", str(p), "--resolution", resolution]
+            r3 = runner.run_stream(a3, ws=None, timeout=120)
+            cfg = paths.read_json(p / "project-setup.json", default={}) or {}
+            if str((cfg.get("resolution") or {}).get("deliver") or "") == resolution:
+                profile["resolution"] = resolution
+            else:
+                profile["warnings"].append("分辨率没写上：%s" % "\n".join(r3["lines"][-3:]))
+
     return {
         "ok": ok, "rc": res["rc"], "elapsed": res["elapsed"],
         "argv_display": " ".join(str(a) for a in argv[1:]),
         "stdout": text,
         "friendly": None if ok else ux.friendly_error(res["rc"], text),
         "target": str(p), "title": title, "registered": registered,
+        "profile": profile,
     }
 
 
@@ -827,6 +867,75 @@ def api_pipeline_run(payload: dict = Body(...)):
         _write_guard()
     return pipeline.run(ws, budget=budget, until=until, only=only,
                         max_steps=max(1, min(max_steps, 12)), dry_run=bool(dry_run))
+
+
+@app.post("/api/assistant/chat")
+def api_assistant_chat(payload: dict = Body(...)):
+    """对话模式：只读 + 只出提案。
+
+    服务端**不执行**模型给的动作：返回的是「建议跳到哪 / 建议跑哪条」，
+    前端弹确认后再走原有接口（流水线 only=、导航）。这样一次幻觉最多是多问一句，
+    不会变成删文件或花钱。
+    """
+    ws = str(payload.get("ws") or "").strip()
+    ws_ok = None
+    if ws:
+        try:
+            ws_ok = str(_require_ws(ws))
+        except HTTPException:
+            ws_ok = None
+    return assistant.chat(payload.get("message"), ws=ws_ok,
+                          history=payload.get("history") or [])
+
+
+@app.get("/api/comfy/workflows")
+def api_comfy_workflows():
+    """本地出片工作流清单（内置 + 上传件），标出当前用的是哪一份。"""
+    return comfy_store.list_all()
+
+
+@app.get("/api/comfy/workflows/{wf_id}")
+def api_comfy_workflow(wf_id: str):
+    try:
+        return comfy_store.get(wf_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+
+
+@app.post("/api/comfy/workflows")
+def api_comfy_workflow_save(payload: dict = Body(...)):
+    """上传/粘贴一份 API 格式工作流：校验 → 存盘 → 自动识别端口并生成映射。"""
+    _write_guard()
+    name = str(payload.get("name") or "").strip() or "workflow"
+    text = str(payload.get("json") or "")
+    if len(text) < 32:
+        raise HTTPException(status_code=400, detail="工作流内容为空")
+    if len(text) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="工作流超过 8MB，确认是不是把整包节点都导进来了")
+    try:
+        return comfy_store.save(name, text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.post("/api/comfy/workflows/current")
+def api_comfy_workflow_current(payload: dict = Body(...)):
+    _write_guard()
+    wf_id = str(payload.get("id") or "").strip()
+    try:
+        return comfy_store.set_current(wf_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+
+
+@app.get("/api/styles")
+def api_styles():
+    """画风目录：3 条轨道（生产规格）+ 系统默认风格（提示词）+ 画幅/分辨率预设。
+
+    轨道决定「资产几张、单镜多长、交付到哪」，风格只决定「看起来像什么」——
+    两者不能混：选错轨道会在出片一半才发现资产不够。
+    """
+    return styles.catalog()
 
 
 @app.get("/api/generators")

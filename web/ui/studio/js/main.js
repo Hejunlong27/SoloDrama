@@ -3,6 +3,7 @@
    视图按路由**动态加载**（每个页面一个模块），避免单文件膨胀，也让单页故障不影响外壳。
    ============================================================ */
 import { api, clearCache } from './api.js';
+import { openAssistant } from './assistant.js';
 import { esc, icon, paintIcons, errorCard, openDrawer, closeDrawer, closeModal, skeleton, toast } from './ui.js';
 import {
   S, loadProjects, loadCaps, loadHealth, loadRunning, project as currentProject,
@@ -17,7 +18,6 @@ const NAV = [
       { key: 'tasks', label: '任务中心', ico: 'list' },
       { key: 'cost', label: '成本中心', ico: 'coins' },
       { key: 'models', label: 'AI 模型中心', ico: 'cpu' },
-      { key: 'generators', label: '生成通道', ico: 'spark' },
       { key: 'connections', label: '连接中心', ico: 'plug' },
       { key: 'health', label: '环境体检', ico: 'check' }
     ]
@@ -360,6 +360,8 @@ async function boot() {
       toast('刷新失败：' + (e.detail || e.message), 'bad');
     } finally { btn.disabled = false; }
   };
+  const aiBtn = document.getElementById('btnAssistant');
+  if (aiBtn) aiBtn.onclick = () => openAssistant(ctx());
   document.getElementById('scrim').onclick = () => { closeModal(); closeDrawer(); };
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeModal(); closeDrawer(); }

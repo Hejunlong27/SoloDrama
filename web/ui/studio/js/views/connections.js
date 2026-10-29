@@ -135,7 +135,7 @@ function header(ov) {
     + '</div></div>';
 }
 
-export async function render(ctx) {
+async function renderChannels(ctx) {
   let ov;
   try {
     ov = await api.connections();
@@ -295,5 +295,175 @@ function mountRh(ctx, root) {
         };
       }
     });
+  };
+}
+
+/* ============================================================
+   页签分发：连接中心 = 通道配置 + 生成通道 + 出片工作流
+   为什么合到一页：这三块回答的是同一个问题「我把东西接上了吗、接的是哪一份」。
+   分成两个顶级菜单时，用户要在两个页面之间对着看，还容易出现「这边显示可用、
+   那边说没配置」的口径差（因为各自探测的时机不同）。
+   ============================================================ */
+const TABS = [
+  { key: 'channels', label: '通道配置', sub: '大模型 / ComfyUI / RunningHub' },
+  { key: 'generators', label: '生成通道', sub: '图像与视频各条通道的真实状态' },
+  { key: 'workflows', label: '出片工作流', sub: '换一份 ComfyUI 工作流并自动识别端口' }
+];
+
+function tabBar(active) {
+  return '<div class="tabs">' + TABS.map((t) => {
+    const on = t.key === active;
+    return '<button class="tab' + (on ? ' active' : '') + '" data-ctab="' + t.key + '">'
+      + esc(t.label) + '</button>';
+  }).join('') + '</div>';
+}
+
+function pageHead(active) {
+  const t = TABS.find((x) => x.key === active) || TABS[0];
+  return '<div class="page-head"><div><h1 class="page-title">连接中心</h1>'
+    + '<div class="page-sub">' + esc(t.label) + ' · ' + esc(t.sub) + '</div></div>'
+    + '</div>' + tabBar(active);
+}
+
+function bindTabs(root) {
+  root.querySelectorAll('[data-ctab]').forEach((b) => {
+    b.onclick = () => { location.hash = '#/connections?tab=' + b.dataset.ctab; };
+  });
+}
+
+/* ---------- 出片工作流：上传 / 切换 / 看端口 ---------- */
+function wfRow(it) {
+  const mapTone = it.has_map ? 'ok' : 'warn';
+  return '<tr>'
+    + '<td><div class="row gap8"><span>' + esc(it.name) + '</span>'
+    + (it.builtin ? badge('outline', '内置') : '') + '</div>'
+    + '<div class="row-sub mono">' + esc(it.path) + '</div></td>'
+    + '<td class="num">' + (it.node_count || 0) + '</td>'
+    + '<td>' + badge(it.capacity ? 'info' : 'muted', (it.capacity || 0) + ' 张参考图') + '</td>'
+    + '<td>' + badge(mapTone, it.has_map ? '已生成映射' : '缺映射') + '</td>'
+    + '<td class="right">'
+    + (it.current ? badge('ok', '当前使用')
+      : '<button class="btn quiet sm" data-wf-use="' + esc(it.id) + '">设为当前</button>')
+    + ' <button class="btn quiet sm" data-wf-ports="' + esc(it.id) + '">看端口</button>'
+    + '</td></tr>';
+}
+
+async function workflowsPanel(ctx) {
+  const d = await api.comfyWorkflows().catch((e) => ({ error: String((e && e.detail) || e) }));
+  if (d.error) return { html: pageHead('workflows') + '<div class="alert bad">读不到工作流：' + esc(d.error) + '</div>', mount: bindTabs };
+  const items = d.items || [];
+  const html = pageHead('workflows')
+    + '<div class="alert info" style="margin-bottom:14px"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+    + '上传件存在 <span class="mono">' + esc(d.dir) + '</span>，<b>不会覆盖仓库里的内置工作流</b>；'
+    + '同名再上传会把旧文件挪成 <span class="mono">.bak_时间戳</span>。'
+    + '保存时会自动识别端口并生成映射，识别不出的角色会明确列出来让你补。</div></div>'
+    + '<section class="card" style="margin-bottom:14px"><div class="card-h"><h3>现有工作流</h3>'
+    + '<span class="card-sub">' + items.length + ' 份</span></div>'
+    + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
+    + '<th>名称 / 路径</th><th class="num" style="width:88px">节点</th>'
+    + '<th style="width:120px">容量</th><th style="width:110px">映射</th>'
+    + '<th class="right" style="width:210px">操作</th></tr></thead><tbody>'
+    + (items.map(wfRow).join('') || '<tr><td colspan="5" class="dim">还没有工作流</td></tr>')
+    + '</tbody></table></div></div></section>'
+
+    + '<section class="card"><div class="card-h"><h3>上传 / 粘贴新工作流</h3>'
+    + '<span class="card-sub">必须是 ComfyUI「导出 API 格式」的 JSON</span></div>'
+    + '<div class="card-b"><div class="grid g2" style="align-items:start">'
+    + '<div class="field"><label class="tiny dim">名称（决定文件名）</label>'
+    + '<input class="input" id="wfName" placeholder="h3-4step-v2"></div>'
+    + '<div class="field"><label class="tiny dim">从文件读入</label>'
+    + '<input class="input" id="wfFile" type="file" accept=".json,application/json"></div></div>'
+    + '<div class="field"><label class="tiny dim">或直接粘贴 JSON</label>'
+    + '<textarea class="textarea" id="wfJson" rows="7" placeholder=\'{"1": {"class_type": "...", "inputs": {}}}\'></textarea></div>'
+    + '<div class="row"><button class="btn primary" id="wfSave">' + icon('check', 14) + ' 校验并保存</button>'
+    + '<span class="tiny dim">校验不过不会留半成品；保存后可回到这里「设为当前」</span></div>'
+    + '<div id="wfOut" style="margin-top:10px"></div></div></section>';
+
+  return {
+    html,
+    mount: (root) => {
+      bindTabs(root);
+      const out = root.querySelector('#wfOut');
+      root.querySelectorAll('[data-wf-use]').forEach((b) => {
+        b.onclick = async () => {
+          try { await api.setComfyWorkflow(b.dataset.wfUse); toast('已切换，出片默认用它'); ctx.refresh(); }
+          catch (e) { toast('切换失败：' + ((e.detail) || e.message), 'bad'); }
+        };
+      });
+      root.querySelectorAll('[data-wf-ports]').forEach((b) => {
+        b.onclick = async () => {
+          try {
+            const it = await api.comfyWorkflow(b.dataset.wfPorts);
+            const rows = (it.ports || []).map((p) => '<tr><td class="mono">' + esc(p.node) + '</td>'
+              + '<td class="mono small">' + esc(p.class_type) + '</td><td class="mono small">' + esc(p.field) + '</td>'
+              + '<td>' + badge('info', esc(p.role)) + '</td>'
+              + '<td class="mono tiny dim">' + esc(String(p.value).slice(0, 40)) + '</td></tr>').join('');
+            openModal({
+              title: '端口 · ' + (it.name || it.id),
+              icon: 'cpu',
+              html: '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+                + '参考图容量 <b>' + (it.capacity || 0) + ' 张</b>；出片时会按实际张数自动关掉多余槽位。</div></div>'
+                + '<div class="table-wrap" style="max-height:460px;overflow:auto"><table class="tb"><thead><tr>'
+                + '<th>节点</th><th>类型</th><th>字段</th><th>角色</th><th>当前值</th></tr></thead><tbody>'
+                + (rows || '<tr><td colspan="5" class="dim">没识别到端口</td></tr>') + '</tbody></table></div>',
+              foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>'
+            });
+          } catch (e) { toast('读端口失败：' + ((e.detail) || e.message), 'bad'); }
+        };
+      });
+
+      const fileEl = root.querySelector('#wfFile');
+      const jsonEl = root.querySelector('#wfJson');
+      const nameEl = root.querySelector('#wfName');
+      if (fileEl) {
+        fileEl.onchange = () => {
+          const f = fileEl.files && fileEl.files[0];
+          if (!f) return;
+          const rd = new FileReader();
+          rd.onload = () => { jsonEl.value = String(rd.result || ''); if (!nameEl.value) nameEl.value = f.name.replace(/\.json$/i, ''); };
+          rd.readAsText(f);
+        };
+      }
+      const btn = root.querySelector('#wfSave');
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await api.saveComfyWorkflow({ name: nameEl.value || 'workflow', json: jsonEl.value });
+          out.innerHTML = '<div class="alert ok"><span class="nav-ico">' + icon('check', 14) + '</span><div>'
+            + '已保存 <b>' + esc(r.id) + '</b>：' + r.node_count + ' 个节点，参考图容量 <b>' + r.capacity + '</b>。'
+            + '<div class="tiny dim" style="margin-top:4px">自动映射：' + esc(JSON.stringify(r.map))
+            + (r.missing_roles && r.missing_roles.length
+              ? '<br>缺角色：' + esc(r.missing_roles.join('、')) + '（需要在映射文件里手动指定）' : '')
+            + '</div></div></div>';
+          toast('工作流已保存');
+          ctx.refresh();
+        } catch (e) {
+          out.innerHTML = '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+            + esc(typeof e.detail === 'string' ? e.detail : (e.detail && e.detail.message) || e.message) + '</div></div>';
+        } finally { btn.disabled = false; }
+      };
+    }
+  };
+}
+
+export async function render(ctx) {
+  const m = String(location.hash || '').match(/[?&]tab=([a-z]+)/);
+  const tab = (m && m[1]) || 'channels';
+  if (tab === 'workflows') return workflowsPanel(ctx);
+  if (tab === 'generators') {
+    const g = await import('./generators.js');
+    const out = await g.render(ctx, { embedded: true });
+    return {
+      html: pageHead('generators') + out.html,
+      mount: (root) => { bindTabs(root); if (out.mount) out.mount(root); }
+    };
+  }
+  const base = await renderChannels(ctx);
+  /* 通道页的 html 前面加上页头与页签（renderChannels 自己那份 page-head 换成带页签的） */
+  const idx = base.html.indexOf('</div></div>');
+  const rest = idx >= 0 ? base.html.slice(idx + '</div></div>'.length) : base.html;
+  return {
+    html: pageHead('channels') + rest,
+    mount: (root) => { bindTabs(root); if (base.mount) base.mount(root); }
   };
 }

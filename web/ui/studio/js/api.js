@@ -86,6 +86,7 @@ const TTL = {
   '/api/llm/providers': 12000,
   '/api/llm/purposes': 12000,
   '/api/health': 10000,
+  '/api/styles': 120000,
 };
 const CACHE = new Map();
 
@@ -115,6 +116,18 @@ export const api = {
   healthChecks: (ws) => get('/api/health/checks', { ws }),
   healthFix: (body) => post('/api/health/fix', body),
   healthFixes: (limit) => get('/api/health/fixes', { limit }),
+
+  /* 对话模式：只读 + 只出提案（动作由前端确认后执行） */
+  assistantChat: (body) => post('/api/assistant/chat', body),
+
+  /* 本地出片工作流：清单 / 上传 / 切换 */
+  comfyWorkflows: () => get('/api/comfy/workflows'),
+  comfyWorkflow: (id) => get('/api/comfy/workflows/' + encodeURIComponent(id)),
+  saveComfyWorkflow: (body) => post('/api/comfy/workflows', body),
+  setComfyWorkflow: (id) => post('/api/comfy/workflows/current', { id }),
+
+  /* 画风目录：3 条轨道 + 系统默认风格 + 画幅/分辨率预设 */
+  styles: () => get('/api/styles'),
 
   pipeline: (ws, budget) => get('/api/pipeline/plan', { ws, budget }),
   pipelineRun: (body) => post('/api/pipeline/run', body),

@@ -248,22 +248,52 @@ async function scanDrawer(ctx) {
 
 /* 新建项目：调用引擎真实的脚手架（creation.py scaffold），建完自动登记并切过去。
    安全：目标必须是绝对路径；已存在且非空的目录一律拒绝（控制台不覆盖任何文件）。 */
-function newProjectModal(ctx) {
+/* 新建项目：调引擎真实的脚手架（creation.py scaffold），建完自动登记并切过去。
+   这一版把「画风 / 画幅 / 分辨率」也一起定了 —— 它们在建档之后改要 reset 重确认（G-1 门禁），
+   放到建项目时一次选完，比事后补更省事，也更不容易选错轨道。
+   路径：浏览器拿不到系统目录选择框，所以用「已有项目的上级目录」做候选根，减少手打。 */
+async function newProjectModal(ctx) {
+  let cat = { tracks: [], styles: [], presets: {} };
+  try { cat = await api.styles(); } catch (e) { /* 画风目录读不到也要能建项目 */ }
+  const styles = cat.styles || [];
+  const aspects = (cat.presets && cat.presets.aspect) || [{ id: '9:16', label: '竖屏 9:16' }];
+  const resos = (cat.presets && cat.presets.resolution) || [{ id: '1080x1920', label: '1080×1920' }];
+  const roots = [];
+  (S.projects || []).forEach((p) => {
+    const parent = String(p.path || '').replace(/[\\/][^\\/]+$/, '');
+    if (parent && roots.indexOf(parent) < 0) roots.push(parent);
+  });
+
+  const styleOpts = styles.length
+    ? styles.map((s) => '<option value="' + esc(s.id) + '" data-track="' + esc(s.track) + '">'
+      + esc(s.name) + '（' + esc((s.tags || []).join(' · ')) + '）</option>').join('')
+    : '<option value="">（画风目录读不到，可先建项目后补）</option>';
+
   openModal({
     title: '新建剧项目',
     icon: 'plus',
     html: '<div class="stack">'
       + '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
       + '会调用引擎的 <span class="mono">creation.py scaffold</span> 建 9 个阶段目录 + layout.json，'
-      + '并把新工作区登记到控制台。</div></div>'
+      + '并把画风与交付分辨率写进该项目。<b>画风建完再改要重新确认（G-1 门禁）</b>。</div></div>'
+
+      + '<div class="field"><label class="tiny dim">放在哪个根目录下</label>'
+      + '<div class="row gap8"><select class="select" id="pRoot" style="flex:1">'
+      + '<option value="">（手动填下面的完整路径）</option>'
+      + roots.map((r) => '<option value="' + esc(r) + '">' + esc(r) + '</option>').join('')
+      + '</select></div>'
+      + '<div class="tiny dim" style="margin-top:4px">候选来自你已有项目的上级目录；'
+      + '浏览器无法直接选系统文件夹。</div></div>'
+
       + '<div class="field"><label class="tiny dim">目标目录（绝对路径）</label>'
       + '<input class="input" id="pTarget" placeholder="D:/剧本/我的新剧">'
-      + '<div class="tiny dim" style="margin-top:4px">目录不存在会自动创建；已存在且非空会被拒绝。</div></div>'
+      + '<div class="tiny dim" style="margin-top:4px">不存在会自动创建；已存在且非空会被拒绝。</div></div>'
       + '<div class="grid g2">'
-      + '<div class="field"><label class="tiny dim">短标识（小写字母/数字/连字符）</label>'
-      + '<input class="input" id="pSlug" placeholder="my-new-drama"></div>'
       + '<div class="field"><label class="tiny dim">剧名</label>'
-      + '<input class="input" id="pTitle" placeholder="我的新剧"></div></div>'
+      + '<input class="input" id="pTitle" placeholder="我的新剧"></div>'
+      + '<div class="field"><label class="tiny dim">短标识（小写字母/数字/连字符）</label>'
+      + '<input class="input" id="pSlug" placeholder="my-new-drama"></div></div>'
+
       + '<div class="grid g2">'
       + '<div class="field"><label class="tiny dim">目标平台</label>'
       + '<select class="select" id="pPlatform"><option>ReelShort</option><option>DramaBox</option>'
@@ -272,17 +302,76 @@ function newProjectModal(ctx) {
       + '<div class="row gap8"><input class="input" id="pEp" type="number" min="1" max="200" value="30" style="width:90px">'
       + '<select class="select" id="pSec" style="width:110px"><option value="60">60 秒</option>'
       + '<option value="70">70 秒</option><option value="90">90 秒</option></select></div></div></div>'
+
+      + '<div class="grid g2">'
+      + '<div class="field"><label class="tiny dim">画面尺寸</label>'
+      + '<select class="select" id="pAspect">'
+      + aspects.map((a) => '<option value="' + esc(a.id) + '">' + esc(a.label) + '</option>').join('')
+      + '</select></div>'
+      + '<div class="field"><label class="tiny dim">分辨率</label>'
+      + '<select class="select" id="pRes"></select></div></div>'
+
+      + '<div class="field"><label class="tiny dim">画风（决定生产规格，不只是看起来像什么）</label>'
+      + '<select class="select" id="pStyle">' + styleOpts + '</select>'
+      + '<div class="tiny dim" id="pStyleHint" style="margin-top:5px"></div></div>'
+
       + '<div id="pResult"></div></div>',
     foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
       + '<button class="btn primary" id="pCreate">创建</button>',
     mount: (m) => {
       paintIcons(m);
+      const $ = (id) => m.querySelector('#' + id);
+      const aspectEl = $('pAspect');
+      const resEl = $('pRes');
+      const styleEl = $('pStyle');
+
+      const fillRes = () => {
+        const a = aspectEl.value;
+        const pool = resos.filter((r) => !r.aspect || r.aspect === a);
+        resEl.innerHTML = (pool.length ? pool : resos)
+          .map((r) => '<option value="' + esc(r.id) + '">' + esc(r.label) + '</option>').join('');
+      };
+      const paintStyle = () => {
+        const it = styles.find((s) => s.id === styleEl.value) || {};
+        const track = (cat.tracks || []).find((t) => t.id === it.track) || {};
+        const spec = track.spec || {};
+        const sd = spec.shot_duration || {};
+        $('pStyleHint').innerHTML = it.id
+          ? esc((it.prompt || '').slice(0, 90)) + '…<br>'
+            + '轨道 <b>' + esc(track.label || it.track) + '</b>：单镜 '
+            + esc((sd.min || '?') + '-' + (sd.max || '?') + ' 秒') + '，交付到 '
+            + esc(spec.delivery_stop || '—')
+          : '';
+      };
+      aspectEl.onchange = fillRes;
+      styleEl.onchange = paintStyle;
+      fillRes();
+      paintStyle();
+
+      // 选了根目录就把路径补全（只在用户没手填时）
+      $('pRoot').onchange = () => {
+        const root = $('pRoot').value;
+        const t = $('pTarget');
+        if (root && (!t.value.trim() || t.value.indexOf(root) === 0)) {
+          t.value = root.replace(/[\\/]+$/, '') + '/';
+          t.focus();
+        }
+      };
+      // 剧名 → 短标识的弱建议：只在中英文/数字能直接转写时补，贴中文就留空让人自己填
+      $('pTitle').oninput = () => {
+        const slugEl = $('pSlug');
+        if (slugEl.dataset.touched) return;
+        const t = $('pTitle').value.trim().toLowerCase();
+        if (/^[a-z0-9 _-]+$/.test(t)) slugEl.value = t.replace(/[ _]+/g, '-').replace(/^-+|-+$/g, '');
+      };
+      $('pSlug').oninput = () => { $('pSlug').dataset.touched = '1'; };
+
       const btn = m.querySelector('#pCreate');
       btn.onclick = async () => {
-        const target = (m.querySelector('#pTarget').value || '').trim();
-        const slug = (m.querySelector('#pSlug').value || '').trim().toLowerCase();
-        const title = (m.querySelector('#pTitle').value || '').trim();
-        const box = m.querySelector('#pResult');
+        const target = ($('pTarget').value || '').trim();
+        const slug = ($('pSlug').value || '').trim().toLowerCase();
+        const title = ($('pTitle').value || '').trim();
+        const box = $('pResult');
         if (!/^[A-Za-z]:[\/]/.test(target) && target.charAt(0) !== '/') {
           box.innerHTML = '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14)
             + '</span><div>目标目录必须是绝对路径（如 D:/剧本/我的新剧）</div></div>';
@@ -298,26 +387,35 @@ function newProjectModal(ctx) {
             + '</span><div>请填剧名</div></div>';
           return;
         }
+        const picked = styles.find((s) => s.id === styleEl.value) || {};
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span>创建中';
         box.innerHTML = '';
         try {
           const r = await api.createProject({
             target, slug, title,
-            platform: m.querySelector('#pPlatform').value,
-            ep: Number(m.querySelector('#pEp').value),
-            sec: Number(m.querySelector('#pSec').value)
+            platform: $('pPlatform').value,
+            ep: Number($('pEp').value),
+            sec: Number($('pSec').value),
+            resolution: resEl.value || '',
+            style: styleEl.value || '',
+            track: picked.track || ''
           });
           if (r.ok) {
-            box.innerHTML = '<div class="alert info"><span class="nav-ico">' + icon('check', 14)
+            const prof = r.profile || {};
+            const warn = (prof.warnings || []).length
+              ? '<div class="alert warn" style="margin-top:8px"><span class="nav-ico">' + icon('alert', 14)
+                + '</span><div>' + esc((prof.warnings || []).join('；')) + '</div></div>' : '';
+            box.innerHTML = '<div class="alert ok"><span class="nav-ico">' + icon('check', 14)
               + '</span><div>已创建并登记：<span class="mono">' + esc(r.target) + '</span>'
-              + '<div class="tiny dim" style="margin-top:4px">耗时 ' + esc(r.elapsed) + ' 秒 · '
-              + '下一步：系统设置 → 看 G-0 九项还缺什么</div></div></div>'
-              + '<pre class="log" style="max-height:160px">' + esc((r.stdout || '').slice(-1200)) + '</pre>';
+              + '<div class="tiny dim" style="margin-top:4px">'
+              + (prof.style ? '画风 ' + esc(prof.style.id) + '（' + esc(prof.style.track) + '）' : '画风未设')
+              + ' · ' + (prof.resolution ? esc(prof.resolution) : '分辨率未设')
+              + ' · 耗时 ' + esc(r.elapsed) + ' 秒</div></div></div>' + warn;
             toast('项目已创建');
             await loadProjects();
             import('../store.js').then((sm) => sm.setWs(r.target, { pushUrl: true }));
-            setTimeout(() => { closeModal(); ctx.navigate('overview'); }, 1200);
+            setTimeout(() => { closeModal(); ctx.navigate('overview'); }, 1400);
           } else {
             box.innerHTML = '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14)
               + '</span><div>创建失败（退出码 ' + esc(r.rc) + '）：'

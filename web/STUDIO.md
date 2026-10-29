@@ -94,7 +94,6 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 创作中心    | S1–S5 完成度（引擎 probes）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
 | 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
 | 流水线 | **11 个环节串成一条可执行的线**：连跑 / 逐步确认两种模式、预算内自动放行、遇「前置未齐 / 需人工 / 计费估不出来」停下并说明原因；**每行一个可点的大按钮**（运行此步 `only=` 只跑这一条 / 打开对应页面） | `/api/pipeline/plan`（只读计划）、`/api/pipeline/run`（执行，默认 dry_run） |
-| 生成通道 | **图像 / 视频** 各条通道的真实状态（本地 ComfyUI ｜ RunningHub 工作流）、**文生图与图生图分开登记**、缺什么/下一步、￥0 还是计费；可在此写入云端工作流 ID 与节点（写前备份） | `/api/generators`（只读探测）、`POST /api/generators/rh`（写项目 `config.local.json`） |
 | 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**出片**（计费五步）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
 | 发行中心    | 发布版剧集/封面/文案/发布清单/版权资料的存在性核对                                                | `/api/artifacts`、`/api/file`、`release_check`（未接入，见 §7）                                                                                     |
@@ -255,7 +254,7 @@ HEADER 优先沿用**已有正式剧本的六行**（保住人工写的视觉锚
 ## 6. 测试
 
 ```bash
-# 离线单元/契约（默认 venv 即可；共 38 个文件）
+# 离线单元/契约（默认 venv 即可；共 41 个文件）
 for t in $(find stages tools web -name "test_*.py" -not -path "*__pycache__*"); do
   python "$t" || echo "FAILED $t"; done
 
@@ -268,7 +267,7 @@ python web/tools/verify_llm_loop.py
 
 本轮实测结果（2026-10-28）：
 
-- **38 个测试文件全绿**（引擎 23 + web 15）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
+- **41 个测试文件全绿**（引擎 24 + web 17）。新增：`test_workspaces.py`（登记表自愈 / prune 不碰磁盘），
   `test_inventory.py` 补 `[5] 散图口径`。
 - 新增 `test_workspaces.py` 的动因：真实登记表里 `current` 指着已删除的目录，四个用例分别守住
   「死路径自愈并落盘」「未登记的死 current 不许变卡片」「全盘皆死时置空」「prune 只清注册表」。
@@ -614,4 +613,90 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
   改成两列栅格 + `minmax(0,1fr)` + `overflow-wrap: anywhere`，并在 ≤1500px 时上下排。
 * **`nth-of-type` 别用在混排容器**：卡片入场用 `.view-in .card:nth-of-type(2)` 控制错峰，
   只在 card 全是 `<section>` 的页面成立；混排页面上错峰会失效（视觉上只是少了 30ms 延迟，不影响功能）。
+
+---
+
+## 14. 工作流 / 画风 / 对话（2026-10-29 第二批）
+
+### 14.1 本地出片工作流：手动替换 + 端口识别 + 槽位裁剪
+
+**换工作流**不再需要改代码：连接中心 → **出片工作流** → 上传或粘贴 JSON → 校验 → 自动生成映射 → 设为当前。
+
+| 文件 | 作用 |
+| --- | --- |
+| `web/var/comfy/workflows/<id>.json` | 上传的工作流（内置那份只读，永不被覆盖） |
+| `web/var/comfy/workflows/<id>.map.json` | 自动生成的节点映射（角色 → 节点 id） |
+| `web/var/comfy/workflows/index.json` | 哪一份是「当前使用」 |
+
+保存时做三件事：校验是 **API 格式**（带 `nodes/links` 的界面导出会被拒，并提示「导出 API 格式」）、
+校验**有输出节点**（没有的话跑完不出东西）、按端口角色生成映射。识别不出的角色**如实列出来**：
+`prompt` / `images` 缺了算「必需」，其余只是「不覆盖，沿用工作流里的值」。
+
+**端口识别与槽位裁剪**的真源是 `stages/video/comfyui/comfy_ports.py`（纯标准库，引擎脚本直接 import；
+`web/core/comfy_ports.py` 只按路径加载它）：
+
+* `describe(wf)`：认出提示词 / 参考图槽 / 步数 / 种子 / 画幅 / 输出，算出**参考图容量**；
+  两种槽写法都认 —— `image1` 与 H3 的 `ref_images.ref_image_0`；
+* `prune_for_refs(wf, n)`：**真的改图** —— 删掉多余的 `LoadImage`、删掉多槽节点上的 `ref_image_n` 字段、
+  再按输出节点做可达性剪枝。实测把 6 槽工作流裁到 2 槽：删 4 个加载器 + 1 个孤立节点，**零悬空引用**。
+
+为什么必须真删而不是「不传值」：本地提交的是整张图，多余的 `LoadImage` 会带着上次的文件名照样执行
+（串景 + 白占显存）；云端的 `nodeInfoList` 是覆盖表，没发的节点沿用保存值 —— 这两条都踩过。
+
+**云端的边界**：RunningHub 只能覆盖节点值，**不能删节点**。所以那边做的是「按张数决定喂哪几个槽 +
+多余的按策略处理」，界面上会如实写清楚，而不是假装关掉了。
+
+### 14.2 画风库：6 个官方风格进了系统默认
+
+`configs/styles.json`（真源，可增补）+ `style_gate.py` 的轨道。轨道决定**生产规格**
+（资产几张、单镜多长、交付到哪），风格只决定**看起来像什么** —— 两者不能混，选错轨道会在出片一半才发现资产不够。
+
+| 风格 | 轨道 | 场景 |
+| --- | --- | --- |
+| 电影超写实 `cinematic` | live_action | 真人写实、电影感 |
+| 拉美魔幻现实 `magical-realism` | live_action | 文艺、魔幻但不靠特效 |
+| 日式青春胶片 `jp-youth-film` | live_action | 怀旧、颗粒、生活流 |
+| 短剧风格 `short-form-drama` | live_action | 强情绪、快识别（真人短剧默认） |
+| 日式赛璐璐 `cel-shading` | 2d_animation | 二维动画 |
+| 国漫二次元常用风格 `cn-anime-style` | 2d_animation | 国漫插画感 |
+
+提示词为官方原文，未改写。确认画风时会一并写进 `style-plan.json` 的 `style_prompt` / `style_name`。
+`live_action` 原来没有子模式，这轮补了 `default_sub_mode = short-form-drama` —— 否则
+`style set live_action`（不带 `--sub-mode`）会判「未知子模式 None」，整条 setup 流程都会挂
+（实测挂了 12 个引擎测试，见 §14.5）。
+
+### 14.3 新建项目：路径 + 画幅 + 分辨率 + 画风
+
+`POST /api/projects/create` 新增 `resolution` / `style` / `track`。建档后调引擎自己的
+`drama.py style set` 与 `project_setup.py set --resolution`，**然后回读 `style-plan.json` /
+`project-setup.json` 验真**：
+
+> 这两个脚本在「其它 G-0 项没填」时会用 **rc=4** 表示「等待确认」，但文件其实已经写了。
+> 拿退出码当结论会误报「分辨率没写上」—— 实测踩到，改成回读文件。
+
+界面里路径用「已有项目的上级目录」做候选根（浏览器拿不到系统目录选择框，这点在弹窗里写明）。
+
+### 14.4 对话模式
+
+顶栏「助手」→ 抽屉。**服务端只出提案，不执行任何动作**：
+
+| 动作 | 谁执行 | 边界 |
+| --- | --- | --- |
+| `navigate` | 前端直接跳 | route 按页面清单白名单过滤 |
+| `run` | 前端弹确认 → `pipeline/run` 的 `only=` | 只允许流水线登记的免费命令，`assets.rh` 这类计费命令**代码里就不在白名单** |
+| `none` | — | 问状态类问题必须落到这里 |
+
+模型输出不是 JSON 时整段当回答、动作置空（宁可少做）。实测三句：
+
+* 「现在卡在哪一步？」→ 准确说出停在 S1、0/11 完成、下一步是调研，`action=none`；
+* 「带我看看资产」→ `navigate assets`；
+* 「跑一下转分镜」→ 模型主动发现「可执行命令里没有这一项」，反问要哪个，并说明「真跑会写盘，我不替你按」。
+
+### 14.5 这轮踩的坑
+
+* **模板数量的断言不该写死**：新增一个 `assistant.chat` 用途就让「应有 7 个模板」红了。改成
+  「≥7 且每个用途都有模板」—— 测试要守契约，不守数字。
+* **`live_action` 加了子模式但没有默认值** → `style set live_action` 直接报「未知子模式 None」，
+  连带 12 个引擎测试失败。加子模式时必须同时给默认值。
+* **`project_setup` 的 rc=4 不是失败**：它是「等待确认」，文件已写。所有「跑完就断言」的地方都要回读文件。
 

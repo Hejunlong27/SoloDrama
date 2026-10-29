@@ -367,7 +367,9 @@ def _vars():
 def test_templates():
     section("6 模板与用途")
     all_t = templates.all_templates()
-    check(len(all_t) == 7, "应有 7 个模板，实际 %d" % len(all_t))
+    # 不写死数量：新增用途是常态，写死会逼着每次改测试（那样测试就从「守契约」变成「守数字」）。
+    # 真正要守的是「每个用途都有模板、每个模板都能读」。
+    check(len(all_t) >= 7, "模板数不应少于 7，实际 %d" % len(all_t))
     check(all(t["ok"] for t in all_t), "模板正文都应能读到：%r"
           % [t["id"] for t in all_t if not t["ok"]])
     check(all(t["body_sha"] for t in all_t), "每个模板都应有指纹")
@@ -387,7 +389,10 @@ def test_templates():
     except LLMError as exc:
         check(exc.kind == "config", "缺变量应为 config，实际 %s" % exc.kind)
 
-    check(len(templates.PURPOSES) == 7, "应有 7 个业务用途")
+    check(len(templates.PURPOSES) >= 7, "业务用途不应少于 7，实际 %d" % len(templates.PURPOSES))
+    missing = [p["id"] for p in templates.PURPOSES
+               if p.get("template_id") and p["template_id"] not in templates.TEMPLATE_MAP]
+    check(not missing, "这些用途没有对应模板：%s" % missing)
     check(templates.PURPOSE_MAP["script.generate"]["requires"] == ["json"], "剧本生成应要求 json 能力")
 
 

@@ -624,3 +624,21 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   }
 }
 
+/* ---------- 助手（对话） ---------- */
+.chat-wrap { display: flex; flex-direction: column; height: 100%; min-height: 420px; gap: 12px; }
+.chat-hint { flex: none; }
+.chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.chat-row { display: flex; }
+.chat-row.me { justify-content: flex-end; }
+.chat-row.ai { justify-content: flex-start; }
+.chat-bubble {
+  max-width: 84%; padding: 9px 12px; border-radius: var(--r-md);
+  background: var(--bg-card); border: 1px solid var(--line);
+  font-size: var(--fs-13); line-height: 1.6; white-space: normal;
+}
+.chat-row.me .chat-bubble { background: var(--accent-tint); border-color: var(--accent-line); }
+.chat-bubble.dim { color: var(--txt-3); }
+.chat-act { display: flex; align-items: center; gap: 10px; padding: 2px 0 6px; flex-wrap: wrap; }
+.chat-input { flex: none; display: flex; gap: 8px; align-items: flex-end; }
+.chat-input .textarea { flex: 1; min-height: 62px; resize: vertical; }
+

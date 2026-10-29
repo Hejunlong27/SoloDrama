@@ -1,6 +1,14 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-10-29 更新（V0.7.21 · 工作流可换 / 槽位自动关 / 画风库 / 对话控制）**：用户一次提了 5 件：①本地工作流支持手动替换 ②不管本地还是 RH 都要自动识别输入节点、运行时关掉多余图槽 ③连接中心与生成通道重叠，合并 ④新建项目可选路径/画幅/分辨率/画风，并把 RH 官方 6 个风格加进默认库 ⑤接入 DeepSeek 后增加对话模式。
+  ① **工作流可换**：`web/core/comfy_store.py` + `GET/POST /api/comfy/workflows*`。上传校验三条：是 API 格式（`nodes/links` 的界面导出直接拒，提示「导出 API 格式」）、有输出节点（没输出的跑完不出东西）、能描述出端口。上传件落 `web/var/comfy/workflows/`，内置只读；同名再上传先挪 `.bak_时间戳`。自动映射按端口角色生成，识别不出的**如实列出**并区分「必需（prompt/images）」与「沿用原值（其余）」。
+  ② **端口识别 + 槽位裁剪**：真源 `stages/video/comfyui/comfy_ports.py`（纯标准库，可独立运行；`web/core/comfy_ports.py` 只是按路径加载，避免两份漂）。`describe()` 认两类槽写法（`image1` / `ref_images.ref_image_0`），`prune_for_refs()` **真的改图**：删多余 `LoadImage`、删多槽节点上的 `ref_image_n`、按输出做可达性剪枝。实测真实 6 槽云端工作流裁到 2：`dropped_nodes=[146,159,160,161,278]`，**零悬空引用**，原文件未被改动。客户端 `--list-ports` 可离线看端口；干跑也会打印「将关闭哪些槽」。云端 RH 只能覆盖值不能删节点，文档与界面都写明，不装样子。
+  ③ **合并**：连接中心改三页签（通道配置/生成通道/出片工作流），`generators.js` 支持 `embedded` 模式（去掉自己的页头，避免一页两个大标题），顶级导航删掉「生成通道」，`#/generators` 保留为旧链接。
+  ④ **画风库**：`configs/styles.json` 收录 6 个官方风格（提示词为原文），按语义挂到 `live_action`（4 个）与 `2d_animation`（2 个）轨道；`style_gate.style_lib()` 读它并 `_merge_style_lib()`，确认画风时写 `style_prompt`/`style_name`。新建项目接口加 `resolution/style/track`，建档后调 `drama style set` + `project_setup set --resolution`，**回读文件验真**（rc=4 是「等待确认」，不是失败）。
+  ⑤ **对话**：`web/core/assistant.py` + `/api/assistant/chat` + 顶栏「助手」抽屉。用途 `assistant.chat`（新增提示词 `assistant-chat.md`）。服务端只出提案：`navigate` 走前端白名单、`run` 走 `pipeline/run` 的 `only=` 且必须过确认，计费命令**代码里就不在白名单**；模型不按 JSON 回时整段当回答、动作置空。实测三句行为正确（问进度→none；要资产→navigate；跑分镜→反问并说明不替你按）。
+  ⑥ **踩坑**：加子模式没给默认值 → `style set live_action` 报「未知子模式 None」，连带 12 个引擎测试挂；`llm_gateway.complete` 不存在（是 `get_gateway().complete`）；模板数量断言写死 7 会被新增用途打红，改成「≥7 且每个用途都有模板」。
+  ⑦ 测试：新增 3 个文件（`test_comfy_ports` 7 组、`test_workflow_store` 6 组、`test_assistant` 4 组），全量 **41 个 0 失败**。
 - **2026-10-29 更新（V0.7.20 · 可读性 / 动效 / 打开速度）**：用户反馈「按钮太小、字太小、切换没动效、模块打开慢」，并要求先装个设计类 skill 再做。已装 `ui-design-library`（Emil Kowalski 的动效准则）与 `ui-design-system`，按前者的规矩落地，不是凭感觉调数值。
   ① **字号**：正文 13→15、元信息 11→12、小标题 14→16、页面标题 20→24、KPI 26→32；`--row-h` 36→44、`--top-h` 56→60、`--nav-w` 232→252。**不做等比 ×1.15** —— 那样「都变大了」但主次更糊，层级要靠差值。全部走 `tokens.css`，一处改完全局生效（此前只有 6 处硬编码 10px，这轮一并清到 12px）。
   ② **按钮**：`.btn` 30→36、`.lg` 36→44、`.sm` 24→30、`.icon` 28→36，新增 `.btn.stage`（34px）。**流水线 11 行每行补按钮**：可自动→「运行此步」，需人工/被挡→「打开页面 / 去补齐」；配套 `/api/pipeline/run` 新增 `only=<Sx>`（**只跑这一条**，否则点 S10 会把前 9 步跑一遍）。顺带修 `MANUAL_HINT` 里 S3 的 page 写成 `asset`（前端路由是 `assets`，点了会落空）—— 这个字段此前从未被消费，接上按钮才暴露。

@@ -106,7 +106,9 @@ STYLES = {
         "desc": "真人写实。旁白推进 + 角色对白。**强制「1 视频片段 = 1 张三格时间分镜」**，交付成片 + 旁白 + 可选字幕。",
         "visual_style_lock": "live-action-photographic",
         "sub_modes": {},
-        "default_sub_mode": None,
+        # 子模式由 configs/styles.json 合并进来（见文件末尾 _merge_style_lib）；
+        # 给一个默认值，避免「带了子模式却没默认」时 `style set live_action` 直接报错。
+        "default_sub_mode": "short-form-drama",
         "shot_duration": {"min": 5.0, "max": 15.0, "action_min": 5.0, "action_max": 15.0},
         "narration_max_chars": {"normal": 60, "emotion": 70, "monologue": 80},
         "reserve": {"narration_pct_max": 0.60, "dialogue_pct_max": 0.70,
@@ -123,6 +125,36 @@ STYLES = {
 }
 
 ORDER = ("3d_manhua", "2d_animation", "live_action")
+
+
+def style_lib() -> dict:
+    """读 `configs/styles.json`（系统默认风格库）→ {id: 条目}。
+
+    为什么从这里读而不是把 6 条硬编码进 STYLES：风格文案经常增补（官方库 306 条），
+    硬编码会让「引擎接受的子模式」和「界面能选的风格」两套清单慢慢漂开。
+    读不到就返回空（脚本被拷进项目、仓库不在旁边时属于正常情况）。
+    """
+    try:
+        root = pathlib.Path(__file__).resolve().parents[3]
+        d = json.loads((root / "configs" / "styles.json").read_text(encoding="utf-8-sig"))
+    except Exception:                                             # noqa: BLE001
+        return {}
+    out = {}
+    for it in d.get("styles") or []:
+        if isinstance(it, dict) and it.get("id"):
+            out[str(it["id"])] = it
+    return out
+
+
+def _merge_style_lib() -> None:
+    """把风格库里的条目挂到各自轨道的 sub_modes 上（轨道不匹配的不挂）。"""
+    for sid, it in style_lib().items():
+        track = it.get("track")
+        if track in STYLES:
+            STYLES[track]["sub_modes"].setdefault(sid, it.get("name") or sid)
+
+
+_merge_style_lib()
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +322,7 @@ def _do_set(ws: pathlib.Path, choice: str, sub_mode: str | None, source: str = "
     s = STYLES[choice]
     subs = s["sub_modes"]
     if subs:
-        sub_mode = sub_mode or s["default_sub_mode"]
+        sub_mode = sub_mode or s.get("default_sub_mode") or next(iter(subs), None)
         if sub_mode not in subs:
             print("[FAIL] 未知子模式：%s（%s 可选 %s）" % (sub_mode, choice, "|".join(subs)))
             return 2
@@ -306,6 +338,8 @@ def _do_set(ws: pathlib.Path, choice: str, sub_mode: str | None, source: str = "
         "label": s["label"],
         "sub_mode": sub_mode,
         "visual_style_lock": s["visual_style_lock"],
+        "style_prompt": (style_lib().get(sub_mode or "") or {}).get("prompt", ""),
+        "style_name": (style_lib().get(sub_mode or "") or {}).get("name", ""),
         "source_skill": s["source_skill"],
         "confirmed": True,
         "confirmed_at": _now(),
