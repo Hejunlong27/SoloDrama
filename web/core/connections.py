@@ -41,7 +41,12 @@ LABELS = {
 
 DEFAULTS: dict[str, dict] = {
     "llm": {},
-    "comfyui": {"base_url": "http://127.0.0.1:8188"},
+    # autostart：出图前发现 8188 没服务时，由 Studio 起一个 headless 实例
+    # （真源 `stages/assets/comfyui/comfy_boot.py`）。默认开 —— 关掉它等于把
+    # 「先点开桌面版」这道手工步骤还回去。
+    # launch：手动指定安装（python + main_py）。留空则自动读 ComfyUI Desktop 的
+    # installations.json，换机器、换实例都不用改代码。
+    "comfyui": {"base_url": "http://127.0.0.1:8188", "autostart": True, "launch": {}},
     "runninghub": {"base_url": "https://www.runninghub.ai", "kind": "workflow",
                    "workflow_id": "", "ai_app_id": ""},
 }
@@ -115,7 +120,9 @@ def save(patch: dict) -> dict:
             if kk in ("api_key", "key", "apiKey"):
                 continue
             if kk in DEFAULTS.get(k, {}) or kk in ("model", "note", "label"):
-                if cfg[k].get(kk) != vv:
+                # `autostart` 是策略开关，不影响「现在连不连得上」。
+                # 勾一下就把「已连接」打回「待验证」，会让用户以为服务掉了。
+                if cfg[k].get(kk) != vv and kk != "autostart":
                     changed = True
                 cfg[k][kk] = vv
         if changed:
@@ -205,9 +212,13 @@ def env_for() -> dict:
     """给子进程的环境变量。空值不注入，避免把默认值覆盖成空串。"""
     cfg = load()
     out: dict[str, str] = {}
-    comfy = (cfg.get("comfyui", {}).get("base_url") or "").strip()
+    comfy_cfg = cfg.get("comfyui", {}) or {}
+    comfy = (comfy_cfg.get("base_url") or "").strip()
     if comfy:
         out["COMFYUI_URL"] = comfy
+    # 自动启动开关也要下发：CLI / agent 直接跑出图脚本时，判断依据必须和界面一致，
+    # 否则「界面关掉了自动启动，命令行却照旧拉起一个实例」——两套口径，用户没法解释。
+    out["SOLODRAMA_COMFY_AUTOSTART"] = "0" if comfy_cfg.get("autostart") is False else "1"
     rh = cfg.get("runninghub", {}) or {}
     key = get_key("runninghub").strip()
     if key:
@@ -298,11 +309,14 @@ def _test_comfyui() -> dict:
     except urllib.error.URLError as e:
         msg = str(getattr(e, "reason", e))
         refused = "refused" in msg.lower() or "10061" in msg
+        loopback = _is_loopback(base)
+        nxt = ("ComfyUI 没启动：出图时会自动拉起一个后台实例（也可以在连接中心点「启动」）"
+               if (refused and loopback) else
+               ("检查地址/端口/防火墙；远程机器要允许 8188 入站" if not loopback else
+                "确认地址/端口；本机 8188 被别的程序占用时换一个端口"))
         return {"ok": False, "reason": "refused" if refused else "unreachable",
                 "detail": "连不上 %s（%s）" % (base, msg[:120]),
-                "next": ("ComfyUI 没启动：打开 ComfyUI 桌面版，或在 ComfyUI 目录执行 "
-                         "`python main.py --port 8188`") if refused else
-                        "检查地址/端口/防火墙；远程机器要允许 8188 入站"}
+                "next": nxt, "can_start": bool(refused and loopback)}
     except (TimeoutError, OSError) as e:
         return {"ok": False, "reason": "timeout", "detail": "5 秒内没有响应（%s）" % type(e).__name__,
                 "next": "ComfyUI 可能在启动中，或负载过高；稍后重试"}
@@ -316,6 +330,15 @@ def _test_comfyui() -> dict:
     return {"ok": True, "reason": "ok", "detail": "ComfyUI 在线" + (" · " + " · ".join(bits) if bits else ""),
             "comfyui": dict(info, base_url=base),
             "next": ""}
+
+
+def _is_loopback(base: str) -> bool:
+    """本机地址才允许自动启动实例（远程地址只探测）。"""
+    try:
+        host = (urllib.parse.urlparse(base if "://" in base else "http://" + base).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
 
 
 def _rh_site_ok(base: str) -> bool:
@@ -649,6 +672,7 @@ def _llm_providers() -> list:
 
 _DOC = {
     "llm": "用途路由在「AI 模型中心」——同一个模型可以只负责剧本，另一个只负责分镜。",
-    "comfyui": "本地出图 ￥0，只占 GPU。地址默认 http://127.0.0.1:8188，需要先启动 ComfyUI。",
+    "comfyui": "本地出图 ￥0，只占 GPU。地址默认 http://127.0.0.1:8188；"
+               "没启动时 Studio 会自动拉起一个后台实例（约 30–90 秒），不需要先开桌面版。",
     "runninghub": "云端出片按次计费（27 币/段 + 1 币/秒）。这里只做只读验证，不产生任务。",
 }

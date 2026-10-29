@@ -141,6 +141,23 @@ def test_save_keeps_key():
         check(CONN.get_key("runninghub") == "", "没有其它来源时 get_key 应为空")
 
 
+def test_autostart_toggle():
+    section("2b 自动启动开关：改策略不该把「已连接」打回待验证")
+    with Sandbox():
+        CONN.save({"comfyui": {"base_url": "http://127.0.0.1:8188", "autostart": True}})
+        CONN._note_test("comfyui", True, "ComfyUI 在线", "")
+        check(CONN.load()["comfyui"].get("last_ok") is True, "先造一个「已连接」状态")
+        # 关掉自动启动：这是策略，不是连通性变化
+        CONN.save({"comfyui": {"autostart": False}})
+        check(CONN.load()["comfyui"].get("last_ok") is True,
+              "只切开关不该作废 last_ok（否则用户以为服务掉了）")
+        check(CONN.load()["comfyui"]["autostart"] is False, "开关要真的存下来")
+        # 改地址：必须作废（旧结论对不上新地址）
+        CONN.save({"comfyui": {"base_url": "http://127.0.0.1:9999"}})
+        check(CONN.load()["comfyui"].get("last_ok") is None, "改地址必须把旧结论清掉")
+        check(CONN.load()["comfyui"]["autostart"] is False, "改地址不该把开关重置")
+
+
 def test_overview_masked():
     section("3 概览：三条通道，且无明文")
     with Sandbox():
@@ -279,6 +296,7 @@ def main() -> int:
     print("=" * 60)
     test_hint()
     test_save_keeps_key()
+    test_autostart_toggle()
     test_overview_masked()
     test_env_injection()
     test_site_and_unknown()

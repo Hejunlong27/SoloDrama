@@ -49,12 +49,31 @@ def human(n: int) -> str:
     return f"{n / 1024 / 1024:.2f} MB"
 
 
+def _data_dir(workspace: Path) -> Path:
+    """数据目录解析（唯一真源 = <ws>/layout.json 的 data_rel，相对 engine_root）。
+
+    旧布局没有 layout.json 时退回 <ws>/data —— 与 `stages/_layout.py` 的口径一致。
+    硬编码 `<ws>/data` 会把新布局项目（data_rel=../06-提示词）误判成「找不到工作区」。
+    """
+    lay = workspace / "layout.json"
+    if lay.is_file():
+        try:
+            obj = json.loads(lay.read_text(encoding="utf-8"))
+            rel = obj.get("data_rel")
+            if rel:
+                return (workspace / (obj.get("engine_root") or "video-pipeline") / rel).resolve()
+        except (OSError, json.JSONDecodeError):
+            pass
+    return workspace / "data"
+
+
 def collect_sources(workspace: Path) -> list[Path]:
     """从 characters.json / scenes.json 里读引用，读不到就退回扫 refs/ 目录。"""
     found: list[Path] = []
     seen: set[str] = set()
+    data_dir = _data_dir(workspace)
     for name in ("characters.json", "scenes.json"):
-        f = workspace / "data" / name
+        f = data_dir / name
         if not f.is_file():
             continue
         try:
@@ -69,7 +88,7 @@ def collect_sources(workspace: Path) -> list[Path]:
                 continue
             p = Path(raw)
             if not p.is_absolute():
-                p = workspace / "data" / p
+                p = data_dir / p
             p = p.resolve()
             if str(p) in seen:
                 continue
@@ -77,7 +96,9 @@ def collect_sources(workspace: Path) -> list[Path]:
             found.append(p)
 
     if not found:
-        refs = workspace / "data" / "refs"
+        # 兜底扫描也要跟着 data_dir 走：新布局里 refs 在 06-提示词/ 下，
+        # 写死 `<ws>/data` 会让兜底永远扫不到东西（表现为「找不到任何本地参考图」）。
+        refs = data_dir / "refs"
         if refs.is_dir():
             found = sorted(p for p in refs.iterdir() if p.is_file())
             if found:
@@ -126,11 +147,12 @@ def main() -> int:
     else:
         workspace = (Path(__file__).resolve().parent.parent / "video-pipeline").resolve()
 
-    if not (workspace / "data").is_dir():
-        print(f"[FAIL] 找不到工作区 data/：{workspace}")
+    data_dir = _data_dir(workspace)
+    if not data_dir.is_dir():
+        print(f"[FAIL] 找不到工作区 data/：{data_dir}")
         return 1
 
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else workspace / "data" / "refs_h3"
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else data_dir / "refs_h3"
     ext = ".jpg" if args.format == "jpg" else ".png"
 
     sources = collect_sources(workspace)

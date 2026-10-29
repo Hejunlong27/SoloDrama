@@ -54,8 +54,47 @@ function cardLlm(it) {
     + icon('external', 13) + ' 去 AI 模型中心</button></div></section>';
 }
 
-function cardComfy(it) {
+/* ---------- 本地 ComfyUI 的「在线状态 + 启动/停止」 ----------
+   为什么要显示这些：出图前它会自动拉起后台实例（真源 comfy_boot.py），
+   用户需要知道「现在是谁在跑、是不是我开的、要等多久」，否则点了没反应会被当成坏了。 */
+function liveHtml(s) {
+  if (!s) return '<div class="tiny dim">读不到本机服务状态。</div>';
+  const t = s.task || {};
+  const starting = t.state === 'starting';
+  const on = !!s.online;
+  const tone = starting ? 'info' : (on ? 'info' : (s.can_start ? 'warn' : 'bad'));
+  let head;
+  if (starting) {
+    head = '正在启动 ComfyUI… <b>' + (t.elapsed || 0) + 's</b>'
+      + '<div class="tiny" style="margin-top:4px;opacity:.8">'
+      + esc((t.lines && t.lines.length ? t.lines[t.lines.length - 1] : '') || '正在拉起后台实例')
+      + '</div>';
+  } else if (on) {
+    head = esc(s.detail || 'ComfyUI 在线')
+      + (s.owned ? '<div class="tiny" style="margin-top:4px;opacity:.8">这个实例由 Studio 启动'
+        + (s.started_iso ? '（' + esc(s.started_iso) + '）' : '') + '</div>'
+        : '<div class="tiny" style="margin-top:4px;opacity:.8">正在复用你已打开的实例，不会另起一个</div>');
+  } else {
+    head = esc(s.detail || '未在线')
+      + (s.can_start
+        ? '<div class="tiny" style="margin-top:4px;opacity:.8">出图时会自动拉起后台实例（约 30–90 秒），不需要先开桌面版</div>'
+        : '<div class="tiny" style="margin-top:4px;opacity:.8">这台机器上没找到可启动的安装：可先用桌面版启动一次，或填下面的安装路径</div>');
+  }
+  const btns = starting
+    ? '<button class="btn quiet sm" disabled><span class="spinner"></span> 启动中</button>'
+    : (on
+      ? (s.owned
+        ? '<button class="btn quiet sm" id="cStop">' + icon('close', 12) + ' 停止</button>'
+        : '')
+      : (s.can_start ? '<button class="btn quiet sm" id="cStart">' + icon('play', 12) + ' 现在启动</button>' : ''));
+  return '<div class="alert ' + tone + '"><span class="nav-ico">'
+    + icon(on || starting ? 'check' : 'alert', 14) + '</span><div style="flex:1">' + head + '</div>'
+    + '<div class="row" style="gap:6px;align-items:center">' + btns + '</div></div>';
+}
+
+function cardComfy(it, cs) {
   const f = it.fields || {};
+  const auto = f.autostart !== false;
   return '<section class="card" id="card-comfyui"><div class="card-h">'
     + '<span class="state ' + tone(it) + '"><i class="dot ' + tone(it) + '"></i>' + esc(toneText(it)) + '</span>'
     + '<h3>本地出图 · ComfyUI</h3><span class="card-sub">角色 / 场景 / 道具图</span>'
@@ -69,9 +108,16 @@ function cardComfy(it) {
     + '<button class="btn quiet" id="cTest">测试连接</button>'
     + '<span class="tiny dim" style="margin-left:auto">'
     + (it.last_test ? esc(ago(it.last_test)) + '前验证' : '还没验证过') + '</span></div>'
-    + '<div id="cResult" style="margin-top:10px">' + resultBox(it) + '</div>'
-    + '</div><div class="card-foot"><span class="tiny dim">保存后出图器会自动用这个地址（不需要你设环境变量），'
-    + '所有出图脚本自动生效——不需要你在终端设环境变量。</span></div></section>';
+    + '<label class="row gap8" style="margin-top:12px;cursor:pointer;align-items:flex-start">'
+    + '<input type="checkbox" id="cAuto"' + (auto ? ' checked' : '') + ' style="margin-top:3px">'
+    + '<span class="small">没启动时自动拉起后台实例<span class="tiny dim">（无窗口；关掉就等于恢复「先开桌面版」）</span></span></label>'
+    + '<div id="cLive" style="margin-top:12px">' + liveHtml(cs) + '</div>'
+    /* 有实时状态时不再重复显示「上次测试结果」—— 两块说的是同一件事，数字还会打架
+       （一块是刚探的显存，一块是 20 分钟前存的）。点「测试连接」时才把它显示出来。 */
+    + '<div id="cResult" style="margin-top:10px' + (cs ? ';display:none' : '') + '">'
+    + (cs ? '' : resultBox(it)) + '</div>'
+    + '</div><div class="card-foot"><span class="tiny dim">保存后出图器会自动用这个地址（不需要你设环境变量）。'
+    + '已在线就复用，不会出现两个实例抢同一张显卡。</span></div></section>';
 }
 
 function cardRh(it) {
@@ -153,10 +199,12 @@ async function renderChannels(ctx) {
   const llm = byKind.llm || { fields: {}, doc: '' };
   const comfy = byKind.comfyui || { fields: {}, doc: '' };
   const rh = byKind.runninghub || { fields: {}, doc: '' };
+  /* 本机服务实时状态（在线 / 谁启动的 / 正在启动的进度）。读不到就退化成静态说明，不挡页面。 */
+  const cs = await api.comfyStatus().catch(() => null);
 
   const html = header(ov)
     + '<div class="grid g2" style="align-items:start">'
-    + cardLlm(llm) + cardComfy(comfy) + cardRh(rh)
+    + cardLlm(llm) + cardComfy(comfy, cs) + cardRh(rh)
     + '<section class="card"><div class="card-h"><h3>注入关系</h3>'
     + '<span class="card-sub">界面填一次，子进程自动带上</span></div><div class="card-b">'
     + kv([
@@ -204,11 +252,36 @@ async function renderChannels(ctx) {
 function mountComfy(ctx, root) {
   const save = root.querySelector('#cSave');
   const test = root.querySelector('#cTest');
+  /* 启动是异步的（冷启动 30–90 秒）：轮询状态，直到 task 不再是 starting。
+     ★ 上限 240 次 ≈ 6 分钟，够慢机器；超了就停，别把浏览器拖死。 */
+  const poll = (n) => {
+    n = n || 0;
+    setTimeout(async () => {
+      if (!document.body.contains(root)) return;
+      let s = null;
+      try { s = await api.comfyStatus(); } catch (e) { /* 网络抖一下，下一轮再试 */ }
+      if (s) paintLive(s);
+      const st = s && s.task ? s.task.state : '';
+      if (st === 'starting' && n < 240) poll(n + 1);
+      else if (n > 0) ctx.refresh();
+    }, n === 0 ? 900 : 1600);
+  };
+  const paintLive = (s) => {
+    const box = root.querySelector('#cLive');
+    if (!box) return;
+    box.innerHTML = liveHtml(s);
+    paintIcons(box);
+    bindLive(ctx, root, poll);
+  };
+  bindLive(ctx, root, poll);
   if (save) save.onclick = async () => {
     save.disabled = true;
     try {
-      await api.saveConnection('comfyui', { base_url: (root.querySelector('#cUrl') || {}).value || '' });
-      toast('已保存 ComfyUI 地址');
+      await api.saveConnection('comfyui', {
+        base_url: (root.querySelector('#cUrl') || {}).value || '',
+        autostart: !!(root.querySelector('#cAuto') || {}).checked
+      });
+      toast('已保存 ComfyUI 配置');
       ctx.refresh();
     } catch (e) { toast('保存失败：' + (e.detail || e.message), 'bad'); }
     finally { save.disabled = false; }
@@ -219,14 +292,54 @@ function mountComfy(ctx, root) {
     const box = root.querySelector('#cResult');
     try {
       const r = await api.testConnection('comfyui');
-      if (box) box.innerHTML = '<div class="alert ' + (r.ok ? 'info' : 'bad') + '">'
-        + '<span class="nav-ico">' + icon(r.ok ? 'check' : 'alert', 14) + '</span><div>'
-        + esc(r.detail || '') + (r.next ? '<div class="tiny" style="margin-top:4px;opacity:.8">下一步：'
-          + esc(r.next) + '</div>' : '') + '</div></div>';
+      if (box) {
+        box.style.display = 'block';
+        box.innerHTML = '<div class="alert ' + (r.ok ? 'info' : 'bad') + '">'
+          + '<span class="nav-ico">' + icon(r.ok ? 'check' : 'alert', 14) + '</span><div>'
+          + esc(r.detail || '') + (r.next ? '<div class="tiny" style="margin-top:4px;opacity:.8">下一步：'
+            + esc(r.next) + '</div>' : '') + '</div></div>';
+      }
       toast(r.ok ? 'ComfyUI 在线' : '测试失败', r.ok ? 'ok' : 'bad');
       if (r.ok) setTimeout(() => ctx.refresh(), 900);
     } catch (e) { toast('测试失败：' + (e.detail || e.message), 'bad'); }
     finally { test.disabled = false; test.textContent = '测试连接'; }
+  };
+  /* 页面打开时如果正在启动（比如从别的页切回来），接着看进度 */
+  api.comfyStatus().then((s) => {
+    if (s && s.task && s.task.state === 'starting') poll(1);
+  }).catch(() => {});
+}
+
+/* 绑定「现在启动 / 停止」两个按钮（每次重绘都要重绑：它们是新 DOM） */
+function bindLive(ctx, root, poll) {
+  const start = root.querySelector('#cStart');
+  if (start) start.onclick = async () => {
+    start.disabled = true;
+    start.innerHTML = '<span class="spinner"></span> 启动中';
+    try {
+      const r = await api.startComfy();
+      if (!r.ok) {
+        toast(r.detail || '无法启动', 'bad');
+        const s = await api.comfyStatus().catch(() => null);
+        const box = root.querySelector('#cLive');
+        if (s && box) { box.innerHTML = liveHtml(s); paintIcons(box); bindLive(ctx, root, poll); }
+        return;
+      }
+      toast('正在启动，通常 30–90 秒');
+      poll(1);
+    } catch (e) {
+      toast('启动失败：' + (e.detail || e.message), 'bad');
+      start.disabled = false;
+    }
+  };
+  const stop = root.querySelector('#cStop');
+  if (stop) stop.onclick = async () => {
+    stop.disabled = true;
+    try {
+      const r = await api.stopComfy();
+      toast(r.ok ? (r.detail || '已停止') : (r.detail || '停止失败'), r.ok ? 'ok' : 'bad');
+    } catch (e) { toast('停止失败：' + (e.detail || e.message), 'bad'); }
+    ctx.refresh();
   };
 }
 

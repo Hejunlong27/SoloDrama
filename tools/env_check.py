@@ -225,8 +225,8 @@ def collect() -> dict:
     items.append({
         "group": "配置", "name": "ComfyUI 本地端口",
         "ok": _port_open("127.0.0.1", 8188), "required": False,
-        "detail": "127.0.0.1:8188 " + ("可达" if _port_open("127.0.0.1", 8188) else "未监听（本地出图需先启动）"),
-        "hint": "本地出图默认￥0，需手动启动 ComfyUI；不用本地通道可忽略",
+        "detail": "127.0.0.1:8188 " + ("可达" if _port_open("127.0.0.1", 8188) else "未监听（出图时会自动启动）"),
+        "hint": "本地出图默认￥0；没启动时 Studio 会拉起一个后台实例，不用先开桌面版",
     })
 
     # 5) 仓库完整性

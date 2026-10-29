@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, assistant, comfy_store, commands as CMD,
+from core import (adapters, artifacts, assistant, comfy_launcher, comfy_store, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
                     studio, styles, ux)
@@ -780,6 +780,33 @@ def connections_test(kind: str):
     if k not in connections.KINDS:
         raise HTTPException(status_code=404, detail="未知通道：%s" % kind)
     return connections.test(k)
+
+
+# ---------------------------------------------------------------------------
+# 本地 ComfyUI：按需启动（后台实例，无窗口）
+# 三条纪律：
+#   * 只对 loopback 生效 —— 远程地址只探测，不在本机起进程；
+#   * 启动是**异步**的（冷启动 30–90 秒），接口立刻返回，前端轮询 /status 看进度；
+#     同步等待会把一个请求挂一分半，uvicorn 单进程下整个界面都刷不出来；
+#   * 停止只停 Studio 自己启动的那个实例（引擎侧核对「pid 是否正在监听该端口」）。
+# ---------------------------------------------------------------------------
+@app.get("/api/comfy/status")
+def comfy_status():
+    return comfy_launcher.status()
+
+
+@app.post("/api/comfy/start")
+def comfy_start():
+    if READONLY_MODE:
+        raise HTTPException(status_code=403, detail="只读模式（demo）：不能启动本机服务")
+    return comfy_launcher.start_async()
+
+
+@app.post("/api/comfy/stop")
+def comfy_stop():
+    if READONLY_MODE:
+        raise HTTPException(status_code=403, detail="只读模式（demo）：不能停止本机服务")
+    return comfy_launcher.stop()
 
 
 @app.get("/api/studio/asset-md")

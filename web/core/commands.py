@@ -499,17 +499,18 @@ _add(_c("assets.local", "6 资产", "本地出图（￥0，默认干跑）", "dr
                       placeholder="<工作区>/04-资产/资产提示词.md")],
         resources=["GPU"],
         env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="默认干跑只列清单；--submit 才动 GPU。本机需 ComfyUI 在 8188 运行；"
-             "asset_md 不填时引擎会报「未设置 SOLODRAMA_ASSET_MD」。",
-        agent="先干跑给我看清单与缺口；我确认后再加 --submit。出图前请确认本机 ComfyUI 是否在线。"))
+        help="默认干跑只列清单；--submit 才动 GPU。本机 ComfyUI 没启动时会自动拉起后台实例"
+             "（30–90 秒，可用 --no-boot 关掉）；asset_md 不填时引擎会报「未设置 SOLODRAMA_ASSET_MD」。",
+        agent="先干跑给我看清单与缺口；我确认后再加 --submit。出图前不用管 ComfyUI 是否在线，"
+              "它会自动启动。"))
 _add(_c("assets.check", "6 资产", "ComfyUI 在线体检", "drama",
         argv=["assets", "--engine", "local", "--check"], mode="sync", danger=READ,
         # ★ 体检也要 asset_md：gen_assets_local.py 在解析 --check 之前就会检查
         #   SOLODRAMA_ASSET_MD，缺了会直接 rc=1（看上去像「ComfyUI 没开」，其实是缺提示词文件）。
         params=[Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
         env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="只体检 ComfyUI 是否在线，不出图。",
-        agent="不在线就告诉我怎么启动（ComfyUI 桌面版需手动启动 8188 端口）。"))
+        help="只体检 ComfyUI 是否在线，不出图（没启动会先自动拉起）。",
+        agent="不在线就把启动失败的原因（端口被占 / 缺依赖 / 超时）说清楚；不用叫我手动开桌面版。"))
 _add(_c("assets.rh_wf", "6 资产", "云端工作流出图（文生图/图生图，★计费）", "gen_rh_wf",
         billing=PAID, danger=DANGER,
         flags={"--md": "md", "--only": "only", "--ratio": "ratio",

@@ -7,7 +7,7 @@ pip 退出码 0 只说明 pip 自己没崩，不说明这个解释器现在能 i
 `winget install ffmpeg` 更是经常「跑完了但 PATH 里还是没有」。
 
 所以这里的断言几乎全在守边界：
-  1. 每一项都必须带 `fix.kind`，且**能自动修的只允许 pip / mkdir / config 三类**；
+  1. 每一项都必须带 `fix.kind`，且**能自动修的只允许 pip / mkdir / config / comfy_start 四类**；
   2. 修复动作的命令由服务端现算：pip 必须打在**引擎解释器**上，不许 `--user`
      （那会装到用户目录，引擎进程不一定读得到）、不许 `--break-system-packages`；
   3. 非自动项（winget / 外部 GUI / 填 Key）调 fix 必须被拒，**且不产生任何执行**；
@@ -28,7 +28,7 @@ sys.path.insert(0, str(WEB))
 from core import health, paths  # noqa: E402
 
 FAILS = []
-AUTO_KINDS = {"pip", "mkdir", "config"}
+AUTO_KINDS = {"pip", "mkdir", "config", "comfy_start"}
 ALL_KINDS = AUTO_KINDS | {"manual", "page", "none"}
 
 
@@ -193,9 +193,23 @@ def test_history():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_comfy_start_wired():
+    section("8. ComfyUI 自动启动：按钮后面真的有动作")
+    # 这一组的风险是「假按钮」：界面标了 auto、点了却什么都没发生。
+    # 所以必须同时满足三件事：kind 合法、标了 auto、执行函数真的注册了。
+    d = health.collect()
+    it = next((i for i in (d.get("items") or []) if i["id"] == "svc.comfy"), None)
+    check(it is not None, "缺少 svc.comfy 体检项（ComfyUI 本地端口）")
+    fx = (it or {}).get("fix") or {}
+    check(fx.get("kind") == "comfy_start", "kind 应为 comfy_start，实际 %r" % fx.get("kind"))
+    check(fx.get("auto") is True, "必须标 auto，否则界面不会给按钮")
+    check("comfy_start" in health._FIXERS, "必须注册了执行函数（否则就是假按钮）")
+    check(bool(fx.get("note")), "note 要说清代价（首次 30–90 秒、不接管桌面版）")
+
+
 if __name__ == "__main__":
     for fn in (test_shape, test_pip_command, test_refuse_non_auto, test_mkdir_fix,
-               test_config_fix, test_verify_is_honest, test_history):
+               test_config_fix, test_verify_is_honest, test_history, test_comfy_start_wired):
         fn()
     print("\n" + "-" * 62)
     if FAILS:

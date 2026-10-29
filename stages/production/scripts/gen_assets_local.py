@@ -160,13 +160,40 @@ def _write_prod_manifest(items: list, manifest: dict) -> None:
     }, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
+def _ensure_comfy(wait_s: int = 120) -> bool:
+    """确保本机 ComfyUI 在线；没启动就按需拉一个后台实例（`--no-boot` 可关）。
+
+    为什么放在这一层，而不是塞进 comfy_client.py：客户端要能在「别人已经起好服务」
+    的环境里单独跑（云端地址、远程机器），不该擅自在本机拉进程。这里是「出图编排」，
+    知道自己在做什么，也该为用户把「先开桌面版」这道手工步骤消掉。
+
+    真源在 `stages/assets/comfyui/comfy_boot.py`：它只对 loopback 生效，已有实例一律复用。
+    """
+    url = (os.environ.get('COMFYUI_URL') or 'http://127.0.0.1:8188').strip()
+    try:
+        if str(COMFY_DIR) not in sys.path:
+            sys.path.insert(0, str(COMFY_DIR))
+        import comfy_boot as boot                       # noqa: PLC0415
+    except Exception as e:                              # noqa: BLE001
+        print('  [WARN] 读不到自动启动模块（%s），按「服务已就绪」继续' % type(e).__name__)
+        return True
+    print('  ComfyUI: %s' % url)
+    r = boot.ensure(url, wait_s=wait_s, log=lambda m: print('  ' + m))
+    print('  [%s] %s' % ('OK' if r.get('ok') else 'FAIL', r.get('detail') or r.get('reason') or ''))
+    if not r.get('ok') and r.get('next'):
+        print('  下一步：%s' % r['next'])
+    return bool(r.get('ok'))
+
+
 def cmd_check() -> int:
     print('【本地 ComfyUI 体检】%s' % COMFY_PY)
+    if not _ensure_comfy():
+        return 1
     rc = subprocess.call([sys.executable, str(COMFY_PY), '--check'])
     if rc == 0:
         print('  [OK] ComfyUI 在线，可以出图（命令：drama.py assets --engine local --submit）')
     else:
-        print('  [FAIL] 连不上 ComfyUI。请先启动 ComfyUI，或设 COMFYUI_URL 指向它。')
+        print('  [FAIL] ComfyUI 未就绪。可先跑 --check 看启动日志，或设 COMFYUI_URL 指向已有服务。')
     return rc
 
 
@@ -186,7 +213,12 @@ def main() -> int:
     ap.add_argument('--submit', action='store_true', help='★ 真的调用 ComfyUI 出图（不花钱，但会占 GPU）')
     ap.add_argument('--force', action='store_true', help='已出图的重跑（默认跳过已有产物，断点续跑）')
     ap.add_argument('--check', action='store_true', help='只体检 ComfyUI 是否在线，然后退出')
+    ap.add_argument('--no-boot', action='store_true',
+                    help='不自动启动 ComfyUI（默认没启动就拉一个后台实例）')
     args = ap.parse_args()
+    if args.no_boot:
+        # 一个开关管三层：本脚本的 ensure()、以及它 spawn 出去的 comfy_client 子进程
+        os.environ['SOLODRAMA_COMFY_AUTOSTART'] = '0'
 
     applied = _apply_model_plan_env()
     if applied:
@@ -259,6 +291,11 @@ def main() -> int:
     if not args.force:
         cmd.append('--skip-existing')
     print()
+    # ★ 出图前先确保服务在线（没启动就拉一个后台实例）。不做这一步的后果：
+    #   每张图都要等一次连接超时，最后报「N 项无产物」，而真实原因只是一行「没启动」。
+    if not _ensure_comfy():
+        print('[FAIL] ComfyUI 没起来，本次不提交（避免每张图都空跑一次超时）')
+        return 2
     print('  $ %s' % ' '.join(cmd[1:]))
     t0 = time.time()
     rc = subprocess.call(cmd)

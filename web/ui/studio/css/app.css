@@ -199,50 +199,70 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .kpi-n { font-size: var(--fs-11); color: var(--txt-3); margin-top: 2px; }
 .kpi-n .warn { color: var(--accent); }
 
-/* ---------- 按钮 ---------- */
+/* ---------- 按钮 ----------
+   对齐 OpenDesign / claude（DESIGN.md §4 Buttons、§5 Border Radius Scale、
+   §6 Depth & Elevation、§3 Typography）。规范锁定的取值以组件局部变量承载，
+   不改 tokens.css —— 作用域只到 .btn，不牵动其他组件；日后并入全局令牌时
+   本块 --btn-* 直接折叠进 tokens.css。
+   变体映射：默认 → §4「Dark Charcoal」（#30302e + Ivory，规范里唯一的深底变体）
+             .primary → §4「Brand Terracotta」（#c96442 + Ivory，唯一的彩色 CTA） */
 .btn {
+  --btn-r: 8px;                    /* §5 Comfortably rounded：标准按钮 */
+  --btn-fs: 16px;                  /* §3 Body Standard 16px，原文明列「button text」 */
+  --btn-bg: #30302e;               /* §2 Dark Surface */
+  --btn-bg-hover: #3d3d3a;         /* §2 Dark Warm（规范未定义 hover 面，取调色板内相邻值） */
+  --btn-fg: #faf9f5;               /* §2 Ivory */
+  --btn-ring: 0 0 0 1px #30302e;   /* §6 Level 2 Ring：用阴影充当边框 */
+
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  height: 36px; padding: 0 15px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--line-strong);
-  background: var(--bg-hover); color: var(--txt);
-  font-size: var(--fs-13); font-weight: 450; white-space: nowrap;
-  /* 只过渡颜色类属性；按压用 transform，走 GPU，不触发重排 */
-  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+  height: 36px; padding: 0 12px;
+  border-radius: var(--btn-r);
+  border: 1px solid transparent;    /* 边缘改由 ring 表达（§6）；保留 1px 占位，尺寸不变 */
+  background: var(--btn-bg); color: var(--btn-fg);
+  box-shadow: var(--btn-ring);
+  font-size: var(--btn-fs); font-weight: 500; white-space: nowrap;   /* §3 字重上界 500；§7 禁 bold */
+  transition: background var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease),
               color var(--dur-1) var(--ease), transform var(--dur-fast) var(--ease-out);
 }
-.btn:hover { background: var(--bg-active); border-color: #3f4855; }
-.btn:active { transform: translateY(1px) scale(.995); }
+/* §4 图标优先排布：图标在左时左内距收窄（0px 12px 0px 8px） */
+.btn:has([data-ico]) { padding-left: 8px; }
+.btn:hover { background: var(--btn-bg-hover); }
+/* §6 Level 4 Inset：按压态叠 1px 内描边 @15% */
+.btn:active {
+  transform: translateY(1px) scale(.995);
+  box-shadow: var(--btn-ring), inset 0 0 0 1px rgba(0, 0, 0, .15);
+}
+/* §4「Focus: ring with Focus Blue」；§2 声明它全系统唯一冷色，仅用于可访问性 */
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--btn-ring), 0 0 0 3px rgba(56, 152, 236, .3);
+}
 .btn.primary {
-  position: relative; overflow: hidden;
-  background: var(--accent); border-color: var(--accent); color: #171a1f; font-weight: 600;
+  --btn-r: 12px;                    /* §4 8–12px；§5 主按钮取 Generously rounded 12px */
+  --btn-bg: #c96442;                /* §4 Brand Terracotta */
+  --btn-fg: #faf9f5;                /* §4 Text: Ivory */
+  --btn-ring: 0 0 0 1px #c96442;    /* §4 ring-based shadow */
 }
-.btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
-/* 「鼠标流动」：指针位置的高光，仅在主按钮上；属于反馈而非装饰，
-   因此只在 hover 时出现、且不改变布局。坐标由 main.js 的 pointermove 写入 --mx/--my。 */
-.btn.primary::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%),
-              rgba(255, 255, 255, .30), rgba(255, 255, 255, 0) 65%);
-  opacity: 0; transition: opacity var(--dur-2) var(--ease-out);
-}
-.btn.primary:hover::after { opacity: 1; }
-.btn.ghost { background: transparent; border-color: transparent; color: var(--txt-2); }
-.btn.ghost:hover { background: var(--bg-hover); color: var(--txt); }
-.btn.quiet { background: transparent; border-color: var(--line); color: var(--txt-2); }
-.btn.quiet:hover { background: var(--bg-hover); color: var(--txt); }
-.btn.danger { background: transparent; border-color: rgba(217, 105, 94, .5); color: var(--danger); }
+/* 包内 tokens.css:45 的 accent-hover = accent 混黑 8%；双声明保底，
+   浏览器不支持 color-mix 时退回本色（不出现透明底） */
+.btn.primary:hover { background: #c96442; background: color-mix(in oklab, #c96442, black 8%); }
+/* ghost / quiet / danger 是项目自有变体，规范无对应条款：结构保留，只接上 ring 体系 */
+.btn.ghost { --btn-bg: transparent; --btn-bg-hover: var(--bg-hover); --btn-ring: none; border-color: transparent; color: var(--txt-2); }
+.btn.ghost:hover { color: var(--txt); }
+.btn.quiet { --btn-bg: transparent; --btn-bg-hover: var(--bg-hover); --btn-ring: 0 0 0 1px #30302e; color: var(--txt-2); }
+.btn.quiet:hover { color: var(--txt); }
+.btn.danger { --btn-bg: transparent; --btn-ring: none; border-color: rgba(217, 105, 94, .5); color: var(--danger); }
 .btn.danger:hover { background: var(--danger-tint); }
-.btn.sm { height: 30px; padding: 0 11px; font-size: var(--fs-12); border-radius: var(--r-sm); }
-.btn.xs { height: 26px; padding: 0 9px; font-size: var(--fs-11); border-radius: var(--r-sm); }
-.btn.lg { height: 44px; padding: 0 22px; font-size: var(--fs-14); gap: 9px; }
+.btn.sm { --btn-r: 6px; --btn-fs: 14px; height: 30px; padding: 0 11px; }   /* §5 Subtly rounded；§3 Caption 14px */
+.btn.xs { --btn-r: 6px; --btn-fs: 12px; letter-spacing: .12px; height: 26px; padding: 0 9px; }  /* §5；§3 Label 12px + 0.12px 字距 */
+.btn.lg { --btn-r: 12px; height: 44px; padding: 0 22px; gap: 9px; }
 .btn.icon { width: 36px; height: 36px; padding: 0; }
 .btn.icon.sm { width: 30px; height: 30px; }
 /* 环节级主操作（流水线每一步的「运行」）：比普通按钮再大一档，一眼能点到 */
-.btn.stage { height: 34px; min-width: 84px; padding: 0 14px; font-size: var(--fs-12); }
+.btn.stage { --btn-fs: 14px; height: 34px; min-width: 84px; padding: 0 14px; }
 .btn[disabled] { opacity: .42; cursor: not-allowed; pointer-events: none; }
 .cost-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
-.btn.primary .cost-dot { background: #171a1f; }
+.btn.primary .cost-dot { background: #faf9f5; }
 .spinner {
   width: 12px; height: 12px; flex: none;
   border: 1.5px solid currentColor; border-right-color: transparent;

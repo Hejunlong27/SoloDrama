@@ -465,11 +465,11 @@ python comfy_local_video.py --workflow 新工作流.json --check         # ④ �
 | `pip` | `python -m pip install <锁定版本>` | 只装进**引擎解释器**，不动系统 Python；`requirements.txt` 里有精确版本 |
 | `mkdir` | 建 `web/var` / `web/var/llm` | 只建 Studio 自己的运行时目录，不碰项目文件 |
 | `config` | 清掉 `configs/settings.json` 里指向空文件的 `python` | 先备份；清掉后自动回落到本机默认 venv |
+| `comfy_start` | 拉起本机 ComfyUI 后台实例（无窗口） | 复刻桌面版命令行（模型路径 yaml + input/output 目录）；只对 loopback 生效，已在线一律复用，只停自己启动的那个 |
 
 **不能自动的**一律标 `manual` / `page`，并说清原因（这是这个功能的关键）：
 
 * `winget install ffmpeg` —— 要弹 UAC，Studio 不去替你点授权框；
-* 启动 ComfyUI —— 独立 GUI 进程，Studio 不拉起外部进程；
 * 填 Key —— 只能人来给（且不该走环境变量：填一次进连接中心，之后所有命令自动带上）；
 * manifest 不符 —— 是「仓库被改过」，不是「环境缺东西」，清错方向的自动修复更危险。
 
@@ -741,3 +741,52 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
   连带 12 个引擎测试失败。加子模式时必须同时给默认值。
 * **`project_setup` 的 rc=4 不是失败**：它是「等待确认」，文件已写。所有「跑完就断言」的地方都要回读文件。
 
+
+## 15. 本地 ComfyUI 按需启动（2026-10-29）
+
+### 15.1 之前为什么必须手点
+
+ComfyUI Desktop 是 Electron 外壳，真正提供服务的是它 spawn 的 `python main.py`。旧实现
+把「拉起进程」判为不可自动化（`health._MANUAL_WHY["本机服务"]`），于是每次出图前都要先开桌面版：
+连不上 → 体检提示「需手动启动」→ 用户去开窗口 → 回来重测。这条链本身没有错，只是把机器能做的事留给了人。
+
+### 15.2 做法
+
+真源是 `stages/assets/comfyui/comfy_boot.py`（纯标准库，引擎脚本可直接用），Web 层
+`core/comfy_launcher.py` 只负责按路径加载 + 读连接中心 + 把启动变成可轮询的后台动作。
+
+启动命令**复刻桌面版**，三个参数不能省：
+
+| 参数 | 少了会怎样 |
+| --- | --- |
+| `--extra-model-paths-config <inst-*.yaml>` | 找不到模型，报「模型缺失」，极易误判成装坏了 |
+| `--input-directory / --output-directory` | 产物落进安装目录，而不是共享目录 |
+| `--enable-manager`（来自 `launchArgs`） | 插件管理不可用；其余桌面版私有参数一律白名单挡掉 |
+
+安装信息不手填：读 `%APPDATA%\Comfy Desktop\installations.json`（`installPath` / `launchArgs` /
+`id`），解释器取 `<安装>/ComfyUI/.venv/Scripts/python.exe`，模型路径取 `instance-model-paths/<id>.yaml`。
+换机器、换实例都不用改代码；找不到才要求手填（`connections.json` 的 `launch` 段）。
+
+三个入口共用同一个 `ensure()`：
+
+* 连接中心「本地出图」卡片：`GET /api/comfy/status` + `POST /api/comfy/start|stop`（异步，前端轮询进度）；
+* 环境体检 `svc.comfy`：`fix.kind = comfy_start`，**同步等就绪**（复检要的是「现在能用了吗」）；
+* 出图脚本 `gen_assets_local.py`：`--submit` 与 `--check` 之前先 `ensure()`，`--no-boot` 可关。
+
+### 15.3 六条边界
+
+1. **只对 loopback 生效**：远程地址只探测，不在本机起进程（起了也没用，还白占显存）。
+2. **在线就 attach**：8188 上已有 ComfyUI 就复用，绝不另起；桌面版 `portConflict: auto` 会自己让路。
+3. **端口被非 ComfyUI 占用时停下报错**，不硬起（硬起的表现是「点了没反应」，比报错更难查）。
+4. **停止只停自己的**：锁里记 pid，且必须「这个 pid 正在监听该端口」才允许 kill。
+5. **不做开机常驻**：16G 内存下常驻代价偏高，按需启动已满足「不用手点」。
+6. **失败给人话**：按日志分类为 端口被占 / 缺 torch / CUDA 失败 / 启动超时 / 缺安装，各带下一步。
+
+### 15.4 这轮踩的坑
+
+* **监听端口的不是 spawn 的那个进程**：0.42 的 `main.py` 会再拉一个子进程 bind 端口
+  （实测 spawn=23324、LISTENING=8792）。锁里只记 spawn pid 时，`stop()` 会判 `not_listener` 永远停不掉。
+  现在锁同时记 `spawn_pid` 与 `pid`，就绪时回填真正的监听者。
+* **不能拿「pid 还活着」当所有权**：Windows 会复用 PID。判据改成「它是这个端口的监听者」。
+* **同步等待会掐死界面**：单进程 uvicorn 下一个 90 秒的请求会让整页刷不出来，所以界面走异步 + 轮询。
+* **`generators.py` 硬编码 8188**：连接中心改了地址它不认，界面说「未启动」而实际能出图。已改为读连接配置。

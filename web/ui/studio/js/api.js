@@ -153,6 +153,10 @@ export const api = {
   connections: () => get('/api/connections'),
   saveConnection: (kind, body) => post('/api/connections/' + encodeURIComponent(kind), body),
   testConnection: (kind) => post('/api/connections/' + encodeURIComponent(kind) + '/test', {}),
+  /* 本机 ComfyUI：按需启动（异步，30–90 秒）。status 要轮询，绝不能进 TTL 缓存。 */
+  comfyStatus: () => get('/api/comfy/status'),
+  startComfy: () => post('/api/comfy/start', {}),
+  stopComfy: () => post('/api/comfy/stop', {}),
 
   jobs: (ws, limit) => get('/api/jobs', { ws, limit: limit || 50 }),
   job: (id) => get('/api/jobs/' + encodeURIComponent(id)),

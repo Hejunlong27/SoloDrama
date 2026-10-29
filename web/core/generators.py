@@ -24,7 +24,19 @@ from pathlib import Path
 
 from . import paths
 
-COMFY = "http://127.0.0.1:8188"
+def _comfy_base() -> str:
+    """ComfyUI 地址取连接中心，**不再硬编码 8188**。
+
+    硬编码的后果很具体：用户在界面上把地址改成 9000，这里仍探 8188 ——
+    生成通道说「未启动」，实际出图脚本（走 COMFYUI_URL）却能跑；两套口径比没有更糟。
+    """
+    try:
+        from . import connections
+        base = str((connections.load().get("comfyui") or {}).get("base_url") or "").strip()
+    except Exception:      # noqa: BLE001
+        base = ""
+    return (base or "http://127.0.0.1:8188").rstrip("/")
+
 _CACHE: dict = {}
 _TTL_PROBE = 30.0        # 在线探测
 _TTL_INFO = 300.0        # object_info 很大，缓存久一点
@@ -51,13 +63,13 @@ def _comfy() -> dict:
         return hit[1]
     out = {"online": False, "version": "", "vram_free_gb": 0.0, "reason": ""}
     try:
-        st = _json_url(COMFY + "/system_stats", 2.5)
+        st = _json_url(_comfy_base() + "/system_stats", 2.5)
         dev = (st.get("devices") or [{}])[0]
         out.update({"online": True,
                     "version": str((st.get("system") or {}).get("comfyui_version") or ""),
                     "vram_free_gb": round(int(dev.get("vram_free") or 0) / (1024 ** 3), 1)})
     except Exception as exc:  # noqa: BLE001
-        out["reason"] = "%s（ComfyUI Desktop 需手动启动 8188）" % type(exc).__name__
+        out["reason"] = "%s（没启动：出图时会自动拉起后台实例）" % type(exc).__name__
     _CACHE["comfy"] = (now, out)
     return out
 
@@ -68,7 +80,7 @@ def _comfy_info() -> dict:
     if hit and now - hit[0] < _TTL_INFO:
         return hit[1]
     try:
-        d = _json_url(COMFY + "/object_info", 20.0)
+        d = _json_url(_comfy_base() + "/object_info", 20.0)
     except Exception:  # noqa: BLE001
         d = {}
     _CACHE["info"] = (now, d)

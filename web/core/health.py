@@ -44,7 +44,7 @@ _ENV_FIX = {
     "whisper-cli": ("bin.whisper", {"kind": "manual"}),
     "RUNNINGHUB_API_KEY": ("cfg.rh_key", {"kind": "page", "page": "#/connections"}),
     "RUNNINGHUB_BASE_URL": ("cfg.rh_base", {"kind": "page", "page": "#/connections"}),
-    "ComfyUI 本地端口": ("svc.comfy", {"kind": "manual"}),
+    "ComfyUI 本地端口": ("svc.comfy", {"kind": "comfy_start"}),
     "manifest.sha256": ("repo.manifest", {"kind": "manual"}),
 }
 
@@ -54,7 +54,7 @@ _GROUP_ORDER = ["运行时", "Python 依赖", "外部程序", "本机服务", "�
 _MANUAL_WHY = {
     "外部程序": "装外部程序要管理员权限（UAC），Studio 不替你弹授权框 —— 复制命令自己跑一次",
     "完整性": "仓库文件被改动过（或清单过期）：确认这些改动是你要的，再重建清单",
-    "本机服务": "ComfyUI 是独立的 GUI 程序，Studio 不替你拉起外部进程 —— 自己启动后回来重测",
+    "本机服务": "启动的是本机 ComfyUI 后台实例（不起窗口）；你手动开的桌面版不会被接管",
     "运行时": "需要你先装好对应运行时；Studio 不会替换系统里的 Python",
 }
 
@@ -238,6 +238,11 @@ def _fix_spec(item: dict, fix: dict) -> dict:
             "note": "只装进 %s，不动系统 Python；装完会自动复检" % paths.engine_python(),
             "argv": argv,
         })
+    elif kind == "comfy_start":
+        spec.update({
+            "auto": True, "label": "自动启动", "cmd": "",
+            "note": "起一个后台实例（无窗口）。首次约 30–90 秒；你手动打开的桌面版不会被接管",
+        })
     elif kind == "manual":
         spec.update({"auto": False, "label": "复制命令" if item.get("hint") else "",
                      "cmd": item.get("hint") or "",
@@ -280,6 +285,26 @@ def _do_config(item: dict) -> dict:
                       ("已备份：%s" % bak) if bak else "（原文件不存在，无需备份）"]}
 
 
+def _do_comfy_start(item: dict) -> dict:
+    """启动本机 ComfyUI 后台实例。**同步等就绪** —— 复检要的是「现在能用了吗」。"""
+    from . import comfy_launcher
+    res = comfy_launcher.ensure_sync(wait_s=150)
+    lines = ["%s  %s" % ("[OK]" if res.get("ok") else "[FAIL]", res.get("detail") or "")]
+    if res.get("next"):
+        lines.append("下一步：%s" % res["next"])
+    if res.get("install"):
+        inst = res["install"]
+        lines.append("实例：%s" % (inst.get("name") or ""))
+        lines.append("解释器：%s" % (inst.get("python") or ""))
+    if not res.get("ok"):
+        tail = comfy_launcher.tail(12)
+        if tail:
+            lines.append("—— 最近日志 ——")
+            lines.extend(tail.splitlines())
+    return {"ok": bool(res.get("ok")), "rc": 0 if res.get("ok") else 1,
+            "lines": lines, "cmd": ""}
+
+
 def _do_pip(item: dict) -> dict:
     argv = (item.get("fix") or {}).get("argv") or []
     if not argv:
@@ -290,7 +315,8 @@ def _do_pip(item: dict) -> dict:
             "elapsed": r["elapsed"], "cmd": _fmt_cmd(argv)}
 
 
-_FIXERS = {"mkdir": _do_mkdir, "config": _do_config, "pip": _do_pip}
+_FIXERS = {"mkdir": _do_mkdir, "config": _do_config, "pip": _do_pip,
+           "comfy_start": _do_comfy_start}
 
 
 def _log(rec: dict) -> None:
