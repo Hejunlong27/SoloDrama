@@ -117,7 +117,8 @@ export const api = {
   healthFix: (body) => post('/api/health/fix', body),
   healthFixes: (limit) => get('/api/health/fixes', { limit }),
 
-  /* 对话模式：只读 + 只出提案（动作由前端确认后执行） */
+  /* 对话模式：开场引导（只读状态，不调模型）+ 提问（只读 + 只出提案） */
+  assistantWelcome: (ws) => get('/api/assistant/welcome', { ws }),
   assistantChat: (body) => post('/api/assistant/chat', body),
 
   /* 本地出片工作流：清单 / 上传 / 切换 */

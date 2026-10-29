@@ -5,7 +5,6 @@
      * 跳页由前端直接做（无副作用）；
      * 跑命令必须过确认弹窗，而且走的是流水线的 `only=`（自带前置检查与预算裁决）。 */
 import { api } from './api.js';
-import { S } from './store.js';
 import { esc, icon, openDrawer, closeDrawer, openModal, toast } from './ui.js';
 
 const HISTORY = [];          // 只留最近几轮，够模型理解上下文即可
@@ -15,20 +14,34 @@ function bubble(role, text) {
     + '<div class="chat-bubble">' + esc(text).replace(/\n/g, '<br>') + '</div></div>';
 }
 
-function actionBar(a) {
-  if (!a || a.type === 'none') return '';
-  if (a.type === 'navigate') {
-    return '<div class="chat-act"><button class="btn primary sm" data-act="go" data-route="'
-      + esc(a.route) + '">' + icon('external', 12) + ' 带我去 ' + esc(a.route) + '</button>'
-      + (a.why ? '<span class="tiny dim">' + esc(a.why) + '</span>' : '') + '</div>';
-  }
-  if (a.type === 'run') {
-    return '<div class="chat-act"><button class="btn primary sm" data-act="run" data-stage="'
+/* 引导候选：点一下就等于把这句话说出去 —— 用户不用想「我该怎么问」 */
+function chipsHTML(list) {
+  const arr = (list || []).filter(Boolean).slice(0, 3);
+  return arr.map((t) => '<button class="chat-chip" data-say="' + esc(t) + '">'
+    + esc(t) + '</button>').join('');
+}
+
+/* 动作条：模型提案 + 状态推导的「去 XX」。
+   两条来源分开画：前者是模型建议（可能没有），后者由服务端按卡点算，永远不会缺。 */
+function actionBar(a, goto) {
+  const out = [];
+  if (a && a.type === 'navigate') {
+    out.push('<div class="chat-act"><button class="btn primary sm" data-act="go" data-route="'
+      + esc(a.route) + '" data-label="' + esc(a.label || a.route) + '">' + icon('external', 12) + ' 带我去' + esc(a.label || a.route)
+      + '</button>' + (a.why ? '<span class="tiny dim">' + esc(a.why) + '</span>' : '') + '</div>');
+  } else if (a && a.type === 'run') {
+    out.push('<div class="chat-act"><button class="btn primary sm" data-act="run" data-stage="'
       + esc(a.stage || '') + '" data-cmd="' + esc(a.command || '') + '">'
-      + icon('play', 12) + ' 执行 ' + esc(a.stage || a.command) + '</button>'
-      + '<span class="tiny dim">' + esc(a.why || '会先让你确认') + '</span></div>';
+      + icon('play', 12) + ' 执行 ' + esc(a.label || a.stage || a.command) + '</button>'
+      + '<span class="tiny dim">' + esc(a.why || '会先让你确认') + '</span></div>');
   }
-  return '';
+  const dup = a && a.type === 'navigate' && a.route === (goto || {}).route;
+  if (goto && goto.route && !dup) {
+    out.push('<div class="chat-act"><button class="btn quiet sm" data-act="go" data-route="'
+      + esc(goto.route) + '" data-label="' + esc(goto.label || goto.route) + '">' + icon('external', 12) + ' 去' + esc(goto.label || goto.route)
+      + '</button><span class="tiny dim">' + esc(goto.why || '当前该去这里') + '</span></div>');
+  }
+  return out.join('');
 }
 
 export function openAssistant(ctx) {
@@ -36,24 +49,54 @@ export function openAssistant(ctx) {
     title: '助手 · 对话控制',
     html: '<div class="chat-wrap">'
       + '<div class="chat-hint alert info" id="chatHint"><span class="nav-ico">' + icon('spark', 14)
-      + '</span><div>可以直接问「现在到哪一步了」「还缺什么」，也可以说「带我看看资产」「跑一下转分镜」。'
-      + '写盘和计费的动作我一定先问你。</div></div>'
+      + '</span><div>我能读状态、能带路、能跑免费的那几步；花钱和写盘的动作一定先问你。</div></div>'
       + '<div class="chat-log" id="chatLog">'
-      + bubble('ai', '我是这个工作台的助手。当前项目：' + (S.ws ? S.ws.split(/[\\/]/).pop() : '未选择')
-        + '。想看什么、想做什么，直接说。')
+      + bubble('ai', '正在看当前状态…')
       + '</div>'
+      + '<div class="chat-chips" id="chatChips"></div>'
       + '<div class="chat-input"><textarea class="textarea" id="chatText" rows="2" '
       + 'placeholder="例如：现在卡在哪一步？（Enter 发送，Shift+Enter 换行）"></textarea>'
       + '<button class="btn primary" id="chatSend">' + icon('play', 14) + ' 发送</button></div></div>',
-    foot: '<span class="tiny dim">模型：DeepSeek（走内部网关，Key 不落到浏览器）</span>'
+    foot: '<span class="tiny dim" id="chatModel">模型：读取中…</span>'
       + '<span class="spacer"></span><button class="btn quiet" data-close="drawer">关闭</button>'
   });
 
   const log = drawer.querySelector('#chatLog');
   const text = drawer.querySelector('#chatText');
   const send = drawer.querySelector('#chatSend');
+  const hint = drawer.querySelector('#chatHint div');
+  const chips = drawer.querySelector('#chatChips');
+  const modelLine = drawer.querySelector('#chatModel');
+  const first = log.firstElementChild;
 
   const push = (html) => { log.insertAdjacentHTML('beforeend', html); log.scrollTop = log.scrollHeight; };
+  const setChips = (list) => {
+    const arr = (list || []).filter(Boolean).slice(0, 3);
+    chips.innerHTML = chipsHTML(arr);
+    chips.classList.toggle('on', arr.length > 0);
+  };
+
+  /* 开口第一屏走服务端的 welcome：按当前状态给引导语 + 可点的下一步 —— 不花钱 */
+  api.assistantWelcome(ctx.ws).then((w) => {
+    if (!w) return;
+    if (first) {
+      const b = first.querySelector('.chat-bubble');
+      if (b) b.innerHTML = esc(w.greeting || '').replace(/\n/g, '<br>');
+    }
+    if (w.tips && w.tips.length) hint.innerHTML = w.tips.map((t) => esc(t)).join('<br>');
+    setChips(w.suggestions);
+    modelLine.textContent = '模型：' + (w.model || '未接模型');
+  }).catch(() => {
+    if (first) first.remove();
+    setChips(['现在卡在哪一步？', '我的环境有什么问题？']);
+  });
+
+  chips.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-say]');
+    if (!b || send.disabled) return;
+    text.value = b.getAttribute('data-say') || '';
+    ask();
+  });
 
   const runStage = (stage, cmd) => {
     if (!stage) {
@@ -96,8 +139,10 @@ export function openAssistant(ctx) {
     const b = e.target.closest('[data-act]');
     if (!b) return;
     if (b.dataset.act === 'go') {
+      const label = b.getAttribute('data-label') || b.dataset.route;
       closeDrawer();
       location.hash = '#/' + b.dataset.route;
+      toast('已到' + label);
     } else if (b.dataset.act === 'run') {
       runStage(b.dataset.stage, b.dataset.cmd);
     }
@@ -108,6 +153,7 @@ export function openAssistant(ctx) {
     if (!msg) return;
     push(bubble('user', msg));
     text.value = '';
+    setChips([]);                       // 旧的引导先收起，免得和新回答对不上
     send.disabled = true;
     push('<div class="chat-row ai"><div class="chat-bubble dim">思考中…</div></div>');
     const pending = log.lastElementChild;
@@ -121,11 +167,13 @@ export function openAssistant(ctx) {
         push('<div class="chat-row ai"><div class="tiny dim">⚠ 这是离线演练（Mock）的回答，'
           + '不是真模型。去「AI 模型中心」确认提供商已接通。</div></div>');
       }
-      const bar = actionBar(r.action);
+      const bar = actionBar(r.action, r.goto);
       if (bar) push(bar);
+      setChips(r.suggestions);          // 接着问什么，由这次回答给出
     } catch (e) {
       pending.remove();
       push(bubble('ai', '出错了：' + (typeof e.detail === 'string' ? e.detail : (e.detail && e.detail.message) || e.message)));
+      setChips(['现在卡在哪一步？', '我的环境有什么问题？']);
     } finally {
       send.disabled = false;
       text.focus();

@@ -639,6 +639,24 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .chat-row.me .chat-bubble { background: var(--accent-tint); border-color: var(--accent-line); }
 .chat-bubble.dim { color: var(--txt-3); }
 .chat-act { display: flex; align-items: center; gap: 10px; padding: 2px 0 6px; flex-wrap: wrap; }
+/* 引导候选：默认收起，有建议时才占一行 —— 空着也要留白的抽屉最劝退 */
+.chat-chips { flex: none; display: none; gap: 8px; flex-wrap: wrap; }
+.chat-chips.on { display: flex; }
+.chat-chip {
+  height: 32px; padding: 0 13px;
+  border-radius: 999px;
+  background: var(--bg-card); border: 1px solid var(--line);
+  color: var(--txt-2); font-size: var(--fs-12); cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out),
+              background var(--dur-1) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.chat-chip:hover {
+  border-color: var(--accent-line); color: var(--accent);
+  background: var(--accent-tint); transform: translateY(-1px);
+}
+.chat-chip:active { transform: none; }
 .chat-input { flex: none; display: flex; gap: 8px; align-items: flex-end; }
 .chat-input .textarea { flex: 1; min-height: 62px; resize: vertical; }
 

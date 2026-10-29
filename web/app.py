@@ -869,6 +869,22 @@ def api_pipeline_run(payload: dict = Body(...)):
                         max_steps=max(1, min(max_steps, 12)), dry_run=bool(dry_run))
 
 
+@app.get("/api/assistant/welcome")
+def api_assistant_welcome(ws: str = ""):
+    """助手开口第一屏：引导语 + 可点的下一步问题。
+
+    **不调模型、不花钱**：纯读状态拼出来的。前端打开抽屉先拿这个，
+    用户永远能看到「现在能问什么」，而不是对着空白输入框发呆。
+    """
+    ws_ok = None
+    if ws:
+        try:
+            ws_ok = str(_require_ws(ws))
+        except HTTPException:
+            ws_ok = None
+    return assistant.welcome(ws_ok)
+
+
 @app.post("/api/assistant/chat")
 def api_assistant_chat(payload: dict = Body(...)):
     """对话模式：只读 + 只出提案。
