@@ -2205,10 +2205,17 @@ def main():
     print("集号 %s ｜ 段数 %d ｜ 缺失 %d" % (args.ep, len(segs), len(missing)))
     if missing:
         print("  ⚠ 缺失段：%s" % ", ".join(missing))
-    print("分辨率路线：源 %dx%d → 字幕画布 %dx%d（%s）"
-          % (src_w, src_h, cw, ch,
-             "高清放大 %s 后烧字幕" % ((up_cfg or {}).get("model", {}).get("name"))
-             if up_on else "未开高清放大"))
+    # ★ 2026-10-30：把「放大目标」与「交付规格」分开打印。
+    #   此前只打「字幕画布 2560x4632」，而最终交付其实是 1080×1920 —— 名字对不上，
+    #   排查时容易误以为交付了 4K。
+    _dw, _dh = int(cfg["canvas"]["width"]), int(cfg["canvas"]["height"])
+    print("分辨率路线：源 %dx%d → %s → 交付 %dx%d SAR 1:1（%s）"
+          % (src_w, src_h,
+             ("放大 %dx%d（%s）" % (cw, ch, (up_cfg or {}).get("model", {}).get("name")))
+             if up_on else "不放大",
+             _dw, _dh,
+             "烧字幕时 crop-to-fill 归一化" if not getattr(args, "no_normalize", False)
+             else "未归一化（--no-normalize）"))
 
     if args.stage in ("align", "all"):
         n, sk, rebuilt, filled = stage_align(
@@ -2261,6 +2268,18 @@ def main():
 
         dump_json(os.path.join(subs_dir, "cues.json"), cues)
         print("② 字幕条目：%d 条 ｜ 覆盖 %.1fs" % (len(cues), total))
+        # ★ 2026-10-30：cues 为空时**不许烧成片**。此前会静默写一份空 ASS、
+        #   烧出一条无字幕视频，文件名还叫 `_subbed.mp4` —— 和「已经加过字幕」长得一模一样，
+        #   于是被 release_export 当合格成片导出，直到平台驳回「画面中不包含字幕」。
+        #   实测踩点：`--stage render` 不跑对齐，而 align/*.json 缺失时 build_cues 返回空列表。
+        if not cues:
+            _why = ("本集字幕条目为 0（build_cues 返回空）。常见原因：\n"
+                    "  ① align/<shot>.json 不存在 —— `--stage render` 不会自动对齐，先跑 `--stage align`\n"
+                    "  ② 剧本台词没解析到 —— 检查 03-剧本 里 <d> 台词段与 shot 编号是否对得上\n"
+                    "  ③ 对齐器/whisper 路径不可用 —— 时间拿不到真对齐，宁可不出片也不许用估算糊过去")
+            if args.stage == "render" or (args.stage == "all" and args.burn):
+                raise SystemExit("断言失败：%s\n%s" % ("不能烧一条空字幕冒充成片", _why))
+            print("  ⚠ %s" % _why.replace("\n", "\n  "))
         for w in warn:
             print("  ⚠ %s" % w)
         report["cues"] = len(cues)
