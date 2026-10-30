@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 556" width="1200" height="556" font-family="system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif" role="img" aria-label="SoloDrama 技术思路：一条产线，六道硬约束">
+<rect width="1200" height="556" fill="#0B0D10"/>
+<rect x="28" y="24" width="3" height="28" fill="#E0A458"/>
+<text x="42" y="46" font-size="20" fill="#EDEFF2" font-weight="700">技术思路 · 一条产线，六道硬约束</text>
+<text x="1172" y="45" font-size="14" fill="#8A9099" text-anchor="end">SoloDrama · 本地全链路</text>
+<line x1="28" y1="70" x2="1172" y2="70" stroke="#262D36"/>
+<rect x="28" y="96" width="1144" height="62" rx="12" fill="#12161B" stroke="#3A424D" stroke-dasharray="6 5"/>
+<text x="52" y="133" font-size="17" fill="#E0A458" font-weight="700">编排层</text>
+<text x="110" y="133" font-size="17" fill="#8A9099">只调度、不干活：门禁 · 干跑 · 小样 · 续跑 · 台账</text>
+<text x="1148" y="132" font-size="14" fill="#8A9099" text-anchor="end">调度 / 校验 / 搬运 / 记账</text>
+<line x1="28" y1="202" x2="1172" y2="202" stroke="#262D36" stroke-dasharray="4 6"/>
+<rect x="362.9" y="186" width="474.3" height="32" rx="16" fill="#161B22" stroke="#262D36"/>
+<text x="600" y="207" font-size="14.5" fill="#8A9099" text-anchor="middle">data/ 四文件只读契约：shots · characters · scenes · h3_prompts</text>
+<text x="28" y="258" font-size="14" fill="#8A9099">引擎层 — 子进程 + 固定 CLI 契约，业务逻辑一行不改</text>
+<rect x="28" y="276" width="174" height="88" rx="10" fill="#161B22" stroke="#262D36"/>
+<text x="42" y="300" font-size="13" fill="#E0A458" font-weight="700">01</text>
+<text x="42" y="328" font-size="21" fill="#EDEFF2" font-weight="700">选题 · 剧本</text>
+<text x="42" y="350" font-size="15" fill="#8A9099">定位卡 → N 集</text>
+<path d="M208 314 l8 6 l-8 6" fill="none" stroke="#E0A458" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="115" y1="364" x2="115" y2="392" stroke="#3A424D" stroke-dasharray="3 4"/>
+<circle cx="115" cy="402" r="3" fill="#E0A458"/>
+<text x="115" y="426" font-size="14.5" fill="#EDEFF2" text-anchor="middle">确定性脚本</text>
+<text x="115" y="446" font-size="14.5" fill="#8A9099" text-anchor="middle">+ 人工质量闸</text>
+<rect x="222" y="276" width="174" height="88" rx="10" fill="#161B22" stroke="#262D36"/>
+<text x="236" y="300" font-size="13" fill="#E0A458" font-weight="700">02</text>
+<text x="236" y="328" font-size="21" fill="#EDEFF2" font-weight="700">资产出图</text>
+<text x="236" y="350" font-size="15" fill="#8A9099">角色 · 场景 · 道具</text>
+<path d="M402 314 l8 6 l-8 6" fill="none" stroke="#E0A458" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="309" y1="364" x2="309" y2="392" stroke="#3A424D" stroke-dasharray="3 4"/>
+<circle cx="309" cy="402" r="3" fill="#E0A458"/>
+<text x="309" y="426" font-size="14.5" fill="#EDEFF2" text-anchor="middle">图片槽全探测</text>
+<text x="309" y="446" font-size="14.5" fill="#8A9099" text-anchor="middle">未覆盖填中性灰</text>
+<rect x="416" y="276" width="174" height="88" rx="10" fill="#161B22" stroke="#262D36"/>
+<text x="430" y="300" font-size="13" fill="#E0A458" font-weight="700">03</text>
+<text x="430" y="328" font-size="21" fill="#EDEFF2" font-weight="700">出片</text>
+<text x="430" y="350" font-size="15" fill="#8A9099">H3 分段 4–15s</text>
+<path d="M596 314 l8 6 l-8 6" fill="none" stroke="#E0A458" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="503" y1="364" x2="503" y2="392" stroke="#3A424D" stroke-dasharray="3 4"/>
+<circle cx="503" cy="402" r="3" fill="#E0A458"/>
+<text x="503" y="426" font-size="14.5" fill="#EDEFF2" text-anchor="middle">先干跑 → 小样</text>
+<text x="503" y="446" font-size="14.5" fill="#8A9099" text-anchor="middle">门禁不过不提交</text>
+<rect x="610" y="276" width="174" height="88" rx="10" fill="#161B22" stroke="#262D36"/>
+<text x="624" y="300" font-size="13" fill="#E0A458" font-weight="700">04</text>
+<text x="624" y="328" font-size="21" fill="#EDEFF2" font-weight="700">字幕</text>
+<text x="624" y="350" font-size="15" fill="#8A9099">对齐 → ASS</text>
+<path d="M790 314 l8 6 l-8 6" fill="none" stroke="#E0A458" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="697" y1="364" x2="697" y2="392" stroke="#3A424D" stroke-dasharray="3 4"/>
+<circle cx="697" cy="402" r="3" fill="#E0A458"/>
+<text x="697" y="426" font-size="14.5" fill="#EDEFF2" text-anchor="middle">时间只认真对齐</text>
+<text x="697" y="446" font-size="14.5" fill="#8A9099" text-anchor="middle">cues=0 拒绝出片</text>
+<rect x="804" y="276" width="174" height="88" rx="10" fill="#161B22" stroke="#262D36"/>
+<text x="818" y="300" font-size="13" fill="#E0A458" font-weight="700">05</text>
+<text x="818" y="328" font-size="21" fill="#EDEFF2" font-weight="700">成片</text>
+<text x="818" y="350" font-size="15" fill="#8A9099">拼接 · 2K · 烧录</text>
+<path d="M984 314 l8 6 l-8 6" fill="none" stroke="#E0A458" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="891" y1="364" x2="891" y2="392" stroke="#3A424D" stroke-dasharray="3 4"/>
+<circle cx="891" cy="402" r="3" fill="#E0A458"/>
+<text x="891" y="426" font-size="14.5" fill="#EDEFF2" text-anchor="middle">1080×1920</text>
+<text x="891" y="446" font-size="14.5" fill="#8A9099" text-anchor="middle">裁，不补边</text>
+<rect x="998" y="276" width="174" height="88" rx="10" fill="#161B22" stroke="#262D36"/>
+<text x="1012" y="300" font-size="13" fill="#E0A458" font-weight="700">06</text>
+<text x="1012" y="328" font-size="21" fill="#EDEFF2" font-weight="700">发行</text>
+<text x="1012" y="350" font-size="15" fill="#8A9099">EpisodeNN + 素材</text>
+<line x1="1085" y1="364" x2="1085" y2="392" stroke="#3A424D" stroke-dasharray="3 4"/>
+<circle cx="1085" cy="402" r="3" fill="#E0A458"/>
+<text x="1085" y="426" font-size="14.5" fill="#EDEFF2" text-anchor="middle">命名与落点</text>
+<text x="1085" y="446" font-size="14.5" fill="#8A9099" text-anchor="middle">合规门禁</text>
+<rect x="28" y="476" width="1144" height="52" rx="10" fill="#12161B" stroke="#262D36"/>
+<rect x="48" y="490" width="3" height="24" fill="#E0A458"/>
+<text x="64" y="509" font-size="16" fill="#EDEFF2">六道约束的共同点：能自动判的绝不问人，判不了就停在原地等人。</text>
+</svg>
