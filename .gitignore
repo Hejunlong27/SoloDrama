@@ -20,6 +20,12 @@ output/
 **/ledger/
 orchestrator/
 
+# 封面提示词 emit 产物：`cover_prompt.py --out-dir .` 会写到当前目录，
+# 内容是某一部剧的 brief（标题/人物/冲突道具），属项目数据 —— 只允许留在工作区。
+/cover_prompts.json
+/comfyui_manifest.json
+/rh_plan.json
+
 # ---- 例外：引擎自带的 workspace 模板样例必须入库（逐文件白名单）----
 # ⚠ 安全红线：此处**不得**使用 `data/**` 通配放开。
 #   该目录位于 assets/ 下，若整体放开会绕过上方 `data/`、`**/data/refs/`、
