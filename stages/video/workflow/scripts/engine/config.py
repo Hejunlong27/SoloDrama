@@ -204,15 +204,33 @@ H3: dict = {
     "unused_slots": dict(SLOT_HYGIENE),
 
     # ★ 2026-11-01 实测回填（工作流 2113319585146560513，已跑通 47 币/9s 段）。
-    #   只登记**引擎会消费**的键；工作流里其余可填节点记在下面注释，不要塞进来当成输入。
+    #   6 个 LoadImage（282–287）**全部登记、按用途分段**，顺序即 <Picture n>：
+    #
+    #       <Picture 1>      282  board_ref   分镜图（这一镜的构图锚）
+    #       <Picture 2–4>  283-285 char_ref    角色（最多 3 人）
+    #       <Picture 5–6>  286-287 scene_ref   场景（最多 2 处）
+    #
+    #   为什么分镜图要排第一（2026-11-01 用户口径）：
+    #   只给角色卡与场景卡时，两张图的构图都不是「本镜」的构图，模型每一镜都在重新猜机位，
+    #   于是同一个空间在相邻镜头里朝向乱跳。分镜图是**与成片同构的单帧画面**，
+    #   和视频同模态，把它放第一张等于把「这一镜长什么样」直接告诉模型。
+    #
+    #   注意：这不是 2026-10-31 被否掉的「站位图」。站位图是俯视平面线稿，模型会当画面复刻；
+    #   分镜图是 9:16 摄影画面，只提供构图与光位，不含任何线稿语义。
     "nodes": {
-        "prompt":   {"nodeId": "138", "fieldName": "value"},    # PrimitiveStringMultiline
-        "duration": {"nodeId": "132", "fieldName": "value"},    # PrimitiveFloat（秒）
-        "char_ref": {"nodeId": "282", "fieldName": "image"},    # LoadImage
-        "scene_ref":{"nodeId": "283", "fieldName": "image"},    # LoadImage
+        "prompt":    {"nodeId": "138", "fieldName": "value"},    # PrimitiveStringMultiline
+        "duration":  {"nodeId": "132", "fieldName": "value"},    # PrimitiveFloat（秒）
+        "board_ref": {"nodeId": "282", "fieldName": "image"},    # <Picture 1>
+        "char_ref":  {"value": "url", "slots": [                 # <Picture 2–4>
+            {"nodeId": "283", "fieldName": "image"},
+            {"nodeId": "284", "fieldName": "image"},
+            {"nodeId": "285", "fieldName": "image"},
+        ]},
+        "scene_ref": {"value": "url", "slots": [                 # <Picture 5–6>
+            {"nodeId": "286", "fieldName": "image"},
+            {"nodeId": "287", "fieldName": "image"},
+        ]},
         # 说明（勿改）：
-        #   284–287 是另外 4 个 LoadImage 槽位，由 SLOT_HYGIENE 自动顶成中性灰；
-        #   不要登记 —— 登记了会被当成「本镜要用的图」，反而占掉策略位。
         #   163 = INTConstant 采样步数（工作流内已是 8）
         #   115 = ResolutionSelector（已是 9:16 / 0.8MP / multiple 32）
         #   156 = VHS_VideoCombine 输出

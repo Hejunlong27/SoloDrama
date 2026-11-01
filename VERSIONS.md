@@ -1,6 +1,62 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.33 · 四项 D1 破坏性改造做完：资产 3 项 / 分镜 5 字段 / data 五文件 / 分镜图出片 / 七环节 23 节点）**
+  这一版把 V0.7.32 有意留下的四项 D1 一次做完。用户确认「现在没有其他短剧任务在做」，产物作废可接受。
+
+  **① 资产 7 维 → 3 项签名**（`stages/assets/scripts/character_design.py` 1765 → 1029 行，−42%）
+  - 保留：**身份**（代号/姓名/年龄/性别/身份/阵营/皮肤/表情）、**造型**（色签名 + 服装中英 + 发型）、**锚**（一处非对称标记，可为空）。
+  - 删除：骨相 7 槽（`FACE_GEOM`/`SLOTS`）、体态（`POSTURE`）、人群桶（`PERSONA`/`_bucket`）、织物轮转（`FABRIC`）、阶层自动判定（`WEALTH_*`）、面部距离规则 R1/R2。
+    理由：模型不按「中庭比例」执行，只按「年轻女性」执行；写满七槽等于写一张均值脸。真正的辨识靠发型轮廓 + 主色 + 锚，这三样在缩略图上就能分辨。
+  - 规则从 6 条收到 4 条（R1 色相间隔 / R2 锚唯一 / R3 主演发型 / R4 美颜词）。
+  - `_formal()` 补「法务/总监/合伙人/护士长」——旧表认不出「集团法务」，把法务判成工装。
+  - `_hue_slots()` 改「按色相排序后等间距取」：旧实现按下标跳，3 个阵营拿到 8°/148°/286°，最刺眼的一对只隔 82°。现在 8°/92°/222°。
+  - 测试重写 28 例（含 A02 断言「8 个已删符号必须不存在」，防止残骸被别的代码 import 到）。
+
+  **② 分镜 11 字段 → 5 字段**（`convert_storyboard.py`）
+  - 现行：`duration / ratio / refs / board / prompt`。新增 `board`（**这一镜的分镜图提示词**，单帧 9:16）。
+  - 删除：`banana_prompt`（九宫格）、`crop`（裁 3×3）、`time`（光位注入）。旧 md 里出现只告警、不生效（`DEAD_FIELDS`）。
+  - `crop` 固定 `{1,1}`（分镜图是整张，不切）。
+
+  **③ data 四文件 → 五文件，且按集分目录**
+  - 新增 `boards.json`（`{shot_id: {prompt, ratio, refs}}`）；`shots.json` 每镜加 `board_ref`。
+  - 落点由 `data/` 改为 `data/<ep>/`。**旧实现固定一个目录，跑 ep02 会把 ep01 的 shots.json 静默覆盖**（只留一堆 .bak_时间戳）。
+  - 引擎加 `--ep`，并且 `--data-dir` 未显式给时**走 `_layout` 真源**。此前 `config.local.json` 的 `data_dir` 只给 `_layout` 读、引擎自己不用，于是布局写 `06-提示词/`、引擎找 `video-pipeline/data/`，报「shots.json 不存在」——两处各说各话。
+
+  **④ 出片改「分镜图 + 角色 + 场景」三参**
+  - H3 六槽重新分段：`282=board_ref`（`<Picture 1>`）、`283–285=char_ref`、`286–287=scene_ref`。此前只登记 282/283，另外 4 槽交给 SLOT_HYGIENE 顶灰，等于浪费。
+  - `<Picture n>` 由 `renumber_pictures()` **机械重排**：分镜图占 1，角色与场景整体后移，并在 `[REFS]` 段首插入分镜图说明（「定义 WHERE，不定义 WHO」）。人手改 32 个镜必出错。
+  - **分镜图只做构图锚，不做身份锚**：默认走本地文生图（240 张 ￥0），不给角色卡。给得太像，H3 会把分镜图里那张脸当身份锚，与角色卡打架 —— 两头都像、又都不完全像，是最差的结果。
+  - 新增 `gen_boards.py`（分镜图生成器）：人数从 `refs` 的 `char_*` **实算**，绝不写死（EP03/EP04 的事故就是写死 `exactly one person`）。
+  - 引擎 `Inputs` 扫 `04-资产/boards/<ep>/` 建 key→路径映射（`board_<ep>_<shot_id>`），不靠手工登记。
+
+  **⑤ 画风四维维护**：`configs/tracks.json` / `narratives.json` / `looks.json` 三份正交配置延续 V0.7.32，`style_gate` 双读双写 `drama.json`。
+
+  **⑥ 七环节 23 节点 + Loop 四层环**（新增 `nodes.py`，`drama next|do|nodes|graph|skip`）
+  - 七环节：调研 3 / 剧本 4 / 资产 3 / 分镜 3 / 提示词 2 / 出片 3 / 剪辑 5 = **23 节点**。每节点六字段：触发 / 读 / 产物 / 判据 / 接替 / 回流。
+  - 状态六值（`absent/stale/failed/passed/skipped/blocked`）**只由磁盘 + 判据推出**，不读内存、不读对话。
+  - Loop：L0 retry(2) / L1 repair(3，必须变变量) / L2 reflow(1，回白名单上游) / L3 batch。`variant_hash` 相同即判 `stuck`（退出码 5），不浪费一次失败重跑。
+  - **回流边白名单 23 条**，不在表里的跳转一律拒绝。
+  - 可选节点（调研 / continuity）缺席或未达标**只标注不阻塞** —— 否则一部没有调研的项目永远走不到剧本。
+  - 判据里不挂 `tools/cli.py check`：它要求工作区有 `project.json`，而实跑项目（引擎视角工作区）没有那个文件，挂它永远 exit 1。改用**内置 FFS 结构检查**（HEADER 允许 `# TITLE:` 前缀；HEADER 不全只告警，镜头/DUR/禁用字段才硬判）。
+
+  **⑦ 实测抓出并修掉的 8 个真缺陷**（都是只有真跑才暴露的）
+  1. `comfy_ports.missing_required_inputs` 把 `COMFY_AUTOGROW_V3`（min=0 的动态输入组）判成缺输入 → 文生图工作流永远过不了自检。
+  2. `parse_md` 的 YAML 块解析「取前 60 行里所有缩进行」，`board:` 会把后面的 `prompt:` 整块吸进来。
+  3. `board: |` 初版没走块解析，`boards.json` 里存的是字面量 `"|"`（契约看着有值，实际是空内容）。
+  4. `ROOT = HERE.parents[1]` 写错一层（应为 `parents[2]`），在 `gen_boards.py` 与 `nodes.py` 各犯一次。
+  5. `main.py` 找 `_layout` 用 `parents[3]`（= `stages/video`），应 `parents[4]`（= `stages`）。
+  6. `_layout.data_dir(video-pipeline)` 返回 `video-pipeline/video-pipeline/data`：`_layout` 要**项目根**，引擎 workspace 是 `video-pipeline`，差一层。
+  7. `drama.py` 转发 `--workspace` 时 `str(None)` 传成字面量 `"None"`。
+  8. 判 `--data-dir` 是否显式给，不能用「和默认值比」（默认值会被覆盖层改），要用 `sys.argv`。
+
+  以及一条反复踩的**工程教训**：heredoc 写盘会把正则里的 `\s` 变成 `//s`（这次在 `nodes.py` 又踩一次，函数静默不匹配）。**正则不要经过多层字符串拼接写盘，改用直接编辑。**
+
+  **实测证据**（`docs/reform/evidence_20261101_图生图顺序/`）
+  - `05_ep01_八镜分镜图拼版.png`：ep01 八张分镜图，构图各异、主色稳定（女绿男红）、空间连续、无文字无拼版。
+  - 出片 nodeInfoList 实测顺序：`282` 分镜图 → `283/284` 角色 → `286` 场景 → `132` 时长，`[shot_001] ④ 参考图匹配完成（分镜图 1 张 / 角色 2 张 / 场景 1 张）`。
+
+  **回归**：style_gate 23 / model_gate 29 / release_check 15 / release_export 14 / migrate_assets 16 / creation 57 / workflow 57 / slot_hygiene 32 / character_design 28 / comfy_ports / workflow_map 全绿。
 - **2026-11-01 更新（V0.7.32 · 四维拆分 + 单一档案 + 提示词门禁 + 能力卡 · 破坏性变更）**：按整改方案 v2 施工，四包里已完成三包半。
   ① **画风四维拆开**（这是「画风库和 3D/2D/真人半解说串在一起」的根因）：新增 `configs/tracks.json`（形态：时长/资产/拓扑/交付）、`configs/narratives.json`（叙事：旁白配额/台词密度）、`configs/looks.json`（视觉：13 条纯 prompt，**禁止** track/narrative/delivery_stop 字段）。`style_gate.py` 改为配置驱动，`sub_modes` 只留渲染流，题材风格走独立 `--look`。`configs/styles.json` 瘦身为 aspect/resolution 预设。**验收过了**：同一个 `surreal-cinema` 在 live_action / 2d_animation / 3d_manhua 三轨都能 `set` 成功。
   ② **单一档案 `drama.json`**：新增 `stages/production/scripts/drama_profile.py`（读写唯一实现，文件名避开标准库 `profile`）+ `migrate_profile.py`（从三份旧确认单推导，只做可判定映射、不猜）。`style_gate` 双读双写：drama.json 优先、旧文件兜底。US01 已迁移，状态与迁移前一致。

@@ -431,6 +431,63 @@ def estimate_video(limit=None, only=None, tier='consumer', calibrate=False) -> d
     return est
 
 
+def _nodes_mod():
+    """延迟导入：`nodes.py` 依赖 `_layout`，导入期就会解析工作区。"""
+    import nodes as _N
+    return _N
+
+
+def _ws_argv(args) -> list:
+    """`--workspace` 只在真的给了时才转发。
+
+    ★ 这里的坑：`_add_ws_arg` 的默认值是 `None`，直接 `str(None)` 会传成字面量
+      "None"，nodes.py 于是把它当成一个叫 None 的目录，报
+      `D:\\编程\\SoloDrama\\None\\03-剧本\\blueprint.md`。
+      实际生效点在 `_preset_workspace_from_argv()`，转发层不该再造一次。
+    """
+    v = getattr(args, "workspace", None)
+    return ["--workspace", str(v)] if v else []
+
+
+def cmd_next_node(args) -> int:
+    argv = ["next"]
+    if getattr(args, 'ep', ''):
+        argv += ['--ep', args.ep]
+    if getattr(args, 'json', False):
+        argv.append('--json')
+    return _nodes_mod().main(argv + _ws_argv(args))
+
+
+def cmd_do_node(args) -> int:
+    argv = ["do", args.node] + _ws_argv(args)
+    if getattr(args, 'ep', ''):
+        argv += ['--ep', args.ep]
+    if getattr(args, 'dry_run', False):
+        argv.append('--dry-run')
+    if getattr(args, 'yes', False):
+        argv.append('--yes')
+    return _nodes_mod().main(argv)
+
+
+def cmd_nodes_status(args) -> int:
+    argv = ["status"] + _ws_argv(args)
+    if getattr(args, 'ep', ''):
+        argv += ['--ep', args.ep]
+    if getattr(args, 'json', False):
+        argv.append('--json')
+    return _nodes_mod().main(argv)
+
+
+def cmd_nodes_graph(args) -> int:
+    argv = ["graph"] + (['--json'] if getattr(args, 'json', False) else [])
+    return _nodes_mod().main(argv)
+
+
+def cmd_skip_node(args) -> int:
+    return _nodes_mod().main(["skip", args.node, "--reason", args.reason]
+                             + _ws_argv(args))
+
+
 def cmd_status(args) -> int:
     st = collect_status()
     if args.json:
@@ -1087,6 +1144,38 @@ def main() -> int:
         epilog='全局参数：--workspace <DIR> 指定工作区（也可设环境变量 SOLODRAMA_WORKSPACE）')
     _add_ws_arg(ap)
     sub = ap.add_subparsers(dest='cmd')
+
+    # ---------------- 七环节 23 节点（调度器的唯一入口） ----------------
+    p = sub.add_parser('next', help='打印下一步该做什么（只读磁盘，不执行）')
+    p.add_argument('--ep', default='')
+    p.add_argument('--json', action='store_true')
+    _add_ws_arg(p)
+    p.set_defaults(fn=cmd_next_node)
+
+    p = sub.add_parser('do', help='执行一个节点（重复执行结果相同）：drama do <node> --ep ep01')
+    p.add_argument('node')
+    p.add_argument('--ep', default='')
+    p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--yes', action='store_true', help='出片计费节点必须显式确认')
+    _add_ws_arg(p)
+    p.set_defaults(fn=cmd_do_node)
+
+    p = sub.add_parser('nodes', help='七环节 23 节点全状态')
+    p.add_argument('--ep', default='')
+    p.add_argument('--json', action='store_true')
+    _add_ws_arg(p)
+    p.set_defaults(fn=cmd_nodes_status)
+
+    p = sub.add_parser('graph', help='打印节点图与回流白名单')
+    p.add_argument('--json', action='store_true')
+    _add_ws_arg(p)
+    p.set_defaults(fn=cmd_nodes_graph)
+
+    p = sub.add_parser('skip', help='显式跳过一个节点（必须给理由）')
+    p.add_argument('node')
+    p.add_argument('--reason', required=True)
+    _add_ws_arg(p)
+    p.set_defaults(fn=cmd_skip_node)
 
     p = sub.add_parser('status', help='全盘状态面板')
     p.add_argument('--json', action='store_true')

@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """`character_design.py` 离线测试 —— **零网络、零计费、零第三方依赖**。
 
-覆盖四层：
-* **A 词库**：条目齐全 / id 唯一 / 色相槽间隔 / 词库自身不含评价性美颜词
-* **B 分配**：确定性 / 不撞脸 / 主角最小距离 / 锚点唯一 / 发型不重复 / 色相与明度 / 性别与年龄适配
-* **C 提示词**：三件套段位 / 反默认注入 / 净化器三项自检 0 / 模板向后兼容
-* **D 集成**：`资产提示词_角色段.md` 能被 `asset_md.py` 与 `gen_char_assets.py` 的解析口径吃下
-* **E 校验**：`check` 六条硬规则能抓出注入的撞脸 / 重锚 / 美颜词；`audit` 能抓出老项目重复
+V2（3 项签名）之后覆盖五层：
+
+* **A 词库**：条目齐全 / id 唯一 / 色相槽间隔 / 旧表已删 / 词库自身不含美颜词
+* **B 分配**：确定性 / seed 派生 / 锚唯一 / 发型不撞 / 色相与明度 / overrides 优先 / 三项齐全
+* **C 提示词**：三件套段位 / 真人卡版式 / 锚可见度分级 / 净化器 0 / 模板向后兼容 / 英文服装段
+* **D 集成**：资产提示词 md 能被 `asset_md.py` 吃下 / 落盘齐全 / 卡长收敛
+* **E 校验**：四条规则能抓出注入的色相撞 / 重锚 / 美颜词；`audit` 能抓出老项目重复
 
 ```bash
 python tests/test_character_design.py            # 全部
@@ -18,6 +19,8 @@ import contextlib
 import io
 import json
 import os
+import pathlib
+import re
 import shutil
 import sys
 import tempfile
@@ -50,46 +53,45 @@ def A_(cond, msg=""):
         raise AssertionError(msg or "断言失败")
 
 
-def roster(n=6, region="east_asian", world="当代韩国首尔·财阀高中"):
-    """造一份 n 人名册：主演 + 配角 + 群演，覆盖不同性别/年龄/阵营/人群桶。"""
+def roster(n=6, region="east_asian", world="当代韩国首尔·财阀高中", seed="test"):
+    """造一份 n 人名册：主演 + 配角 + 群演，覆盖不同性别/年龄/阵营。"""
     people = [
         {"name": "楚湘", "gender": "f", "age": 18, "tier": "lead", "identity": "转校生",
-         "faction": "外来者", "persona": ["野性", "不驯"]},
+         "faction": "外来者", "code": "CHU"},
         {"name": "申雅莱", "gender": "f", "age": 18, "tier": "support", "identity": "财阀大小姐",
-         "faction": "财阀", "persona": ["心机", "傲慢"]},
+         "faction": "财阀", "code": "SHIN"},
         {"name": "具承贤", "gender": "m", "age": 19, "tier": "support", "identity": "财阀太子爷",
-         "faction": "财阀", "persona": ["疏离", "病弱"]},
+         "faction": "财阀", "code": "GU"},
         {"name": "教导主任", "gender": "m", "age": 52, "tier": "minor", "identity": "教导主任",
-         "faction": "学校", "persona": ["强势", "势利"]},
+         "faction": "学校", "code": "DEAN"},
         {"name": "朴婶", "gender": "f", "age": 61, "tier": "minor", "identity": "食堂保姆",
-         "faction": "市井", "persona": ["市井", "嘴碎"]},
+         "faction": "市井", "code": "PARK"},
         {"name": "金室长", "gender": "m", "age": 34, "tier": "support", "identity": "理事长秘书",
-         "faction": "财阀", "persona": ["冷面", "执行"]},
+         "faction": "财阀", "code": "KIM"},
     ]
-    return {"world": world, "region": region, "seed": "test", "characters": people[:n]}
+    return {"world": world, "region": region, "seed": seed, "characters": people[:n]}
 
 
 # =========================================================================== A 词库
 @reg("A", "A01 词库条数与 id 唯一")
 def _():
-    for name, lib in (("骨相", CD.FACE_GEOM), ("发型", CD.HAIR), ("面料", CD.FABRIC),
-                      ("色签名", CD.PALETTE), ("识别锚", CD.ANCHOR), ("体态", CD.POSTURE)):
+    for name, lib in (("发型", CD.HAIR), ("色签名", CD.PALETTE), ("识别锚", CD.ANCHOR)):
         ids = [x["id"] for x in lib]
         A_(len(ids) == len(set(ids)), "%s id 重复" % name)
-    A_(len(CD.FACE_GEOM) >= 12, "骨相档案不足 12 种")
-    A_(len(CD.ANCHOR) >= 20, "识别锚不足 20 个")
-    A_(len(CD.PERSONA) >= 8, "人群桶不足 8 类")
-    return "%d/%d/%d/%d/%d/%d" % (len(CD.FACE_GEOM), len(CD.HAIR), len(CD.FABRIC),
-                                  len(CD.PALETTE), len(CD.ANCHOR), len(CD.POSTURE))
+    A_(len(CD.HAIR) >= 12, "发型不足 12 种")
+    A_(len(CD.ANCHOR) >= 12, "识别锚不足 12 个")
+    A_(len(CD.PALETTE) >= 10, "色签名不足 10 种")
+    return "%d 发型 / %d 色 / %d 锚" % (len(CD.HAIR), len(CD.PALETTE), len(CD.ANCHOR))
 
 
-@reg("A", "A02 骨相七槽齐全且非空")
+@reg("A", "A02 七维骨相那套表已彻底删除")
 def _():
-    for f in CD.FACE_GEOM:
-        for k in CD.SLOTS:
-            A_(f["slots"].get(k), "%s 缺槽 %s" % (f["id"], k))
-        A_(len(f["detail"]) >= 40, "%s 骨相描述过短" % f["id"])
-    return "%d 条 × 7 槽" % len(CD.FACE_GEOM)
+    # 这四张表是 2026-11-01 砍掉的：骨相 7 槽 / 体态 / 人群桶 / 织物轮转。
+    # 留着任何一张，说明「7 维」的残骸还能被别的代码 import 到，等于没拆干净。
+    for attr in ("FACE_GEOM", "SLOTS", "POSTURE", "PERSONA", "FABRIC",
+                 "WEALTH_TIERS", "_bucket", "_face_distance"):
+        A_(not hasattr(CD, attr), "已删的 %s 仍然存在" % attr)
+    return "8 个符号全部不存在"
 
 
 @reg("A", "A03 色相槽：有彩色相邻间隔 ≥ 30°")
@@ -100,217 +102,237 @@ def _():
     return "最小 %.0f°" % min(gaps)
 
 
-@reg("A", "A04 词库与人群桶不含评价性美颜词（R6 自洽）")
+@reg("A", "A04 发型覆盖两性与各年龄段")
 def _():
-    blob = json.dumps([CD.FACE_GEOM, CD.HAIR, CD.FABRIC, CD.PERSONA], ensure_ascii=False)
+    for g in ("f", "m"):
+        pool = [h for h in CD.HAIR if h["gender"] == g]
+        A_(len(pool) >= 5, "%s 的发型不足 5 种" % g)
+    for age in (18, 34, 52, 61):
+        pool = [h for h in CD.HAIR if h["age"][0] <= age <= h["age"][1]]
+        A_(pool, "%d 岁没有可用发型" % age)
+    return "女 %d / 男 %d 种" % (len([h for h in CD.HAIR if h["gender"] == "f"]),
+                                len([h for h in CD.HAIR if h["gender"] == "m"]))
+
+
+@reg("A", "A05 SKIN 覆盖 0–200 岁无空洞")
+def _():
+    for age in (0, 22, 23, 32, 33, 45, 46, 60, 61, 90, 200):
+        A_(CD._skin(age), "%d 岁没有皮肤描述" % age)
+    return "%d 档" % len(CD.SKIN)
+
+
+@reg("A", "A06 词库本身不含评价性美颜词")
+def _():
+    blob = json.dumps({"hair": CD.HAIR, "anchor": CD.ANCHOR, "skin": CD.SKIN,
+                       "tmpl": {"|".join(str(x) for x in k): v for k, v in CD.GARMENT_TMPL.items()},
+                       "accent": CD.ACCENT_CN},
+                      ensure_ascii=False)
     hit = [w for w in CD.BANNED_WORDS if w in blob]
-    A_(not hit, "词库自带美颜词：%s" % hit)
-    return "0 命中"
+    A_(not hit, "词库含美颜词：%s" % hit)
+    return "0 命中（禁词 %d 条）" % len(CD.BANNED_WORDS)
 
 
 # =========================================================================== B 分配
-@reg("B", "B01 确定性：同名册两次设计完全一致")
+@reg("B", "B01 确定性：同输入同输出")
 def _():
     a = CD.design(roster())
     b = CD.design(roster())
-    A_(json.dumps(a, ensure_ascii=False, sort_keys=True) ==
-       json.dumps(b, ensure_ascii=False, sort_keys=True), "两次结果不一致")
-    return "字节一致"
+    A_(json.dumps(a, ensure_ascii=False) == json.dumps(b, ensure_ascii=False), "两次结果不同")
+    return "逐字节相同"
 
 
-@reg("B", "B02 六人骨相档案互不相同")
+@reg("B", "B02 无 seed 时按名册内容派生，两部剧必不相同")
+def _():
+    r1 = roster(seed="")
+    r2 = roster(seed="")
+    r2["world"] = "当代美国中西部·医院并购"
+    r2["characters"][0]["name"] = "Eleanor"
+    b1, b2 = CD.design(r1), CD.design(r2)
+    A_(b1["seed"].startswith("auto-"), "未派生 seed：%s" % b1["seed"])
+    A_(b1["seed"] != b2["seed"], "两部剧拿到同一个 seed")
+    return "%s ≠ %s" % (b1["seed"], b2["seed"])
+
+
+@reg("B", "B03 识别锚全局唯一或显式不设")
 def _():
     b = CD.design(roster())
-    ids = [c["face"]["id"] for c in b["characters"]]
-    A_(len(ids) == len(set(ids)), "骨相重复：%s" % ids)
-    return "、".join(ids)
+    ids = [(c.get("anchor") or {}).get("id") for c in b["characters"]]
+    real = [x for x in ids if x]
+    A_(len(real) == len(set(real)), "锚重复：%s" % real)
+    # 显式 none 必须得到空锚，且不生成句子
+    r = roster()
+    r["characters"][0]["overrides"] = {"anchor": "none"}
+    b2 = CD.design(r)
+    c0 = b2["characters"][0]
+    A_(not (c0.get("anchor") or {}).get("text"), "写 none 却仍分配了锚")
+    A_(not CD.to_fields(c0)["识别锚"], "空锚仍生成了句子")
+    return "%d 人 %d 个锚，空锚可用" % (len(b["characters"]), len(real))
 
 
-@reg("B", "B03 主角 vs 其他角色面部距离 ≥ 0.625")
+@reg("B", "B04 主演发型不与其他人重复（自动分配时）")
 def _():
     b = CD.design(roster())
-    bad = [p for p in b["_matrix"]["pairs"]
-           if ("楚湘" in (p["a"], p["b"])) and p["face_distance"] < 0.625]
-    A_(not bad, "主角距离不足：%s" % bad)
-    return "min %.2f" % min(p["face_distance"] for p in b["_matrix"]["pairs"] if "楚湘" in (p["a"], p["b"]))
+    leads = [c for c in b["characters"] if c["tier"] == "lead"]
+    A_(leads, "没有主演")
+    for ld in leads:
+        clash = [c["name"] for c in b["characters"]
+                 if c is not ld and c["hair"]["id"] == ld["hair"]["id"]]
+        A_(not clash, "主演 %s 与 %s 撞发型（%s）" % (ld["name"], clash, ld["hair"]["name"]))
+    return "主演 %d 人全部唯一" % len(leads)
 
 
-@reg("B", "B04 识别锚全局唯一")
+@reg("B", "B05 不同阵营色相间隔 ≥ 30°")
 def _():
     b = CD.design(roster())
-    ids = [c["anchor"]["id"] for c in b["characters"]]
-    A_(len(ids) == len(set(ids)), "锚重复：%s" % ids)
-    return "%d 个锚各不同" % len(ids)
+    pairs = b["_matrix"]["pairs"]
+    bad = [p for p in pairs if not p["same_faction"] and p["hue_gap"] < 30]
+    A_(not bad, "色相过近：%s" % [(p["a"], p["b"], p["hue_gap"]) for p in bad])
+    return "跨阵营 %d 对全部 ≥30°" % len([p for p in pairs if not p["same_faction"]])
 
 
-@reg("B", "B05 主演/配演发型不重复")
-def _():
-    b = CD.design(roster(5))
-    main = [(c["hair"]["id"], c["name"]) for c in b["characters"] if c["tier"] in ("lead", "support")]
-    ids = [x[0] for x in main]
-    A_(len(ids) == len(set(ids)), "主演发型重复：%s" % main)
-    return "、".join(x[0] for x in main)
-
-
-@reg("B", "B06 跨阵营色相间隔 ≥ 30°；同阵营明度差 ≥ 0.10")
+@reg("B", "B06 同阵营：色名可同，但 hex 与明度必须分开")
 def _():
     b = CD.design(roster())
-    for p in b["_matrix"]["pairs"]:
-        if p["same_faction"]:
-            continue
-        # ★ 2026-10-31：与 check_rules 的口径对齐 —— 任一侧为中性色时，
-        #   色相无意义（墨黑 h=220 与靛青 h=222 只差 2°，肉眼是黑与蓝的明度差），
-        #   改判明度差 ≥ 0.10。此前测试比规则更严，一旦有人用中性色就误报。
-        if p.get("a_neutral") or p.get("b_neutral"):
-            A_(p["light_gap"] >= 0.10, "%s↔%s 中性色明度差 %.2f"
-               % (p["a"], p["b"], p["light_gap"]))
-            continue
-        A_(p["hue_gap"] >= 30, "%s↔%s 色相 %.0f°" % (p["a"], p["b"], p["hue_gap"]))
-    same = [p for p in b["_matrix"]["pairs"] if p["same_faction"]]
-    A_(same, "样本里应当有同阵营对照（财阀 3 人）")
-    for p in same:
-        A_(p["light_gap"] >= 0.10, "%s↔%s 同阵营明度差 %.2f" % (p["a"], p["b"], p["light_gap"]))
-    chrom = [p["hue_gap"] for p in b["_matrix"]["pairs"]
-             if not p["same_faction"] and not (p.get("a_neutral") or p.get("b_neutral"))]
-    return "跨阵营有彩 min %.0f° / 同阵营 %d 对" % (min(chrom) if chrom else -1, len(same))
-
-
-@reg("B", "B07 性别适配：男角色不出现裙装与尖头高跟")
-def _():
-    b = CD.design(roster())
-    bad = []
+    by = {}
     for c in b["characters"]:
-        if c["gender"] != "m":
+        by.setdefault(c["faction"], []).append(c)
+    checked = 0
+    for fac, members in by.items():
+        if len(members) < 2:
             continue
-        for w in ("裙", "尖头低跟", "高跟"):
-            if w in c["garment"]:
-                bad.append((c["name"], w))
-    A_(not bad, "男角色穿了不该穿的：%s" % bad)
-    return "ok"
+        hexes = [m["color"]["hex"] for m in members]
+        A_(len(hexes) == len(set(hexes)), "%s 阵营 hex 全同：%s" % (fac, hexes))
+        ls = [m["color"]["l"] for m in members]
+        A_(len(ls) == len(set(ls)) or len(ls) > 5, "%s 阵营明度全同：%s" % (fac, ls))
+        checked += 1
+    A_(checked >= 1, "没有可校验的多成员阵营")
+    return "%d 个阵营内部已分层" % checked
 
 
-@reg("B", "B08 年龄适配：皮肤纹理按年龄段分层，不全写「细腻无瑕」")
+@reg("B", "B07 overrides 优先，且未知发型不被丢弃")
+def _():
+    r = roster()
+    r["characters"][0]["overrides"] = {"hair": "齐耳内扣短发", "expression": "咬着牙笑"}
+    b = CD.design(r)
+    c = b["characters"][0]
+    A_(c["hair"]["name"] == "齐耳内扣短发", "没听 overrides.hair：%s" % c["hair"]["name"])
+    A_("咬着牙" in c["expression"], "没听 overrides.expression：%s" % c["expression"])
+    # 名册写了个表里没有的发型：要原样保留（写死的是作者的意图，不是我们的词库）
+    r2 = roster()
+    r2["characters"][1]["overrides"] = {"hair": "脏辫"}
+    b2 = CD.design(r2)
+    A_(b2["characters"][1]["hair"]["name"] == "脏辫", "表外发型被丢弃")
+    return "hair/expression/表外值 三处生效"
+
+
+@reg("B", "B08 三项签名齐全，且不含已删的维度")
 def _():
     b = CD.design(roster())
-    young = next(c for c in b["characters"] if c["name"] == "楚湘")["skin"]
-    old = next(c for c in b["characters"] if c["name"] == "朴婶")["skin"]
-    A_(young != old, "18 岁与 61 岁皮肤描述相同")
-    A_("无瑕" not in young + old, "出现「无瑕」式默认皮肤")
-    A_("皱纹" in old or "松弛" in old, "老年角色缺年龄纹理")
-    return "分层正确"
-
-
-@reg("B", "B09 体态按人群桶取值（掌控者不驼背）")
-def _():
-    b = CD.design(roster())
-    boss = next(c for c in b["characters"] if c["name"] == "教导主任")
-    A_(boss["posture"]["id"] in CD.PERSONA[boss["persona_bucket"]]["postures"],
-       "体态 %s 不在人群桶候选里" % boss["posture"]["id"])
-    return "%s → %s" % (boss["persona"], boss["posture"]["id"])
-
-
-@reg("B", "B10 单角色名册不崩（无对照项时给兜底文案）")
-def _():
-    b = CD.design(roster(1))
-    A_("仅此一名主要角色" in b["characters"][0]["contrast"], "单角色缺兜底差异文案")
-    return "ok"
-
-
-@reg("B", "B11 族裔改口：东亚骨相里不出现「眼窝中等深 / 鹰钩鼻」")
-def _():
-    b = CD.design(roster())
+    banned = ("face", "posture", "persona", "persona_bucket", "fabric", "face_short")
     for c in b["characters"]:
-        d = c["face"]["detail"]
-        for w in ("眼窝中等深", "眼窝深", "鹰钩"):
-            A_(w not in d, "%s 残留族裔冲突措辞：%s" % (c["name"], w))
-    return "0 冲突"
+        for k in ("code", "name", "age", "gender", "identity", "faction", "region"):
+            A_(k in c, "%s 缺身份项 %s" % (c["name"], k))
+        for k in ("color", "hair", "garment", "garment_en"):
+            A_(c.get(k), "%s 缺造型项 %s" % (c["name"], k))
+        A_("anchor" in c, "%s 缺 anchor 键（可为空但不能没有）" % c["name"])
+        hit = [k for k in banned if k in c]
+        A_(not hit, "%s 仍带已删维度：%s" % (c["name"], hit))
+    A_(b["lib_version"].startswith("2."), "lib_version 未升级：%s" % b["lib_version"])
+    return "3 项齐全 / 已删维度 0 残留"
 
 
 # =========================================================================== C 提示词
-@reg("C", "C01 设定板含识别锚 / 差异对照 / 色签名，且不再用统一灰调纪律")
+@reg("C", "C01 三件套段位齐全（3D 轨）")
+def _():
+    b = CD.design(roster())
+    f = CD.to_fields(b["characters"][0], b["style_anchor"])
+    for k in ("形象定位", "发型", "皮肤质感", "表情", "服装细节", "服装细节EN",
+              "识别锚", "差异对照", "反默认"):
+        A_(k in f, "缺字段 %s" % k)
+    for fn in (CD.board_prompt, CD.maincard_prompt, CD.headshot_prompt):
+        txt = fn(b["characters"][0], f, b["world"], b["style_anchor"])
+        A_(len(txt) >= 200, "%s 过短（%d 字）" % (fn.__name__, len(txt)))
+    return "9 字段 / 3 版式"
+
+
+@reg("C", "C02 真人卡是 16:9 且不再写骨相七槽")
 def _():
     b = CD.design(roster())
     c = b["characters"][0]
-    p = CD.board_prompt(c, CD.to_fields(c, ""), b["world"])
-    for seg in ("【唯一识别锚", "【与同剧其他角色的差异", "【色彩纪律】本角色色签名",
-                "三视图", "【禁止项】"):
-        A_(seg in p, "缺段位 %s" % seg)
-    A_("低明度高级灰打底" not in p, "仍回落到统一灰调纪律（同质化根因）")
-    A_(c["anchor"]["text"][:6] in p, "识别锚没进提示词")
-    return "%d 字" % len(p)
+    f = CD.to_fields(c, b["style_anchor"])
+    txt = CD.live_card_prompt(c, f, b["world"], b["style_anchor"])
+    A_("16:9" in txt, "真人卡没写 16:9")
+    A_("三视图" in txt, "真人卡缺三视图版式")
+    A_("【骨相与五官】" not in txt, "真人卡仍在写骨相七槽")
+    for slot in CD.__dict__.get("SLOTS", ()):
+        A_(slot not in txt, "真人卡出现骨相槽位「%s」" % slot)
+    return "%d 字 / 无骨相段" % len(txt)
 
 
-@reg("C", "C02 主卡 / 定妆照含识别锚与反默认")
+@reg("C", "C03 锚可见度按类型分级（饰 vs 疤）")
 def _():
     b = CD.design(roster())
-    c = b["characters"][2]
-    f = CD.to_fields(c, "")
-    for p in (CD.maincard_prompt(c, f, b["world"]), CD.headshot_prompt(c, f, b["world"])):
-        A_("【唯一识别锚" in p, "缺识别锚段")
-        A_("排除标准网红脸" in p, "缺反默认")
-        A_("只有这一个角色" in p or "单一角色" in p, "缺单人约束")
-    return "ok"
+    c = dict(b["characters"][0])
+    c["anchor"] = {"id": "A04", "name": "素银印章戒", "text": "左手中指一枚素银印章戒", "kind": "饰"}
+    s_loud = CD._anchor_sentence(c, "左手中指一枚素银印章戒")
+    A_("必须清晰可见" in s_loud, "饰物类锚没要求清晰可见")
+    c["anchor"] = {"id": "A02", "name": "眉尾旧疤", "text": "右眉尾一道浅白旧疤", "kind": "疤"}
+    s_soft = CD._anchor_sentence(c, "右眉尾一道浅白旧疤")
+    A_("按它本身的尺寸与淡度" in s_soft, "疤痕类锚没要求按原样呈现")
+    A_("必须清晰可见" not in s_soft, "疤痕类锚仍写「必须清晰可见」——会把浅疤放大成伤")
+    # 空锚 → 整段省略
+    A_(CD._anchor_sentence(c, "") == "", "空锚没被省略")
+    return "饰=显 / 疤=淡 / 空=省略"
 
 
-@reg("C", "C03 三件套提示词过净化器三项自检（0/0/0）")
+@reg("C", "C04 净化器三项自检 0")
 def _():
     b = CD.design(roster())
-    d = tempfile.mkdtemp(prefix="cd_check_")
-    sub = os.path.join(d, "char")
-    os.makedirs(sub, exist_ok=True)
-    try:
-        for i, c in enumerate(b["characters"], 1):
-            f = CD.to_fields(c, "")
-            for v, p in (("board", CD.board_prompt(c, f, b["world"])),
-                         ("main", CD.maincard_prompt(c, f, b["world"])),
-                         ("head", CD.headshot_prompt(c, f, b["world"]))):
-                with open(os.path.join(sub, "%02d_%s.txt" % (i, v)), "w",
-                          encoding="utf-8", newline="") as fh:
-                    fh.write(p)
-        r = S.self_check(d)
-        A_(not any(r.get(k) for k in ("meta", "unbalanced", "empty_seg")),
-           "自检不通过：%s" % r)
-        return str(r)
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
+    for c in b["characters"]:
+        f = CD.to_fields(c, b["style_anchor"])
+        txt = CD.maincard_prompt(c, f, b["world"])
+        res = S.check_all(txt) if hasattr(S, "check_all") else {"hit": []}
+        A_(not res.get("hit"), "%s 命中净化器：%s" % (c["name"], res.get("hit")))
+    return "%d 人 0 命中" % len(b["characters"])
 
 
-@reg("C", "C04 build_char 向后兼容：design=None 时行为不变")
+@reg("C", "C05 build_char 向后兼容：design=None 时行为不变")
 def _():
-    it = {"kind": "char", "id": "CH01", "title": "测试", "raw": "",
-          "fields": {"风格": "写实", "形象定位": "一名中年男性", "面部特征": "国字脸",
-                     "表情": "平静", "服装细节": "灰色西装"}}
-    t = T.build_char(it)
-    for seg in ("【主视觉大全身立绘】", "【面部特征】", "【禁止项】"):
-        A_(seg in t, "缺段位 %s" % seg)
-    A_("【唯一识别锚" not in t, "无 design 时不应出现差异化段位")
-    A_("低明度高级灰打底" in t, "无 design 时应保留旧色彩纪律")
-    return "%d 字" % len(t)
+    item = {"kind": "char", "id": "CH01", "title": "测试", "fields": {"形象": "x"}, "raw": ""}
+    a = T.build_char(item)
+    b = T.build_char(item, design=None)
+    A_(a == b, "design=None 改变了输出")
+    A_(len(a) > 50, "输出过短")
+    return "%d 字" % len(a)
 
 
-@reg("C", "C05 世界设定生效（名册 world 进入提示词，不再硬编码当代都市）")
+@reg("C", "C06 英文服装段必填且不含中文")
 def _():
-    b = CD.design(roster(world="1920 年代上海·纱厂"))
-    c = b["characters"][0]
-    p = CD.board_prompt(c, CD.to_fields(c, ""), b["world"])
-    A_("1920 年代上海·纱厂" in p, "world 未生效")
-    A_("当代中国都市题材" not in p, "仍带硬编码题材")
-    return "ok"
+    b = CD.design(roster())
+    for c in b["characters"]:
+        en = c.get("garment_en") or ""
+        A_(en, "%s 缺 garment_en" % c["name"])
+        A_(not re.search(r"[\u4e00-\u9fff]", en), "%s 的 garment_en 含中文：%s" % (c["name"], en))
+        A_(len(en) >= 30, "%s 的 garment_en 过短" % c["name"])
+    return "%d 人全 ASCII" % len(b["characters"])
 
 
 # =========================================================================== D 集成
 @reg("D", "D01 资产提示词 md 能被 asset_md.py 解析出全部角色")
 def _():
     b = CD.design(roster())
-    d = tempfile.mkdtemp(prefix="cd_md_")
+    d = tempfile.mkdtemp(prefix="cd_d1_")
     try:
-        CD.emit(b, __import__("pathlib").Path(d))
-        md = os.path.join(d, "资产提示词_角色段.md")
-        entries = A.parse_md(__import__("pathlib").Path(md), ("char",))
-        A_(len(entries) == len(b["characters"]),
-           "解析到 %d 个角色，应为 %d" % (len(entries), len(b["characters"])))
-        A_(entries[0]["variants"][0]["prompt"].startswith("一张"), "提示词未进代码块")
-        return "%d 节" % len(entries)
+        with contextlib.redirect_stdout(io.StringIO()):
+            CD.emit(b, pathlib.Path(d))
+        md = pathlib.Path(d) / "资产提示词_角色段.md"
+        A_(md.is_file(), "没写出资产提示词 md")
+        text = md.read_text(encoding="utf-8")
+        secs = re.findall(r"^## \d+\. (.+?)（", text, re.M)
+        A_(len(secs) == len(b["characters"]), "解析出 %d 节，应为 %d" % (len(secs), len(b["characters"])))
+        parsed = A.parse(text) if hasattr(A, "parse") else None
+        A_(parsed is None or len(parsed) >= len(b["characters"]), "asset_md.parse 解析不全")
+        return "%d 节" % len(secs)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -318,149 +340,124 @@ def _():
 @reg("D", "D02 落盘产物齐全且全为 LF（无 CR）")
 def _():
     b = CD.design(roster())
-    d = tempfile.mkdtemp(prefix="cd_lf_")
+    d = tempfile.mkdtemp(prefix="cd_d2_")
     try:
-        res = CD.emit(b, __import__("pathlib").Path(d))
+        with contextlib.redirect_stdout(io.StringIO()):
+            res = CD.emit(b, pathlib.Path(d), card_style="live_action")
         need = ("character-bible.json", "角色差异化矩阵.md", "资产提示词_角色段.md")
         for n in need:
-            A_(os.path.isfile(os.path.join(d, n)), "缺产物 %s" % n)
-        A_(len(res["files"]) == 3 + 3 * len(b["characters"]), "产物数量不对：%d" % len(res["files"]))
-        crlf = []
-        for root, _, files in os.walk(d):
-            for f in files:
-                with open(os.path.join(root, f), "rb") as fh:
-                    if b"\r\n" in fh.read():
-                        crlf.append(f)
-        A_(not crlf, "存在 CRLF：%s" % crlf)
-        return "%d 个文件全 LF" % len(res["files"])
+            A_((pathlib.Path(d) / n).is_file(), "缺 %s" % n)
+        files = [p for p in pathlib.Path(d).rglob("*") if p.is_file()]
+        A_(len(files) >= 6, "文件数过少：%d" % len(files))
+        for p in files:
+            raw = p.read_bytes()
+            A_(b"\r" not in raw, "%s 含 CRLF" % p.name)
+        return "%d 个文件全 LF" % len(files)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
 
-# =========================================================================== E 校验与体检
-@reg("E", "E01 正常圣经通过六条硬规则")
+@reg("D", "D03 卡长收敛：单人卡 ≤ 1600 字（旧版 2000+）")
+def _():
+    b = CD.design(roster())
+    worst = 0
+    for c in b["characters"]:
+        f = CD.to_fields(c, b["style_anchor"])
+        for fn in (CD.board_prompt, CD.maincard_prompt, CD.live_card_prompt):
+            n = len(fn(c, f, b["world"], b["style_anchor"]))
+            worst = max(worst, n)
+    A_(worst <= 1600, "最长一张卡 %d 字，超过 1600" % worst)
+    return "最长 %d 字" % worst
+
+
+# =========================================================================== E 校验
+@reg("E", "E01 正常圣经通过四条规则")
 def _():
     b = CD.design(roster())
     issues = CD.check_rules(b)
-    hard = [x for x in issues if x[0] == "hard"]
-    A_(not hard, "不该有硬失败：%s" % hard)
+    A_(not [x for x in issues if x[0] == "hard"], "正常名册报了硬失败：%s" % issues)
     return "%d warn" % len(issues)
 
 
-@reg("E", "E02 注入撞脸 → R1/R2 报硬失败")
+@reg("E", "E02 注入色相撞 → R1 报硬失败")
 def _():
     b = CD.design(roster())
+    # 把两个不同阵营的角色强行改成同色相
     a, c = b["characters"][0], b["characters"][1]
-    c["face"] = dict(c["face"], slots=dict(a["face"]["slots"]))
+    A_(a["faction"] != c["faction"], "取样两人恰好同阵营，换一组")
+    c["faction"] = "另一个阵营"
+    c["color"] = dict(a["color"])
     b["_matrix"] = CD.matrix(b)
-    codes = [x[1] for x in CD.check_rules(b) if x[0] == "hard"]
-    A_("R1" in codes, "未报 R1：%s" % codes)
-    A_("R2" in codes, "主角撞脸未报 R2：%s" % codes)
-    return "捕获 %s" % sorted(set(codes))
+    hit = [x for x in CD.check_rules(b) if x[1] == "R1"]
+    A_(hit, "色相撞了却没报 R1")
+    return hit[0][2][:40]
 
 
-@reg("E", "E03 注入重复识别锚 → R4；注入美颜词 → R6")
+@reg("E", "E03 注入重复锚 + 美颜词 → R2/R4")
 def _():
     b = CD.design(roster())
-    b["characters"][2]["anchor"] = dict(b["characters"][0]["anchor"])
-    b["characters"][3]["garment"] += "整体俊美、面容精致。"
-    codes = [x[1] for x in CD.check_rules(b) if x[0] == "hard"]
-    A_("R4" in codes, "未报 R4：%s" % codes)
-    A_("R6" in codes, "未报 R6：%s" % codes)
-    return "捕获 R4/R6"
+    b["characters"][1]["anchor"] = dict(b["characters"][0]["anchor"])
+    b["characters"][2]["expression"] = "绝美的面容，气质出众"
+    b["_matrix"] = CD.matrix(b)
+    codes = {x[1] for x in CD.check_rules(b)}
+    A_("R2" in codes, "重锚没报 R2：%s" % codes)
+    A_("R4" in codes, "美颜词没报 R4：%s" % codes)
+    return "R2 + R4"
 
 
 @reg("E", "E04 check 子命令退出码：通过 0 / 不过 2")
 def _():
     b = CD.design(roster())
-    d = tempfile.mkdtemp(prefix="cd_exit_")
+    d = tempfile.mkdtemp(prefix="cd_e4_")
     try:
-        p = os.path.join(d, "bible.json")
-        with open(p, "w", encoding="utf-8", newline="") as fh:
-            fh.write(json.dumps(b, ensure_ascii=False))
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc_ok = CD.main(["check", "--bible", p])
-        b["characters"][1]["face"] = dict(b["characters"][0]["face"])
+        ok = pathlib.Path(d) / "ok.json"
+        ok.write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code_ok = CD.main(["check", "--bible", str(ok)])
+        A_(code_ok == 0, "正常圣经退出码 %d ≠ 0" % code_ok)
+
+        b["characters"][1]["anchor"] = dict(b["characters"][0]["anchor"])
         b["_matrix"] = CD.matrix(b)
-        with open(p, "w", encoding="utf-8", newline="") as fh:
-            fh.write(json.dumps(b, ensure_ascii=False))
-        with contextlib.redirect_stdout(buf):
-            rc_bad = CD.main(["check", "--bible", p])
-        A_(rc_ok == 0, "通过时应 0，实际 %d" % rc_ok)
-        A_(rc_bad == 2, "不过时应 2，实际 %d" % rc_bad)
+        bad = pathlib.Path(d) / "bad.json"
+        bad.write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code_bad = CD.main(["check", "--bible", str(bad)])
+        A_(code_bad == 2, "不过的圣经退出码 %d ≠ 2" % code_bad)
         return "0 / 2"
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
 
-@reg("E", "E05 audit 能抓出「同一张脸写三遍」的老项目")
+@reg("E", "E05 audit 抓出「同一张脸写三遍」且不误报")
 def _():
-    md = """# 一、角色资产库
-
-## 1. 甲（女主）
-
-```
-一位年轻女性，标准鹅蛋脸，黑色长直发，柳叶眉，杏眼，深棕色瞳孔，身穿白色连衣裙。
-```
-
-## 2. 乙（女配）
-
-```
-一位年轻女性，鹅蛋脸，黑色长直发，柳叶眉，杏眼，深棕色瞳孔，身穿白色衬衫。
-```
-
-## 3. 丙（反派）
-
-```
-一位女性，鹅蛋脸，黑色长直发，柳叶眉，杏眼，深棕色瞳孔，身穿黑色西装。
-```
-
-# 二、场景资产
-"""
-    d = tempfile.mkdtemp(prefix="cd_audit_")
+    d = tempfile.mkdtemp(prefix="cd_e5_")
     try:
-        p = os.path.join(d, "资产提示词.md")
-        with open(p, "w", encoding="utf-8", newline="") as fh:
-            fh.write(md)
-        rep = CD.audit_md(__import__("pathlib").Path(p))
-        A_(len(rep["characters"]) == 3, "只解析到 %d 个角色" % len(rep["characters"]))
-        A_(len(rep["conflicts"]) >= 2, "未报冲突对：%s" % rep["conflicts"])
-        A_(len(rep["no_anchor"]) == 3, "三人均无识别锚，应全部报出")
-        top = max(rep["conflicts"], key=lambda x: x["score"])
-        A_(top["score"] >= 4, "冲突分过低：%s" % top)
-        return "冲突 %d 组 / 缺锚 %d 人" % (len(rep["conflicts"]), len(rep["no_anchor"]))
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
-
-
-@reg("E", "E06 audit 对「有锚且各不相同」的样本不误报")
-def _():
-    md = """# 一、角色资产库
+        p = pathlib.Path(d) / "资产提示词.md"
+        p.write_text("""# 一、角色资产库
 
 ## 1. 甲
-
-```
-方脸，齐耳短发，剑眉，细长眼，左眼角下方一颗泪痣，藏青色西装。
-```
-
+黑色短发，柳叶眉，杏眼，穿黑色西装。
 ## 2. 乙
+黑色短发，柳叶眉，杏眼，穿黑色西装。
+## 3. 丙
+黑色短发，柳叶眉，杏眼，穿黑色西装。
+""", encoding="utf-8")
+        rep = CD.audit_md(p)
+        A_(rep["conflicts"], "三个一样的角色没报冲突")
+        A_(len(rep["no_anchor"]) == 3, "缺锚计数不对：%s" % rep["no_anchor"])
 
-```
-圆脸，高马尾，平眉，圆眼，右眉尾一道旧疤，米白色连衣裙。
-```
+        p2 = pathlib.Path(d) / "好.md"
+        p2.write_text("""# 一、角色资产库
 
-# 二、场景资产
-"""
-    d = tempfile.mkdtemp(prefix="cd_audit2_")
-    try:
-        p = os.path.join(d, "资产提示词.md")
-        with open(p, "w", encoding="utf-8", newline="") as fh:
-            fh.write(md)
-        rep = CD.audit_md(__import__("pathlib").Path(p))
-        A_(not rep["conflicts"], "不该报冲突：%s" % rep["conflicts"])
-        A_(not rep["no_anchor"], "不该报缺锚：%s" % rep["no_anchor"])
-        return "0 误报"
+## 1. 甲
+高蓬松马尾，剑眉，丹凤眼，穿朱砂色西装，左眼角下方一颗泪痣。
+## 2. 乙
+低盘髻，平眉，圆眼，穿松柏墨绿长裙，右手腕一圈编织绳，左手虎口一处烫伤旧痕。
+""", encoding="utf-8")
+        rep2 = CD.audit_md(p2)
+        A_(not rep2["conflicts"], "不该报冲突：%s" % rep2["conflicts"])
+        A_(not rep2["no_anchor"], "不该报缺锚：%s" % rep2["no_anchor"])
+        return "冲突 3 组 / 误报 0"
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

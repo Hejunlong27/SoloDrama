@@ -240,11 +240,21 @@ def missing_required_inputs(wf: dict, object_info: dict) -> list:
             continue
         ins = node.get("inputs") or {}
         miss = []
-        for field in req:
+        for field, spec in req.items():
             if field in ins:
                 continue
             if any(str(k).startswith(str(field) + ".") for k in ins):
                 continue
+            # ★ 2026-11-01：`COMFY_AUTOGROW_*` 是**动态输入组**（如 Qwen 的 images.image_1..16），
+            #   它的 `min=0` 表示「可以一张都没有」——纯文生图就是 0 张。
+            #   按 object_info 的 required 字面判，会把「合法的空组」判成缺输入，
+            #   于是文生图工作流永远过不了自检（实测：t2i 报 471 缺 images）。
+            typ = spec[0] if isinstance(spec, (list, tuple)) and spec else spec
+            if isinstance(typ, str) and typ.startswith("COMFY_AUTOGROW"):
+                opts = spec[1] if isinstance(spec, (list, tuple)) and len(spec) > 1 else {}
+                tpl = (opts or {}).get("template") or {}
+                if int(tpl.get("min") or 0) <= 0:
+                    continue
             miss.append(str(field))
         if miss:
             out.append((str(nid), cls, miss))

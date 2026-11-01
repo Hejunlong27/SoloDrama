@@ -559,6 +559,10 @@ class ShotContext:
     output_root: Path
     characters: Dict[str, str] = field(default_factory=dict)
     scenes: Dict[str, str] = field(default_factory=dict)
+    # ★ 2026-11-01：分镜图映射（key = `board_<ep>_<shot_id>` → 绝对路径）。
+    #   由 main.Inputs 扫 `04-资产/boards/<ep>/` 建立，不由人手工登记 ——
+    #   分镜图是「每镜一张」的派生产物，手工登 240 条必然漏。
+    boards: Dict[str, str] = field(default_factory=dict)
     dry_run: bool = False
     # --video-only：跳过 ①出图 ②裁剪（不扣图费），H3 走多参 reference generation（无首帧/无九宫格）
     video_only: bool = False
@@ -799,7 +803,8 @@ def get_image_provider() -> ImageProvider:
 def build_h3_node_list(*, prompt: str, frame_url: Optional[str], char_values: List[str],
                        scene_values: List[str], grid_url: Optional[str],
                        duration: Any, ratio: Optional[str],
-                       slot_fill: Optional[Sequence[tuple]] = None) -> List[Dict[str, Any]]:
+                       slot_fill: Optional[Sequence[tuple]] = None,
+                       board_values: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """组装 H3 nodeInfoList。配置里 nodeId 为空的节点自动跳过。
 
     ★ 支持两种节点形态（2026-09-18 新增，为「本地 RH 接口版」这类工作流而改）：
@@ -871,6 +876,10 @@ def build_h3_node_list(*, prompt: str, frame_url: Optional[str], char_values: Li
                   % (len(scene_vals), len(merged), cap))
         char_vals, scene_vals = merged, []
 
+    # ★ 顺序即 <Picture n>：分镜图 → 角色 → 场景。
+    #   分镜图排第一不是审美选择：它是唯一「与成片同构」的图，模型靠它定机位；
+    #   排到后面会被角色卡挤掉，构图又回到「每镜重新猜」。
+    pairs += role_pairs("board_ref", [v for v in (board_values or []) if v])
     pairs += role_pairs("char_ref", char_vals)
     pairs += role_pairs("scene_ref", scene_vals)
 
@@ -1120,6 +1129,19 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
         h3_nodes = (C.H3.get("nodes") or {})
         char_form = (h3_nodes.get("char_ref") or {}).get("value") or "url"
         scene_form = (h3_nodes.get("scene_ref") or {}).get("value") or "url"
+        board_form = (h3_nodes.get("board_ref") or {}).get("value") or "url"
+        board_values: List[str] = []
+        board_snap: List[Dict[str, Any]] = []
+        _bref = str(shot.get("board_ref") or "").strip()
+        if _bref and (h3_nodes.get("board_ref") or {}).get("nodeId"):
+            if _bref in ctx.boards:
+                board_values, board_snap = await resolve_refs(
+                    ctx, [_bref], ctx.boards, "boards", ctx.data_dir, value_form=board_form)
+            else:
+                # 没有分镜图不阻断：退回「角色+场景」两参，但要说出来，
+                # 否则又变成「以为用了分镜图，其实没用」。
+                ctx.log(f"[{shot_id}] ④ 缺分镜图 {_bref}（04-资产/boards/ 里没有），"
+                        f"本镜退化为「角色+场景」两参")
         char_values, char_snap = await resolve_refs(
             ctx, shot.get("character_refs") or [], ctx.characters, "characters", ctx.data_dir,
             value_form=char_form)
@@ -1127,9 +1149,10 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
             ctx, shot.get("scene_refs") or [], ctx.scenes, "scenes", ctx.data_dir,
             value_form=scene_form)
         (sdir / "refs_used.json").write_text(json.dumps(
-            {"characters": char_snap, "scenes": scene_snap}, ensure_ascii=False, indent=2),
-            encoding="utf-8")
-        ctx.log(f"[{shot_id}] ④ 参考图匹配完成（角色 {len(char_values)} 张 / 场景 {len(scene_values)} 张）")
+            {"board": board_snap, "characters": char_snap, "scenes": scene_snap},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+        ctx.log(f"[{shot_id}] ④ 参考图匹配完成（分镜图 {len(board_values)} 张 / "
+                f"角色 {len(char_values)} 张 / 场景 {len(scene_values)} 张）")
 
         # ---------- ⑤ 生成视频 ----------
         reuse_task_id = None
@@ -1172,7 +1195,7 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
                 prompt=str(h3.get("prompt")), frame_url=frame_url,
                 char_values=char_values, scene_values=scene_values, grid_url=grid_url,
                 duration=duration, ratio=h3.get("ratio") or shot.get("ratio"),
-                slot_fill=ctx.slot_fill("h3"))
+                slot_fill=ctx.slot_fill("h3"), board_values=board_values)
 
         if ctx.dry_run:
             node_list = _nodes_for(h3.get("duration"))

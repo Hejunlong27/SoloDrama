@@ -132,15 +132,19 @@ def check_prompt(prompt: str, char_codes: list, image_count: int | None) -> list
                        "msg": "提示词含中文字符：…%s…" % body[s:hit.start() + 20].replace("\n", " ")})
 
     # ---- C5 图号闭合 ----
+    # 2026-11-01 收紧：原来是「最大编号 > 图片数」才报错，于是「少发一张」永远查不出来
+    # （编号 1..3、实际只发 2 张 → 通过）。现在要求**严格相等**：
+    # `<Picture n>` 必须刚好覆盖「分镜图 1 + 角色 + 场景」的每一张。
     nums = [int(x) for x in PICTURE_RE.findall(prompt)]
     if nums:
         mx = max(nums)
-        if image_count is not None and mx > image_count:
+        if image_count is not None and mx != image_count:
             issues.append({"code": "C5", "level": "ERROR",
-                           "msg": "<Picture %d> 超出实际发送的图片数 %d" % (mx, image_count)})
-        if sorted(nums) != list(range(1, mx + 1)):
+                           "msg": "<Picture %d> 与实际发送的图片数 %d 不符"
+                                  "（分镜图 1 + 角色 + 场景）" % (mx, image_count)})
+        if sorted(set(nums)) != list(range(1, mx + 1)):
             issues.append({"code": "C5", "level": "WARN",
-                           "msg": "<Picture n> 编号不连续：%s" % nums})
+                           "msg": "<Picture n> 编号不连续：%s" % sorted(set(nums))})
     elif image_count:
         issues.append({"code": "C5", "level": "ERROR",
                        "msg": "发送了 %d 张参考图，但提示词里没有任何 <Picture n>" % image_count})
@@ -171,7 +175,11 @@ def parse_storyboard_md(text: str) -> dict:
         prompt = pm.group(1) if pm else ""
         prompt = "\n".join(ln[4:] if ln.startswith("    ") else ln.strip()
                            for ln in prompt.split("\n"))
-        out[sid] = {"codes": codes, "refs": refs, "prompt": prompt.strip()}
+        # board 同理（`- board: |` 之后的缩进块）。有它，图片数要多算 1 张：它占 <Picture 1>。
+        bm = re.search(r"(?ms)^-\s*board:\s*\|\s*\n(.*?)(?=\n-\s|\n---|\Z)", body)
+        board = "\n".join(ln[4:] if ln.startswith("    ") else ln.strip()
+                          for ln in (bm.group(1) if bm else "").split("\n")).strip()
+        out[sid] = {"codes": codes, "refs": refs, "prompt": prompt.strip(), "board": board}
     return out
 
 
@@ -182,15 +190,20 @@ def run_ep(ws: pathlib.Path, ep: str) -> dict:
         return {"ep": ep, "error": "找不到分镜 md：%s" % md, "shots": []}
     shots_md = parse_storyboard_md(md.read_text(encoding="utf-8"))
 
-    # 提示词：优先本集快照（这才是真正会发出去的文本）
+    # 提示词：优先**真正会发出去的那份** —— 先看 data/<ep>/（convert_storyboard 的落点，
+    # 已含 <Picture n> 重排），再看历史 `_eps/<ep>/` 快照。
+    # 顺序不能反：_eps 是旧路径，里面的编号还是「角色从 1 开始」的旧编号，
+    # 拿它来判会报一堆假 C5。
     data = ws / "06-提示词"
-    snap = data / "_eps" / ep / "h3_prompts.json"
-    if snap.is_file():
-        prompts = _read_json(snap, {}) or {}
-        src = str(snap)
-    else:
+    prompts, src = None, ""
+    for cand in (data / ep / "h3_prompts.json", data / "_eps" / ep / "h3_prompts.json"):
+        if cand.is_file():
+            prompts = _read_json(cand, {}) or {}
+            src = str(cand)
+            break
+    if prompts is None:
         prompts = {sid: {"prompt": v["prompt"]} for sid, v in shots_md.items()}
-        src = "%s（md 内联，无 _eps 快照）" % md.name
+        src = "%s（md 内联，无 data/<ep> 快照）" % md.name
 
     out = []
     for sid, meta in shots_md.items():
@@ -201,12 +214,20 @@ def run_ep(ws: pathlib.Path, ep: str) -> dict:
             prompt = item
         else:
             prompt = meta["prompt"]
+        # 图片数 = 分镜图 1 张 + refs 里的角色与场景。分镜图进了槽位就必须算进来，
+        # 否则 C5 会拿「不含分镜图」的数字去对「已含分镜图」的编号，永远差一位。
+        n_img = len(meta["refs"]) + (1 if meta.get("board") else 0)
         if not prompt:
-            out.append({"shot": sid, "codes": meta["codes"], "images": len(meta["refs"]),
+            out.append({"shot": sid, "codes": meta["codes"], "images": n_img,
                         "issues": [{"code": "C0", "level": "ERROR", "msg": "该镜没有提示词正文"}]})
             continue
-        out.append({"shot": sid, "codes": meta["codes"], "images": len(meta["refs"]),
-                    "issues": check_prompt(prompt, meta["codes"], len(meta["refs"]) or None)})
+        _iss = check_prompt(prompt, meta["codes"], n_img or None)
+        if not meta.get("board"):
+            # 缺分镜图不拦（老项目还能跑），但必须说出来 ——
+            # 否则又是「以为用了构图锚，其实一直在两参出片」。
+            _iss.append({"code": "C6", "level": "WARN",
+                         "msg": "缺 board（分镜图）字段：出片退化为「角色+场景」两参"})
+        out.append({"shot": sid, "codes": meta["codes"], "images": n_img, "issues": _iss})
     return {"ep": ep, "source": src, "shots": out}
 
 

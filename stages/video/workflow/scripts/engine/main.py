@@ -237,7 +237,7 @@ def _read_json(path: Path, default: Any) -> Any:
 
 
 class Inputs:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, boards_dir: Optional[Path] = None) -> None:
         self.data_dir = data_dir
         raw_shots = _read_json(data_dir / "shots.json", [])
         if isinstance(raw_shots, dict):
@@ -246,6 +246,27 @@ class Inputs:
         self.characters: Dict[str, str] = _read_json(data_dir / "characters.json", {}) or {}
         self.scenes: Dict[str, str] = _read_json(data_dir / "scenes.json", {}) or {}
         self.h3_prompts: Dict[str, Any] = _read_json(data_dir / "h3_prompts.json", {}) or {}
+        # 分镜图契约（gen_boards.py 的输入）：缺了不报错，只是这一镜退回两参
+        self.boards_prompts: Dict[str, Any] = _read_json(data_dir / "boards.json", {}) or {}
+        self.boards: Dict[str, str] = self._scan_boards(boards_dir)
+
+    @staticmethod
+    def _scan_boards(boards_dir: Optional[Path]) -> Dict[str, str]:
+        """扫 `04-资产/boards/` 建 key→路径 映射。
+
+        key 规则与 convert_storyboard 的 board_ref 对齐：`board_<ep>_<shot_id>`。
+        文件名形如 `.../boards/ep01/shot_001.png`。**扫而不是登记**：
+        240 张图手工登记必漏，而且改名就失联。
+        """
+        out: Dict[str, str] = {}
+        if not boards_dir or not boards_dir.is_dir():
+            return out
+        for p in sorted(boards_dir.rglob("*")):
+            if not p.is_file() or p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+                continue
+            ep, stem = p.parent.name, p.stem
+            out["board_%s_%s" % (ep, stem)] = str(p.resolve())
+        return out
 
     def validate(self) -> List[str]:
         """静态校验输入，返回问题列表（不联网）。"""
@@ -261,8 +282,10 @@ class Inputs:
             if sid in seen:
                 problems.append(f"shot_id 重复: {sid}")
             seen.add(sid)
-            if not (s.get("banana_prompt") or s.get("prompt")):
-                problems.append(f"{sid} 缺少 banana_prompt")
+            # 2026-11-01：出图提示词已随九宫格链下线；现在检查的是「这一镜有没有分镜图」。
+            bref = str(s.get("board_ref") or "").strip()
+            if bref and self.boards and bref not in self.boards:
+                problems.append(f"{sid} 的 board_ref={bref} 在 04-资产/boards/ 里找不到图")
             if sid not in self.h3_prompts:
                 problems.append(f"{sid} 在 h3_prompts.json 里没有对应提示词")
             for key, table, name in ((s.get("character_refs") or [], self.characters, "characters"),
@@ -488,10 +511,49 @@ async def run_resume_download(workspace: Path, out_root: Path,
 
 async def run_pipeline(args: argparse.Namespace) -> int:
     workspace = args._workspace
-    data_dir = _resolve_against(workspace, args.data_dir)
+    # ★ 2026-11-01：`--data-dir` 没显式给时，**走布局真源**而不是 `C.DATA_DIR`。
+    #   `config.local.json` 里的 `data_dir` 原本只给 `stages/_layout.py` 读，
+    #   引擎自己不用它 —— 于是布局把数据写在 `06-提示词/`，引擎去 `video-pipeline/data/`
+    #   找，报「shots.json 不存在」，两处各说各话。
+    _layout_mod = None
+    try:
+        import sys as _s
+        # main.py 在 stages/video/workflow/scripts/engine/ 下：
+        # parents[3]=stages/video，parents[4]=stages ← 要这个才能 import _layout
+        _s.path.insert(0, str(Path(__file__).resolve().parents[4]))
+        import _layout as _layout_mod                            # noqa: E402
+    except Exception:                                            # noqa: BLE001
+        _layout_mod = None
+    # `_layout` 要的是**项目根**，而引擎的 workspace 通常指 `video-pipeline`。
+    # 直接把 video-pipeline 传进去会得到 `video-pipeline/video-pipeline/data`（实测）。
+    _proj_root = (Path(workspace).parent if Path(workspace).name == "video-pipeline"
+                  else Path(workspace))
+    # 判「用户有没有显式给 --data-dir」用 sys.argv，不用「和默认值比」——
+    # 默认值会被覆盖层改，比较会失效（实测：args.data_dir 已是覆盖层的值，
+    # 与 C.DATA_DIR 不等，于是这整段被跳过，仍然去 video-pipeline/data 找）。
+    _explicit_data = "--data-dir" in sys.argv
+    if not _explicit_data and _layout_mod is not None:
+        try:
+            base_data = _layout_mod.data_dir(_proj_root)
+        except Exception:                                        # noqa: BLE001
+            base_data = _resolve_against(workspace, args.data_dir)
+    else:
+        base_data = _resolve_against(workspace, args.data_dir)
+    # ★ 2026-11-01：`--ep` 时数据在 `data/<ep>/`，一集一目录。
+    #   旧实现固定 `data/`，跑第二集会把第一集的 shots.json 覆盖掉。
+    _ep = str(getattr(args, "ep", "") or "").strip()
+    data_dir = (base_data / _ep) if _ep else base_data
     out_root = _resolve_against(workspace, args.out_dir)
 
-    inputs = Inputs(data_dir)
+    # 分镜图：`04-资产/boards/`（与 convert_storyboard 的落点约定一致）
+    boards_dir = None
+    if _layout_mod is not None:
+        try:
+            boards_dir = _layout_mod.assets_dir(_proj_root) / "boards"
+        except Exception:                                    # noqa: BLE001
+            boards_dir = None
+
+    inputs = Inputs(data_dir, boards_dir)
     problems = inputs.validate()
     if problems:
         print("! 输入数据存在问题：")
@@ -530,6 +592,8 @@ async def run_pipeline(args: argparse.Namespace) -> int:
     await logger.log(f"工作区 {args._workspace}")
     await logger.log(f"批次 {batch_id} | 图片模型={C.ACTIVE_IMAGE_PROVIDER}"
                      f"({provider.__class__.__name__}) | H3 工作流={C.H3.get('id') or '未填写'}")
+    await logger.log(f"分镜图 {len(inputs.boards)} 张可用"
+                     + ("" if inputs.boards else "（没有分镜图，出片退化为「角色+场景」两参）"))
     await logger.log(f"待处理 {len(shots)} 个分镜 | 并发={C.CONCURRENCY} | 批大小={C.BATCH_SIZE}"
                      f" | 轮询通道={C.POLL_CHANNEL} | {'DRY-RUN 预演' if args.dry_run else '真实执行'}")
     if args.dry_run:
@@ -552,6 +616,7 @@ async def run_pipeline(args: argparse.Namespace) -> int:
             output_root=batch_dir,
             characters=inputs.characters,
             scenes=inputs.scenes,
+            boards=inputs.boards,
             dry_run=args.dry_run,
             video_only=bool(getattr(args, "video_only", False)),
             # 运行台账：逐任务落盘（含失败与换算指标）。预演不写，避免污染真实账。
@@ -788,6 +853,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="工作区根目录（data/ 与 output/ 的基准）。默认按 "
                         "--workspace > 环境变量 VIDEO_PIPELINE_WORKSPACE > "
                         "<引擎>/.workspace 指针 > ~/video-pipeline-workspace 解析")
+    p.add_argument("--ep", default="",
+                   help="集号（如 ep01）。给了就读 data/<ep>/ 下的五文件；不给则用 --data-dir 原值")
     p.add_argument("--data-dir", default=C.DATA_DIR,
                    help=f"输入 JSON 目录（相对工作区，默认 {C.DATA_DIR}）")
     p.add_argument("--out-dir", default=C.OUTPUT_DIR,
