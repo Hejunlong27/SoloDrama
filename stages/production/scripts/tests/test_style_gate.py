@@ -90,8 +90,11 @@ def main():
         SG._do_set(ws, "2d_animation", None)
         s2 = SG.STYLES["2d_animation"]
         check("2D 不要三视图/辅卡", s2["assets"]["character_3view"] == 0 and s2["assets"]["scene_aux"] == 0)
-        check("2D 交付止于旁白交接", s2["delivery_stop"] == "narration_handoff")
-        check("真人强制三格分镜", SG.STYLES["live_action"]["storyboard_topology"] == "three_panel_per_clip")
+        # ★ 2026-11-01 口径变更（整改方案 v2 §二）：
+        #   ① 2D 也是短剧，交付到成片 —— 旧的「止于旁白交接」是半解说技能族的遗产；
+        #   ② 真人轨分镜从「三格拼版」改为「一镜一张单帧」，三格本身就是 P21 实测的雷同源头。
+        check("2D 交付到成片（不再是旁白交接）", s2["delivery_stop"] == "final_video")
+        check("真人一镜一张单帧分镜", SG.STYLES["live_action"]["storyboard_topology"] == "one_frame_per_clip")
 
         # --- 三类校验：合规样本应通过 ---
         SG._do_set(ws, "3d_manhua", None)

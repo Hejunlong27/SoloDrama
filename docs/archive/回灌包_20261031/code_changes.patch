@@ -1,0 +1,1500 @@
+diff --git a/VERSIONS.md b/VERSIONS.md
+index a358aea..c675a01 100644
+--- a/VERSIONS.md
++++ b/VERSIONS.md
+@@ -1,6 +1,47 @@
+ # VERSIONS.md —— 引擎收编清单与版本固化
+ 
+ - 收编日期：2026-10-08
++- **2026-11-01 更新（V0.7.29 · EP01 画面不可读的三层根因 · 破坏性变更）**：用户看完首集成片判定「画面内容完全是乱的，不知道在讲什么东西」。自查后结论：**不是出图模型的问题，是三件事同时发生**。
++  ① **剧本层（P25，最致命）**：EP01 里 `contract / 契约 / sign / marriage / 婚 / 90` 各出现 **0 次**，标题《Ninety Days, Mr. Nobody》承诺的东西正片一次没有。查骨架 `人工拆解.md` 与 `blueprint.md` 确认——**契约被排到 EP02 才登场，问题在骨架不在正文**。连带三条：男主在 SC-03/04 **断线 16 秒**（占全片 24%）、四空间三跳时、开场是「递扳手」这种日常而非冲突（违反 §3.3 黄金 3 秒）。修法给了两案（倒叙砸设定 / 补视觉设定），**待用户拍板**。
++  ② **提示词层（P26）**：8 个镜头的 H3 提示词里 `woman / man / she / he / female / male` 各 **0 次**，`figure` 出现 **38 次** —— 人物指代用的是 `the shorter figure in a worn cardigan` 这类**相对外貌**，出处是项目侧 `_tools/patch_storyboard_h3.py` 的 `LABEL` 字典。后果：SC-02（剧本是一男一女）成片出成**两个中年男人**。修法已验证：指代改为「姓名 + 性别 + 年龄段 + 服装色签名」，并在 `[SUBJECT]` 首句锁人数（`exactly two people — one woman and one man, nobody else`），`[ACTION]` 改用姓名。
++  ③ **参考图层（P27）**：角色卡是「16:9 纯白 + 左脸特写 + 右三视图」= **一张图 4 个人像**，H3 多参把它读成 **4 个人物**，成片出现 3 个女主。修法：从角色卡裁**单人正面竖条**（`crop=420:1088:890:0`，左右边缘不得带进相邻视角——第一次用 `x=830,w=520` 把侧面像切进半个人，H3 仍判成两人），`characters.json` 指向单人版。实测同段提示词 → 8.5 秒全程恰好一男一女。
++  ④ **whisper 反证（本次最重要的方法）**：用 `whisper-cli` 转写自己的成片，19 句台词**全部正确、无时序错位**。所以「看不懂」不等于「听不清」——**是画面与声音完全脱节**。根因：`[SUBJECT]/[ACTION]` 全是肢体动作（holds out / kneels / walks / copies），没有一条把**信息**翻译成画面里的**物件**。修法：每条补 `[PROP]`，且信息物件**用背面/侧面/局部表达**（「一张被两条黄胶带压住、边角卷起的纸」远比「写着 41 个名字的告示」可画）。
++  ⑤ **连带修复 RH 放大工作流 `2110614419863592961`**：此前判「跑了 11 分钟报 805，不可用」是**误判**。真实三因：输入是 `hevc / Main 10 / yuv420p10le`（服务端解不动，先转 `h264+yuv420p`）、提交走了 v1 legacy 通道（改 `/openapi/v2/run/workflow/{id}`）、节点 4/5 是**短边/长边**不是宽/高（竖版给 `4=1080, 5=1920`；给反输出 598×1080）。修完实测 **52–62 秒 / 10–12 币**，输出 1062×1920。
++  ⑥ **P31 引擎不支持一镜多角色**：`CHAR: ELLE, KANE` 被整串比对，同时报 E002 与 E003（12 个错）。一镜两角是短剧常态，照原实现根本写不出来。修法：`validate.py` 新增 `_split_codes()`（按 `, ， 、 ; ； /` 切分），`_check_codes` 与 `_check_char_anchor` 改为逐个代号比对，单代号行为不变。已同步五工作区。
++  ⑦ **P32 宽景别诱发边缘补人**：`shot_001`（medium 35mm）右下角多出半个人（同款卡其夹克与棕裤），其余 7 段紧景别全部干净。`exactly two people` 这类数量约束**对宽景别效力不足**。修法双管：景别收紧到 `medium close shot, 50mm` 并写明站位关系；`[SUBJECT]` 末尾加边缘约束 `Nothing else enters the frame — no limb, no shoulder, no second body at either edge.`。**判据：出片后必须看画框四边**，问题在右下角，缩略图里几乎看不见。
++  ⑧ **P33 上游产物改不动**：`convert_storyboard.py --apply` 会把 `characters.json` 按 `04-资产/refs.json` 重写，直接改 `06-提示词/characters.json` 等于没改（单人参考图的修复被无声回滚）。改源 `refs.json` 才持久，已封装 `_tools/make_single_refs.py --patch-refs`。**普适教训：凡上游生成的产物，改它等于没改。**
++  ⑨ 重制结果（方案 A）：剧本 66 秒 / 8 镜 / 3 空间（BOARD·BOILER·WARD）/ 契约词 6 次 / 男主断线 8 秒，`lint` + `cli check` 双门禁 0 ERROR 0 WARN；RH 出片 8/8（1 段偶发失败原样重试即过，共 339 币）。**`[PROP]` 机制验证有效**——黄黑封条、打开的铝制工具箱、笔夹歪掉的银色钢笔、第七条上的红圈，四类信息物件均可在成片指认，且不依赖可读文字。
++  ⑩ **P34 整集 ASR 让字幕逐段漂移**：整集合并后一次转写，whisper 把每段台词后的静音算进这一句，时间戳逐段累积（第 1 条占 0–13s，而 shot_001 只有 9.42s），到第 3 段已错开一整句——画面上是锅炉房、字幕却是上一镜台词。修法：`build_subs_ep.py` 改**逐段转写 + 段偏移**，误差锁在单段内；条数由 8 变 10（长台词正确切句）。判据：烧完必须抽帧比对字幕文本与画面场景是否同属一镜。
++  ⑪ **P35 `subtitles=` 塞 Windows 绝对路径必失败**：`D\:` 转义会让 ffmpeg 把盘符后的路径当作 `original_size` 选项值。修法：ASS 复制进临时目录、`cwd` 切过去、filter 里只写裸文件名。
++  ⑫ **P36 字幕普遍比音轨提前（用户验收反馈）**：`whisper.cpp` 的 SRT 起点习惯性标到 0，而 H3 语音每段开头有 0.3–1.4 秒呼吸/环境音（实测 8 段：0.313 / 0.398 / 0.421 / 0.685 / 0.730 / 0.739 / 1.357 s），逐段转写只解决段间漂移（P34），段内仍整体提前。修法：`voice_start()` 用 `ffmpeg silencedetect` 取首个 `silence_end`，把该段全部 cue 整体后移（仅当 0.05 < shift < 2.0）。**坑中坑**：第一版正则多转义成 `//s`，匹配不到任何东西，函数静默返回 0、流程照常出片——判据必须看行为：抽 0.2 s 应**无字幕**、0.7 s 应有字幕。另新增 `<ep>.fix.json` 每集 ASR 错字修正表，重跑不丢。
++  ⑬ **P37 主角与群演同色系会被淹没**：EP02 SC-01 病区公告栏群戏，ELLE 的青绿针织衫与护士刷手服同色，人群里认不出主角。色签名只约束了「角色之间不撞」，没约束「角色与环境/群演」。修法：群戏镜 `[SHOT]` 写明其他人焦外不解析面孔、主角占前景、必要时给对比色小块。判据：抽一帧三秒内能指出主角。
++  ⑭ **P38 放大失败不阻断，静默产出残缺成片（最危险）**：EP03 成片 58.87s 而剧本 66s——`shot_008`（钩子镜）放大返回 805，`upscale_rh.py` 只把失败写进 summary 不让进程失败，`pipeline_ep.py` 又没校验，于是拿 7 段拼了一集照常烧字幕归档。**成片能播、看起来完成了，但钩子没了**。修法：流水线两处硬校验（放大后逐段比对 + 烧录前 `copied < 8` 即中止），补跑后 58.87→68.29s。判据：成片时长必须接近剧本合计（±10%），不等就查 `upscale_summary.json` 的 `ok=false`。
++  ⑮ **P39 中文剧本不能直接生成提示词**：第一版 `gen_h3.py` 把中文 ACTION 直接拼进 `[SUBJECT]`，出「beat 1 早班的病区走廊…」这种中文提示词；`[REFS]` 也残留「齐耳内扣短发」「松石青」。H3 只认英文，中文片段等同噪声。修法：**剧本/英文层/提示词三层分离**——`03-剧本/ep_XX.md`（中文，给编剧）+ `03-剧本/en/epXX.en.json`（英文，给 H3）+ `06-提示词/h3_prompts.json`（机器生成）。缺英文层直接报错退出，另加 `HAIR_EN`/`COLOR_EN` 映射表。
++  ⑯ 完整复盘（含 whisper 19 句对照表、三条量化命令、判据、回滚）见 `docs/patches/2026-11-01_EP01画面不可读三层根因修复记录.md`。
++  **遗留**：P25 待拍板、P28 跨段一致性无锚、P29 画面内文字载体出乱码、P30 字幕时间轴仍为字数估算（whisper 模型已备好，可直接重做）。
++- **2026-10-31 更新（V0.7.28 · 弃用剪影：分镜图改为俯视站位图 · 破坏性变更）**：用户看完剪影分镜图直接要求「把剪影这个环节删掉，不要用剪影了」。
++  ① **决策**：改用**俯视站位图**（`top-down floor-plan blocking diagram`）—— 这不是新发明，`画风三轨规范.md` §1.3.1 的对照表里本来就有，当时定位「调度补充」，现升为**主方案**，灰阶三色调剪影标为 **2026-10-31 弃用**。
++  ② **为什么这个替换是对的**（不是迁就用户，是剪影选错了重点）：剪影把「景别 + 光位 + 构图」压在三格里，而**这些 H3 提示词本来就写清楚了**，图纸只是重复文字信息；它**无法表达的**「演员站哪、机位在哪、视锥盖哪块地」才是分镜阶段真正要确认、也最容易出错的部分。且实测同镜三格常被画成几乎一样的画面（因为三格差别往往只是光线与头部角度）。
++  ③ **实现**：新增 `workflow_qwen21_blocking_16x9.json`（16:9 / 2MP / cfg=2）。与通用工作流**唯一差别是负向词** —— 必须去掉 `text, letters, numbers, signage, labels`，否则标题与图例会被一起压掉；改为 `photograph, 3d render, perspective view, realistic figures, human faces, hands, colour, gradient, shading, texture, drop shadow, blurry, low detail, watermark`。8 条分镜提示词全部重写为「ROOM / FIGURE A / FIGURE B / KEY MARKER / 标题 / 图例」六段式，画幅由 9:16 改 16:9，删除原 8 张三格剪影图。
++  ④ **规范同步**（`docs/styles/画风三轨规范.md` §1.3.1）：① 标题改「统一画俯视站位图」并写明弃用理由；⑥「剪影的代价」改「站位图的边界」（不表达景别光位微表情，只解决空间调度）；⑦ 改「站位图必须写文字，负向词要单独配」（与场景卡相反：文字是需求不是噪音）；⑧ 模板补「相机三角必须在房间轮廓之外」并新增三个坑 —— **相机跑进房间/被家具压住**、**单人镜凭空多一个人**（模板留着 `FIGURE B:` 而该镜只有一人时模型会补画）、**缺图例无法审阅**；⑨ `weak_reference` 的解释由「复刻剪影质感」改为「把平面调度图当画面去复刻」。
++  ⑤ **实测**（Qwen 2.1 turbo / 2MP / cfg=2 / 单张约 50 秒，8 张全部 1920×1088）：标题 `BLOCKING - EP01 SC07`、图例 `dot A = the seated woman, four small rectangles = the stack of bills` **全部清晰可读无乱码**；圆点带朝向箭头、视锥虚线扇开、关键物位置准确；单人镜确认只画一个点。已知小瑕疵：个别镜 `CAM A` 文字未出现、楼梯镜上方圆点的箭头画成双向。
++  ⑥ **判据**：俯视平面（无透视/无写实人物/无脸）→ 人物=圆点+单箭头且点内无字母 → 相机三角在房间外且有 CAM A 与虚线视锥 → 底部必有一行图例 → 单人镜必须显式写 `exactly ONE human dot on the whole sheet`。
++  ⑦ **P24 多集分镜图串集（数据流缺陷）**：EP02 的 8 张图出完，抽检发现标题写着 `BLOCKING - EP03 SC07`。根因三层：`convert_storyboard.py` 的 `data_dir` 是**固定目录**（每集转换覆盖上一集）→ `build_sb_manifest.py` 默认读 `06-提示词/shots.json`（只保留最后一集）→ 改 `kind` 后跑的「批量重建三份清单」循环里三次都读了同一个文件，三份 manifest 全成 EP03 内容。分集后果：EP01 图早出完反而是对的、EP02 全错、EP03 碰巧对。修法：`build_sb_manifest.py` 新增 `--shots` **显式绑定本集源文件**；每集转换后归档 data 到 `06-提示词/_eps/<ep>/`；站位图按集分目录 `scenes/ep01|02|03/`、清单按集命名；清单 `kind` 用 `shot` 避免被 `comfy_client` 再套一层 `scenes/`。判据：清单首条 `ROOM:` 必须属于本集场景、条目数等于本集段数、**出图后抽检图上标题的集号**。普适教训：**任何「读当前状态」的批处理，在多版本产物下必然串**。遗留：`convert_storyboard.py` 不支持按集分目录，多集只能靠外部 `_eps/` 绕，根治需给 `data_dir` 加 `--ep` 维度。
++  完整复盘见 `docs/patches/2026-10-31_文生图选型与人像细节修复记录.md` §P23 / §P24。
++- **2026-10-31 更新（V0.7.27 · 出图通道标准化：Qwen 2.1 turbo 高清基线 + 图生图 + 固定 seed）**：用户反馈「人物面部细节有点漂移，不够清晰」，要求生图统一回 Qwen image 2.1 turbo 但必须解决人像飘移。排查结论：**不是模型不行，是四个参数同时错了**。
++  ① **cfg=1 让负向条件完全不参与引导**：`497 SamplerCustom.cfg=1` 时 `negative` 不参与计算，而 `character_design.py` 生成的【反默认】段（「不要画成通用 AI 美人脸：不削尖下颌、不放大眼裂、不做磨皮…」100+ 字）**全是否定句** —— 那一段 100% 无效，而它恰恰是反塑料脸的唯一约束。
++  ② **1.5MP 下人脸像素密度不够**：16:9/1.5MP=1632×918，左半脸特写约占画面 40% 宽 → 脸部仅约 300×350 px。实测 1.5→2.0MP，针织织纹从「糊成一片」变为「可辨单根毛线走向」，是唯一零副作用的变量。
++  ③ **manifest 不带 seed → 每次重跑换脸**：`_tools/build_manifest.py` 只写 id/kind/name/prompt/aspect；`comfy_client.build()` 里 `if seed is not None` 才写，None 就用工作流默认值 → 同角色重跑 3 次得 3 张脸，且改提示词时无法做受控实验（以为是提示词的功劳，其实是运气）。新增 `stable_seed(project, asset_id)` = `sha1("项目::资产")[:8] % (2**31-1)`：同资产跨批次可复现，不同剧不撞脸，且不写死常量（否则全公司同一张脸）。
++  ④ **步数越多不等于越好**：Qwen 2.1 turbo 是蒸馏模型，8 步是设计点。实测 12 步 → 31 岁画成 40+，16 步更甚（细纹加深、眼窝凹陷）。hires fix 二段同样试过：denoise 0.55 会**改脸**（鼻梁压痕重绘变形），0.40 安全但 87 s vs 25 s 换不到明显收益 → 不做默认。
++  ⑤ **修法**：新增 `workflow_qwen21_t2i_hq.json`（14 节点，16:9 / 2MP / cfg=2 / 负向词 `plastic skin, waxy texture, airbrushed, over-smoothed, symmetric face, cgi render…` / 8 步原 sigmas），并把 `comfy_client.py` 默认节点映射切到 488/487/497/13/474（否则开箱即用会崩）。
++  ⑥ **图生图通道（P13/P14）**：新增 `COMFYUI_NODE_LOADIMAGE`（逗号分隔 LoadImage，按序接 `ref_images`）、`COMFYUI_NODE_MODE`（布尔开关，有参考图写 False）、`COMFYUI_NODE_SAVE`（指定 SaveImage；留空则多输出按**像素数取最大**）。参考图必须先 `upload_image()` 上传换成 input 目录文件名（`LoadImage.image` 只认服务器端文件名，写本地绝对路径无效），上传名用内容 sha1 前 16 位保证 ASCII 且可复用；`_img_size()` 纯标准库读 PNG IHDR / JPEG SOF。配套产出 `qwen_edit_16x9.json`（单图 15 节点，摘掉 `490` 与 `471.images.image_2`）与 `qwen_edit2_16x9.json`（双图 16 节点）。多输出不筛的后果：Moss+SeedVR2 这类双 SaveImage 工作流会让一张资产变成 `x_00.png`+`x_01.png`，下游 `refs.json` glob 与 `--skip-existing` 判重全被污染。
++  ⑦ **Moss-image 试过未采用**：细节更实（毛孔/胡茬/发丝），但 38 岁出成 50 岁、指定短寸偏分出成大背头 —— 角色卡是全剧身份一致性的工业件，年龄发型错了就得重画，细节可以靠分辨率与 cfg 补，五官年龄补不回来。工作流保留在 `workflows/moss_image_16x9.json`。
++  ⑧ **附带修好 SeedVR2 节点注册失败**：`ModuleNotFoundError: comfy_api` 是表层，真因是 `diffusers 0.27.2` 仍在 import `huggingface_hub` 已删除的 `cached_download`（要求 `diffusers>=0.33.1` 但没装上）。装 `diffusers>=0.33.1 gguf peft omegaconf rotary_embedding_torch` 后节点恢复。备用工作流 `moss_hires_16x9.json` 已产出（`batch_size` 5→1、`ImageScaleToTotalPixels` 0.3→1.5 MP、只留高清 SaveImage）。
++  ⑨ **P18 落盘回归**：P3 把落盘改成「临时文件 → `os.replace`」后，Windows 上目标文件被占用（看图程序/杀软）会抛 `[WinError 5] 拒绝访问`，19 张批量必撞 1 张。改为三级降级（换名 → 先删再换 → 覆盖写），失败时保留临时文件并把路径写进报错——那张图其实已经生成好了，改名即可，不必重跑 50 秒。
++  ⑩ **P19 场景伪文字**：2MP 后 11 个场景里 5 个出现满墙乱码（诊所整面数字表格、会议室白板乱码折线图）。先加负向词 `text, letters, numbers, signage…` **无效**——因为正向提示词的【空间】行就写着「墙上 32 个名字」「41 个名牌墙」「墙上一张并购进度表」「玻璃上的手写菜单」，模型只是忠实照做。这是 §3.8.1「剧本↔资产解耦」的复发，泄漏的不是长相而是**信息内容**。修法：只描述物质痕迹（`残胶/划痕/褪色/擦拭痕/空插槽/油渍`），不描述其上承载的信息。改完整面墙的伪表格消失，角色卡提示词 `cmp` 逐文件核对零变化。**普适教训：负向词只能减少，不能撤销指令——正向要求的元素，任何负向都压不住。**
++⑪ **P20 女主脸上多出一道疤**：锚 `A14` 原描述「鼻梁上一道横向浅压痕（长期戴眼镜留下，但不戴眼镜）」自相矛盾，模型只能按「伤」理解；而 `live_card_prompt` 对**所有**锚都写「必须清晰可见」，把一道浅痕推成了显眼的疤（2MP 高像素密度进一步放大）。修法三件套：① 新增 `_anchor_sentence()`，锚的可见度按类型分档 —— `饰/眼镜/纹` 要求清晰可见，`疤/痕/斑/痣/轮廓/发` 改为「按本身尺寸与淡度如实呈现，不要加深/扩大/加高光/画成伤疤」；② `A14` 改为「无名指戒痕」（手部、肤色差，同属「痕」配额但不会被画成伤）；③ 主角显式指定锚，ELLE 用 `A08 磨损编织绳`。⑫ **P20b**：A08 初版被画成金属手链——「素色编织绳」在图像先验里指向不明，改为「米色棉线、三股细棉线搓成、绳头留短须、无金属件无吊坠」后正确。规律：**识别锚必须能被画出来，不是被理解**（「素色/低调」模型转不成像素）。⑬ **P21 分镜三格雷同**：`shot_001` 三格原为「两人面对面 / 光灭 / 头微抬几度」，差别只有程度副词，出图必然一样；改为「伸手够不到 / 手将触碰时光灭 / 收回胸前且距离拉开」后推进成立。判据：任意两格至少一项可画物理差异（肢体位置/物体位置/进画面/距离/光源状态）。⑭ 同批：8 张角色卡与 8 张分镜图按新基线重出，分镜专用 9:16 高清工作流 `workflow_qwen21_t2i_hq_9x16.json`。
++  完整复盘（含 8 组实测对照表、判据、验证命令、回滚）见 `docs/patches/2026-10-31_文生图选型与人像细节修复记录.md`。**遗留**：P16 一人多套造型、P17 场景缺豪门空间、P19 场景描述待加自动校验、P22 分镜剪影在 2MP 下带出面部轮廓（需分镜专用负向词）。
++- **2026-10-31 更新（V0.7.26 · 剧本层与资产层解耦：不再逼编剧先定长相）**：用户反馈「每次剧本创作都会出现这道手上伤疤」，要求「剧本环节不要把设定卡太细，要保留随机性」，并指出资产设计同病。排查后确认不是模型问题，是**三层串联的设计缺陷**：`convert.world_bible_to_char_anchors` 缺 `visual_anchor` 直接 `raise`（不写长相不许开工）→ `render_skeleton` 模板写死 `# CHAR: 代号: <锚点>`（占位符就在索要长相）→ `validate` 的 E002 用 `sha1` 逐字比对且无「留空」分支（只能照抄资产卡）。于是编剧的第一决策变成「他长什么样」，而不是「他想要什么」。⑥ 更深的病灶在随机性：`seed` 缺省是常量 `"solodrama"`，**没写 seed 的项目共用同一串哈希**；锚库 24 条里 4 条是疤（16.7%），A02/A03 排最前，选取用 `hash % len(pool)` 反复命中靠前条目 —— 实测 4 组模拟名册里 3 组的第二个角色都是「虎口烫痕」。修法：① `visual_anchor` 改可选，缺失即空串，不再抛错；② 骨架占位符改 `<身份/关系>`；③ E002 增加三条短路（HEADER 空 / 写 `-`·`无`·`待定` / 库内空），只有两边都写了才比对；④ `seed` 缺省改为按 `world + 全部角色名` 派生 `auto-<sha1[:12]>`，显式 seed 仍优先；⑤ 新增 `ANCHOR_KIND` + `KIND_QUOTA`（疤 1 / 痕 1 / 斑 1 / 痣 2 / 饰 2 / 纹 1），选取算法由取模改为 `sorted(pool, key=hash(seed+id))[0]`；⑥ `overrides.anchor` 支持 `none`，R4 跳过无锚角色，提示词整段省略锚点 —— 原则改为「主卡必须有锚，配角可以没有」。⑦ 同批修的还有：拉丁语系 55 字符单句上限取消（改 `DUR × 3.8 词/秒` 预算，单镜句数 2→4，4 条单测）；`script_rewrite.lint` 里残留的 40 字符硬阈值同步改词/秒；`tools/cli.py::cmd_import_bible` 读 `<ws>/bible/`、写 `03-剧本/` 的路径分叉。⑧ 资产侧同批补两处：`plan` 新增 `--card-style {auto,3d_manhua,2d_animation,live_action}` 与 `--scenes`，真人轨原生产出「16:9 纯白 + 左脸特写 + 右三视图」角色卡与场景卡（此前只有竖版 3D 模板，照它出图直接跑偏画风，每个真人项目都得在外面手写一套）；`_bucket()` 改为**只匹配 persona 词**并加年龄闸门（B7 长者 ≥50 / B3 天真者 14–32），修掉「31 岁急诊护士因身份里有『母亲』被判成长者」「护士长因『病区』被判成病态者」，无命中时也不再固定回落 B2（原本 8 人 6 个隐忍者），名册可用 `persona_bucket` 与 `overrides.expression` 直接指定。⑨ 测试：`test_setup_workflow_pipeline` 57 例、`test_character_design` 28 例全绿。**破坏性变更**：重跑 `plan` 的项目会换一套锚点，已出图的项目不要重跑（要旧行为就显式写 `"seed": "solodrama"`）。完整复盘见 `docs/patches/2026-10-31_剧本过度设定与识别锚重复修复记录.md`。
+ - **2026-10-30 更新（V0.7.25 · README 重构：交付报告 → 落地页）**：用户要求「简化说明，只介绍解决什么核心问题、技术思路，然后放几个案例效果」。原 README 736 行 / 121 KB，把完整操作手册与验收清单堆在首页，读者要翻过三段提示词才看到产品长什么样。重构后 ≈180 行 / 12 KB（−90%），结构固定为：它解决什么问题 → 技术思路（一张图）→ 案例效果（3 图 + 实测表）→ 三分钟跑起来 → 仓库结构与文档地图。
+   ① **问题段用可核对的数字代替形容词**：一集 60 秒 = 6–10 个生成段 + 20–40 张资产图 + 11 个环节；交付规格 672×1216 = 0.5526 ≠ 9:16。
+   ② **技术思路压成一张 SVG 图 + 三句洞察**（`docs/showcase/04-architecture.svg`，1200×556，6.5 KB）：三段式——编排层（虚线框，只调度不干活）/ 中缝 `data/` 四文件只读契约 / 引擎层 6 站，每站吊一条硬约束；底部一句「能自动判的绝不问人，判不了就停在原地等人」。图下只留三条反直觉设计（门禁拦「确认 A 跑 B」/ 字幕只认对齐 / 裁不补边），6 条落点收进 `<details>` 折叠表。**刻意不用 `<style>` 类选择器**：全部 presentation attribute + 根节点 `font-family` —— GitHub 走 camo 代理转发 SVG，内嵌样式有被剥离的风险，剥了就是黑底黑字。文字宽度先用 `ImageFont.getlength` 预检（超框直接报错退出），再用 headless Chrome 截图复核版式。
+diff --git a/configs/styles.json b/configs/styles.json
+index 378ea1b..3ce390c 100644
+--- a/configs/styles.json
++++ b/configs/styles.json
+@@ -3,6 +3,20 @@
+   "source": "RHSTORY 画风库 · 服务端全量（RunningHub 官方，306 条中收录 6 条为系统默认）",
+   "note": "prompt 为官方原文，未改写。track 决定走哪条生产规格（真人 / 2D / 3D），选错会连带资产数量与单镜时长一起错。",
+   "styles": [
++    {
++      "id": "surreal-cinema",
++      "name": "电影超现实",
++      "name_en": "Cinematic Surrealism",
++      "rh_key": "surreal-cinema",
++      "track": "live_action",
++      "tags": [
++        "真人",
++        "超现实",
++        "文艺"
++      ],
++      "prompt": "surreal live-action film look, impossible spatial logic, symbolic visual logic, dreamlike continuity, poetic composition, unexpected juxtaposition, restrained but uncanny color, soft haze, philosophical mood, visually intelligent absurdity, cinematic art-house surrealism, no fantasy spectacle overload.",
++      "prompt_en": "surreal live-action film look, impossible spatial logic, symbolic visual logic, dreamlike continuity, poetic composition, unexpected juxtaposition, restrained but uncanny color, soft haze, philosophical mood, visually intelligent absurdity, cinematic art-house surrealism, no fantasy spectacle overload."
++    },
+     {
+       "id": "cinematic",
+       "name": "电影超写实",
+diff --git a/docs/assets/角色差异化设计规范.md b/docs/assets/角色差异化设计规范.md
+index 7367a81..578d1fb 100644
+--- a/docs/assets/角色差异化设计规范.md
++++ b/docs/assets/角色差异化设计规范.md
+@@ -45,6 +45,30 @@
+ | **D5 材质织物** | 织物种类 + 垂坠 / 反光行为 | 「精纺羊毛，垂坠挺括、表面哑光、折线利落」 | 「高级面料的衣服」 |
+ | **D6 识别锚** | 一处**非对称**、可指认、跨镜不变的标记 | 「右眉尾一道浅白旧疤（约 1.5cm，断开眉毛）」 | 「对称双眼」「五官对称」 |
+ 
++### D7 阶层（wealth）· ★ 2026-10-31 新增
++
++> 这一维此前**只写在 D4/D5 的说明里，没有实现**：色相按「阵营」分槽、面料按「人群桶」抽，
++> 正装判定只认中文词表（总裁/董事/财阀）。实测后果：8 个角色里有 7 个走休闲分支，
++> 「集团实际持有人」被分到**运动涤纶**，8 人只用 3 个色相 —— 全员像同一个剧组的临时演员。
++
++四档与判定：`old_money / new_money / professional / working`
++
++| 档 | 视觉承诺 | 服装 | 面料 | 允许色 |
++|---|---|---|---|---|
++| **old_money** | 无标、剪裁、旧物 | 无标深色三件套（男）／无标收腰套装（女），法式袖口，手工牛津鞋／低跟尖头 | 精纺羊毛、羊绒、真丝缎 | 墨黑、象牙白 |
++| **new_money** | 对比、金属、体量 | 枪驳领双排扣（男）／结构感西装＋真丝吊带（女），袖扣／宽金属手镯 | 精纺羊毛、硬挺府绸、皮革 | 墨黑、象牙白、酒红 |
++| **professional** | 合身、克制 | 沿用 formal 分支（西裤＋府绸衬衫） | 硬挺府绸、精纺羊毛 | 沿用阵营色槽 |
++| **working** | 耐穿、旧 | 沿用 casual 分支（工装／牛仔／针织） | 水洗棉、牛仔布 | 沿用阵营色槽 |
++
++三条实现约束（踩过才知道）：
++
++1. **判定优先级**：名册显式 `wealth` > 身份/性格关键词 > 兜底 `working`。
++   兜底选 working 而不是 professional —— 宁可把有钱人画朴素，也别把护士画成总裁。
++2. **豪门色不能塞进 PALETTE**：那个列表有「相邻色相 ≥30°」的不变量，酒红贴在朱砂旁只有 7°。
++   单开 `WEALTH_PALETTE`，并且**只在中性区**取色（墨黑 l=0.06 / 象牙白 l=0.86）——
++   因为 R3 对「中性 vs 有彩」按明度差判，l=0.12 的黑会与 l=0.20 的松石青撞（差 0.08 < 0.10）。
++3. **拿不到豪门色就整套回退**：只换色不换造型会写出「主色朱砂 + 深色三件套」这种自相矛盾的提示词。
++
+ **为什么是这六维**：D1–D3 决定「像谁」，且不随服装变化；D4–D5 决定「哪个阶层/职业」；
+ D6 是**唯一能在三米外被指认的特征**。全部角色在这六维上被分配完毕，差异是**构造出来的**，
+ 不依赖写作者的灵感。
+diff --git a/docs/orchestration/生产流程总纲.md b/docs/orchestration/生产流程总纲.md
+index da3019c..e42a577 100644
+--- a/docs/orchestration/生产流程总纲.md
++++ b/docs/orchestration/生产流程总纲.md
+@@ -320,6 +320,28 @@ R6 文案不得含「俊美/精致/白皙无瑕」这类评价性美颜词。
+ 老项目无需重跑全部：先 `character_design.py audit --md 资产提示词.md` 体检，
+ 按「维度覆盖率」补脸型/眉形/识别锚，再重出撞得最凶的那几张。
+ 
++### 3.8.1 剧本层与资产层分离（★ 2026-10-31，不可回退）
++
++> 背景：剧本阶段被强制写长相（`visual_anchor` 必填 + 骨架索要「锚点」+ E002 逐字比对），
++> 结果编剧的第一决策变成「他长什么样」；叠加锚库疤痕偏置与常量种子，**每部剧都长着同一道疤**。
++> 完整复盘见 `docs/patches/2026-10-31_剧本过度设定与识别锚重复修复记录.md`。
++
++| 层 | 只回答 | 落点 |
++|---|---|---|
++| 剧本（S2） | 他要什么、谁挡着、输了失去什么 | `03-剧本/world-bible.json`（代号 + 身份/关系） |
++| 资产（S3） | 他长什么样、怎么一眼认出 | `04-资产/design/character-bible.json`（面部七槽 / 发型 / 色签名 / 识别锚） |
++
++**四条判据**
++
++1. 剧本 HEADER 写 `# CHAR: 代号: 身份/关系` 即合法；**不写长相不报错**（E002 两边都有值才比对）。
++2. 骨架模板里不得出现「锚点」二字（占位符是 `<身份/关系>`）。
++3. 识别锚的**类别配额**：同一部剧「疤/痕/斑」合计 ≤1 人（`KIND_QUOTA`），主卡必须有锚、配角可无。
++4. `seed` 缺省必须由名册内容派生（`auto-<hash>`），**禁止常量默认值** —— 否则跨剧重复。
++5. 角色卡版式随画风走：`plan --card-style auto` 读 `style_lock`，真人轨出「16:9 纯白 + 左脸特写 + 右三视图」，
++   **不要手写第二套提示词**（手写层一出现，规则就开始分叉）。场景卡用 `--scenes <world-bible.json>` 一并产出。
++
++> 一句话：**剧本管动机，资产管辨识度。两件事一旦耦合，编剧就开始为一张脸写戏。**
++
+ ---
+ 
+ ## 四、门禁与关卡（每道都不可绕）
+@@ -413,6 +435,9 @@ python stages/production/scripts/drama.py models status     # 看「执行依据
+ | **发行资料清单（封面抓马度 · 版权资料 4+4 · 发布清单）★ 单一真源** | `docs/distribution/发行资料清单.md` |
+ | **产线对账关卡（26 个坑 → 固定检查）** | `docs/patches/产线对账关卡_2026-10-18.md` |
+ | **落点与命名事故复盘（2026-10-19 用户验收意见 · AI 助手必读）** | `docs/patches/2026-10-19_落点与命名事故复盘.md` |
++| **剧本过度设定与识别锚重复（2026-10-31 · 剧本↔资产解耦 · AI 助手必读）** | `docs/patches/2026-10-31_剧本过度设定与识别锚重复修复记录.md` |
++| **文生图选型与人像细节（2026-10-31 · cfg/分辨率/seed 三参数 · AI 助手必读）** | `docs/patches/2026-10-31_文生图选型与人像细节修复记录.md` |
++| **EP01 画面不可读三层根因（2026-11-01 · 剧本/指代/参考图 · AI 助手必读）** | `docs/patches/2026-11-01_EP01画面不可读三层根因修复记录.md` |
+ | **新项目启动提示词（复制给 AI 助手；含老项目归位命令）** | `docs/新项目启动提示词.md` |
+ | 生产总控坑册（**§F 落点与命名**） | `stages/production/references/pitfalls.md` |
+ | 台词时长审计口径 | `docs/creation/台词时长审计口径.md` |
+diff --git a/docs/styles/画风三轨规范.md b/docs/styles/画风三轨规范.md
+index 8d7584a..b5844b1 100644
+--- a/docs/styles/画风三轨规范.md
++++ b/docs/styles/画风三轨规范.md
+@@ -114,7 +114,7 @@ python stages/production/scripts/drama.py style set live_action
+ > 来源：2026-10-20 / 10-21 两轮端到端实跑（EP01–EP05 共 40 余张分镜图，含三版 A/B/C 对照实验）。
+ > **本节覆盖上文与本文件冲突的旧写法**（旧写法内部有几何矛盾，见 ②）。
+ 
+-**① 分镜图不承担身份 —— 必须画灰阶三色调剪影**
++**① 分镜图不承担身份 —— 统一画俯视站位图（★ 2026-10-31 修订：弃用剪影）**
+ 
+ 真人质感的分镜图会携带可被人脸识别的身份信息；当它作为 H3 的参考图/首帧进入生成时，
+ 会与角色卡争夺「身份来源」，等于主动引入第二个身份锚。实测四种替代（同镜同种子）：
+@@ -123,11 +123,24 @@ python stages/production/scripts/drama.py style set live_action
+ |---|---|---|---|
+ | 铅笔粗稿 | **强**（五官可辨） | 影调最好 | **淘汰** |
+ | 矢量线稿 | 弱 | 空间丢失严重，易画成"人形面具" | 不推荐 |
+-| **灰阶块面（3 色调）** | **零** | 景别 + 光位 + 构图全保留 | **主方案** |
+-| 俯视站位图 | 零 | 唯一能表达"谁在哪 / 机位在哪 / 视锥范围" | **调度补充** |
++| 灰阶块面（3 色调剪影） | **零** | 景别 + 光位 + 构图保留 | **2026-10-31 弃用**：表达不了机位、走位、视锥；用户明确要求停用（原因见下） |
++| **俯视站位图** | **零** | 谁在哪 / 机位在哪 / 视锥范围 / 关键物位置 | **主方案** |
+ 
+-规则：真人写实轨的三格分镜**必须**用 `flat grayscale value-block`（纯剪影、无面部细节）；
+-**禁止**照片质感或带五官的铅笔画。≥3 人同场、有走位、需明确机位的镜头**额外**产出一张站位图。
++规则：真人写实轨的分镜图**统一画俯视站位图**（`top-down floor-plan blocking diagram`），一镜一张 16:9。
++不再出「三格剪影」，也**禁止**照片质感或带五官的铅笔画。完整写法与三个实测坑见 §⑧。
++
++> **★ 2026-11-01 追加：站位图不再作为视频参考图。**
++> 用户实测判定「无站位参考图的效果最佳」，同镜三条片子对比（本地带/本地不带/云端不带），
++> 云端不带站位图那条质量最好。站位图对成片没有增益，反而多一个可能被误读的输入。
++> 现行口径：**站位图降级为人工调度文档**（谁在哪、机位在哪、视锥盖哪块地），
++> 出图后**不进 H3 的参考图列表**。角色卡与场景卡单独就能把身份与光位喂对。
++> 参见 `docs/patches/2026-11-01_取消站位图参考与切换RH视频通道.md`。
++
++> **为什么弃用剪影（2026-10-31）**：剪影把「景别 + 光位 + 构图」压在一张 9:16 三格纸上，
++> 但**这些恰恰是 H3 提示词已经写清楚的东西**，图纸重复了一遍文字信息；而它**无法表达的**
++> 「演员站在哪、机位在哪、视锥覆盖哪块地」，才是分镜阶段真正需要被确认、且最容易出错的部分。
++> 实测同一镜三格常被画成几乎一样的画面（P21），因为三格的差别往往只是光线与头部角度。
++> 换成俯视站位图后，一镜一张、信息密度集中在调度上，文字（标题、CAM A、图例）也更容易画对。
+ 
+ **② 画幅：竖版纸 9:16 + 三格横屏上下叠（"三格并排 + 每格 16:9"在几何上不可能）**
+ 
+@@ -176,37 +189,56 @@ to edge; the room around it stays pale grey and mid grey; there are no white or
+ `her chin slightly down, her gaze angled down-left` → `the whole head a single flat dark oval with only
+ a slight downward tilt to read the pose, nothing inside it`。
+ 
+-**⑥ 剪影的代价，必须显式承认**
++**⑥ 站位图的边界，必须显式承认**
++
++站位图**不表达景别、光位与微表情** —— 它只解决「谁在哪、机位在哪、视锥盖到哪块地」。
++景别与光位本来就在 H3 提示词里写清楚了，图纸不必重复；微表情不进入分镜环节。
++因此镜头设计若依赖「眼部特写 / 眼神一变」推进，站位图**不作表达，也不应被要求表达** ——
++这类镜头在剧本阶段就该改用动作或台词推进，不要指望用图去验证。
++
++**⑦ 站位图「必须」写文字，所以负向词要单独配一套**
+ 
+-剪影**不能表达五官微表情**。剧本阶段就应避免「眼部特写 / 眼神一变」这类依赖微表情推进的镜头设计，
+-否则到分镜阶段会被迫改写。有效替代：
+-`大特写·眼睛抬起` → `头肩剪影近景，下巴抬起几度，左轮廓一道细白轮廓光`；
+-`镜片反光挡住眼睛` → `黑头部剪影上一个黑圈（镜框），圈内一块纯白覆盖整个眼区`；
+-`表情复杂` → 不表达，交给 H3 提示词的情绪节拍。
++与场景卡相反：站位图的标题（`BLOCKING - EP01 SC01`）、机位标注（`CAM A`）与底部图例是**需求**，
++不是噪音。而通用工作流的负向词里含 `text, letters, numbers, signage, labels` ——
++拿它跑站位图，标题与图例会一起被压掉。
+ 
+-**⑦ 顺带解决「纸上出现可读文字」**
++**站位图必须用独立工作流**，负向词改成：
++
++```
++photograph, 3d render, perspective view, realistic figures, human faces, hands,
++colour, gradient, shading, texture, drop shadow, blurry, low detail, watermark
++```
+ 
+-真人质感下纸是白的，模型天然想往上写字，`no readable text` 压不住（cfg=1 时负向词本就无效）。
+-灰阶块面里纸就是一块纯白矩形 —— **实测 0 处可读文字**。靠画风结构性地消除文字，比靠提示词禁止可靠。
++实测（Qwen-Image 2.1 turbo / 2MP / cfg=2）：标题 `BLOCKING - EP01 SC01` 与图例
++`dot A = nurse, dot B = owner` 一次画对、清晰可读，无乱码。
+ 
+-**⑧ 站位图（blocking diagram）写法 + 三个实测坑**
++**⑧ 站位图写法（主方案）+ 六个实测坑**
+ 
+ ```
+ A top-down floor-plan blocking diagram for one shot, horizontal 16:9 white sheet, black uniform-weight
+-line art, no colour, no shading, no texture, no realistic figures.
+-Human positions = ROUND black dots with a small arrow for facing direction (never triangles or squares).
+-Camera = one filled black triangle with a dashed wedge-shaped field of view, marked CAM A.
+-EVERY seat in the public spectator seating is EMPTY — no circles, no dots, no arrows — with the single
+-exception explicitly named below.
+-Title at the top reads BLOCKING - EP01 SC04 in small monospace lettering.
+-Legend: witness box = grandma   counsel table = father + lawyer   platform = judge
++line art on pure white, no colour, no shading, no texture, no perspective, no realistic figures,
++no faces, no hands.
++Human positions = ROUND black dots about the size of a coin, each with ONE short straight arrow showing
++facing direction (never triangles or squares); no letters, numbers or labels inside the dots.
++Camera = one filled black triangle standing OUTSIDE the room outline at the bottom edge, pointing up
++into the room, with a dashed wedge-shaped field of view spreading from it across the floor;
++the caption CAM A sits immediately beside the triangle, outside the room.
++ROOM: <plain floor-plan description of walls, furniture footprints, openings>
++FIGURE A: <position + facing>
++FIGURE B: <position + facing>
++KEY MARKER, the most important element on the sheet: <the one object that carries the beat>
++Title along the top edge reads BLOCKING - EP01 SC04 in small monospace lettering.
++One short legend line at the bottom edge outside the room: dot A = grandma, dot B = counsel
+ ```
+ 
+ | 坑 | 现象 | 解法 |
+ |---|---|---|
+ | `bench` 有歧义 | `circle marked J in the bench` → J 被放进**旁听长椅** | 一律写 `the JUDGE'S RAISED PLATFORM — an elevated desk on a dais`，并显式 `NOT in the spectator rows` |
+-| 单字母标注被错配 | `J / A / S / O` 两次实测被互换 | **图上不写字母**：只画裸圆点，身份靠位置 + 标题下图例自解释 |
++| 单字母标注被错配 | `J / A / S / O` 两次实测被互换 | **图上不写字母**：只画裸圆点，身份靠位置 + 底部图例自解释 |
+ | 旁听席被自动填满 | 每排座位都画上小圆点，看起来坐满了 | 必须写 `EVERY seat … EMPTY — no circles, no dots, no arrows` |
++| 相机三角跑进房间 | 只写 `Camera = one filled black triangle` 时，三角落在**锅炉块内部**或被家具压住 | 必须写 `standing OUTSIDE the room outline at the bottom edge, pointing up into the room`，并让 `CAM A` 也跟着在房间外 |
++| 单人镜凭空多一个人 | 模板里留着 `FIGURE B:` 而这一镜只有一个人，模型会**补画第二个人** | 明确写 `FIGURE B: no second person anywhere in this room — exactly ONE human dot on the whole sheet` |
++| 图例缺失导致无法审阅 | 只有圆点没有图例，谁是谁全靠猜 | 底部固定一行 `dot A = …, dot B = …`；实测 2MP + cfg=2 下这一行能画对且可读 |
+ 
+ 关键语义标记要**加重**：SC-07 的核心是「指向一把空椅」，首版漏了虚线环（该镜分镜图等于失效）。
+ 写法升级为 `THE KEY MARKER, most important element on the sheet: a LARGE CLEAR DASHED RING, diameter
+@@ -219,7 +251,7 @@ and shot order"），所以这条路是**官方一等公民**，不需要发明
+ 
+ - `subject_definitions` 写 `It is a planning diagram only … and it is NOT a keyframe.`
+ - `retention_analysis` 给 `<Picture N>: weak_reference - only the camera distance, subject placement,
+-  light direction and shot order … are followed`（**禁止**写 `fully_preserved`，那会让模型复刻剪影质感）
++  light direction and shot order … are followed`（**禁止**写 `fully_preserved`，那会让模型把平面调度图当成画面去复刻）
+ 
+ **⑩ 引用义务下调**：分镜图既不承担身份，`storyboard.json` 里为它登记的 `character_refs / scene_refs`
+ 降级为**调度信息**（谁在画面里、在哪个场地），不再作为出图参考图传入。
+diff --git a/stages/assets/comfyui/comfy_client.py b/stages/assets/comfyui/comfy_client.py
+index da16b04..d49c98f 100644
+--- a/stages/assets/comfyui/comfy_client.py
++++ b/stages/assets/comfyui/comfy_client.py
+@@ -26,12 +26,15 @@
+ 可配置项（环境变量，缺省即本机默认工作流的实测值）
+ --------------------------------------------------
+   COMFYUI_URL           ComfyUI 地址，默认 http://127.0.0.1:8188
+-  COMFYUI_WORKFLOW      工作流 JSON 路径，默认本目录 workflow_qwen_image21.json
+-  COMFYUI_NODE_PROMPT   正向提示词节点，默认 "6"
+-  COMFYUI_NODE_PREFIX   保存图像节点（决定输出文件名前缀），默认 "2"
+-  COMFYUI_NODE_SEED     种子节点，默认 "10"
++  COMFYUI_WORKFLOW      工作流 JSON 路径，默认本目录 workflow_qwen21_t2i_hq.json
++  COMFYUI_NODE_PROMPT   正向提示词节点，默认 "488"
++  COMFYUI_NODE_PREFIX   保存图像节点（决定输出文件名前缀），默认 "487"
++  COMFYUI_NODE_SEED     种子节点，默认 "497"
+   COMFYUI_NODE_ASPECT   分辨率节点，默认 "13"
+-  COMFYUI_NODE_LATENT   空 Latent 节点（batch_size），默认 "7"
++  COMFYUI_NODE_LATENT   空 Latent 节点（batch_size），默认 "474"
++  COMFYUI_NODE_LOADIMAGE 逗号分隔的 LoadImage 节点（图生图用），如 "489" 或 "489,490"
++  COMFYUI_NODE_MODE     布尔开关节点（文生图/编辑切换），如 "494"；有参考图时自动写 False
++  COMFYUI_NODE_SAVE     只取哪个 SaveImage 的输出；留空时多输出按**像素数**取最大
+ """
+ import argparse
+ import json
+@@ -54,15 +57,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
+ 
+ COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
+ DEFAULT_WORKFLOW = os.environ.get("COMFYUI_WORKFLOW",
+-                                  os.path.join(HERE, "workflow_qwen_image21.json"))
++                                  os.path.join(HERE, "workflow_qwen21_t2i_hq.json"))
+ 
+-# ★ 节点映射：默认值对应本目录 workflow_qwen_image21.json（Qwen-Image 2.1）。
++# ★ 节点映射：默认值对应本目录 workflow_qwen21_t2i_hq.json
++#   （Qwen-Image 2.1 turbo / 16:9 / 2MP / cfg=2，2026-10-31 定的高清基线）。
+ #   换工作流**必须**核对节点 id —— 见 references/workflow-qwen-image21.md「换工作流的适配清单」。
+-PROMPT_NODE = os.environ.get("COMFYUI_NODE_PROMPT", "6")    # PrimitiveStringMultiline
+-PREFIX_NODE = os.environ.get("COMFYUI_NODE_PREFIX", "2")    # SaveImage
+-SEED_NODE = os.environ.get("COMFYUI_NODE_SEED", "10")       # Seed (rgthree)
++PROMPT_NODE = os.environ.get("COMFYUI_NODE_PROMPT", "488")  # PrimitiveStringMultiline
++PREFIX_NODE = os.environ.get("COMFYUI_NODE_PREFIX", "487")  # SaveImage
++SEED_NODE = os.environ.get("COMFYUI_NODE_SEED", "497")      # SamplerCustom(noise_seed)
+ ASPECT_NODE = os.environ.get("COMFYUI_NODE_ASPECT", "13")   # ResolutionSelector
+-LATENT_NODE = os.environ.get("COMFYUI_NODE_LATENT", "7")    # EmptyLatentImage
++LATENT_NODE = os.environ.get("COMFYUI_NODE_LATENT", "474")  # EmptyLatentImage
++
++# ★ 2026-10-31（反馈 P13/P14）：图生图与多输出两条通道
++#   LOAD_NODES  逗号分隔的 LoadImage 节点，按顺序接收 ref_images（第 1 张 → 第 1 个节点）
++#   MODE_NODE   布尔开关节点（图生图工作流的「文生图 / 编辑」切换）。有 refs 时写 False，否则 True
++#   SAVE_NODE   指定只取哪个 SaveImage 的输出；留空则「多输出时自动取分辨率最大的一张」
++LOAD_NODES = [x.strip() for x in os.environ.get("COMFYUI_NODE_LOADIMAGE", "").split(",") if x.strip()]
++MODE_NODE = os.environ.get("COMFYUI_NODE_MODE", "")
++SAVE_NODE = os.environ.get("COMFYUI_NODE_SAVE", "")
+ 
+ 
+ # ★ 本客户端只连**本机 / 局域网的 ComfyUI**，必须**绕开系统代理**：
+@@ -78,6 +90,77 @@ def _req(url, data=None, headers=None, timeout=60):
+         return r.read()
+ 
+ 
++# ---------------------------------------------------------------------------
++# ★ 2026-10-31（反馈 P13）：图生图必须先把本地图「放进 ComfyUI 的 input 目录」
++# ---------------------------------------------------------------------------
++# `LoadImage.image` 只认 ComfyUI 服务器 input 目录里的**文件名**，写本地绝对路径无效
++# （提交后报 `FileNotFoundError` 或直接出糊图）。标准做法是走 /upload/image 上传。
++# 这里用纯标准库手写 multipart —— 该文件顶部承诺「零第三方依赖」，不引入 requests。
++def _ascii_name(path: str) -> str:
++    """上传名一律转 ASCII：ComfyUI 对中文文件名的 multipart 处理有版本差异，
++    且落进 input 目录后无法追溯来源。这里用「内容哈希 + 原扩展名」，同一张图重复上传可复用。"""
++    import hashlib
++    ext = os.path.splitext(path)[1].lower() or ".png"
++    with open(path, "rb") as f:
++        h = hashlib.sha1(f.read()).hexdigest()[:16]
++    return "sd_%s%s" % (h, ext)
++
++
++def upload_image(path: str) -> str:
++    """上传一张本地图到 ComfyUI input 目录，返回可写进 LoadImage.image 的文件名。"""
++    name = _ascii_name(path)
++    boundary = "----sd" + uuid.uuid4().hex
++    parts = []
++    for field, value in (("type", "input"), ("overwrite", "true")):
++        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
++                      % (boundary, field, value)).encode("utf-8"))
++    parts.append(("--%s\r\nContent-Disposition: form-data; name=\"image\"; filename=\"%s\"\r\n"
++                  "Content-Type: application/octet-stream\r\n\r\n" % (boundary, name)).encode("utf-8"))
++    with open(path, "rb") as f:
++        parts.append(f.read())
++    parts.append(("\r\n--%s--\r\n" % boundary).encode("utf-8"))
++    body = b"".join(parts)
++    raw = _req(COMFY + "/upload/image", data=body,
++               headers={"Content-Type": "multipart/form-data; boundary=" + boundary},
++               timeout=180)
++    res = json.loads(raw.decode("utf-8"))
++    got = res.get("name") or name
++    sub = (res.get("subfolder") or "").strip()
++    return "%s/%s" % (sub, got) if sub else got
++
++
++def _img_size(path: str):
++    """读 PNG / JPEG 的像素数（纯标准库）。用于「多输出时挑最大那张」。"""
++    try:
++        with open(path, "rb") as f:
++            head = f.read(32)
++            if head[:8] == b"\x89PNG\r\n\x1a\n":
++                w = int.from_bytes(head[16:20], "big")
++                h = int.from_bytes(head[20:24], "big")
++                return w * h
++            if head[:2] == b"\xff\xd8":                     # JPEG：扫 SOF
++                f.seek(2)
++                while True:
++                    b = f.read(1)
++                    while b and b != b"\xff":
++                        b = f.read(1)
++                    marker = f.read(1)
++                    while marker == b"\xff":
++                        marker = f.read(1)
++                    if not marker:
++                        return 0
++                    if marker[0] in (0xC0, 0xC1, 0xC2, 0xC3):
++                        f.read(3)
++                        h = int.from_bytes(f.read(2), "big")
++                        w = int.from_bytes(f.read(2), "big")
++                        return w * h
++                    seg = int.from_bytes(f.read(2), "big")
++                    f.seek(seg - 2, 1)
++    except Exception:                                       # noqa: BLE001
++        pass
++    return 0
++
++
+ def check():
+     """体检：读 /system_stats（不占用出图显存），返回 ComfyUI 版本 / 显卡 / 空闲显存。"""
+     raw = _req(COMFY + "/system_stats", timeout=10).decode("utf-8")
+@@ -169,12 +252,30 @@ def _warn_negation(prompt: str, wf: dict) -> None:
+ _SEED_KEYS = ("noise_seed", "seed", "random_seed")
+ 
+ 
+-def build(base, prompt, prefix, seed=None, aspect=None, count=1):
+-    """把「提示词 / 文件名前缀 / 种子 / 画幅 / 张数」写进工作流副本（不改原文件）。"""
++def build(base, prompt, prefix, seed=None, aspect=None, count=1, refs=None):
++    """把「提示词 / 文件名前缀 / 种子 / 画幅 / 张数 / 参考图」写进工作流副本（不改原文件）。
++
++    `refs` 非空即进入**图生图/编辑**模式：写进 LoadImage 节点，并把 MODE_NODE 置 False。
++    工作流没有 MODE_NODE 时（纯文生图），refs 会被忽略并告警 —— 不静默丢参数。
++    """
+     wf = json.loads(json.dumps(base))
+     wf[PROMPT_NODE]["inputs"]["value"] = prompt
+     wf[PREFIX_NODE]["inputs"]["filename_prefix"] = prefix
+     _warn_negation(prompt, wf)
++    if refs:
++        if not LOAD_NODES:
++            print("[WARN] 给了 ref_images 但未设 COMFYUI_NODE_LOADIMAGE，参考图被忽略（当前工作流是纯文生图）",
++                  file=sys.stderr)
++        for i, node_id in enumerate(LOAD_NODES):
++            if i >= len(refs):
++                break
++            if node_id not in wf:
++                raise KeyError("COMFYUI_NODE_LOADIMAGE 指向的节点 %s 不存在" % node_id)
++            wf[node_id]["inputs"]["image"] = refs[i]
++        if MODE_NODE:
++            wf[MODE_NODE]["inputs"]["value"] = False
++    elif MODE_NODE:
++        wf[MODE_NODE]["inputs"]["value"] = True
+     if seed is not None:
+         ins = wf.setdefault(SEED_NODE, {}).setdefault("inputs", {})
+         for k in _SEED_KEYS:
+@@ -195,22 +296,73 @@ def build(base, prompt, prefix, seed=None, aspect=None, count=1):
+ 
+ def run_one(base, item, out_dir):
+     prefix = item.get("prefix") or item.get("id")
+-    wf = build(base, item["prompt"], prefix, item.get("seed"), item.get("aspect"), item.get("count", 1))
++    # ★ 2026-10-31（P13）：参考图先上传换名，再写进 LoadImage
++    refs = []
++    for p in (item.get("ref_images") or []):
++        if not os.path.isfile(p):
++            raise FileNotFoundError("参考图不存在：%s" % p)
++        refs.append(upload_image(p))
++    wf = build(base, item["prompt"], prefix, item.get("seed"), item.get("aspect"),
++               item.get("count", 1), refs=refs)
+     res = submit(wf, str(uuid.uuid4()))
+     # node_errors 非空 = 参数错误（提示词节点 id 错 / 模型没装），直接中止不要重试
+     if res.get("node_errors"):
+         raise RuntimeError("node errors: " + json.dumps(res["node_errors"], ensure_ascii=False)[:800])
+     pid = res["prompt_id"]
+     entry = wait(pid)
+-    outs = []
+-    for _node_id, out in sorted(entry.get("outputs", {}).items()):
++
++    # ★ 2026-10-31（P14）：Moss+SeedVR2 这类工作流有**两个 SaveImage**（低清 / 高清）。
++    #   若两个都落盘，一张资产会变成 `x_00.png` + `x_01.png` 两个文件，
++    #   下游 refs.json 的 glob 与 --skip-existing 判重都会被污染。规则：
++    #   ① 显式 COMFYUI_NODE_SAVE 优先；② 否则下载后按**像素数**只留最大那张。
++    cand = []
++    for node_id, out in sorted(entry.get("outputs", {}).items()):
++        if SAVE_NODE and str(node_id) != str(SAVE_NODE):
++            continue
+         for img in out.get("images", []):
+-            ext = os.path.splitext(img.get("filename", ""))[1] or ".png"
+-            safe = "{}_{:02d}{}".format(prefix, len(outs), ext)
+-            path = os.path.join(out_dir, safe)
+-            n = fetch_image(img, path)
+-            outs.append((path, n))
+-    return outs
++            cand.append(img)
++    if not cand:
++        raise RuntimeError("工作流没有产出图片（outputs 为空或 SAVE_NODE=%s 不匹配）" % SAVE_NODE)
++
++    tmp = []
++    for i, img in enumerate(cand):
++        ext = os.path.splitext(img.get("filename", ""))[1] or ".png"
++        path = os.path.join(out_dir, ".__tmp_{}_{:02d}{}".format(prefix, i, ext))
++        n = fetch_image(img, path)
++        tmp.append((path, n, _img_size(path)))
++    if len(tmp) > 1:
++        tmp.sort(key=lambda x: x[2], reverse=True)
++        print("[note] 工作流有 %d 个输出，按分辨率保留最大的一张（%d px）"
++              % (len(tmp), tmp[0][2]), flush=True)
++    for p, _n, _s in tmp[1:]:
++        try:
++            os.remove(p)
++        except OSError:
++            pass
++    path, n, _s = tmp[0]
++    final = os.path.join(out_dir, "{}_{:02d}{}".format(prefix, 0, os.path.splitext(path)[1]))
++    # ★ 2026-10-31（P18）：Windows 上目标文件被占用（预览器/资源管理器/杀软扫描）时
++    #   `os.replace` 直接抛 `[WinError 5] 拒绝访问`，整张图白跑。实测批量 19 张里必有 1 张撞上。
++    #   降级链：直接换 → 先删再换 → 覆盖写 → 放弃但保留临时文件并报清楚。
++    try:
++        os.replace(path, final)
++    except OSError as e1:
++        try:
++            os.remove(final)
++        except OSError:
++            pass
++        try:
++            os.replace(path, final)
++        except OSError:
++            try:
++                import shutil
++                shutil.copyfile(path, final)
++                os.remove(path)
++            except OSError as e3:
++                raise RuntimeError(
++                    "无法写入 %s（目标被占用）。临时文件已保留在 %s，关掉看图程序后重跑该资产即可。原始错误：%s / %s"
++                    % (final, path, e1, e3))
++    return [(final, n)]
+ 
+ 
+ KIND_DIR = {"char": "characters", "scene": "scenes", "prop": "props"}
+@@ -272,6 +424,7 @@ def main():
+     ap.add_argument("--spec", help="资产清单 JSON（格式见 references/本地ComfyUI出图.md §五）")
+     ap.add_argument("--kind", help="按 kind 过滤: char/scene/prop")
+     ap.add_argument("--only", help="逗号分隔的资产 id")
++    ap.add_argument("--image", help="（单张模式）参考图路径，给了就走图生图/编辑；可重复用逗号分隔")
+     ap.add_argument("--prompt")
+     ap.add_argument("--prefix")
+     ap.add_argument("--seed", type=int)
+@@ -311,6 +464,12 @@ def main():
+         with open(args.spec, "r", encoding="utf-8") as f:
+             spec = json.load(f)
+         items = spec.get("assets", spec if isinstance(spec, list) else [])
++        # ★ 参考图相对路径统一按**清单文件所在目录**解析（与 refs.json 的约定一致）
++        _spec_dir = os.path.dirname(os.path.abspath(args.spec))
++        for _it in items:
++            if _it.get("ref_images"):
++                _it["ref_images"] = [p if os.path.isabs(p) else os.path.join(_spec_dir, p)
++                                     for p in _it["ref_images"]]
+         # ★ 清单级 style_lock：统一风格串，逐条拼到 prompt 前，保证系列一致
+         style_lock = (spec.get("style_lock") or "").strip() if isinstance(spec, dict) else ""
+         spec_aspect = (spec.get("aspect") or "").strip() if isinstance(spec, dict) else ""
+@@ -346,7 +505,8 @@ def main():
+         print("[done] generated={} skipped={} failed={}".format(done, skipped, failed), flush=True)
+     else:
+         it = {"id": args.prefix or "out", "prefix": args.prefix or "out", "prompt": args.prompt,
+-              "seed": args.seed, "aspect": args.aspect, "count": args.count}
++              "seed": args.seed, "aspect": args.aspect, "count": args.count,
++              "ref_images": [p.strip() for p in (args.image or "").split(",") if p.strip()]}
+         outs = run_one(base, it, args.out)
+         for p, n in outs:
+             print("-> {} ({:.0f} KB)".format(p, n / 1024.0), flush=True)
+diff --git a/stages/assets/scripts/character_design.py b/stages/assets/scripts/character_design.py
+index b3889e3..bf3fba1 100644
+--- a/stages/assets/scripts/character_design.py
++++ b/stages/assets/scripts/character_design.py
+@@ -330,8 +330,114 @@ PALETTE = [
+     {"id": "P09", "name": "烟灰", "h": 210, "s": 0.06, "l": 0.38},
+     {"id": "P10", "name": "米白", "h": 40, "s": 0.10, "l": 0.72},
+ ]
++
++# ★ 2026-10-31：原 PALETTE 十个全是中间调（s 0.24–0.42 / l 0.26–0.42），
++#   轮转出来是「文艺片底色」，出不了豪门质感。
++#   但豪门色**不能塞进 PALETTE** —— 那个列表有「相邻色相 ≥30°」的不变量（测试 A03 盯着），
++#   酒红贴在朱砂旁边只有 7°。所以单开一个池子，只在 wealth 档使用，并带冲突回退。
++WEALTH_PALETTE = [
++    {"id": "W01", "name": "墨黑", "h": 220, "s": 0.04, "l": 0.06},
++    {"id": "W02", "name": "象牙白", "h": 42, "s": 0.08, "l": 0.86},
++    {"id": "W03", "name": "酒红", "h": 352, "s": 0.46, "l": 0.22},
++    {"id": "W04", "name": "深海军蓝", "h": 215, "s": 0.42, "l": 0.18},
++]
+ NEUTRAL_S = 0.15        # 低于此饱和度视为中性色：不参与色相判定
+ 
++# ===========================================================================
++# 二点五、阶层（wealth）：规范里缺的那一维
++# ===========================================================================
++# 为什么要它：D4 色彩 / D5 织物在规范里被写成「决定哪个阶层/职业」，
++# 但实现只有「阵营」与「人群桶」两个维度 —— 阵营管色相轮转，人群桶管面料偏好。
++# 于是「集团实际持有人」会和「夜班护士」抽到同一批休闲单品，富豪穿上运动涤纶。
++# 四档的分法：老钱看剪裁与无标，新贵看对比与金属，专业人士看合身，工薪看耐穿。
++WEALTH_TIERS = ("old_money", "new_money", "professional", "working")
++
++WEALTH_KEYS = {
++    "old_money": ("old money", "老钱", "家族信托", "信托", "继承人", "heir", "heiress",
++                  "dynasty", "estate", "世家", "祖产", "家族企业", "族长"),
++    "new_money": ("new money", "新贵", "总裁", "ceo", "chairman", "主席", "创始人", "founder",
++                  "集团", "财阀", "持有人", "董事长", "少爷", "千金"),
++    "professional": ("律师", "法务", "审计", "会计", "医生", "记者", "教授", "counsel",
++                     "attorney", "lawyer", "doctor", "journalist", "护士长", "主任"),
++    "working": ("护士", "护工", "工人", "服务员", "司机", "保安", "店员", "nurse", "worker",
++                "clerk", "cashier", "driver", "guard"),
++}
++
++# 每个阶层可用的主色（只对老钱/新贵强制；专业与工薪沿用阵营色槽）
++# 只给中性色：R3 判定里「中性 vs 有彩」按色相差算，酒红(352)/深海军蓝(215)
++# 一旦与阵营色贴到 30° 以内就是硬失败，实测调参不划算。
++# 豪门质感交给**剪裁、面料、配件**（无标三件套/真丝/旧机械表），不靠撞色 —— 这本来就是老钱的做法。
++WEALTH_COLOR = {
++    "old_money": ("W01", "W02"),             # 墨黑 / 象牙白
++    "new_money": ("W01", "W02", "W03"),      # 墨黑 / 象牙白 / 酒红（贴色时自动落回中性）
++}
++WEALTH_ACCENT = {
++    "old_money": ("#8A7440", "袖扣"),         # 哑光黄铜，只在袖扣
++    "new_money": ("#9AA3AE", "表带"),         # 拉丝钢，只在表带
++}
++WEALTH_FABRIC = {"old_money": ("T01", "T10", "T03"), "new_money": ("T01", "T05", "T11")}
++
++
++def _wealth(d: dict) -> str:
++    """定阶层：名册显式写 > 身份/性格关键词 > 兜底 working。
++
++    兜底选 working 而不是 professional：宁可把有钱人画朴素，
++    也不要把护士画成总裁 —— 后者会让整部剧的阶层信号失真。
++    """
++    forced = str((d.get("overrides") or {}).get("wealth") or d.get("wealth") or "").strip().lower()
++    if forced in WEALTH_TIERS or forced in ("old", "new", "pro", "work"):
++        return {"old": "old_money", "new": "new_money", "pro": "professional",
++                "work": "working"}.get(forced, forced)
++    text = " ".join([str(d.get("identity") or ""), PERSONA.get(d.get("persona_bucket"), {}).get("name", "")]).lower()
++    for tier in ("old_money", "new_money", "professional", "working"):
++        if any(k.lower() in text for k in WEALTH_KEYS[tier]):
++            return tier
++    return "working"
++
++
++def _color_clash(c1: dict, c2: dict) -> bool:
++    """两种配色是否冲突（与 R3 同口径）：中性对看明度，有彩对看色相。"""
++    n1, n2 = c1.get("s", 1) < NEUTRAL_S, c2.get("s", 1) < NEUTRAL_S
++    if n1 or n2:
++        return abs(c1.get("l", 0) - c2.get("l", 0)) < 0.10
++    return _hue_gap(c1.get("hue", 0), c2.get("hue", 0)) < 30
++
++
++def _apply_wealth(d: dict, designs: list | None = None) -> None:
++    """把阶层落到 D4 色彩 / D5 织物上。
++
++    做法：先按阶层挑一个候选色，**再拿它与全体已分配配色逐对比**；
++    只要有一处冲突就退回原来的阵营色。不追求「一定用上豪门色」，
++    只保证不破坏 R3 这条硬规则 —— 宁可素，不可撞。
++    """
++    tier = _wealth(d)
++    d["wealth"] = tier
++    if tier not in WEALTH_COLOR:
++        return
++    origin_color, origin_fabric = d["color"], d["fabric"]
++    pool = [x for x in WEALTH_PALETTE if x["id"] in WEALTH_COLOR[tier]]
++    # 按「本剧第几个有钱人」取色，而不是各算各的哈希：
++    # 两个人各自哈希很容易撞同一个色，撞了就回退，最后谁也拿不到豪门色。
++    seq = sum(1 for x in (designs or []) if x is not d and x.get("_w_applied"))
++    pick = pool[seq % len(pool)]
++    cand = {"id": pick["id"], "name": pick["name"], "hue": pick["h"],
++            "hex": _rgb(pick["h"], pick["s"], pick["l"]), "l": pick["l"], "s": pick["s"],
++            "accent_hex": WEALTH_ACCENT[tier][0], "accent_place": WEALTH_ACCENT[tier][1]}
++    if any(_color_clash(cand, x["color"]) for x in (designs or [])
++           if x is not d and x.get("color")):
++        # 回退时**连造型一起回退**：只留阵营色却仍写「深色三件套」，
++        # 提示词会自相矛盾（实测维维安出现「主色朱砂 + 深色套装」）。
++        d["color"] = origin_color
++        d["_w_applied"] = False
++        return
++    d["color"] = cand
++    d["_w_applied"] = True
++    fabrics = [f for f in FABRIC if f["id"] in WEALTH_FABRIC[tier]]
++    if fabrics:
++        d["fabric"] = fabrics[_h(d["name"] + "wf") % len(fabrics)]
++    d["_wealth_fabric"] = d["fabric"] is not origin_fabric
++
++
+ ANCHOR = [
+     {"id": "A01", "name": "泪痣", "text": "左眼角下方一颗扁平泪痣（直径约 2mm）", "bare": True},
+     {"id": "A02", "name": "眉尾旧疤", "text": "右眉尾一道浅白旧疤（约 1.5cm，断开眉毛）", "bare": False},
+@@ -340,13 +446,19 @@ ANCHOR = [
+     {"id": "A05", "name": "细圆框眼镜", "text": "一副细金属圆框眼镜（镜片有细微划痕）", "bare": False},
+     {"id": "A06", "name": "单只旧金耳夹", "text": "右耳单只旧金耳夹（另一只耳垂无饰）", "bare": False},
+     {"id": "A07", "name": "颈侧细疤", "text": "左侧颈侧一道淡色细疤（约 3cm）", "bare": False},
+-    {"id": "A08", "name": "磨损编织绳", "text": "右手腕一条磨损的素色编织绳（无坠）", "bare": False},
++    # ★ 2026-10-31（P20b）：原「右手腕一条磨损的素色编织绳（无坠）」被模型画成**金属手链** ——
++    #   「素色编织绳」这个说法在图像先验里太弱，模型默认往首饰方向靠。改成具象的材质描述。
++    {"id": "A08", "name": "磨损编织绳", "text": "右手腕系着一条米色棉线编织绳（三股细棉线搓成，绳头留短须，无金属件、无吊坠）", "bare": False},
+     {"id": "A09", "name": "断眉", "text": "左眉中段一道断口（眉毛不连续）", "bare": True},
+     {"id": "A10", "name": "单侧酒窝", "text": "右脸颊一个单侧酒窝（左脸没有）", "bare": True},
+     {"id": "A11", "name": "唇下小痣", "text": "下唇正中偏左一颗小痣（直径约 1mm）", "bare": True},
+     {"id": "A12", "name": "额角发旋", "text": "右侧额角发际线处一个明显发旋", "bare": False},
+     {"id": "A13", "name": "小指旧伤", "text": "左手小指指甲缺半截（旧伤愈合）", "bare": False},
+-    {"id": "A14", "name": "鼻梁压痕", "text": "鼻梁上一道横向浅压痕（长期戴眼镜留下，但不戴眼镜）", "bare": True, "min_age": 28},
++    # ★ 2026-10-31（P20）：原为「鼻梁上一道横向浅压痕（长期戴眼镜留下，但不戴眼镜）」。
++    #   两个硬伤：① 「长期戴眼镜」与「不戴眼镜」自相矛盾，模型只能按「伤」来理解；
++    #   ② 鼻梁是整张脸最显眼的位置，2MP 下任何痕迹都会放大成疤 —— 实测女主脸上凭空多出一道伤。
++    #   改成手部戒痕：同属「痕」类配额，但位置在手指、性质是肤色差，不会被画成伤痕。
++    {"id": "A14", "name": "无名指戒痕", "text": "左手无名指根部一圈比周围略浅的肤色（长期戴戒指留下的戒痕，戒指已不在）", "bare": False, "min_age": 28},
+     {"id": "A15", "name": "锁骨胎记", "text": "右锁骨下方一处浅褐色胎记（边缘不规则）", "bare": False},
+     {"id": "A16", "name": "方形旧表", "text": "左手腕一只老式方形手表（表带磨白、表盘发黄）", "bare": False, "min_age": 26},
+     {"id": "A17", "name": "褪色徽章", "text": "左胸别一枚褪色金属徽章（图案磨损不可辨）", "bare": False},
+@@ -359,6 +471,23 @@ ANCHOR = [
+     {"id": "A24", "name": "宽银拇指环", "text": "右手拇指一枚宽银戒（表面有细密划痕）", "bare": False, "min_age": 22},
+ ]
+ 
++# ★ 2026-10-31：识别锚的**类别配额**。
++#   病根：24 条锚里 5 条是疤（A02/A03/A07/A13/A20），加上 A02/A03 排最前、
++#   旧实现用 `hash % len(pool)` 取模，几乎每部剧的第二个人都会抽到「左手虎口烫痕」。
++#   修法：按类别限流，同剧疤/痕/斑各 ≤1 人、痣/饰各 ≤2 人。
++ANCHOR_KIND = {
++    "A01": "痣", "A02": "疤", "A03": "疤", "A04": "饰", "A05": "眼镜", "A06": "饰",
++    "A07": "疤", "A08": "饰", "A09": "疤", "A10": "轮廓", "A11": "痣", "A12": "发",
++    "A13": "疤", "A14": "痕", "A15": "斑", "A16": "饰", "A17": "饰", "A18": "纹",
++    "A19": "轮廓", "A20": "疤", "A21": "饰", "A22": "饰", "A23": "斑", "A24": "饰",
++}
++KIND_QUOTA = {"疤": 1, "痕": 1, "斑": 1, "痣": 2, "饰": 2, "纹": 1}
++
++
++def _anchor_kind(a: dict) -> str:
++    return ANCHOR_KIND.get(a.get("id") or "", "其他")
++
++
+ POSTURE = [
+     {"id": "S01", "posture": "重心压在左脚，右肩略低，下巴微收"},
+     {"id": "S02", "posture": "双脚与肩同宽，脊背笔直，下巴平抬"},
+@@ -483,21 +612,38 @@ def _gender_cn(g: str) -> str:
+ def _bucket(ch: dict) -> str:
+     """人群桶：按关键词命中数取最高分（同分按桶序），无命中按年龄兜底。
+ 
+-    不能「首个命中即返回」——实测「冷面·病·疏离」会被先出现的 B6 抢走，
+-    而这个角色的核心是 B10 病态者。
++    ★ 2026-10-31 三处修法（事故：31 岁急诊护士被判成「长者」）：
++      ① 只匹配 persona 词，不匹配 identity 整句 ——
++         「背着**母亲**留下的医疗债」命中 B7 的「母」、「**病区**工会」命中 B10 的「病」，
++         命中的是剧情词，不是性格。
++      ② 年龄闸门 BUCKET_AGE：长者 ≥50、天真者 14–32，不在区间不参与竞争。
++      ③ 名册可显式指定 persona_bucket；无命中时在可用桶里按种子分散，不再固定回落 B2。
+     """
+-    text = " ".join([str(ch.get("identity") or "")] + [str(x) for x in (ch.get("persona") or [])])
++    forced = str(ch.get("persona_bucket") or "").strip().upper()
++    if forced in PERSONA:
++        return forced
++
++    text = " ".join(str(x) for x in (ch.get("persona") or []))
++    age = int(ch.get("age") or 30)
+     best, best_hit = None, 0
+     for bid, p in PERSONA.items():
++        lo, hi = BUCKET_AGE.get(bid, (0, 200))
++        if not (lo <= age <= hi):
++            continue
+         hit = sum(1 for k in p["kw"] if k in text)
+         if hit > best_hit:
+             best, best_hit = bid, hit
+     if best:
+         return best
+-    age = int(ch.get("age") or 30)
+-    if age >= 55:
+-        return "B7"
+-    return "B3" if age <= 20 else "B2"
++    pool = [bid for bid in PERSONA
++            if BUCKET_AGE.get(bid, (0, 200))[0] <= age <= BUCKET_AGE.get(bid, (0, 200))[1]]
++    if not pool:
++        return "B2"
++    return sorted(pool, key=lambda b: _h(str(ch.get("name") or "") + "bucket" + b))[0]
++
++
++# 桶的年龄适用区间（不在区间内的桶不参与竞争）
++BUCKET_AGE = {"B7": (50, 200), "B3": (14, 32)}
+ 
+ 
+ def _regionize(text: str, region: dict) -> str:
+@@ -519,6 +665,7 @@ def _formal(ch: dict) -> bool:
+                                    "秘书", "助理", "主母", "高管", "财阀", "少爷", "千金"))
+ 
+ 
++# ===========================================================================
+ # ===========================================================================
+ # 三、分配：最大最小距离贪心
+ # ===========================================================================
+@@ -579,13 +726,24 @@ def design(roster: dict) -> dict:
+     chars = list(roster.get("characters") or [])
+     if not chars:
+         raise SystemExit("[FAIL] 名册里没有 characters（至少给一个角色）")
+-    seed = str(roster.get("seed") or "solodrama")
++    # ★ 2026-10-31：`seed` 缺省值从常量 "solodrama" 改为**按名册内容派生**。
++    #   旧默认值等于「所有没写 seed 的项目共用同一串哈希」——不同剧、不同人物，
++    #   抽到的锚点/发型/姿态却是同一套，观众看到的就是「又是那道疤」。
++    #   现在：显式给 seed 就用它；没给就按 world + 角色名派生，两个项目自然不同。
++    seed = str(roster.get("seed") or "").strip()
++    if not seed:
++        _fp = hashlib.sha1(("|".join([
++            str(roster.get("world") or ""),
++            ",".join(str(c.get("name") or "") for c in chars),
++        ])).encode("utf-8")).hexdigest()[:12]
++        seed = "auto-" + _fp
+     region_key = roster.get("region") or "east_asian"
+     if region_key not in REGION:
+         raise SystemExit("[FAIL] 未知 region：%s（可选 %s）" % (region_key, "/".join(REGION)))
+     region = REGION[region_key]
+ 
+     used_face, used_hair, used_fabric, used_anchor, used_posture = set(), set(), set(), set(), set()
++    used_kind: dict[str, int] = {}
+     designs = []
+     # 主演先选：让主角拿到「人群桶最贴合 + 距离最远」的骨相，配角随后避让
+     tier_rank = {"lead": 0, "support": 1, "minor": 2}
+@@ -620,12 +778,24 @@ def design(roster: dict) -> dict:
+         used_fabric.add(fabric["id"])
+ 
+         anchor = next((a for a in ANCHOR if a["name"] == ov.get("anchor") or a["id"] == ov.get("anchor")), None)
+-        if anchor is None:
++        _no_anchor = str(ov.get("anchor") or "").strip().lower() in ("none", "无", "不设", "-")
++        if anchor is None and not _no_anchor:
+             free = [a for a in ANCHOR if a["id"] not in used_anchor
+                     and a.get("min_age", 0) <= age <= a.get("max_age", 200)]
+             free = free or [a for a in ANCHOR if a["id"] not in used_anchor]
+-            anchor = free[_h(seed + ch["name"] + "anchor") % len(free)]
+-        used_anchor.add(anchor["id"])
++            # ★ 2026-10-31：两个修法，治「每部剧都长同一道疤」。
++            #   ① 类别配额：同一部剧里「疤/痕/斑」类识别锚最多 1-2 人（见 KIND_QUOTA）。
++            #      此前 24 条锚里 4 条是疤、且 A02/A03 排最前，几乎每部剧都抽到虎口烫痕。
++            #   ② 无偏排序：原来用 `_h(...) % len(free)`，小余数反复命中靠前的条目；
++            #      改成按 hash(seed+id) 排序取第一条，全体等概率且可复现。
++            quota = [a for a in free if used_kind.get(_anchor_kind(a), 0) < KIND_QUOTA.get(_anchor_kind(a), 99)]
++            free = quota or free
++            anchor = sorted(free, key=lambda a: _h(seed + "anchor" + a["id"]))[0]
++        if anchor is None:
++            anchor = {"id": "", "name": "无", "text": "", "bare": True}
++        if anchor["id"]:
++            used_anchor.add(anchor["id"])
++            used_kind[_anchor_kind(anchor)] = used_kind.get(_anchor_kind(anchor), 0) + 1
+ 
+         pref_post = [p for p in POSTURE if p["id"] in PERSONA[bid]["postures"] and p["id"] not in used_posture]
+         cand_post = pref_post or [p for p in POSTURE if p["id"] not in used_posture] or POSTURE
+@@ -633,13 +803,16 @@ def design(roster: dict) -> dict:
+         used_posture.add(posture["id"])
+ 
+         designs.append({
++            "code": str(ch.get("code") or "").upper(),
+             "name": ch["name"], "tier": ch.get("tier") or "support", "gender": gender,
+             "age": age, "identity": ch.get("identity") or "",
+             "faction": ch.get("faction") or "主线", "persona_bucket": bid,
+             "face": face, "hair": hair, "fabric": fabric, "anchor": anchor, "posture": posture,
+             "skin": _skin(age),
++            "expression": str(ov.get("expression") or "").strip(),
+             "region": region_key, "region_cn": region["cn"], "region_line": region["line"],
+             "region_forbid": region["forbid"],
++            "wealth": str(ov.get("wealth") or ch.get("wealth") or ""),
+             "overrides": ov,
+         })
+ 
+@@ -662,9 +835,12 @@ def design(roster: dict) -> dict:
+ 
+     # ---- 服装文本 ----
+     for i, d in enumerate(designs):
++        _apply_wealth(d, designs)  # ★ 先定阶层：D4 色彩 / D5 织物在这里被改写
+         d["garment"] = _garment_text(d, i)
+         d["garment_en"] = _garment_en(d, i)      # ★ 反馈 7.1：英文服装段，供英文提示词直接取用
+-        d["expression"] = PERSONA[d["persona_bucket"]]["expr"]
++        # ★ 2026-10-31：名册写了的表情优先（overrides.expression），否则用桶的默认表情
++        if not (d.get("expression") or "").strip():
++            d["expression"] = PERSONA[d["persona_bucket"]]["expr"]
+ 
+     # ---- 差异对照（与最像的那位显式拉开） ----
+     for d in designs:
+@@ -697,8 +873,50 @@ def design(roster: dict) -> dict:
+     return bible
+ 
+ 
++
++# 阶层造型：只对老钱 / 新贵生效，专业与工薪走原来的 formal/casual 分支
++WEALTH_LOOK = {
++    "old_money": {
++        "m": {"cn": "上装为无标深色三件套（精纺羊毛西装＋同料马甲），内搭埃及棉白衬衫，法式双叠袖口；"
++                     "下装为同料直筒西裤；脚穿手工牛津鞋；配饰为表盘泛黄的旧机械表；全身上下没有任何品牌标识",
++              "en": "an unlabelled dark three-piece suit in worsted wool (jacket and waistcoat), "
++                    "Egyptian-cotton white shirt with French cuffs; matching straight-cut trousers; "
++                    "hand-made oxford shoes; a vintage mechanical watch with a yellowed dial; "
++                    "no visible branding anywhere"},
++        "f": {"cn": "上装为无标深色收腰套装，真丝衬衫扣至第二颗；下装为同料直筒西裤；脚穿低跟尖头鞋；"
++                     "配饰为单串珍珠；全身上下没有任何品牌标识",
++              "en": "an unlabelled dark tailored suit jacket, silk shirt buttoned to the second button; "
++                    "matching straight-cut trousers; pointed low heels; a single strand of pearls; "
++                    "no visible branding anywhere"},
++    },
++    "new_money": {
++        "m": {"cn": "上装为枪驳领双排扣西装，衬衫领口开一颗，袖口露出袖扣；下装为窄版西裤；"
++                     "脚穿德比鞋；配饰为金属表带腕表",
++              "en": "a double-breasted suit with peak lapels, shirt open one button, cufflinks visible; "
++                    "slim-cut trousers; derby shoes; a metal-bracelet watch"},
++        "f": {"cn": "上装为结构感西装外套，内搭真丝吊带；下装为高腰阔腿西裤；脚穿细高跟；"
++                     "配饰为宽金属手镯",
++              "en": "a structured blazer over a silk camisole; high-waisted wide-leg trousers; "
++                    "stiletto heels; a wide metal cuff"},
++    },
++}
++
++
++def _wealth_look(d: dict) -> dict | None:
++    if not d.get("_w_applied"):
++        return None
++    tier = d.get("wealth")
++    if tier not in WEALTH_LOOK:
++        return None
++    return WEALTH_LOOK[tier]["f" if d["gender"] == "f" else "m"]
++
+ def _garment_text(d: dict, idx: int) -> str:
+     """服装文本：**上装由面料决定**（牛仔配夹克、真丝配西装/衬衫），避免「牛仔布针织上衣」。"""
++    look = _wealth_look(d)
++    if look:
++        return ("主色为%s（%s），撞色 %s 只出现在%s；面料为%s，%s；%s。"
++                % (d["color"]["name"], d["color"]["hex"], d["color"]["accent_hex"],
++                   d["color"]["accent_place"], d["fabric"]["name"], d["fabric"]["behavior"], look["cn"]))
+     age = d["age"]
+     g = "f" if d["gender"] == "f" else "m"
+     formal = _formal(d) or age >= 55
+@@ -747,10 +965,22 @@ def _garment_text(d: dict, idx: int) -> str:
+ # 结论：中英混排时，模型对**后段中文服饰描述**几乎不执行。服装必须给一条英文。
+ # 处理：词表与中文侧一一对应（同一批枚举值），下游英文提示词的 `<WARDROBE>` 段直接取用，
+ #       不必再逐角色手写英文（2026-10-20 实跑时是手写 10 个角色的英文才修好的）。
++
++_EN_ACCENT = {"袖扣": "cufflinks", "表带": "watch strap", "领口滚边": "collar piping",
++              "袖口": "cuffs", "围巾": "scarf", "鞋": "shoes", "发带": "hair band",
++              "腰封": "waist sash", "内搭": "undershirt", "领口": "collar"}
++_EN_BEHAVIOR = {"精纺羊毛": "dry matte hand, crisp folds", "羊绒": "soft loft with a faint nap",
++                "真丝缎": "liquid sheen, heavy drape", "硬挺府绸": "crisp papery hand",
++                "皮革": "supple grain", "亚麻": "natural creases, slight translucency",
++                "水洗棉": "soft washed hand", "粗针织": "chunky loft",
++                "牛仔布": "twill with a worn edge", "运动涤纶": "technical sheen",
++                "绒面麂皮": "velvet nap", "纱布棉麻": "gauzy open weave"}
++
+ _EN_COLOR = {
+     "朱砂": "cinnabar red", "姜黄": "turmeric yellow", "苔绿": "moss green",
+     "松柏墨绿": "deep pine green", "松石青": "turquoise teal", "靛青": "indigo",
+     "紫檀": "rosewood", "绛紫": "deep plum", "烟灰": "smoke grey", "米白": "off-white",
++    "墨黑": "near-black ink", "象牙白": "warm ivory", "酒红": "oxblood", "深海军蓝": "deep navy",
+ }
+ _EN_FABRIC = {
+     "精纺羊毛": "worsted wool", "粗针织": "chunky knit", "真丝缎": "silk satin",
+@@ -809,6 +1039,17 @@ def _garment_en(d: dict, idx: int) -> str:
+     刻意与中文函数**不共用**返回值：中文那份含大量中文修饰，混进英文句只会稀释权重；
+     这里输出一条干净的结构化英文（主色 / 撞色位置 / 面料手感 / 上装 / 下装 / 鞋 / 配饰）。
+     """
++    look = _wealth_look(d)
++    if look:
++        # ★ 中英混排会被模型忽略（同 `_garment_en` 顶部注释的实测结论）：
++        #   撞色位置与面料手感都必须给英文，否则出现 "only on the 袖扣" 这种半截中文。
++        return ("main colour %s (%s); accent %s only on the %s; fabric %s, %s; %s."
++                % (_EN_COLOR.get(d["color"]["name"], d["color"]["name"]), d["color"]["hex"],
++                   d["color"]["accent_hex"],
++                   _EN_ACCENT.get(d["color"]["accent_place"], "trim"),
++                   _EN_FABRIC.get(d["fabric"]["name"], d["fabric"]["name"]),
++                   _EN_BEHAVIOR.get(d["fabric"]["name"], "natural hand"),
++                   look["en"]))
+     age = d["age"]
+     g = "f" if d["gender"] == "f" else "m"
+     formal = _formal(d) or age >= 55
+@@ -864,7 +1105,7 @@ def _garment_en(d: dict, idx: int) -> str:
+ 
+ def _public(d: dict) -> dict:
+     """导出到 bible 的字段（不带内部临时键）。"""
+-    keep = ("name", "tier", "gender", "age", "identity", "faction", "persona_bucket",
++    keep = ("code", "name", "tier", "gender", "age", "identity", "faction", "persona_bucket", "wealth",
+             "hair", "fabric", "anchor", "posture", "skin", "region", "region_cn",
+             "region_line", "region_forbid", "color", "garment", "garment_en",
+             "expression", "contrast", "face_short")
+@@ -897,7 +1138,8 @@ def to_fields(c: dict, style_anchor: str = "") -> dict:
+         "表情": c["expression"] + "。",
+         "服装细节": c["garment"],
+         "服装细节EN": c.get("garment_en") or "",
+-        "识别锚": "%s。" % anchor["text"],
++        # ★ 2026-10-31：允许「不设锚」。空锚不生成句子，提示词里整段省略。
++        "识别锚": ("%s。" % anchor["text"]) if (anchor.get("text") or "").strip() else "",
+         "差异对照": c["contrast"],
+         "反默认": ("排除标准网红脸（削尖下颌＋放大眼裂＋垫高鼻梁＋无毛孔磨皮）、韩式平眉、"
+                    "烤瓷牙反光、左右绝对对称的脸；%s；%s。" % (face["forbid"], c["region_forbid"])),
+@@ -923,7 +1165,7 @@ def maincard_prompt(c: dict, fields: dict, world: str = "", style_style: str = "
+     return "\n".join(x for x in [
+         "一张**竖版角色主卡**（单视角角色定妆图），%s，电影级写实 3D CG 渲染，实拍级质感；"
+         "画面里**只有这一个角色**，全身入画、从头顶到鞋底完整。" % (world or "当代中国都市题材"),
+-        "【唯一识别锚｜先读这一条】%s" % f["识别锚"],
++        ("【唯一识别锚｜先读这一条】%s" % f["识别锚"]) if f["识别锚"] else "",
+         "【形象】%s" % f["形象定位"],
+         "【面部特征】%s" % f["面部特征"],
+         "【表情】%s" % f["表情"],
+@@ -943,7 +1185,7 @@ def headshot_prompt(c: dict, fields: dict, world: str = "") -> str:
+     return "\n".join(x for x in [
+         "一张**半身胸像**定妆照，%s，电影级写实 3D CG 渲染，实拍级质感；单一角色、胸线以上取景。"
+         % (world or "当代中国都市题材"),
+-        "【唯一识别锚】%s" % f["识别锚"],
++        ("【唯一识别锚】%s" % f["识别锚"]) if f["识别锚"] else "",
+         "【面部特征】%s" % f["面部特征"],
+         "【表情】%s" % f["表情"],
+         "【服装领口】%s" % f["服装细节"],
+@@ -953,6 +1195,113 @@ def headshot_prompt(c: dict, fields: dict, world: str = "") -> str:
+     ] if x)
+ 
+ 
++# ===========================================================================
++# 四点五、真人写实轨（live_action）专用版式
++# ===========================================================================
++LIVE_PHOTO = ("photographic material truth, real skin texture with visible pores and fine facial hair, "
++              "believable fabric wrinkles, credible lens perspective, natural depth of field")
++LIVE_NEG = ("no second person, no text, no letters, no numbers, no watermark, no logo, no border, "
++            "no layout grid, no props, no environment, no scenery, no CG render look, no 3D render, "
++            "no illustration, no anime, no plastic skin, no airbrushed retouch, no poreless face, "
++            "no perfectly symmetrical AI face, no Instagram filter, no glow, no lens flare")
++
++
++def _live_style(style_anchor: str) -> str:
++    """风格串：名册已写材质项就不重复拼，避免「photographic material truth」出现两次。"""
++    base = (style_anchor or "surreal live-action film look").strip().rstrip("，,")
++    extra = [x for x in LIVE_PHOTO.split(", ")
++             if x.lower() not in base.lower()]
++    return base + ("，" + "，".join(extra) if extra else "")
++
++
++_ANCHOR_LOUD_KINDS = ("饰", "眼镜", "纹")
++
++
++def _anchor_sentence(c: dict, text: str) -> str:
++    """锚的「可见度」必须跟锚的类型匹配。
++
++    ★ 2026-10-31（P20）：31 岁急诊护士的锚是「鼻梁上一道横向浅压痕」，
++      而模板对**所有**锚都写「这个锚必须清晰可见」—— 模型忠实照做，
++      把一道浅压痕画成了显眼的疤痕，女主脸上凭空多出一道伤。
++      锚分两类：饰物/眼镜/纹身本来就该看得见；疤/痕/斑/痣/轮廓/发 要「按原样、别强化」。
++    """
++    if not text:
++        return ""
++    kind = _anchor_kind(c.get("anchor") or {})
++    if kind in _ANCHOR_LOUD_KINDS:
++        vis = "这个锚必须清晰可见、非对称，在左半脸与右三视图里都能认出来；"
++    else:
++        vis = ("这个锚要按它本身的尺寸与淡度如实呈现：不要加深、不要扩大、不要加高光、"
++               "不要画成伤疤或妆效，自然光下能辨认即可；")
++    return "【唯一识别锚 · 先读这一条】%s %s全剧只此一处锚，不要再加第二个。" % (text, vis)
++
++
++def live_card_prompt(c: dict, fields: dict, world: str = "", style_anchor: str = "") -> str:
++    """真人写实轨角色卡：《画风三轨规范》§1.3 —— 16:9 纯白、左脸特写 + 右三视图半身。
++
++    为什么不能复用 maincard_prompt：那是**竖版全身 3D 主卡**，与真人轨要求相反。
++    照 3D 模板出图 = 画风直接跑偏（这条在 2026-10-31 的实跑里踩过）。
++    """
++    f = fields
++    gender_cn = "女性" if c.get("gender") == "f" else "男性"
++    slots = "；".join("%s：%s" % (k, v) for k, v in (c["face"].get("slots") or {}).items())
++    return "\n".join(x for x in [
++        "【风格】%s，16:9 horizontal frame" % _live_style(style_anchor),
++        "【任务】一张**横版 16:9 角色定妆参考卡**，纯白无缝背景上只有这一个人，用于全剧跨镜身份一致性。",
++        _anchor_sentence(c, f["识别锚"]),
++        "【版式】左半边：正侧 3/4 面部特写，眼睛看向镜头；右半边：同一个人半身三视图——正面、侧面、背面——"
++        "等距排列，服装、光位、色温完全一致；画面内不出现分隔线、不出现标签、不出现文字。",
++        "【人物】%s，%d 岁%s，%s。" % (c["name"], c.get("age") or 30, gender_cn, c.get("identity") or ""),
++        "【骨相与五官】%s。" % slots,
++        "【族裔基线】%s" % c["region_line"],
++        "【发型】%s" % c["hair"]["detail"],
++        "【皮肤与质感】%s；保留真实毛孔、细发丝与不对称的左右脸。" % c["skin"],
++        "【服装】%s" % (c.get("garment_en") or c.get("garment") or ""),
++        "【表情】%s。" % (c.get("expression_override") or c.get("expression") or "情绪克制，不外放"),
++        # ★ 2026-10-31（P15）：原来是「不要画成通用 AI 美人脸：不削尖下颌、不放大眼裂…」一整段否定句。
++        #   cfg=1 时负向条件不参与引导，这段 100% 无效；cfg=2 后「正向段落里的否定」语义仍不稳定。
++        #   改成**正向描述要什么**，把族裔禁忌拆成独立一段（否定句放结尾，别夹在正向描述中间）。
++        "【脸型基准】真实寻常面孔，不是平面化的美人模板：下颌角明确、骨量偏小；"
++        "眼裂宽度与脸型成比例、上睑有厚度；鼻梁高度自然、鼻背有轻微起伏与骨点；"
++        "皮肤保留毛孔、细纹、不均匀反光与轻微色差；左右脸在眉高、颧宽、嘴角位置上存在可见差异。",
++        "【族裔约束】%s。" % c["region_forbid"],
++        "【差异对照】%s" % c["contrast"],
++        "【负向】" + LIVE_NEG,
++    ] if x)
++
++
++def live_scene_prompt(s: dict, style_anchor: str = "") -> str:
++    """真人写实轨场景卡：16:9 纯白、**绝对不含人物**（含剪影/倒影）。"""
++    return "\n".join([
++        "【风格】%s，16:9 horizontal frame, empty set" % _live_style(style_anchor),
++        "【任务】一张**横版 16:9 场景参考卡**，用于全剧同一空间的跨镜一致性。",
++        "【空间】%s。" % s.get("desc", ""),
++        "【硬约束 · 绝对不含人物】画面里没有人物、没有人影、没有剪影、没有倒影里的人物、没有肢体局部。"
++        "把这个空间当作在无人时被拍下的一张现场照片。",
++        "【陈设细节】该空间被真实使用过的痕迹要可见：磨损、污渍、贴纸残留、被反复触碰的高光位置；"
++        "但不要出现可读的文字、机构标识或品牌。",
++        "【光线】%s，来源明确、方向可辨，允许一处不合理的入射角作为超现实标记。"
++        % ("夜间人工光" if s.get("time") == "夜" else "白天自然光与室内灯混合"),
++        "【构图】平视，轻微广角，画面深处保留一条通向画外的通道（门、走廊、楼梯）。",
++        "【负向】" + LIVE_NEG,
++    ])
++
++
++def emit_live_scenes(bible: dict, out_dir: pathlib.Path, scenes_path: str) -> list:
++    """按 world-bible 的 scenes 段落盘场景卡提示词（真人轨）。"""
++    src = _load(scenes_path)
++    scenes = (src.get("scenes") if isinstance(src, dict) else src) or []
++    files = []
++    for s in scenes:
++        code = str(s.get("code") or "").upper()
++        if not code:
++            continue
++        p = out_dir / "prompts" / "live" / ("SC_%s_card.txt" % code)
++        _write(p, live_scene_prompt(s, bible.get("style_anchor") or ""))
++        files.append(str(p))
++    return files
++
++
+ # ===========================================================================
+ # 五、差异矩阵与硬规则
+ # ===========================================================================
+@@ -1011,6 +1360,10 @@ def check_rules(bible: dict) -> list:
+     # R4 识别锚唯一
+     seen = {}
+     for c in chars:
++        # ★ 2026-10-31：没设锚的角色（anchor.id 为空）不参与唯一性判定，
++        #   否则「全员必须有锚」会被这条规则反向锁死。
++        if not (c.get("anchor") or {}).get("id"):
++            continue
+         seen.setdefault(c["anchor"]["id"], []).append(c["name"])
+     for aid, names in seen.items():
+         if len(names) > 1:
+@@ -1096,30 +1449,58 @@ def render_asset_md(bible: dict, prompts: dict) -> str:
+     return "\n".join(L)
+ 
+ 
+-def emit(bible: dict, out_dir: pathlib.Path, variants=("board", "maincard", "headshot")) -> dict:
+-    """落盘：bible / 矩阵 md / 资产提示词 md / 逐角色提示词。返回写出的文件表。"""
++def emit(bible: dict, out_dir: pathlib.Path, variants=("board", "maincard", "headshot"),
++         card_style: str = "3d_manhua", scenes_path: str = "") -> dict:
++    """落盘：bible / 矩阵 md / 资产提示词 md / 逐角色提示词。返回写出的文件表。
++
++    ★ 2026-10-31：新增 `card_style`。此前无论什么画风都只产**竖版 3D 主卡**模板
++      （「竖版角色主卡」「电影级写实 3D CG 渲染」），而《画风三轨规范》§1.3 要求真人轨是
++      「16:9 纯白 + 左脸特写 + 右三视图半身」。照旧模板出图 = 画风直接跑偏，
++      所以每个真人项目都得在外面手写一套提示词 —— 这就是这次要消灭的手工层。
++
++      - card_style="live_action"：只出 `prompts/live/<代号>_<名>_card.txt`（一人一卡），
++        另可按 `--scenes <world-bible.json>` 出场景卡；不再产 3D 的 board/maincard/headshot。
++      - 其它取值：保持原行为（board/maincard/headshot 三件套）。
++    """
+     world = bible["world"]
+     style_anchor = bible["style_anchor"]
++    live = str(card_style or "").startswith("live")
+     prompts, files = {}, []
+     for i, c in enumerate(bible["characters"], 1):
+         fields = to_fields(c, style_anchor)
+-        prompts[c["name"]] = {
+-            "board": board_prompt(c, fields, world, style_anchor),
+-            "maincard": maincard_prompt(c, fields, world),
+-            "headshot": headshot_prompt(c, fields, world),
+-            "_fields": fields,
+-        }
++        if live:
++            card = live_card_prompt(c, fields, world, style_anchor)
++            # "board" 槽位仍指向这张卡，好让「资产提示词_角色段.md」照常可读
++            prompts[c["name"]] = {"board": card, "_fields": fields}
++        else:
++            prompts[c["name"]] = {
++                "board": board_prompt(c, fields, world, style_anchor),
++                "maincard": maincard_prompt(c, fields, world),
++                "headshot": headshot_prompt(c, fields, world),
++                "_fields": fields,
++            }
+     issues = check_rules(bible)
+ 
+     _write(out_dir / "character-bible.json", json.dumps(bible, ensure_ascii=False, indent=2))
+     _write(out_dir / "角色差异化矩阵.md", render_matrix_md(bible, issues))
+     _write(out_dir / "资产提示词_角色段.md", render_asset_md(bible, prompts))
+     files += ["character-bible.json", "角色差异化矩阵.md", "资产提示词_角色段.md"]
+-    for i, c in enumerate(bible["characters"], 1):
+-        for v in variants:
+-            p = out_dir / "prompts" / "char" / ("CH%02d_%s_%s.txt" % (i, c["name"], v))
+-            _write(p, prompts[c["name"]][v])
++
++    if live:
++        for i, c in enumerate(bible["characters"], 1):
++            code = c.get("code") or "CH%02d" % i
++            p = out_dir / "prompts" / "live" / ("%s_%s_card.txt" % (code, c["name"].replace(" ", "-")))
++            _write(p, prompts[c["name"]]["board"])
+             files.append(str(p.relative_to(out_dir)))
++        if scenes_path:
++            files += [str(pathlib.Path(x).relative_to(out_dir)) if str(x).startswith(str(out_dir)) else x
++                      for x in emit_live_scenes(bible, out_dir, scenes_path)]
++    else:
++        for i, c in enumerate(bible["characters"], 1):
++            for v in variants:
++                p = out_dir / "prompts" / "char" / ("CH%02d_%s_%s.txt" % (i, c["name"], v))
++                _write(p, prompts[c["name"]][v])
++                files.append(str(p.relative_to(out_dir)))
+     return {"files": files, "issues": issues, "fields": {k: v["_fields"] for k, v in prompts.items()}}
+ 
+ 
+@@ -1301,6 +1682,11 @@ def main(argv=None) -> int:
+     p1.add_argument("--variants", default="board,maincard,headshot",
+                     help="逐角色写出哪些提示词（逗号分隔）")
+     p1.add_argument("--strict", action="store_true", help="硬规则不过也退出码 2")
++    p1.add_argument("--card-style", default="auto",
++                    choices=["auto", "3d_manhua", "2d_animation", "live_action"],
++                    help="角色卡版式：auto=读名册 style_lock；live_action=16:9 纯白+左脸特写+右三视图")
++    p1.add_argument("--scenes", default="",
++                    help="（可选）world-bible.json 路径：同时产出真人轨场景卡提示词")
+ 
+     p2 = sub.add_parser("check", help="校验角色圣经的六条硬规则（退出码 2 = 不过）")
+     p2.add_argument("--bible", required=True)
+@@ -1324,7 +1710,13 @@ def main(argv=None) -> int:
+         bible = design(roster)
+         out = pathlib.Path(args.out)
+         variants = tuple(v.strip() for v in args.variants.split(",") if v.strip())
+-        res = emit(bible, out, variants)
++        # 画风 → 版式：显式 --card-style 优先；auto 时读名册里的 style_lock
++        style = str(getattr(args, "card_style", "auto") or "auto").lower()
++        if style == "auto":
++            lock = str(roster.get("style_lock") or "").lower()
++            style = "live_action" if lock.startswith("live") else (lock or "3d_manhua")
++        bible["card_style"] = style
++        res = emit(bible, out, variants, card_style=style, scenes_path=getattr(args, "scenes", "") or "")
+         print("[OK] %d 个角色 → %s" % (len(bible["characters"]), out))
+         for f in res["files"]:
+             print("  · %s" % f)
+diff --git a/stages/assets/scripts/tests/test_character_design.py b/stages/assets/scripts/tests/test_character_design.py
+index edac9ec..045ebe9 100644
+--- a/stages/assets/scripts/tests/test_character_design.py
++++ b/stages/assets/scripts/tests/test_character_design.py
+@@ -158,13 +158,21 @@ def _():
+     for p in b["_matrix"]["pairs"]:
+         if p["same_faction"]:
+             continue
++        # ★ 2026-10-31：与 check_rules 的口径对齐 —— 任一侧为中性色时，
++        #   色相无意义（墨黑 h=220 与靛青 h=222 只差 2°，肉眼是黑与蓝的明度差），
++        #   改判明度差 ≥ 0.10。此前测试比规则更严，一旦有人用中性色就误报。
++        if p.get("a_neutral") or p.get("b_neutral"):
++            A_(p["light_gap"] >= 0.10, "%s↔%s 中性色明度差 %.2f"
++               % (p["a"], p["b"], p["light_gap"]))
++            continue
+         A_(p["hue_gap"] >= 30, "%s↔%s 色相 %.0f°" % (p["a"], p["b"], p["hue_gap"]))
+     same = [p for p in b["_matrix"]["pairs"] if p["same_faction"]]
+     A_(same, "样本里应当有同阵营对照（财阀 3 人）")
+     for p in same:
+         A_(p["light_gap"] >= 0.10, "%s↔%s 同阵营明度差 %.2f" % (p["a"], p["b"], p["light_gap"]))
+-    return "跨阵营 min %.0f° / 同阵营 %d 对" % (
+-        min(p["hue_gap"] for p in b["_matrix"]["pairs"] if not p["same_faction"]), len(same))
++    chrom = [p["hue_gap"] for p in b["_matrix"]["pairs"]
++             if not p["same_faction"] and not (p.get("a_neutral") or p.get("b_neutral"))]
++    return "跨阵营有彩 min %.0f° / 同阵营 %d 对" % (min(chrom) if chrom else -1, len(same))
+ 
+ 
+ @reg("B", "B07 性别适配：男角色不出现裙装与尖头高跟")
+diff --git a/stages/creation/scripts/script_rewrite.py b/stages/creation/scripts/script_rewrite.py
+index 1fcb8b7..a13a7ec 100644
+--- a/stages/creation/scripts/script_rewrite.py
++++ b/stages/creation/scripts/script_rewrite.py
+@@ -665,13 +665,17 @@ def render_skeleton(ws: pathlib.Path, b: dict, ep: int, shots: int) -> str:
+     row = b.get("_ep_row") or {}
+     # 角色/场景骨架：优先读 bible（若有），否则用占位
+     bible = C.pdir(ws, "bible")
+-    char_line, scene_line = "<CHAR 代号>: <锚点>", "<SCENE 代号>: <描述>"
++    char_line, scene_line = "<CHAR 代号>: <身份/关系>", "<SCENE 代号>: <描述>"
+     chars_md = C.read_text(bible / "characters.md")
+     scenes_md = C.read_text(bible / "scenes.md")
+     if chars_md:
+         codes = re.findall(r"\|\s*`([A-Z_]{2,})`", chars_md)
+         if codes:
+-            char_line = "; ".join("%s: <锚点>" % c for c in codes[:6])
++            # ★ 2026-10-31：这里原来写的是 `<锚点>`。
++            #   锚点是**资产阶段**的视觉概念，写进剧本骨架等于要求剧作家先定长相，
++            #   于是每部剧都被逼着给每个人编一道疤/一颗痣，最后全员同款。
++            #   改成只登记「身份/关系」，长相留给 04-资产/design。
++            char_line = "; ".join("%s: <身份/关系>" % c for c in codes[:6])
+     if scenes_md:
+         codes = re.findall(r"\|\s*`([A-Z_]{2,})`", scenes_md)
+         if codes:
+@@ -747,9 +751,20 @@ def lint(ws: pathlib.Path, ep: int) -> int:
+                 errors.append("%s DUR=%d 越界（%d-%d）" % (sid, d, DUR_MIN, DUR_MAX))
+         dl = re.search(r"(?m)^\s*DIALOG\s*:\s*(.+)$", b)
+         if dl and dl.group(1).strip() not in ("无", ""):
+-            for sent in re.findall(r"[“\"']([^”\"']+)[”\"']", dl.group(1)):
+-                if len(sent.strip()) > 40:
+-                    warns.append("%s 台词偏长（%d 字）：%s" % (sid, len(sent.strip()), sent[:24]))
++            body = dl.group(1)
++            # ★ 2026-10-31：拉丁语系取消单句字符上限（与 tools/core/validate.py 的 E007 同口径），
++            #   改按「词/秒 × 本镜时长」给警告；中文仍按字符。
++            if any("\u4e00" <= ch <= "\u9fff" for ch in body):
++                for sent in re.findall(r"[“\"']([^”\"']+)[”\"']", body):
++                    if len(sent.strip()) > 40:
++                        warns.append("%s 台词偏长（%d 字）：%s" % (sid, len(sent.strip()), sent[:24]))
++            else:
++                secs = int(dur.group(1)) if dur else 8
++                words = len(re.findall(r"[A-Za-z][A-Za-z']*", body))
++                budget = int(secs * 3.8)
++                if words > budget:
++                    warns.append("%s 台词 %d 词超出本镜 %d 秒预算 %d 词（3.8 词/秒）"
++                                 % (sid, words, secs, budget))
+ 
+     # ★ 按本剧 blueprint 的 ep_seconds 选口径：老项目 70 秒、新项目 60 秒各按各的，
+     #   不要用全局常量硬套（否则口径下调会把在跑的老项目判死）。
+diff --git a/stages/production/scripts/tests/test_setup_workflow_pipeline.py b/stages/production/scripts/tests/test_setup_workflow_pipeline.py
+index 9acedcf..de103bd 100644
+--- a/stages/production/scripts/tests/test_setup_workflow_pipeline.py
++++ b/stages/production/scripts/tests/test_setup_workflow_pipeline.py
+@@ -382,10 +382,24 @@ class TestFfsRules(unittest.TestCase):
+         issues = V._check_dialog(self._ep(line))
+         self.assertEqual([i.code for i in issues], [], "西语 55 字符以内应放行")
+ 
+-    def test_72_latin_over_limit(self):
++    def test_72_latin_char_cap_removed(self):
++        # 2026-10-31：取消拉丁语系 55 字符单句上限，改由「词/秒 × 本镜时长」兜底
+         line = "“" + "a" * 60 + "”"
+         issues = V._check_dialog(self._ep(line))
+-        self.assertTrue(any(i.code == "E007" for i in issues))
++        self.assertEqual([i.code for i in issues], [], "长单句不再按字符判死")
++
++    def test_72b_latin_word_budget_enforced(self):
++        line = "“" + " ".join(["word"] * 30) + "”"      # 30 词 > 6s × 3.8 = 22 词
++        issues = V._check_dialog(self._ep(line))
++        self.assertTrue(any("22 词" in i.message for i in issues), "超出本镜语速预算必须报错")
++
++    def test_72c_latin_four_sentences_allowed(self):
++        issues = V._check_dialog(self._ep("“One. Two. Three. Four.”"))
++        self.assertEqual([i.code for i in issues], [], "高密度对白允许单镜 4 句")
++
++    def test_72d_latin_five_sentences_rejected(self):
++        issues = V._check_dialog(self._ep("“One. Two. Three. Four. Five.”"))
++        self.assertTrue(any("4 句上限" in i.message for i in issues))
+ 
+     def test_73_chinese_still_20(self):
+         issues = V._check_dialog(self._ep("“" + "字" * 25 + "”"))
+diff --git a/tools/cli.py b/tools/cli.py
+index 062591c..dfb64b2 100644
+--- a/tools/cli.py
++++ b/tools/cli.py
+@@ -127,7 +127,10 @@ def cmd_import_bible(a) -> None:
+ 
+     cfg = _load_project()
+     slug = cfg["meta"]["slug"]
+-    wb = json.loads((ROOT / cfg["artifacts"]["world_bible"]).read_text(encoding="utf-8"))
++    # ★ 2026-10-31 修：此前读 `ROOT / cfg["artifacts"]["world_bible"]`（= <ws>/bible/…），
++    #   而同一个脚本写 characters.md/scenes.md 用的是 BIBLE（= 03-剧本/bible/），
++    #   分阶段目录启用后**读与写落在两个目录**，import-bible 必然 FileNotFoundError。
++    wb = json.loads((BIBLE / "world-bible.json").read_text(encoding="utf-8"))
+     conn = _conn()
+ 
+     chars = world_bible_to_char_anchors(wb)
+diff --git a/tools/core/convert.py b/tools/core/convert.py
+index 7c89a2e..a26ba91 100644
+--- a/tools/core/convert.py
++++ b/tools/core/convert.py
+@@ -20,19 +20,24 @@ def world_bible_to_char_anchors(wb: dict) -> list:
+       {"characters": [{"name":..., "code":..., "visual_anchor":...,
+                        "palette":..., "voice":...}],
+        "scenes":     [{"code":..., "desc":..., "int_ext":..., "time":...}]}
+-    缺 code 时按姓名首字生成拼音占位，缺 visual_anchor 时报错（不能猜）。
++    缺 code 时按姓名首字生成拼音占位。
++
++    ★ 2026-10-31：`visual_anchor` 改为**可选**。
++      此前缺锚点直接 `raise ValueError`，等于逼着剧本阶段先定长相：
++      剧作家必须先想好「左眉中段一道断口」才能写第 1 集，创作被资产卡绑死，
++      而且所有人最后都长成同一套模板（疤/痣/眼镜）。
++      现在：剧本阶段只登记「代号 + 身份」，长相留给 S3 的 character_design.py；
++      真要写锚点仍然可以写，但不再是义务，也不再是硬校验项。
+     """
+     chars = []
+     for i, c in enumerate(wb.get("characters", []), 1):
+         code = c.get("code") or ""
+         if not code:
+             code = f"CH{i:02d}"
+-        anchor = c.get("visual_anchor") or c.get("anchor_text") or ""
+-        if not anchor:
+-            raise ValueError(f"角色 {c.get('name')} 缺 visual_anchor，无法冻结锚点")
++        anchor = (c.get("visual_anchor") or c.get("anchor_text") or "").strip()
+         chars.append(Character(
+             code=code.upper(), name=c.get("name", code),
+-            anchor_text=anchor.strip(),
++            anchor_text=anchor,
+             palette=c.get("palette", ""), voice=c.get("voice", ""),
+             trigger_word=c.get("trigger_word", ""),
+             lora_path=c.get("lora_path", ""),
+diff --git a/tools/core/validate.py b/tools/core/validate.py
+index 7cec00f..f3f269b 100644
+--- a/tools/core/validate.py
++++ b/tools/core/validate.py
+@@ -31,14 +31,27 @@ SENT_SPLIT_RE = re.compile(r"[。！？!?…；;]+|\.(?=\s|$)")
+ #   用「点后跟空白或行尾」判定，避免把小数（3.5）与版本号切开。
+ # ★ 2026-10-21（反馈 2.2）：20 字上限对拉丁语系过严（20 字符西语 ≈ 3–4 个词，
+ #   等于把台词压到主谓宾都不全）。按内容分档：含中日韩字符 → 20；拉丁/西里尔 → 55 字符。
++# ★ 2026-10-31（US-BATCH-01 用户口径）：**取消拉丁语系 55 字符单句上限**。
++#   理由：高密度对白是短剧冲突感的主要来源，按字符卡句子会把攻防写成陈述句。
++#   替代约束不是「不设限」，而是**时长预算**：一句台词必须能在本镜 DUR 内说完
++#   （上限 3.8 词/秒，见 LATIN_WORDS_PER_SEC_MAX）。字符数不再参与判定。
+ CJK_SENT_MAX = 20
+-LATIN_SENT_MAX = 55
++LATIN_SENT_MAX = 0             # 0 = 不限制（仅对拉丁/西里尔生效）
++LATIN_SENTS_PER_SHOT = 4       # 单镜对白句数上限（原 2 句）：高密度对话需容纳 3–4 轮攻防
++LATIN_WORDS_PER_SEC_MAX = 3.8  # 生理语速上限（词/秒），台词时长预算的硬边界
+ DUR_TOLERANCE_SEC = 2      # 总时长边界容差（反馈 4.x：设定 60 秒，成片 59 秒就判死太硬）
+ 
+ 
++def _is_cjk(text: str) -> bool:
++    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
++
++
+ def _sent_limit(text: str) -> tuple:
+-    """→ (上限, 单位说明)。按字符集分档，不按项目语种猜（混排剧本也稳）。"""
+-    if any("\u4e00" <= ch <= "\u9fff" for ch in text):
++    """→ (上限, 单位说明)。按字符集分档，不按项目语种猜（混排剧本也稳）。
++
++    上限为 0 表示**不限字符数**；此时由 `_check_dialog` 的词/秒预算兜底。
++    """
++    if _is_cjk(text):
+         return CJK_SENT_MAX, "字"
+     return LATIN_SENT_MAX, "字符"
+ 
+@@ -92,6 +105,17 @@ def _parse_char_header(text: str) -> dict:
+     return out
+ 
+ 
++def _split_codes(v: str) -> list:
++    """把 `CHAR` 字段拆成代号列表。
++
++    ★ 2026-11-01（P31）：引擎原先假定 `CHAR: X` 只能写**一个**代号，
++      `CHAR: ELLE, KANE` 会被整串拿去比对，于是同时报 E002「未声明锚点」
++      与 E003「未登记代号」——而一镜两个角色是短剧的常态（对白交锋镜）。
++      这里统一按中英文逗号/顿号/分号/斜杠切分，单代号行为不变。
++    """
++    return [x.strip() for x in re.split(r"[,，、;；/]", v or "") if x.strip()]
++
++
+ def _check_char_anchor(conn, project, ep) -> list:
+     out = []
+     declared = _parse_char_header(ep.header.get("CHAR", ""))
+@@ -101,23 +125,35 @@ def _check_char_anchor(conn, project, ep) -> list:
+             (project, code)).fetchone()
+         if not row:
+             continue  # E003 已报未登记
++        # ★ 2026-10-31：HEADER 只写「身份/关系」时不做锚点比对。
++        #   剧本阶段不该承担长相设定（见 convert.world_bible_to_char_anchors 的注释）；
++        #   只有两边都写了锚才逐字比对，避免「不写就报错」逼人抄资产卡。
++        if not anchor or anchor.strip() in ("-", "无", "待定", "N/A"):
++            continue
++        if not (row["anchor_text"] or "").strip():
++            continue
+         if sha1(anchor) != row["anchor_hash"]:
+             out.append(Issue("E002", LEVEL_ERROR, f"HEADER#CHAR:{code}",
+                              f"锚点与库不一致\n  剧本：{anchor}\n  库内：{row['anchor_text']}"))
+-    # 集内出场但未在 HEADER 声明的
++    # 集内出场但未在 HEADER 声明的（一镜多角色按代号逐个比对，见 _split_codes）
+     for s in ep.shots:
+-        if s.char and s.char != "无" and s.char not in declared:
+-            out.append(Issue("E002", LEVEL_ERROR, s.sc_id,
+-                             f"角色 {s.char} 出场但 HEADER 未声明锚点"))
++        if not s.char or s.char == "无":
++            continue
++        for code in _split_codes(s.char):
++            if code not in declared:
++                out.append(Issue("E002", LEVEL_ERROR, s.sc_id,
++                                 f"角色 {code} 出场但 HEADER 未声明锚点"))
+     return out
+ 
+ 
+ def _check_codes(ep, known_chars: set, known_scenes: set) -> list:
+     out = []
+     for s in ep.shots:
+-        if s.char and s.char != "无" and s.char not in known_chars:
+-            out.append(Issue("E003", LEVEL_ERROR, s.sc_id,
+-                             f"CHAR 引用未登记代号：{s.char}"))
++        if s.char and s.char != "无":
++            for code in _split_codes(s.char):
++                if code not in known_chars:
++                    out.append(Issue("E003", LEVEL_ERROR, s.sc_id,
++                                     f"CHAR 引用未登记代号：{code}"))
+         if s.location and s.location not in known_scenes:
+             out.append(Issue("E003", LEVEL_ERROR, s.sc_id,
+                              f"LOCATION 引用未登记代号：{s.location}"))
+@@ -233,14 +269,25 @@ def _check_dialog(ep) -> list:
+         quoted = QUOTED_RE.findall(s.dialog)
+         body = "".join(quoted) if quoted else s.dialog.strip('“”"')
+         sents = [x for x in SENT_SPLIT_RE.split(body) if x.strip()]
+-        if len(sents) > 2:
++        cjk = _is_cjk(body)
++        max_sents = 2 if cjk else LATIN_SENTS_PER_SHOT
++        if len(sents) > max_sents:
+             out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
+-                             f"对白 {len(sents)} 句，超过 2 句上限"))
++                             f"对白 {len(sents)} 句，超过 {max_sents} 句上限"))
+         for x in sents:
+             lim, unit = _sent_limit(x.strip())
+-            if len(x.strip()) > lim:
++            if lim > 0 and len(x.strip()) > lim:
+                 out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
+                                  f"单句 {len(x.strip())} {unit}超过 {lim} {unit}：{x.strip()}"))
++        # ★ 2026-10-31：拉丁语系取消单句字符上限后，用「词/秒 × 本镜时长」兜底，
++        #   防止把 15 秒的镜头写成 90 词的独白（写得出、拍不出、配音也塞不进）。
++        if not cjk:
++            words = len(body.split())
++            budget = int(s.est_sec * LATIN_WORDS_PER_SEC_MAX)
++            if words > budget:
++                out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
++                                 f"对白 {words} 词，超出本镜 {s.est_sec} 秒可容纳的 {budget} 词"
++                                 f"（{LATIN_WORDS_PER_SEC_MAX} 词/秒上限）"))
+     return out
+ 
+ 

@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import importlib.util
 import json
 import os
@@ -136,6 +137,50 @@ def _probe_alt(py: str, module: str) -> tuple:
         return False, ""
 
 
+def _bin_candidates(name: str) -> list:
+    """常见安装位置候选（Windows 为主，其它平台返回 PATH 之外的空列表）。"""
+    if not IS_WIN:
+        return []
+    exe = name if name.lower().endswith(".exe") else name + ".exe"
+    home = Path.home()
+    la = os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
+    cands = [
+        # winget 安装的可执行文件实际落在这里，但只有**新开**的终端才在 PATH 里
+        Path(la) / "Microsoft" / "WinGet" / "Links" / exe,
+        Path(os.environ.get("ProgramFiles", r"C://Program Files")),
+        Path(os.environ.get("ProgramFiles(x86)", r"C://Program Files (x86)")),
+    ]
+    out = [str(p) for p in cands if str(p).lower().endswith(".exe") and Path(p).is_file()]
+    # 用户目录下的常见解压式安装（whisper-cli / ffmpeg 静态包等）
+    for pat in (str(home / name / "**" / exe), str(home / "*" / name / "**" / exe)):
+        out += glob.glob(pat, recursive=True)[:5]
+    # 项目自带的 envs/ 与同级工具目录
+    for pat in (str(ROOT / "envs" / "*" / exe), str(ROOT / "tools" / "bin" / exe),
+                str(ROOT / "vendor" / "**" / exe)):
+        out += glob.glob(pat, recursive=True)[:5]
+    # Program Files 下两层内（ffmpeg 常是 <PF>\ffmpeg\bin\ffmpeg.exe）
+    for base in (r"C://Program Files", r"C://Program Files (x86)", "D:////Program Files"):
+        out += glob.glob(os.path.join(base, "*", "**", exe), recursive=True)[:5]
+    # 去重保序
+    seen, uniq = set(), []
+    for p in out:
+        k = p.lower()
+        if k not in seen and Path(p).is_file():
+            seen.add(k)
+            uniq.append(p)
+    return uniq
+
+
+def _probe_bin(name: str) -> tuple:
+    """→ (state, path, 来源说明)。state ∈ present / found_elsewhere / missing。"""
+    got = shutil.which(name)
+    if got:
+        return "present", got, "PATH"
+    for p in _bin_candidates(name):
+        return "found_elsewhere", p, "不在 PATH，按安装位置找到"
+    return "missing", "", ""
+
+
 def _port_open(host: str, port: int, timeout: float = 0.8) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -204,13 +249,27 @@ def collect() -> dict:
             "hint": "" if ok else "pip install -r requirements.txt",
         })
 
-    # 3) 外部程序
+    # 3) 外部程序 —— 三态：present / found_elsewhere / missing
+    #    为什么不能只 shutil.which：
+    #      E1 装了但不在 PATH（whisper-cli 常在 C://Users//<u>//whisper-cli//...）；
+    #      E2 PATH 是进程启动快照，装完不重开终端就永远找不到（winget 的 Links 目录最典型）；
+    #      E3 依赖装在另一个解释器里（_probe_alt 找到了，却只写成 hint）。
+    #    以前这三种都归成「未安装」，于是「明明装了却说没装」。
     for name, why, req, how in BINS:
-        got = shutil.which(name)
+        state, got, src = _probe_bin(name)
+        ok = state in ("present", "found_elsewhere")
+        if state == "present":
+            detail = "%s　·　%s" % (got, why)
+            hint = ""
+        elif state == "found_elsewhere":
+            detail = "%s（%s）　·　%s" % (got, src, why)
+            hint = "已安装，只是不在 PATH；加入 PATH 后其它工具也能直接用"
+        else:
+            detail = "未找到（PATH 与常见安装目录都查过）　·　" + why
+            hint = how
         items.append({
-            "group": "外部程序", "name": name, "ok": bool(got), "required": req,
-            "detail": (got or "未在 PATH 找到") + "　·　" + why,
-            "hint": "" if got else how,
+            "group": "外部程序", "name": name, "ok": ok, "required": req,
+            "state": state, "path": got, "detail": detail, "hint": hint,
         })
 
     # 4) 配置

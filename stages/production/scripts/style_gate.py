@@ -47,114 +47,99 @@ EXIT_WAIT_CONFIRM = 4   # 与 drama.py / model_gate.py 一致：4 = 等待用户
 # ---------------------------------------------------------------------------
 # 画风三轨（唯一真源；改这里即改所有下游菜单、校验与默认规格）
 # ---------------------------------------------------------------------------
-STYLES = {
-    "3d_manhua": {
-        "label": "3D 漫剧半解说短剧",
-        "source_skill": "half-narrated-3d-short-drama",
-        "desc": "3D 渲染 + 漫剧 webtoon 分镜语言。旁白推进 + 对白爆点。资产最重（角色三视图 + 场景辅卡）。",
-        "visual_style_lock": "3D-manhua-cel",
-        "sub_modes": {
-            "guoman-3d-render": "国漫 3D 渲染流（默认）",
-            "pixar-disney": "皮克斯 Disney 流",
-            "semi-painterly-3d": "半厚涂 3D 写实流",
-        },
-        "default_sub_mode": "guoman-3d-render",
-        # 单镜时长（秒）
-        "shot_duration": {"min": 6.0, "max": 10.0, "action_min": 4.0, "action_max": 6.0},
-        # 旁白字数硬上限（中文）
-        "narration_max_chars": {"normal": 28, "emotion": 32, "monologue": 36},
-        # 时间窗
-        "reserve": {"narration_pct_max": 0.35, "dialogue_pct_max": 0.55,
-                    "gap_min_s": 0.30, "tail_min_s": 0.30},
-        "anchor_reset_cadence": {"protagonist": 4, "supporting": 6, "scene": 5},
-        "assets": {"character_main": 1, "character_3view": 1,
-                   "scene_main": 1, "scene_aux": 1, "prop_card_max": 1},
-        "first_frame_required": True,       # 必传 opening_frame_image，禁纯文字
-        "angle_match_required": True,       # 首帧角度必须与镜头角度匹配
-        "storyboard_topology": "per_shot",  # 不强制三格
-        "delivery_stop": "assembled_video", # 出无旁白成片 + 独立旁白包
-        "narrator_volume_default": 1.8,
-    },
-    "2d_animation": {
-        "label": "2D 动画半解说短剧",
-        "source_skill": "half-narrated-2d-short-drama",
-        "desc": "2D 赛璐珞 / 国漫 webtoon。旁白锁定语音窗口、保留原声对白。**交付止于旁白交接，不串成片。**",
-        "visual_style_lock": "2D-cel-webtoon",
-        "sub_modes": {
-            "guoman-webtoon": "国漫 webtoon 流（默认）",
-            "cel-anime": "日漫赛璐珞流",
-            "light-color-webtoon": "轻彩漫 webtoon 流",
-        },
-        "default_sub_mode": "guoman-webtoon",
-        "shot_duration": {"min": 4.0, "max": 10.0, "action_min": 4.0, "action_max": 10.0},
-        "narration_max_chars": {"normal": 32, "emotion": 36, "monologue": 40},
-        "reserve": {"narration_pct_max": 0.40, "dialogue_pct_max": 0.60,
-                    "gap_min_s": 0.20, "tail_min_s": 0.20},
-        "anchor_reset_cadence": {"protagonist": 3, "supporting": 5, "scene": 4},
-        "assets": {"character_main": 1, "character_3view": 0,
-                   "scene_main": 1, "scene_aux": 0, "prop_card_max": 1},
-        "first_frame_required": False,      # 首帧是可选连续性参考
-        "angle_match_required": False,
-        "storyboard_topology": "per_shot",
-        "delivery_stop": "narration_handoff",   # 终点 = 旁白交接
-        "narrator_volume_default": 1.15,        # 语速默认 1.15（见下 speed 字段）
-        "narrator_speed_default": 1.15,
-    },
-    "live_action": {
-        "label": "半解说真人短剧",
-        "source_skill": "half-narrated-live-action-short-drama",
-        "desc": "真人写实。旁白推进 + 角色对白。**强制「1 视频片段 = 1 张三格时间分镜」**，交付成片 + 旁白 + 可选字幕。",
-        "visual_style_lock": "live-action-photographic",
-        "sub_modes": {},
-        # 子模式由 configs/styles.json 合并进来（见文件末尾 _merge_style_lib）；
-        # 给一个默认值，避免「带了子模式却没默认」时 `style set live_action` 直接报错。
-        "default_sub_mode": "short-form-drama",
-        "shot_duration": {"min": 5.0, "max": 15.0, "action_min": 5.0, "action_max": 15.0},
-        "narration_max_chars": {"normal": 60, "emotion": 70, "monologue": 80},
-        "reserve": {"narration_pct_max": 0.60, "dialogue_pct_max": 0.70,
-                    "gap_min_s": 0.20, "tail_min_s": 0.20},
-        "anchor_reset_cadence": {"protagonist": 0, "supporting": 0, "scene": 0},  # 不设固定周期
-        "assets": {"character_main": 1, "character_3view": 0, "scene_main": 1,
-                   "scene_aux": 0, "prop_card_max": 0},
-        "first_frame_required": True,       # 干净单格图作构图/起始参考
-        "angle_match_required": False,
-        "storyboard_topology": "three_panel_per_clip",   # ★ 强制三格
-        "delivery_stop": "final_video",
-        "narrator_volume_default": 1.0,
-    },
-}
-
-ORDER = ("3d_manhua", "2d_animation", "live_action")
+_CFG_DIR = pathlib.Path(__file__).resolve().parents[3] / "configs"
 
 
-def style_lib() -> dict:
-    """读 `configs/styles.json`（系统默认风格库）→ {id: 条目}。
-
-    为什么从这里读而不是把 6 条硬编码进 STYLES：风格文案经常增补（官方库 306 条），
-    硬编码会让「引擎接受的子模式」和「界面能选的风格」两套清单慢慢漂开。
-    读不到就返回空（脚本被拷进项目、仓库不在旁边时属于正常情况）。
-    """
+def _load_json(name: str) -> dict:
     try:
-        root = pathlib.Path(__file__).resolve().parents[3]
-        d = json.loads((root / "configs" / "styles.json").read_text(encoding="utf-8-sig"))
-    except Exception:                                             # noqa: BLE001
+        return json.loads((_CFG_DIR / name).read_text(encoding="utf-8-sig"))
+    except Exception:                                          # noqa: BLE001
         return {}
-    out = {}
-    for it in d.get("styles") or []:
-        if isinstance(it, dict) and it.get("id"):
-            out[str(it["id"])] = it
+
+
+try:
+    import drama_profile as _P      # 单一档案 drama.json（同目录）
+except Exception:                                              # noqa: BLE001
+    _P = None
+
+
+# ---------------------------------------------------------------------------
+# 四维之「形态」：tracks.json 只放形态规格（时长/资产/首帧/拓扑/交付）
+# 四维之「叙事」：narratives.json 只放叙事口径（旁白配额/时间窗）
+# 视觉（look）在 looks.json，通道在 model-plan / capability 卡 —— 互不绑定。
+# ---------------------------------------------------------------------------
+_TRACKS_CFG = _load_json("tracks.json")
+_NARR_CFG = _load_json("narratives.json")
+_LOOKS_CFG = _load_json("looks.json")
+
+ORDER = tuple(_TRACKS_CFG.get("order") or ("3d_manhua", "2d_animation", "live_action"))
+NARRATIVE_ORDER = tuple(_NARR_CFG.get("order") or ("dialogue", "narration"))
+DEFAULT_NARRATIVE = str(_NARR_CFG.get("default") or "dialogue")
+
+# STYLES 是 tracks.json 的**运行时视图**：形态字段原样带过来，
+# 再把「默认叙事模式（对白驱动）」的配额并进去 —— 这样 half_narrated_check
+# 读 `spec["narration_max_chars"]` 的老代码不用改。
+STYLES = {}
+for _k, _t in (_TRACKS_CFG.get("tracks") or {}).items():
+    _item = dict(_t)
+    _narr = ((_NARR_CFG.get("modes") or {}).get(DEFAULT_NARRATIVE) or {})
+    _item["narration_max_chars"] = (_narr.get("narration_max_chars") or {}).get(_k) or {}
+    _item["reserve"] = (_narr.get("reserve") or {}).get(_k) or {}
+    # sub_modes 只放**渲染流**，不再混入题材风格
+    _item["sub_modes"] = {kk: vv.get("label", kk) for kk, vv in (_item.get("render_styles") or {}).items()}
+    _item["default_sub_mode"] = _item.get("default_render_style")
+    _item["source_skill"] = ""
+    STYLES[_k] = _item
+
+
+def narrative_spec(mode: str, track: str) -> dict:
+    """取某叙事模式在某形态下的配额（旁白字数 / 时间窗）。"""
+    m = ((_NARR_CFG.get("modes") or {}).get(mode) or {})
+    out = {k: m.get(k) for k in ("label", "desc", "narration_per_ep_max",
+                                 "narration_sec_max", "dialogue_lines_per_60s_min")}
+    out["narration_max_chars"] = (m.get("narration_max_chars") or {}).get(track) or {}
+    out["reserve"] = (m.get("reserve") or {}).get(track) or {}
     return out
 
 
-def _merge_style_lib() -> None:
-    """把风格库里的条目挂到各自轨道的 sub_modes 上（轨道不匹配的不挂）。"""
-    for sid, it in style_lib().items():
-        track = it.get("track")
-        if track in STYLES:
-            STYLES[track]["sub_modes"].setdefault(sid, it.get("name") or sid)
+def merge_spec(track: str, narrative: str = DEFAULT_NARRATIVE) -> dict:
+    """形态 + 叙事 → 一份完整规格。style-plan 的 `spec` 就是它。"""
+    t = STYLES[track]
+    spec = {k: t.get(k) for k in ("shot_duration", "anchor_reset_cadence", "assets",
+                                  "first_frame_required", "angle_match_required",
+                                  "storyboard_topology", "delivery_stop")}
+    spec.update(narrative_spec(narrative, track))
+    return spec
 
 
-_merge_style_lib()
+def looks_lib() -> dict:
+    """视觉风格库 → {id: {name, prompt, tags, recommended_for}}。"""
+    return {str(x.get("id")): x for x in (_LOOKS_CFG.get("looks") or []) if isinstance(x, dict)}
+
+
+def compose_style_prompt(look_id: str, track: str, render_style: str | None) -> str:
+    """look 的 prompt ｜ 该轨渲染流的 prompt。真人轨没有渲染流，只用 look。"""
+    look = looks_lib().get(look_id or "") or {}
+    parts = [str(look.get("prompt") or "").strip()]
+    rs = ((STYLES.get(track, {}).get("render_styles") or {}).get(render_style or "") or {})
+    if rs.get("prompt"):
+        parts.append(str(rs["prompt"]).strip())
+    return ", ".join([x for x in parts if x])
+
+
+def style_lib() -> dict:
+    """兼容旧调用：返回**全部轨道的渲染流**（并集），不再是题材风格库。
+
+    题材风格请用 `looks_lib()`。两者分别是「轨道内的渲染手法」与「跨轨的视觉题材」，
+    以前它们混在一个 sub_modes 字典里，是「画风库和 3D/2D/真人模式串到一起」的根因。
+    """
+    out = {}
+    for track in ORDER:
+        for kk, vv in ((STYLES.get(track, {}).get("render_styles") or {})).items():
+            if kk not in out:
+                out[kk] = {"name": vv.get("label", kk), "prompt": vv.get("prompt", ""),
+                           "track": track}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -220,11 +205,21 @@ def save_plan(ws: pathlib.Path, plan: dict) -> pathlib.Path:
 
 # ---------------------------------------------------------------------------
 def gate_state(ws: pathlib.Path) -> dict:
+    # ★ 2026-11-01：drama.json 优先。它是四维的单一真源；style-plan 只在过渡期兜底。
+    if _P is not None:
+        d = _P.load(ws)
+        if d is not None:
+            f = d.get("format") or {}
+            if f.get("track") and (d.get("confirmed") or {}).get("format_at"):
+                return {"confirmed": True, "choice": f.get("track"), "sub_mode": None,
+                        "look": f.get("look"), "narrative": f.get("narrative") or "dialogue",
+                        "reason": "", "source": "drama.json"}
     plan = load_plan(ws)
     st = plan.get("style") or {}
     if st.get("choice") and st.get("confirmed"):
         return {"confirmed": True, "choice": st["choice"],
-                "sub_mode": st.get("sub_mode"), "reason": ""}
+                "sub_mode": st.get("sub_mode"), "look": st.get("look"),
+                "narrative": st.get("narrative"), "reason": ""}
     return {"confirmed": False, "choice": None, "sub_mode": None,
             "reason": "本项目尚未确认画风（任务开始前必须确认）"}
 
@@ -240,8 +235,9 @@ def require(ws: pathlib.Path, expect: str | None = None) -> tuple:
                        "中途更换会导致已产出素材全部作废。"
                        % (STYLES[st["choice"]]["label"], STYLES.get(expect, {}).get("label", expect)))
     s = STYLES[st["choice"]]
-    sub = ("，子模式 %s" % st["sub_mode"]) if st.get("sub_mode") else ""
-    return True, "已确认画风：%s（%s%s）" % (s["label"], st["choice"], sub)
+    sub = ("，渲染流 %s" % st["sub_mode"]) if st.get("sub_mode") else ""
+    look = ("，look %s" % st["look"]) if st.get("look") else "（未指定 look）"
+    return True, "已确认画风：%s（%s%s%s）" % (s["label"], st["choice"], sub, look)
 
 
 def render_menu(indent: str = "    ") -> str:
@@ -279,8 +275,22 @@ def render_request(ws: pathlib.Path) -> str:
 
 # ---------------------------------------------------------------------------
 def cmd_list(a) -> int:
-    print("【画风三轨】可选：")
+    print("【形态 track】—— 决定资产规格 / 单镜时长 / 分镜拓扑 / 交付")
     print(render_menu())
+    print()
+    print("【视觉 look】—— 纯 prompt，可跨轨使用（%d 条）" % len(looks_lib()))
+    for lid, look in looks_lib().items():
+        tags = "、".join(look.get("tags") or [])
+        rec = ("（推荐轨：%s）" % "/".join(look.get("recommended_for") or [])) if look.get("recommended_for") else ""
+        print("   %-20s %-10s %s%s" % (lid, look.get("name") or "", tags, rec))
+    print()
+    print("【叙事 narrative】—— 决定旁白配额与台词密度")
+    for m in NARRATIVE_ORDER:
+        md = (_NARR_CFG.get("modes") or {}).get(m) or {}
+        print("   %-10s %s" % (m, md.get("label") or ""))
+        print("              旁白/集 ≤%s 条，≤%s 秒；台词密度 ≥%s 句/60s"
+              % (md.get("narration_per_ep_max"), md.get("narration_sec_max"),
+                 md.get("dialogue_lines_per_60s_min")))
     return 0
 
 
@@ -298,6 +308,12 @@ def cmd_status(a) -> int:
         print("画风      : [已确认] %s（%s）" % (s["label"], st["choice"]))
         if st.get("sub_mode"):
             print("子模式    : %s（%s）" % (st["sub_mode"], s["sub_modes"].get(st["sub_mode"], "?")))
+        _ln = str((plan.get("style") or {}).get("look_name") or
+                  (looks_lib().get(st.get("look") or "") or {}).get("name") or "")
+        _nl = str((plan.get("style") or {}).get("narrative_label") or
+                  ((_NARR_CFG.get("modes") or {}).get(st.get("narrative") or DEFAULT_NARRATIVE) or {}).get("label") or "")
+        print("视觉 look   : %s%s" % (st.get("look") or "（未指定）", ("｜" + _ln) if _ln else ""))
+        print("叙事模式    : %s%s" % (st.get("narrative") or DEFAULT_NARRATIVE, ("｜" + _nl) if _nl else ""))
         print("visual_style_lock : %s" % s["visual_style_lock"])
         print("单镜时长  : %g-%g 秒（动作/快切 %g-%g）"
               % (s["shot_duration"]["min"], s["shot_duration"]["max"],
@@ -307,6 +323,9 @@ def cmd_status(a) -> int:
                  s["narration_max_chars"]["monologue"]))
         print("交付终点  : %s" % s["delivery_stop"])
         print("确认时间  : %s" % ((plan.get("style") or {}).get("confirmed_at") or "-"))
+        if _P is not None:
+            _d = _P.load(ws)
+            print("四维档案  : %s" % (_P.fmt_line(_d) if _d else "（drama.json 尚未生成，用 drama.py profile migrate 建立）"))
     else:
         print("画风      : [未确认] 任务开始前必须确认")
     if getattr(a, "json", False):
@@ -315,7 +334,8 @@ def cmd_status(a) -> int:
     return 0
 
 
-def _do_set(ws: pathlib.Path, choice: str, sub_mode: str | None, source: str = "cli") -> int:
+def _do_set(ws: pathlib.Path, choice: str, sub_mode: str | None, source: str = "cli",
+            look: str | None = None, narrative: str | None = None) -> int:
     if choice not in STYLES:
         print("[FAIL] 未知画风：%s（应为 %s）" % (choice, "|".join(ORDER)))
         return 2
@@ -324,33 +344,54 @@ def _do_set(ws: pathlib.Path, choice: str, sub_mode: str | None, source: str = "
     if subs:
         sub_mode = sub_mode or s.get("default_sub_mode") or next(iter(subs), None)
         if sub_mode not in subs:
-            print("[FAIL] 未知子模式：%s（%s 可选 %s）" % (sub_mode, choice, "|".join(subs)))
+            print("[FAIL] 未知渲染流：%s（%s 可选 %s）" % (sub_mode, choice, "|".join(subs)))
             return 2
     else:
         if sub_mode:
-            print("[WARN] %s 无子模式，忽略 --sub-mode %s" % (choice, sub_mode))
+            print("[WARN] %s 无渲染流，忽略 --sub-mode %s" % (choice, sub_mode))
         sub_mode = None
 
     plan = load_plan(ws)
     prev = plan.get("style") or {}
+
+    # 视觉 look：显式给 > 沿用上一次 > 空（允许不指定，但会在状态里提示）
+    look = (look or "").strip() or (prev.get("look") or "")
+    if look and look not in looks_lib():
+        print("[FAIL] 未知 look：%s（可选 %s）" % (look, "|".join(looks_lib())))
+        return 2
+    # 叙事模式：显式给 > 沿用上一次 > 默认对白驱动
+    narrative = (narrative or "").strip() or (prev.get("narrative") or DEFAULT_NARRATIVE)
+    if narrative not in NARRATIVE_ORDER:
+        print("[FAIL] 未知叙事模式：%s（可选 %s）" % (narrative, "|".join(NARRATIVE_ORDER)))
+        return 2
+
     plan["style"] = {
         "choice": choice,
         "label": s["label"],
         "sub_mode": sub_mode,
+        "look": look,
+        "look_name": (looks_lib().get(look) or {}).get("name", ""),
+        "narrative": narrative,
+        "narrative_label": ((_NARR_CFG.get("modes") or {}).get(narrative) or {}).get("label", ""),
         "visual_style_lock": s["visual_style_lock"],
-        "style_prompt": (style_lib().get(sub_mode or "") or {}).get("prompt", ""),
-        "style_name": (style_lib().get(sub_mode or "") or {}).get("name", ""),
-        "source_skill": s["source_skill"],
+        "style_prompt": compose_style_prompt(look, choice, sub_mode),
+        "style_name": "%s%s" % ((looks_lib().get(look) or {}).get("name", "") or "（未指定 look）",
+                                (" / " + s["sub_modes"].get(sub_mode, "")) if sub_mode else ""),
+        "source_skill": s.get("source_skill", ""),
         "confirmed": True,
         "confirmed_at": _now(),
         "confirmed_by": source,
-        "spec": {k: s[k] for k in ("shot_duration", "narration_max_chars", "reserve",
-                                   "anchor_reset_cadence", "assets", "first_frame_required",
-                                   "angle_match_required", "storyboard_topology", "delivery_stop")},
+        "spec": merge_spec(choice, narrative),
     }
     if prev.get("choice"):
         plan.setdefault("history", []).append({"at": _now(), "from": prev.get("choice"), "to": choice})
     p = save_plan(ws, plan)
+    # ★ 双写：drama.json 是四维真源，style-plan 保留给还没改过来的脚本读
+    if _P is not None:
+        _d = _P.effective(ws)
+        _d.setdefault("format", {}).update({"track": choice, "look": look, "narrative": narrative})
+        _d.setdefault("confirmed", {})["format_at"] = plan["style"]["confirmed_at"]
+        _P.save(ws, _d)
     print("[OK] 已确认画风 = %s（%s%s）" % (s["label"], choice,
                                             "，子模式 %s" % sub_mode if sub_mode else ""))
     print("     确认单：%s" % p)
@@ -368,7 +409,8 @@ def _do_set(ws: pathlib.Path, choice: str, sub_mode: str | None, source: str = "
 
 def cmd_set(a) -> int:
     ws = _resolve_ws(getattr(a, "workspace", None))
-    return _do_set(ws, a.choice, getattr(a, "sub_mode", None))
+    return _do_set(ws, a.choice, getattr(a, "sub_mode", None),
+                   look=getattr(a, "look", None), narrative=getattr(a, "narrative", None))
 
 
 def cmd_reset(a) -> int:
@@ -450,9 +492,14 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("set", help="记录确认：set 3d_manhua|2d_animation|live_action [--sub-mode ...]")
+    p = sub.add_parser("set", help="记录确认：set <track> [--look ID] [--sub-mode 渲染流] [--narrative dialogue|narration]")
     p.add_argument("choice", choices=list(ORDER))
-    p.add_argument("--sub-mode", dest="sub_mode", default=None)
+    p.add_argument("--sub-mode", dest="sub_mode", default=None,
+                   help="该轨的渲染流（3D/2D 才有；真人轨忽略）")
+    p.add_argument("--look", default=None,
+                   help="视觉 look（configs/looks.json 里的 id）。与 track 无关，可跨轨使用")
+    p.add_argument("--narrative", default=None, choices=list(NARRATIVE_ORDER),
+                   help="叙事模式：dialogue（默认，对白驱动）｜narration（半解说）")
     p.set_defaults(fn=cmd_set)
 
     p = sub.add_parser("reset", help="清除确认（换画风前用）")

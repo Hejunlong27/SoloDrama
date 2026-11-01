@@ -77,3 +77,6 @@ stages/production/assets/bgm/**
 !stages/production/assets/bgm/README.md
 !stages/production/assets/bgm/bgm-library.json
 !stages/production/assets/bgm/bgm-library.example.json
+
+# 排查用临时文件（probe 输出、跑批日志、一次性脚本产物），不入库
+_scratch/

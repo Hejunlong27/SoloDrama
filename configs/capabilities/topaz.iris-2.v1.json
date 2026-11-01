@@ -1,0 +1,25 @@
+{
+  "id": "topaz.iris-2.v1",
+  "stage": "edit",
+  "engine": "topaz",
+  "label": "Topaz Video 本地超分（iris-2）",
+  "paths": {
+    "install_dir": "D:\\Program Files\\Topaz Labs LLC\\Topaz Video",
+    "model_dir": "C:\\ProgramData\\Topaz Labs LLC\\Topaz Video\\models",
+    "model_data_dir": "D:\\ProgramData\\Topaz Labs LLC\\Topaz Video\\models"
+  },
+  "model": "iris-2",
+  "measured": {
+    "wall_sec_per_ep": 161,
+    "output": "1080x1920"
+  },
+  "preflight": [
+    "exe_exists",
+    "model_weights"
+  ],
+  "known_issues": [
+    "模型定义在 C 盘、权重在 D 盘，自动探测会把 model_data_dir 指错（指到只有 json 的 C 盘）",
+    "iris-3 没有下载过权重，只有 iris-2 —— 报「权重不在 models 里」先看这条",
+    "Topaz 自带 ffmpeg 不含 libass，不能同一步放大 + 烧字幕"
+  ]
+}

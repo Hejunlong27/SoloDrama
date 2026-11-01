@@ -179,6 +179,25 @@ def main() -> int:
         errs += e
         warns += w
 
+    # ★ 2026-11-01：把「提示词一致性」并进来。理由很实在 —— EP03 有 3 个镜、EP04 有 5 个镜
+    #   出现「SUBJECT 锁 1 人、SHOT 写 Two bodies」，出片当然乱，但此前**没有任何一步报错**。
+    #   这类错误必须在计费之前挡住，而且判据要能机器复算（见 prompt_gate.py 的 C1–C5）。
+    if a.ep:
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+            import prompt_gate as _pg
+            _rep = _pg.run_ep(ws, a.ep)
+            if _rep.get("error"):
+                warns.append("prompt_gate：%s" % _rep["error"])
+            else:
+                for _s in _rep.get("shots") or []:
+                    for _i in _s.get("issues") or []:
+                        _line = "%s %s %s：%s" % (_s["shot"], _i["code"], _i["level"], _i["msg"])
+                        (errs if _i["level"] == "ERROR" else warns).append(_line)
+        except Exception as _exc:                                # noqa: BLE001
+            warns.append("prompt_gate 未执行（%s: %s）" % (type(_exc).__name__, _exc))
+
     print("=" * 74)
     print("入 data/ 生成端门禁（B7）")
     print("=" * 74)

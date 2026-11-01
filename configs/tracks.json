@@ -1,0 +1,75 @@
+{
+  "_comment": "形态轨道（track）—— 只放「形态规格」，不放任何视觉风格、不放叙事口径。视觉见 looks.json，叙事见 narratives.json。改这里即改所有下游菜单/校验/默认规格。",
+  "version": 2,
+  "order": ["3d_manhua", "2d_animation", "live_action"],
+  "tracks": {
+    "3d_manhua": {
+      "label": "3D 漫剧",
+      "desc": "3D 渲染 + 漫剧分镜语言。资产最重（角色三视图 + 场景辅卡），首帧强制且角度必须匹配。",
+      "visual_style_lock": "3D-manhua-cel",
+      "render_styles": {
+        "guoman-3d-render": {
+          "label": "国漫 3D 渲染流（默认）",
+          "prompt": "3D rendered, Chinese-animation manhua-cel look, clean dark outlines on top of 3D shading, soft PBR materials with non-photoreal finish, dynamic manhua panel composition, dramatic cinematic light, webtoon-friendly vertical framing"
+        },
+        "pixar-disney": {
+          "label": "皮克斯 Disney 流",
+          "prompt": "3D rendered Pixar/Disney-style, rounded soft shapes, large expressive eyes, soft cinematic lighting, stylized non-photoreal materials, manhua panel composition with dynamic angles"
+        },
+        "semi-painterly-3d": {
+          "label": "半厚涂 3D 写实流",
+          "prompt": "3D rendered with painterly thick-coating, semi-realistic proportions, PBR materials with brushstroke texture, dramatic cinematic light, manhua panel composition, webtoon-friendly framing"
+        }
+      },
+      "default_render_style": "guoman-3d-render",
+      "shot_duration": { "min": 6, "max": 10, "action_min": 4, "action_max": 6 },
+      "anchor_reset_cadence": { "protagonist": 4, "supporting": 6, "scene": 5 },
+      "assets": { "character_main": 1, "character_3view": 1, "scene_main": 1, "scene_aux": 1, "prop_card_max": 1 },
+      "first_frame_required": true,
+      "angle_match_required": true,
+      "storyboard_topology": "per_shot",
+      "delivery_stop": "assembled_video"
+    },
+    "2d_animation": {
+      "label": "2D 动画",
+      "desc": "2D 赛璐珞 / webtoon。资产最轻（角色卡 ×1、场景卡 ×1），首帧可选，逐镜分镜。",
+      "visual_style_lock": "2D-cel-webtoon",
+      "render_styles": {
+        "guoman-webtoon": {
+          "label": "国漫 webtoon 流（默认）",
+          "prompt": "2D cel-shaded animation, Chinese-animation webtoon style, clean bold black outlines, flat color fills with cel highlights"
+        },
+        "cel-anime": {
+          "label": "日漫赛璐珞流",
+          "prompt": "2D cel-shaded anime, Japanese TV-anime cel style, soft cinematic lighting, clean dark line art, anime proportions, flat fills with subtle gradients, expressive anime micro-expressions"
+        },
+        "light-color-webtoon": {
+          "label": "轻彩漫 webtoon 流",
+          "prompt": "2D webtoon / manhua full-color style, flat color fills, minimal shading, panel-driven composition, bold line art, bright clean backgrounds, expressive reaction shots"
+        }
+      },
+      "default_render_style": "guoman-webtoon",
+      "shot_duration": { "min": 4, "max": 10, "action_min": 4, "action_max": 10 },
+      "anchor_reset_cadence": { "protagonist": 3, "supporting": 5, "scene": 4 },
+      "assets": { "character_main": 1, "character_3view": 0, "scene_main": 1, "scene_aux": 0, "prop_card_max": 1 },
+      "first_frame_required": false,
+      "angle_match_required": false,
+      "storyboard_topology": "per_shot",
+      "delivery_stop": "final_video"
+    },
+    "live_action": {
+      "label": "真人写实",
+      "desc": "摄影级真实感。角色卡 16:9 纯白（左脸特写 + 右三视图半身），场景卡绝对无人物。",
+      "visual_style_lock": "live-action-photographic",
+      "render_styles": {},
+      "default_render_style": null,
+      "shot_duration": { "min": 5, "max": 15, "action_min": 5, "action_max": 15 },
+      "anchor_reset_cadence": { "protagonist": 0, "supporting": 0, "scene": 0 },
+      "assets": { "character_main": 1, "character_3view": 0, "scene_main": 1, "scene_aux": 0, "prop_card_max": 0 },
+      "first_frame_required": true,
+      "angle_match_required": false,
+      "storyboard_topology": "one_frame_per_clip",
+      "delivery_stop": "final_video"
+    }
+  }
+}

@@ -1,0 +1,190 @@
+{
+  "_comment": "视觉风格（look）—— 纯 prompt，**禁止**出现 track / narrative / delivery_stop / narration_* 字段。一条 look 可被任意 track 引用；轨道内的「渲染流」在 tracks.json.render_styles，两者拼装使用。",
+  "version": 2,
+  "compose": "style_prompt = look.prompt ｜ track.render_styles[key].prompt（真人轨无渲染流，只用 look）",
+  "looks": [
+    {
+      "id": "surreal-cinema",
+      "name": "电影超现实",
+      "name_en": "Cinematic Surrealism",
+      "prompt": "surreal live-action film look, impossible spatial logic, symbolic visual logic, dreamlike continuity, poetic composition, unexpected juxtaposition, restrained but uncanny color, soft haze, philosophical mood, visually intelligent absurdity, cinematic art-house surrealism, no fantasy spectacle overload.",
+      "tags": [
+        "真人",
+        "超现实",
+        "文艺"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "live_action"
+      ]
+    },
+    {
+      "id": "cinematic",
+      "name": "电影超写实",
+      "name_en": "Cinematic Hyper-realistic",
+      "prompt": "真人电影写实摄影，原生相机直出，无 AI 塑料感，自然真实皮肤肌理，原生环境光影，柔和自然明暗，丁达尔效应，真实景深虚化，细腻原生材质，轻微自然噪点，真人实拍质感，色彩自然还原",
+      "tags": [
+        "真人",
+        "写实",
+        "电影感"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "live_action"
+      ]
+    },
+    {
+      "id": "magical-realism",
+      "name": "拉美魔幻现实",
+      "name_en": "Magical Realism",
+      "prompt": "Latin American magical-realist live-action look, vivid yet grounded color, poetic domestic atmosphere, warm humid light, textured everyday surfaces, subtle impossible details woven into ordinary life, calm characters accepting the strange as normal, family-memory feeling, grounded surreal warmth, no fantasy spectacle or heavy VFX.",
+      "tags": [
+        "真人",
+        "魔幻",
+        "文艺"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "live_action"
+      ]
+    },
+    {
+      "id": "jp-youth-film",
+      "name": "日式青春胶片",
+      "name_en": "Japanese Youth Film",
+      "prompt": "日式青春胶片：强调胶片颗粒、年代色偏、生活化场景、旧广告牌、钨丝灯、街头烟火气和真实抓拍感，画面应有怀旧质感、轻微褪色、柔和动态模糊和时代记忆。核心描述：日式青春胶片，适合角色资产生成、风格化提示词和短片视觉统一。色彩关键词：胶片暖黄、褪色绿色、钨丝灯橙、旧照片灰调。光影关键词：自然窗光、钨丝灯、街灯反射、轻微过曝。镜头关键词：胶片抓拍、生活化中景、轻颗粒、纪实构图。环境关键词：旧街道、霓虹招牌、老式室内、年代道具。生成时必须把这些风格特征落实到角色造型、服装材质、神态动作、背景空间和整体画面气质中，而不是只写风格名称。",
+      "tags": [
+        "真人",
+        "胶片",
+        "怀旧"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "live_action"
+      ]
+    },
+    {
+      "id": "short-form-drama",
+      "name": "短剧风格",
+      "name_en": "Short-Form Drama",
+      "prompt": "contemporary short-form drama live-action look, high-emotion performance, direct dramatic tension, bright but dramatic lighting, strong facial expression, simplified but believable production design, heightened emotional readability, glossy contemporary color, fast-recognizable drama atmosphere, no platform UI, no captions, no subtitles, no title cards, no poster layout.",
+      "tags": [
+        "真人",
+        "短剧",
+        "强情绪"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "live_action"
+      ]
+    },
+    {
+      "id": "cel-shading",
+      "name": "日式赛璐璐",
+      "name_en": "Japanese Cel Shading",
+      "prompt": "日式赛璐璐，正统日系清新动画，干净利落线条，均匀自然平涂，柔和明暗分界，简约治愈日系美学，画面干净通透无 AI 糊感",
+      "tags": [
+        "二维",
+        "动画",
+        "赛璐璐"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "2d_animation"
+      ]
+    },
+    {
+      "id": "cn-anime-style",
+      "name": "国漫二次元常用风格",
+      "name_en": "Common Chinese Anime/Manga Style",
+      "prompt": "国漫二次元常用风格：强调角色设计感、线条节奏、色块关系、夸张轮廓、情绪化光影和插画构图，画面应有清晰主次、强记忆点和适合二创传播的视觉符号。核心描述：国漫二次元常用风格，适合角色资产生成、风格化提示词和短片视觉统一。色彩关键词：高识别主色、干净色块、情绪化渐变、角色专属配色。光影关键词：插画式主光、轮廓高光、情绪阴影、局部强调光。镜头关键词：角色海报构图、动态姿态、强剪影、视觉中心明确。环境关键词：风格化背景、符号化场景、图形化装饰、叙事道具。生成时必须把这些风格特征落实到角色造型、服装材质、神态动作、背景空间和整体画面气质中，而不是只写风格名称。",
+      "tags": [
+        "二维",
+        "国漫",
+        "插画感"
+      ],
+      "source": "runninghub-official",
+      "recommended_for": [
+        "2d_animation"
+      ]
+    },
+    {
+      "id": "guoman-xianxia",
+      "name": "国漫仙侠",
+      "name_en": "",
+      "prompt": "Chinese xianxia fantasy, cultivation world, floating mountains, flowing robes, jade and bronze ornaments, mist and golden runes, mythic scale",
+      "tags": [
+        "仙侠",
+        "东方",
+        "玄幻"
+      ],
+      "source": "local",
+      "recommended_for": []
+    },
+    {
+      "id": "urban-entitled-3d",
+      "name": "都市豪门",
+      "name_en": "",
+      "prompt": "contemporary urban drama, old-money interiors, floor-to-ceiling glass, tailored dark suits, restrained warm practicals, muted wealth palette",
+      "tags": [
+        "都市",
+        "豪门",
+        "情感"
+      ],
+      "source": "local",
+      "recommended_for": []
+    },
+    {
+      "id": "suspense-noir",
+      "name": "悬疑暗调",
+      "name_en": "",
+      "prompt": "neo-noir suspense, hard side light, deep shadows, wet asphalt reflections, desaturated palette with one cold accent, clinical tension",
+      "tags": [
+        "悬疑",
+        "暗调",
+        "犯罪"
+      ],
+      "source": "local",
+      "recommended_for": []
+    },
+    {
+      "id": "jp-romance-cel",
+      "name": "日系恋爱",
+      "name_en": "",
+      "prompt": "Japanese romance anime look, soft bloom, pastel skies, delicate line art, gentle rim light, intimate two-shot framing",
+      "tags": [
+        "日系",
+        "恋爱",
+        "清新"
+      ],
+      "source": "local",
+      "recommended_for": []
+    },
+    {
+      "id": "cn-comedy-webtoon",
+      "name": "国漫搞笑",
+      "name_en": "",
+      "prompt": "Chinese webtoon comedy, exaggerated expressions, bold flat colors, punchy contrast, wide reaction shots, playful timing",
+      "tags": [
+        "搞笑",
+        "日常",
+        "轻喜"
+      ],
+      "source": "local",
+      "recommended_for": []
+    },
+    {
+      "id": "ink-wash-2d",
+      "name": "水墨二维",
+      "name_en": "",
+      "prompt": "Chinese ink-wash animation, sumi-e brush strokes, negative space, restrained monochrome with a single vermilion accent, poetic stillness",
+      "tags": [
+        "水墨",
+        "国风",
+        "文艺"
+      ],
+      "source": "local",
+      "recommended_for": []
+    }
+  ]
+}

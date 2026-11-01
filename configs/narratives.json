@@ -1,0 +1,34 @@
+{
+  "_comment": "叙事模式（narrative）—— 与形态、视觉、通道正交。只决定「谁在讲这个故事」：对白驱动还是旁白驱动。配额按形态分档，因为不同轨的单镜时长不同。",
+  "version": 2,
+  "order": ["dialogue", "narration"],
+  "default": "dialogue",
+  "modes": {
+    "dialogue": {
+      "label": "对白驱动（默认，2026-10-28 定稿）",
+      "desc": "对白承担背景/冲突/反转/关系变化。旁白只做转场与留白，每集 ≤2 条、≤8 秒、只在首尾，不得解说画面。",
+      "narration_per_ep_max": 2,
+      "narration_sec_max": 8,
+      "dialogue_lines_per_60s_min": 10,
+      "narration_max_chars": { "3d_manhua": { "normal": 28, "emotion": 32, "monologue": 36 },
+                              "2d_animation": { "normal": 32, "emotion": 36, "monologue": 40 },
+                              "live_action": { "normal": 60, "emotion": 70, "monologue": 80 } },
+      "reserve": { "3d_manhua": { "narration_pct_max": 0.35, "dialogue_pct_max": 0.55, "gap_min_s": 0.3, "tail_min_s": 0.3 },
+                  "2d_animation": { "narration_pct_max": 0.4, "dialogue_pct_max": 0.6, "gap_min_s": 0.2, "tail_min_s": 0.2 },
+                  "live_action": { "narration_pct_max": 0.6, "dialogue_pct_max": 0.7, "gap_min_s": 0.2, "tail_min_s": 0.2 } }
+    },
+    "narration": {
+      "label": "旁白驱动（半解说残留下来的旧模式，非默认）",
+      "desc": "旁白推进、对白做爆点。**只在明确要做半解说时才选它**；做常规短剧请用 dialogue。",
+      "narration_per_ep_max": 99,
+      "narration_sec_max": 999,
+      "dialogue_lines_per_60s_min": 0,
+      "narration_max_chars": { "3d_manhua": { "normal": 36, "emotion": 40, "monologue": 44 },
+                              "2d_animation": { "normal": 40, "emotion": 44, "monologue": 48 },
+                              "live_action": { "normal": 70, "emotion": 80, "monologue": 90 } },
+      "reserve": { "3d_manhua": { "narration_pct_max": 0.5, "dialogue_pct_max": 0.4, "gap_min_s": 0.3, "tail_min_s": 0.3 },
+                  "2d_animation": { "narration_pct_max": 0.55, "dialogue_pct_max": 0.45, "gap_min_s": 0.2, "tail_min_s": 0.2 },
+                  "live_action": { "narration_pct_max": 0.7, "dialogue_pct_max": 0.5, "gap_min_s": 0.2, "tail_min_s": 0.2 } }
+    }
+  }
+}

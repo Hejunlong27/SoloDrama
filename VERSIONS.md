@@ -1,6 +1,18 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.32 · 四维拆分 + 单一档案 + 提示词门禁 + 能力卡 · 破坏性变更）**：按整改方案 v2 施工，四包里已完成三包半。
+  ① **画风四维拆开**（这是「画风库和 3D/2D/真人半解说串在一起」的根因）：新增 `configs/tracks.json`（形态：时长/资产/拓扑/交付）、`configs/narratives.json`（叙事：旁白配额/台词密度）、`configs/looks.json`（视觉：13 条纯 prompt，**禁止** track/narrative/delivery_stop 字段）。`style_gate.py` 改为配置驱动，`sub_modes` 只留渲染流，题材风格走独立 `--look`。`configs/styles.json` 瘦身为 aspect/resolution 预设。**验收过了**：同一个 `surreal-cinema` 在 live_action / 2d_animation / 3d_manhua 三轨都能 `set` 成功。
+  ② **单一档案 `drama.json`**：新增 `stages/production/scripts/drama_profile.py`（读写唯一实现，文件名避开标准库 `profile`）+ `migrate_profile.py`（从三份旧确认单推导，只做可判定映射、不猜）。`style_gate` 双读双写：drama.json 优先、旧文件兜底。US01 已迁移，状态与迁移前一致。
+  ③ **口径变更两条**：2D 轨 `delivery_stop` 由 `narration_handoff` 改为 `final_video`（2D 也是短剧，不该止步于旁白交接）；真人轨 `storyboard_topology` 由 `three_panel_per_clip` 改为 `one_frame_per_clip`（三格拼版正是 P21 雷同的源头）。对应 2 条单测已按新口径更新。
+  ④ **提示词门禁 `prompt_gate.py`（新增）**：C1 人数锁=CHAR 代号数 / C2 SHOT 的 Two-Three bodies 与 N 一致且不得与 ONLY one body 并存 / C3 在场一致 / C4 无 CJK / C5 `<Picture n>` 闭合。**实测抓出 EP03 2 镜、EP04 3 镜硬失败，EP01/EP02 各 0** —— 与人工核对完全吻合。已接进 `ingest_check.py`（`--ep` 时自动跑）。
+      · 实现要点：角色来源**用分镜 md 的 `- refs:`，不用 shots.json** —— 后者是转换产物且 data_dir 固定（多集互相覆盖），拿它判所有集会张冠李戴。
+      · 踩坑复现：写正则时又被多转义成 `refs://s*`，函数静默返回空、全部判成「CHAR 0 人」。这正是 P36 记过的那条坑，第二次踩到。**教训：正则不要经过多层字符串拼接写盘**。
+  ⑤ **环境体检三态**：`tools/env_check.py` 的 BINS 探测由 `shutil.which` 改为「PATH + 候选安装位置」，输出 `state ∈ present / found_elsewhere / missing`，`found_elsewhere` **算通过**。实测 `whisper-cli` 现在显示 `found_elsewhere` 并给出真实路径 `C://Users//15274//whisper-cli//whisper-bin-v1.8.0//Release//`，不再报「未安装」。`web/core/health.py` 透传三态。
+  ⑥ **能力卡 `configs/capabilities/`（新增 3 张）** + `capabilities.py list/show/check`（默认离线 <1 秒，`--online` 才联网）：`comfy.qwen21_t2i_hq.v1` / `rh.h3.multiref.v1` / `topaz.iris-2.v1`。每张带 `known_issues`，把今天踩的坑（494 语义、枚举后缀、RH 不能禁节点、Topaz 双目录）写死在卡里，避免下次重新推理。
+  ⑦ **清理**：`_回灌包_20261101` 归档到 `docs/archive/回灌包_20261031`；12 个 `_probe/_ep0*.log` 移入 `_scratch/`（已 gitignore）；三份旧规范（总纲/标准作业流程/画风三轨）标题去掉「唯一真源」并加降级声明；回灌包里「旧剧本只会变松、不会变严」的错误结论已就地更正（实测反例：4 秒镜 19 词，旧 PASS 新 FAIL）。
+  **回归**：test_style_gate 23 / test_model_gate 29 / test_release_check 15 / test_release_export 14 / test_migrate_assets 16 / test_creation_pipeline 57 / test_setup_workflow_pipeline 57 / slot_hygiene 32 / character_design 28 / comfy_ports / workflow_map 全绿。
+  **未完成（下一批）**：出片改「分镜图+角色+场景」与 data 五文件契约、资产 7 维→3 项、分镜 11→6 字段、七环节 23 节点与 Loop 四层环。这四项都是 D1（已产出作废）或大改，需单独一批做完，不在本次半途留下半套。
 - **2026-11-01 更新（V0.7.31 · 节点开关能力 + 图生图实测 + 站点改 zh · 破坏性变更）**：三条用户口径落地。
   ① **本地通道获得「真的关节点」的能力**：按参考图数量从 prompt 图里**删掉**多余 LoadImage、指向它的边、以及因此孤立的上游。实测同一份 6 槽工作流：2 张参考图 → 槽 6→2、关掉 8 个节点；4 张 → 槽 6→4、关掉 4 个。出图侧（`comfy_client.build`）与出片侧（`comfy_local_video`）都已接上，实现只有一份（`comfy_ports.prune_for_refs`），`comfy_client` 按路径加载复用、不复制。
   ② **RH 侧没有这个能力，必须说清楚**：`nodeInfoList` 是**值覆盖表**，没有「禁用节点」语义，未发的槽位沿用工作流保存值。只能 `blank`（顶中性灰，默认）/`empty`（空串）/`keep`（危险）。要真减少槽位只能改平台侧工作流。这条写进了 `SLOT_HYGIENE` 注释，避免下次又以为「代码里关掉了」。

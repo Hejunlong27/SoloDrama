@@ -1,0 +1,208 @@
+# -*- coding: utf-8 -*-
+"""capabilities.py —— 能力卡：把「已验证的通道参数」固化成数据，不再每次 probe/试跑
+
+    python capabilities.py list
+    python capabilities.py show rh.h3.multiref.v1
+    python capabilities.py check                 # 离线自检（默认，<3 秒，不花钱）
+    python capabilities.py check --online        # 额外做联网可达性检查
+
+为什么要它：换一次通道就 `--probe` 一次、试跑一次、再手工 export 五个环境变量 ——
+这些参数是稳定的，测一次写下来就够了。写进卡里之后，出片前只验「卡还在不在、节点还在不在」，
+不验「跑一遍看看」。
+
+检查分两级：
+  离线（默认）  卡自身完整性 + 工作流文件存在 + 节点映射指向的 nodeId 在工作流里存在
+                + Topaz 的 exe / 权重目录存在。全是文件系统操作，不联网。
+  联网（--online）额外：ComfyUI /system_stats、RH 站点与 Key 指纹。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]   # stages/production/scripts/x.py → 仓库根
+CAP_DIR = ROOT / "configs" / "capabilities"
+
+
+def _load_all() -> list:
+    out = []
+    for p in sorted(CAP_DIR.glob("*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8-sig"))
+        except Exception as exc:                               # noqa: BLE001
+            out.append({"id": p.stem, "_error": "%s: %s" % (type(exc).__name__, exc)})
+            continue
+        d["_file"] = str(p)
+        out.append(d)
+    return out
+
+
+def _by_id(cid: str):
+    for d in _load_all():
+        if d.get("id") == cid:
+            return d
+    return None
+
+
+# ---------------------------------------------------------------------------
+def _check_comfy(cap: dict, online: bool) -> list:
+    """本地 ComfyUI 通道：工作流文件 + 节点存在性（+ 在线时节点类/必需输入）。"""
+    res = []
+    for role, rel in (cap.get("workflows") or {}).items():
+        p = ROOT / str(rel)
+        res.append((bool(p.is_file()), "工作流 %s：%s" % (role, "存在" if p.is_file() else "缺失 " + str(p))))
+    nodes = cap.get("nodes") or {}
+    t2i = ROOT / str((cap.get("workflows") or {}).get("t2i") or "")
+    if t2i.is_file():
+        try:
+            wf = json.loads(t2i.read_text(encoding="utf-8-sig"))
+        except Exception:                                      # noqa: BLE001
+            wf = {}
+        miss = [k for k in ("prompt", "prefix", "seed", "aspect", "latent")
+                if str(nodes.get(k)) not in wf]
+        res.append((not miss, "文生图节点映射：%s" % ("齐全" if not miss else "工作流里找不到 " + "、".join(miss))))
+    if not online:
+        return res
+    try:
+        import urllib.request
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        raw = op.open("http://127.0.0.1:8188/system_stats", timeout=4).read()
+        st = json.loads(raw.decode("utf-8"))
+        ver = (st.get("system") or {}).get("comfyui_version")
+        res.append((True, "ComfyUI 可达（%s）" % ver))
+    except Exception as exc:                                   # noqa: BLE001
+        res.append((False, "ComfyUI 不可达（%s）—— 本地出图会失败，先启动 8188" % type(exc).__name__))
+    return res
+
+
+def _check_rh(cap: dict, online: bool) -> list:
+    res = []
+    wid = str(cap.get("workflow_id") or "").strip()
+    res.append((bool(wid), "workflow_id = %s" % (wid or "（空）")))
+    nodes = cap.get("nodes") or {}
+    need = ("prompt", "duration", "char_ref", "scene_ref")
+    miss = [k for k in need if not str((nodes.get(k) or {}).get("nodeId") or "").strip()]
+    res.append((not miss, "节点映射：%s" % ("齐全" if not miss else "缺 " + "、".join(miss))))
+    slot = cap.get("slots") or {}
+    res.append((int(slot.get("total") or 0) >= 1, "槽位：%s 个（声明 %s）"
+                % (slot.get("total"), slot.get("declared"))))
+    site = str(cap.get("site") or "").strip()
+    env_site = os.environ.get("RUNNINGHUB_BASE_URL") or ""
+    if site and env_site:
+        ok = site.rstrip("/") == env_site.rstrip("/")
+        res.append((ok, "站点：卡=%s ｜ 环境=%s%s"
+                    % (site.rstrip("/"), env_site.rstrip("/"), "" if ok else "  ← 不一致，key 可能对不上站")))
+    if not online:
+        return res
+    key = os.environ.get("RUNNINGHUB_API_KEY") or ""
+    res.append((bool(key), "API Key：%s" % ("已设置" if key else "未设置（只能走本地通道）")))
+    if wid and key:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                f"{(env_site or site).rstrip('/')}/openapi/v2/run/workflow/{wid}",
+                data=json.dumps({"nodeInfoList": []}).encode(), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+            op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            op.open(req, timeout=8).read()
+            res.append((True, "工作流接口可达"))
+        except Exception as exc:                               # noqa: BLE001
+            res.append((False, "工作流接口探测失败（%s）—— 可能只是参数校验，需人工确认"
+                        % type(exc).__name__))
+    return res
+
+
+def _check_topaz(cap: dict, online: bool) -> list:
+    res = []
+    p = cap.get("paths") or {}
+    exe = pathlib.Path(str(p.get("install_dir") or "")) / "Topaz Video AI.exe"
+    alt = pathlib.Path(str(p.get("install_dir") or ""))
+    ok_install = exe.is_file() or alt.is_dir()
+    res.append((ok_install, "安装目录：%s" % (p.get("install_dir") or "（空）")))
+    md = pathlib.Path(str(p.get("model_data_dir") or ""))
+    n = len(list(md.glob("*.tz3"))) if md.is_dir() else 0
+    res.append((n > 0, "权重目录：%s（%d 个 .tz3）" % (md or "（空）", n)))
+    res.append((str(cap.get("model") or "") in ("iris-2",), "模型：%s（iris-3 无权重）" % cap.get("model")))
+    return res
+
+
+CHECKERS = {"local_comfyui": _check_comfy, "runninghub": _check_rh, "topaz": _check_topaz}
+
+
+def cmd_list(a) -> int:
+    caps = _load_all()
+    if not caps:
+        print("（%s 下没有能力卡）" % CAP_DIR)
+        return 0
+    print("%-26s %-14s %-14s %s" % ("id", "stage", "engine", "label"))
+    for d in caps:
+        print("%-26s %-14s %-14s %s" % (d.get("id"), d.get("stage"), d.get("engine"), d.get("label") or ""))
+    return 0
+
+
+def cmd_show(a) -> int:
+    d = _by_id(a.id)
+    if not d:
+        print("[FAIL] 没有这张卡：%s（用 list 看全部）" % a.id)
+        return 2
+    print(json.dumps(d, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_check(a) -> int:
+    caps = _load_all()
+    if a.id:
+        caps = [c for c in caps if c.get("id") == a.id]
+        if not caps:
+            print("[FAIL] 没有这张卡：%s" % a.id)
+            return 2
+    bad = 0
+    for cap in caps:
+        print("=" * 74)
+        print("%s ｜ %s" % (cap.get("id"), cap.get("label") or ""))
+        print("=" * 74)
+        if cap.get("_error"):
+            print("  [FAIL] 卡片解析失败：%s" % cap["_error"])
+            bad += 1
+            continue
+        fn = CHECKERS.get(str(cap.get("engine") or ""))
+        if fn is None:
+            print("  [WARN] 未知 engine=%s，跳过专项检查" % cap.get("engine"))
+            continue
+        for ok, msg in fn(cap, a.online):
+            print("  [%s] %s" % ("OK" if ok else "FAIL", msg))
+            if not ok:
+                bad += 1
+    print()
+    if bad:
+        print("★ %d 项未通过 —— 该通道暂不可用（不是「跑一遍试试」，是判据没满足）" % bad)
+        return 2
+    print("全部通过%s" % ("（含联网检查）" if a.online else "（离线）"))
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="能力卡：已验证的通道参数")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("list", help="列出全部能力卡")
+    p.set_defaults(fn=cmd_list)
+    p = sub.add_parser("show", help="打印一张卡的完整内容")
+    p.add_argument("id")
+    p.set_defaults(fn=cmd_show)
+    p = sub.add_parser("check", help="自检（默认离线）")
+    p.add_argument("id", nargs="?", default=None)
+    p.add_argument("--online", action="store_true", help="额外做联网可达性检查")
+    p.set_defaults(fn=cmd_check)
+    a = ap.parse_args()
+    return a.fn(a)
+
+
+if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:                                          # noqa: BLE001
+        pass
+    raise SystemExit(main())

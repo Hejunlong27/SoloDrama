@@ -155,6 +155,10 @@ def collect(ws: str | None = None) -> dict:
                 "detail": str(it.get("detail") or ""),
                 "hint": str(it.get("hint") or ""),
                 "source": "env_check",
+                # ★ 2026-11-01：三态透传。present / found_elsewhere 都算通过，
+                #   后者要告诉用户「装了但不在 PATH」，而不是笼统报「未安装」。
+                "state": it.get("state") or ("present" if it.get("ok") else "missing"),
+                "path": it.get("path") or "",
             }
             item["fix"] = _fix_spec(item, fix)
             items.append(item)

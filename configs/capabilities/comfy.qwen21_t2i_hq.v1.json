@@ -1,0 +1,42 @@
+{
+  "id": "comfy.qwen21_t2i_hq.v1",
+  "stage": "image",
+  "engine": "local_comfyui",
+  "label": "本地 ComfyUI · Qwen Image 2.1 turbo（文生图 / 图生图）",
+  "workflows": {
+    "t2i": "stages/assets/comfyui/workflow_qwen21_t2i_hq.json",
+    "edit": "stages/assets/comfyui/workflow_qwen21_edit.json",
+    "t2i_9x16": "stages/assets/comfyui/workflow_qwen21_t2i_hq_9x16.json"
+  },
+  "nodes": {
+    "prompt": "488",
+    "prefix": "487",
+    "seed": "497",
+    "aspect": "13",
+    "latent": "474",
+    "load": [
+      "489",
+      "490"
+    ],
+    "mode": "494",
+    "mode_when_refs": true
+  },
+  "measured": {
+    "wall_sec_per_image": 50,
+    "megapixels": 2.0,
+    "cfg": 2.0,
+    "steps": 8
+  },
+  "preflight": [
+    "comfy_reachable",
+    "node_classes",
+    "required_inputs",
+    "model_files"
+  ],
+  "known_issues": [
+    "494 的语义是「画幅听谁的」：true=按节点 13（默认，参考图仍作 conditioning）；false=跟随参考图",
+    "ResolutionSelector 只认带人话后缀的枚举，裸 9:16 会 400 value_not_in_list",
+    "cfg=1 时负向词完全不生效（_warn_negation 会告警）",
+    "三个 Qwen 工作流的提示词节点都是 488，但 RH 侧文生图是 57、编辑是 74 —— 不要互相照抄"
+  ]
+}
