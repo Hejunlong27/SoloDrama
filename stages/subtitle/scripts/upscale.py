@@ -785,17 +785,58 @@ def run_ffmpeg(cmd, env, log_path, total_frames, quiet=False):
 #   · off  ：不放大，母版直接进字幕（只在母版本来就是交付规格时合理）。
 # 选哪一台是**配置**（config.upscale.json 的 backend），不是代码分支的分叉。
 RH_UPSCALE_DEFAULT = {
-    "_note": "RunningHub 放大通道。节点 4/5 是【短边/长边】不是宽/高 —— 给反会输出 598×1080。",
-    "workflow_id": "2110614419863592961",
+    "_note": "RunningHub 放大通道。★ 节点映射不在这里 —— 唯一真源是能力卡 "
+             "configs/capabilities/rh.upscale.v1.json（卡里有 nodeId + fieldName，"
+             "换工作流只改卡，不改代码、不改项目配置）。",
     "label": "RH 放大 · RH_Astra Iris",
     "instance_type": "default",
-    "nodes": {"video_in": "2", "prefix": "3", "short_edge": "4",
-              "long_edge": "5", "cleaner": "7"},
+    "nodes": {},
+    "fields": {},
     "keep_audio": True,
     "cleaner_action": "Purge Model",
     "timeout_min": 40.0,
     "poll_interval": 5.0,
 }
+
+RH_CARD_REL = os.path.join("configs", "capabilities", "rh.upscale.v1.json")
+
+
+def _repo_root():
+    """本脚本在 <repo>/stages/subtitle/scripts/ ⇒ 上溯四层是仓库根。"""
+    return os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+
+
+def _load_upscale_card():
+    """读放大能力卡；读不到返回 None（由调用方报「拿不到节点映射」）。"""
+    d = load_json(os.path.join(_repo_root(), RH_CARD_REL), None)
+    return d if isinstance(d, dict) else None
+
+
+def _flat_nodes(card_nodes):
+    """卡里的 `{角色: {nodeId, fieldName}}` → 扁平的 nodeId / fieldName 两张表。"""
+    ids, fields = {}, {}
+    for k, v in (card_nodes or {}).items():
+        if isinstance(v, dict):
+            if v.get("nodeId"):
+                ids[k] = str(v["nodeId"])
+            if v.get("fieldName"):
+                fields[k] = str(v["fieldName"])
+        elif v not in (None, ""):
+            ids[k] = str(v)
+    return ids, fields
+
+
+def rh_spec(cfg_rh=None):
+    """合成 RH 放大参数：代码默认 < 能力卡 < 项目配置（`config.upscale.json` 的 rh 段）。"""
+    spec = deep_merge(RH_UPSCALE_DEFAULT, {})
+    cap = _load_upscale_card()
+    if cap:
+        spec["workflow_id"] = str(cap.get("workflow_id") or "")
+        spec["nodes"], spec["fields"] = _flat_nodes(cap.get("nodes"))
+        if "keep_audio" in cap:
+            spec["keep_audio"] = bool(cap["keep_audio"])
+    return deep_merge(spec, cfg_rh or {})
 
 
 def _find_engine_dir():
@@ -886,14 +927,23 @@ async def _rh_upscale_async(spec, base_url, api_key, src, dst, tw, th, prefix, l
                               os.path.getsize(src) / 1048576.0))
     up = await client.upload_file(src)
     short, long_ = (tw, th) if tw <= th else (th, tw)
+    n, f = (spec.get("nodes") or {}), (spec.get("fields") or {})
+    try:
+        vid, pref = n["video_in"], n["prefix"]
+        n_short, n_long = n["short_edge"], n["long_edge"]
+        n_clean = n.get("cleaner")
+    except KeyError as e:                                     # noqa: F841
+        raise RuntimeError("能力卡缺节点映射 %s —— 检查 configs/capabilities/rh.upscale.v1.json"
+                           % e)
     nodes = RunningHubClient.build_node_list([
-        (spec["nodes"]["video_in"], "file", up["fileName"]),
-        (spec["nodes"]["video_in"], "keep_audio",
-         "true" if spec.get("keep_audio", True) else "false"),
-        (spec["nodes"]["prefix"], "filename_prefix", prefix),
-        (spec["nodes"]["short_edge"], "value", str(int(short))),
-        (spec["nodes"]["long_edge"], "value", str(int(long_))),
-        (spec["nodes"]["cleaner"], "model_action", spec.get("cleaner_action") or "Purge Model"),
+        (vid, f.get("video_in") or "file", up["fileName"]),
+        # keep_audio 挂在 LoadVideo 上，卡里没单列（它是同一节点的另一个输入）
+        (vid, "keep_audio", "true" if spec.get("keep_audio", True) else "false"),
+        (pref, f.get("prefix") or "filename_prefix", prefix),
+        (n_short, f.get("short_edge") or "value", str(int(short))),
+        (n_long, f.get("long_edge") or "value", str(int(long_))),
+        (n_clean, f.get("cleaner") or "model_action",
+         spec.get("cleaner_action") or "Purge Model"),
     ])
     tid = await client.create_task("workflow", str(spec["workflow_id"]), nodes,
                                   spec.get("instance_type") or "default")
@@ -921,7 +971,7 @@ async def _rh_upscale_async(spec, base_url, api_key, src, dst, tw, th, prefix, l
 
 def _upscale_rh(cfg, src, dst, tw, th, result, quiet=False, spec=None):
     """云端放大：上传 → 提交 → 轮询 → 下载 → 裁到精确目标。"""
-    spec = deep_merge(RH_UPSCALE_DEFAULT, spec or (cfg.get("rh") or {}))
+    spec = rh_spec(spec or (cfg.get("rh") or {}))
     out = (lambda m: (not quiet) and say(m))
     key = os.environ.get("RUNNINGHUB_API_KEY") or ""
     if not key:
@@ -1078,7 +1128,7 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
         if sample:
             result["error"] = "--sample 只支持本地 Topaz 测速；云端按整集计费，不做样片"
             return result
-        spec = deep_merge(RH_UPSCALE_DEFAULT, cfg.get("rh") or {})
+        spec = rh_spec(cfg.get("rh") or {})
         if verify_only:
             if not os.path.exists(dst):
                 result["error"] = "产物不存在，无法只做验证：%s" % dst
@@ -1086,19 +1136,28 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
             result["ok"] = True
             return result
         if dry_run:
+            if not spec.get("nodes"):
+                # 干跑最容易骗人：节点映射读不到时，下面照样能打印"短边/长边"（那是算出来的，
+                # 不是从卡里来的）。必须在这里就红，否则真跑时才炸。
+                result["error"] = ("拿不到 RH 放大节点映射 —— 能力卡缺失或损坏：%s"
+                                   % os.path.join(_repo_root(), RH_CARD_REL))
+                return result
             short, long_ = (tw, th) if tw <= th else (th, tw)
             result["plan"] = {
                 "backend": "rh", "workflow_id": str(spec["workflow_id"]),
                 "site": _rh_base_url()[0],
-                "nodes": {"short_edge": short, "long_edge": long_,
+                "nodes": {"video_in": spec["nodes"].get("video_in"),
+                          "prefix": spec["nodes"].get("prefix"),
+                          "short_edge": short, "long_edge": long_,
                           "keep_audio": spec.get("keep_audio", True)},
                 "source": src, "dst": dst,
                 "note": "云端放大按整集计费（实测约 35 币/61s 集）；加 --force 不会跳过缓存",
             }
             result["ok"] = True
             if not quiet:
-                say("[dry-run] RH 放大：%s → %s（短边 %d / 长边 %d）"
-                    % (os.path.basename(src), os.path.basename(dst), short, long_))
+                say("[dry-run] RH 放大：%s → %s（短边 %d / 长边 %d，节点 %s/%s）"
+                    % (os.path.basename(src), os.path.basename(dst), short, long_,
+                       spec["nodes"].get("short_edge"), spec["nodes"].get("long_edge")))
             return result
         result = _upscale_rh(cfg, src, dst, tw, th, result, quiet=quiet, spec=spec)
         dump_json(report_path, result)
@@ -1393,9 +1452,10 @@ def _print_human(r):
     plan = r.get("plan")
     if plan and plan.get("backend") == "rh":
         say("  计划    workflow %s ｜ 站点 %s" % (plan["workflow_id"], plan.get("site") or "?"))
-        say("  节点    短边=%s 长边=%s keep_audio=%s"
-            % (plan["nodes"]["short_edge"], plan["nodes"]["long_edge"],
-               plan["nodes"]["keep_audio"]))
+        say("  节点    LoadVideo=%s ｜ SaveVideo=%s ｜ 短边=%s 长边=%s ｜ keep_audio=%s"
+            % (plan["nodes"].get("video_in"), plan["nodes"].get("prefix"),
+               plan["nodes"].get("short_edge"), plan["nodes"].get("long_edge"),
+               plan["nodes"].get("keep_audio")))
         say("  （--dry-run：什么都没提交。云端放大按整集计费）")
     elif plan:
         say("  预计    耗时 %s ｜ 体积 约 %.0f MB"

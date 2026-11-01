@@ -1,30 +1,16 @@
 {
   "version": 1,
   "_note": "高清放大配置 —— 改这里就能改后端/目标分辨率/模型/编码，不需要动代码。用法：python scripts/upscale.py --ep ep03",
-
   "enabled": true,
-
   "backend": "topaz",
   "_backend_note": "三选一：topaz=本地 Topaz Video（免费、慢、画质最稳，默认）｜rh=RunningHub RH_Astra Iris（约 35 币/集，2–3 分钟，输出按源宽高比吸附后自动裁到精确目标）｜off=跳过（母版直接进字幕，只在母版已是交付规格时用）。命令行 --backend 可临时覆盖。",
-
   "rh": {
-    "_note": "RunningHub 放大通道。节点 4/5 是【短边/长边】不是宽/高 —— 给反了输出会变成 598×1080。输入会先转 h264/yuv420p（RH 的 LoadVideo 解不动 hevc Main10）。",
-    "workflow_id": "2110614419863592961",
-    "label": "RH 放大 · RH_Astra Iris",
+    "_note": "RunningHub 放大通道的**可调参数**。节点映射（nodeId/fieldName）、workflow_id、keep_audio 的唯一真源是能力卡 configs/capabilities/rh.upscale.v1.json —— 换工作流改卡，不在这里抄一遍。这里只放超时/重试/清理模型这类项目级偏好；要临时换工作流，才在本文件写 workflow_id 或 nodes（扁平 {角色: nodeId}）覆盖。",
     "instance_type": "default",
-    "nodes": {
-      "video_in": "2",
-      "prefix": "3",
-      "short_edge": "4",
-      "long_edge": "5",
-      "cleaner": "7"
-    },
-    "keep_audio": true,
     "cleaner_action": "Purge Model",
     "timeout_min": 40.0,
     "poll_interval": 5.0
   },
-
   "tool": {
     "_note": "留空 = 自动探测。本机实测：Topaz 装在 D 盘，模型权重也被挪到了 D 盘；独立跑 ffmpeg 必须把这两个目录用环境变量告诉它，否则报 'Model not found: prob-4'。",
     "install_dir": "",
@@ -34,7 +20,6 @@
     "model_data_dir": "D:\\ProgramData\\Topaz Labs LLC\\Topaz Video\\models",
     "extra_env": {}
   },
-
   "target": {
     "_note": "mode=width：按宽度等比放大（1440x832 -> 2560x1480，宽高比不变、只差 0.06%）。想严格 16:9 用 mode=exact + 2560x1440（会裁掉 22px 高度）；想刚好 2 倍用 mode=factor + scale=2。",
     "mode": "width",
@@ -43,7 +28,6 @@
     "keep_aspect": true,
     "even": true
   },
-
   "model": {
     "name": "prob-4",
     "_note": "prob-4 = Proteus 4：通用向，实拍/AI 生成人物最稳，本机 GUI 实测用的就是它。备选：iris-3 人脸修复、nyx-3 降噪、rhea-1 4 倍。estimate=8 让模型自己估参数（= GUI 的 Auto）。",
@@ -60,7 +44,6 @@
     "vram": 1,
     "instances": 1
   },
-
   "encode": {
     "_note": "h264_nvenc + constqp 18 与 Topaz GUI 完整导出的参数一致（本机实测 13.7s 段 -> 16.8MB / 10.4Mbps）。要更小体积可把 codec 换 hevc_nvenc。",
     "codec": "h264_nvenc",
@@ -71,7 +54,6 @@
     "pix_fmt": "yuv420p",
     "audio": "copy"
   },
-
   "verify": {
     "_note": "抽样帧与『纯 lanczos 插值』对比：AI 超分必须比插值更锐，否则说明模型根本没生效。",
     "samples": 3,
