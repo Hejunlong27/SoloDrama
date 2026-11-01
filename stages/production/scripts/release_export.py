@@ -194,7 +194,10 @@ def media_gate(path: Path, spec=None):
 
     bad = DS.judge(p, spec)
     # 字幕：产物名必须带 _subbed（母版/放大版一律不是可发布形态）
-    if not re.search(r"_(subbed|hardsub|hard_sub)\b", path.stem, re.I):
+    # ★ 2026-11-02：原正则用了 `\b`，而 `ep01_subbed_1080p` 里 `subbed` 后面是 `_`
+    #   （还是 word 字符），`\b` 不成立 ⇒ 烧过字幕的成片被判「不是烧过字幕的成片」。
+    #   后缀表按「下划线或结尾」判，别用词边界。
+    if not re.search(r"_(?:subbed|hardsub|hard_sub)(?:[_-]|$)", path.stem, re.I):
         m = re.match(r"^ep(?:isode)?[_\-]?(\d{1,3})", path.stem, re.I)
         bad.append("不是烧过字幕的成片（文件名无 `_subbed`）⇒ 先跑 "
                    "`subtitle.py --ep %s --stage render`" % (m.group(1) if m else "<ep>"))

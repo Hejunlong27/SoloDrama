@@ -72,13 +72,16 @@ export async function render(ctx) {
     + '<button class="btn" id="btnPlan">' + icon('coins', 14) + ' 出片计划（免费）</button>'
     + '</div></div>'
 
-    + (totals.total
+    // ★ 2026-11-02：这里原来读 `summary.json` 的 totals.success/failed/pending，
+    //   而引擎写的是 `{total, ok, fail}` —— 于是三块 chip 恒为 0，而下面的筛选条是对的
+    //   （筛选条用的是逐镜去重后的 counted）。统一用 counted：跨批次去重后才是真实状态。
+    + (counted.all
       ? '<div class="row" style="margin-bottom:12px;flex-wrap:wrap">'
-        + '<span class="chip">镜头 ' + totals.total + '</span>'
-        + '<span class="chip">成功 ' + (totals.success || 0) + '</span>'
-        + '<span class="chip"' + (totals.failed ? ' style="color:var(--danger);border-color:rgba(217,105,94,.35)"' : '')
-        + '>失败 ' + (totals.failed || 0) + '</span>'
-        + '<span class="chip">未跑 ' + (totals.pending || 0) + '</span>'
+        + '<span class="chip">镜头 ' + counted.all + '</span>'
+        + '<span class="chip">成功 ' + counted.done + '</span>'
+        + '<span class="chip"' + (counted.fail ? ' style="color:var(--danger);border-color:rgba(217,105,94,.35)"' : '')
+        + '>失败 ' + counted.fail + '</span>'
+        + '<span class="chip">未跑 ' + counted.todo + '</span>'
         + '<span class="spacer"></span>'
         + (data.batches && data.batches[0] && data.batches[0].fuse && data.batches[0].fuse.blown
           ? badge('bad', '最近批次已熔断', data.batches[0].fuse.reason) : '')
@@ -156,12 +159,31 @@ export async function render(ctx) {
             title: '续跑这一镜',
             icon: 'alert',
             html: '<div class="cost-line"><span class="k">镜头</span><span class="v mono">' + esc(s.shot_id) + '</span></div>'
-              + '<div class="cost-line"><span class="k">批次</span><span class="v mono">' + esc(s.batch || '—') + '（只读）</span></div>'
+              + '<div class="cost-line"><span class="k">批次</span><span class="v mono">' + esc(s.batch || '—') + '</span></div>'
               + '<div class="cost-line"><span class="k">动作</span><span class="v">复用批次续跑，不重提已成功段</span></div>'
-              + '<div class="alert warn" style="margin-top:12px"><span class="nav-ico">' + icon('alert', 14)
-              + '</span><div>续跑仍会向云端提交失败的那一段，按平台用量计费（约 31–34 点/段）。'
-              + '本版**尚未开放**网页端续跑：请到「任务中心」用原批次续跑，或用命令面板执行。</div></div>',
-            foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">知道了</button>'
+              + '<div class="cost-line"><span class="k">费用</span><span class="v">★ 按平台实际用量结算（估不出来，先看余额）</span></div>'
+              + '<label class="chk" style="margin-top:10px"><input type="checkbox" id="rsYes">'
+              + '<span>我确认要提交这一段（会扣 RH 币）</span></label>'
+              + '<div class="alert warn" style="margin-top:10px"><span class="nav-ico">' + icon('alert', 14)
+              + '</span><div>续跑会向云端**重新提交失败的那一段**；已成功的段不会重提。'
+              + '提交后不可撤回。</div></div>',
+            foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+              + '<button class="btn primary" id="rsGo" disabled>续跑这一段</button>',
+            mount: (m) => {
+              const ck = m.querySelector('#rsYes');
+              const go = m.querySelector('#rsGo');
+              ck.onchange = () => { go.disabled = !ck.checked; };
+              go.onclick = () => {
+                m.querySelector('#modal').classList.remove('on');
+                runAction(ctx, {
+                  specId: 'video.resume',
+                  title: '续跑 · ' + (s.raw || s.shot_id),
+                  // `--only` 要的是磁盘上的原始段名（`shot_001`），不是展示用的 ep01_shot_001
+                  params: { resume: s.batch || '', only: s.raw || s.shot_id, yes: true },
+                  onDone: () => setTimeout(() => ctx.refresh(), 1500)
+                });
+              };
+            }
           });
         };
       });

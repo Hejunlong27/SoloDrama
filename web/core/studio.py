@@ -290,7 +290,9 @@ def shots(ws) -> dict:
                 for name, p in _shot_videos(out_dir(ws) / b["batch"]):
                     sid = name if (not ep_guess or name.lower().startswith(ep_guess)) \
                         else "%s_%s" % (ep_guess, name)
-                    shot_rows.append({"shot_id": sid, "video_status": "SUCCESS",
+                    # `raw` = 磁盘上的原始目录名（`shot_001`）。续跑要把它传给引擎的
+                    # `--only`；`shot_id` 是为了展示归一到 `ep01_shot_001`，不能拿去匹配。
+                    shot_rows.append({"shot_id": sid, "raw": name, "video_status": "SUCCESS",
                                       "final_mp4": str(p), "_ep": ep_guess})
             for sh in shot_rows:
                 sid = sh.get("shot_id") or ""
@@ -307,6 +309,7 @@ def shots(ws) -> dict:
                     "batch": b["batch"],
                     "mtime": b["mtime"],
                     "ep": sh.get("_ep") or "",
+                    "raw": sh.get("raw") or "",
                 }
                 cur = merged.get(sid)
                 if cur is None or _priority(cand["status"]) >= _priority(cur["status"]):

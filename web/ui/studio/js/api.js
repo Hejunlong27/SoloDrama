@@ -74,6 +74,7 @@ async function request(path, opts) {
    所以「点完按钮还看到旧数据」不会发生；定时刷新由页面上的刷新按钮 + ctx.refresh 负责。 */
 const TTL = {
   '/api/studio/workflow': 12000,
+  '/api/studio/release/export-preview': 20000,
   '/api/studio/setup': 20000,
   '/api/studio/env': 60000,
   '/api/generators': 15000,
@@ -142,6 +143,7 @@ export const api = {
   episodes: (ws) => get('/api/studio/episodes', { ws }),
   cost: (ws) => get('/api/studio/cost', { ws }),
   releaseStatus: (ws) => get('/api/studio/release', { ws }),
+  releaseExportPreview: (ws) => get('/api/studio/release/export-preview', { ws }),
   env: () => get('/api/studio/env'),
   refresh: (ws) => post('/api/studio/refresh', {}, { ws }),
 

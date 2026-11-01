@@ -753,6 +753,22 @@ def studio_release(ws: str = Query(...)):
             "text_tail": res.get("text_tail") if not res.get("ok") else ""}
 
 
+@app.get("/api/studio/release/export-preview")
+def studio_release_export_preview(ws: str = Query(...)):
+    """导出发布版的干跑预览：会导出哪几集、被哪些门禁拦下（只读，不写盘）。"""
+    res = adapters.release_export_preview(str(_require_ws(ws)))
+    d = res.get("data") or {}
+    return {"ok": bool(d), "reason": "" if d else res.get("reason"),
+            "dry_run": bool(d.get("dry_run", True)),
+            "dst_dir": d.get("dst_dir") or "",
+            "src_dirs": d.get("src_dirs") or [],
+            "plans": d.get("plans") or [],
+            "fails": d.get("fails") or [],
+            "warns": d.get("warns") or [],
+            "verdict": d.get("verdict") or "",
+            "text_tail": res.get("text_tail") if not d else ""}
+
+
 @app.get("/api/studio/cost")
 def studio_cost(ws: str = Query(...)):
     return studio.cost(str(_require_ws(ws)))

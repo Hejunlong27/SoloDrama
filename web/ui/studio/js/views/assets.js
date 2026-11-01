@@ -75,13 +75,14 @@ export async function render(ctx) {
     + '<div class="page-actions">'
     + '<button class="btn quiet" id="btnAssetCheck">' + icon('cpu', 14) + ' 出图器体检</button>'
     + '<button class="btn quiet" id="btnRefsCheck">' + icon('alert', 14) + ' 参考图体检</button>'
+    + '<button class="btn quiet" id="btnRefsShrink">' + icon('download', 14) + ' 瘦身参考图…</button>'
     + '<button class="btn primary" id="btnGen">' + icon('spark', 14) + ' 出图…</button>'
     + '</div></div>'
 
     + (refsOver.length ? '<div class="alert warn" style="margin-bottom:14px"><span class="nav-ico">'
       + icon('alert', 14) + '</span><div><b>' + refsOver.length + ' 张参考图长边超过 5760px</b>'
-      + '（平台会丢弃并导致画面错位）。瘦身会写盘，需在确认后执行：'
-      + '<span class="mono">refs.apply</span></div></div>' : '')
+      + '（平台会丢弃并导致画面错位）。瘦身会写盘（自动备份），点右上角'
+      + '「瘦身参考图…」确认后执行。</div></div>' : '')
 
     + (!mdOk ? '<div class="alert warn" style="margin-bottom:14px"><span class="nav-ico">'
       + icon('alert', 14) + '</span><div><b>没找到「资产提示词 md」</b>，出图会被引擎拒绝'
@@ -184,6 +185,47 @@ export async function render(ctx) {
       });
       const refs = root.querySelector('#btnRefsCheck');
       if (refs) refs.onclick = () => runAction(ctx, { specId: 'refs.report', title: '参考图体检（只读）' });
+
+      // 参考图瘦身：超 H3 上限（5760px）的会被平台丢弃并导致画面错位。
+      // 默认只体检；写盘要勾确认（会先备份再用新图替换）。
+      const shrink = root.querySelector('#btnRefsShrink');
+      if (shrink) shrink.onclick = () => openModal({
+        title: '参考图瘦身',
+        icon: 'download',
+        html: '<div class="small">把长边超过 <b>5760px</b> 的参考图压到可上传范围'
+          + '（默认长边 2048、JPEG q92），否则平台会直接丢弃、画面错位。</div>'
+          + '<div class="cost-line" style="margin-top:8px"><span class="k">写盘</span>'
+          + '<span class="v">覆盖/新增 <span class="mono">04-资产/refs*</span> 下的文件，会先备份</span></div>'
+          + '<div class="cost-line"><span class="k">费用</span><span class="v">￥0（本机处理）</span></div>'
+          + '<label class="chk" style="margin-top:10px"><input type="checkbox" id="rsCfg">'
+          + '<span>同时把 characters.json 指到新目录（会先备份）</span></label>'
+          + '<label class="chk" style="margin-top:6px"><input type="checkbox" id="rsOk">'
+          + '<span>我确认要写盘（覆盖现有参考图）</span></label>'
+          + '<div class="alert info" style="margin-top:10px"><span class="nav-ico">' + icon('alert', 14)
+          + '</span><div>建议先点「只体检」看一眼：哪些越界、压缩后多少 KB，再决定写不写。</div></div>',
+        foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+          + '<button class="btn quiet" id="rsDry">只体检</button>'
+          + '<button class="btn primary" id="rsGo" disabled>瘦身并写盘</button>',
+        mount: (m) => {
+          const ok = m.querySelector('#rsOk');
+          const go = m.querySelector('#rsGo');
+          ok.onchange = () => { go.disabled = !ok.checked; };
+          m.querySelector('#rsDry').onclick = () => {
+            m.querySelector('#modal').classList.remove('on');
+            runAction(ctx, { specId: 'refs.apply', title: '参考图瘦身 · 只体检',
+                             params: { apply: false } });
+          };
+          go.onclick = () => {
+            const cfg = !!(m.querySelector('#rsCfg') || {}).checked;
+            m.querySelector('#modal').classList.remove('on');
+            runAction(ctx, {
+              specId: 'refs.apply', title: '参考图瘦身 · 写盘',
+              params: { apply: true, write_config: cfg },
+              onDone: () => setTimeout(() => ctx.refresh(), 1200)
+            });
+          };
+        }
+      });
       const gen = root.querySelector('#btnGen');
       if (gen) gen.onclick = () => openGenPanel(ctx, md);
     }

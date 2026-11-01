@@ -30,6 +30,7 @@ SCRIPTS = {
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
     "continuity": paths.PROD_SCRIPTS / "script_continuity.py",
     "release_check": paths.PROD_SCRIPTS / "release_check.py",
+    "release_export": paths.PROD_SCRIPTS / "release_export.py",
 }
 
 _CACHE: dict = {}
@@ -184,6 +185,14 @@ def release_status(ws) -> dict:
     检查结论是纯计算，写盘只是为了留痕。
     """
     return run_json("release_check", ["--json", "--no-write"], ws, ttl=20)
+
+
+def release_export_preview(ws) -> dict:
+    """导出发布版的**干跑**预览（只读：不带 `--apply`，不写 09-发行/剧集/）。
+
+    返回 `plans`（会导出哪几集、从哪来）与 `fails`（被门禁拦下的原因）。
+    """
+    return run_json("release_export", ["--all", "--json"], ws, ttl=20)
 
 
 def norm_workflow(res: dict) -> dict:

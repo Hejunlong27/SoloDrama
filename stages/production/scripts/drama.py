@@ -1039,7 +1039,10 @@ def cmd_balance(args) -> int:
 
 
 def cmd_refs(args) -> int:
-    cmd = [sys.executable, SCRIPTS / 'prepare_refs.py']
+    # ★ 2026-11-02：`prepare_refs.py` 的默认工作区是**脚本所在目录**的 video-pipeline/，
+    #   不是 cwd。不显式传 --workspace 时，它永远去 `<仓库>/stages/production/video-pipeline/`
+    #   找 data/，于是「参考图瘦身」对任何项目都报「找不到工作区 data/」—— 功能等于废的。
+    cmd = [sys.executable, SCRIPTS / 'prepare_refs.py', '--workspace', str(WS)]
     if args.apply:
         cmd += ['--apply']
     if args.write_config:

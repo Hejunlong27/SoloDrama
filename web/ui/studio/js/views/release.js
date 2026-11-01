@@ -1,13 +1,19 @@
 /* 发行中心：发布版剧集（真实文件）+ G9 资料齐全度（只读）+ 发行目录清单 */
 import { api, mediaUrl } from '../api.js';
-import { esc, icon, badge, dot, stamp, openDrawer, toast, emptyBox } from '../ui.js';
+import { esc, icon, badge, dot, stamp, openDrawer, toast, emptyBox, openModal } from '../ui.js';
+import { runAction } from '../action.js';
 
 export async function render(ctx) {
-  const [eps, relDir, g9] = await Promise.all([
+  const [eps, relDir, g9, ex] = await Promise.all([
     api.episodes(ctx.ws).catch(() => ({ items: [] })),
     api.artifacts(ctx.ws, '09-发行').catch((e) => ({ items: [], error: e.detail || e.message })),
-    api.releaseStatus(ctx.ws).catch((e) => ({ ok: false, reason: e.detail || e.message }))
+    api.releaseStatus(ctx.ws).catch((e) => ({ ok: false, reason: e.detail || e.message })),
+    // 干跑预览：只算不写（不带 --apply）。plans = 会导出什么，fails = 被哪些门禁拦下。
+    api.releaseExportPreview(ctx.ws).catch((e) => ({ ok: false, reason: e.detail || e.message }))
   ]);
+  const exPlans = (ex && ex.plans) || [];
+  const exFails = (ex && ex.fails) || [];
+  const exWarns = (ex && ex.warns) || [];
 
   // G9：ok / ready_for_export / blocked（release_check.py --json --no-write，纯只读）
   const g9ok = g9 && g9.ok && g9.verdict === 'ok';
@@ -82,9 +88,42 @@ export async function render(ctx) {
         ? ((g9.found.covers || []).join(' / ') + ' 已备') : '缺封面',
       '封面档位固定 cover_9x16.png / cover_3x4.png，由封面出图流程直出（带字）。'
       + '现有文件在右侧「发行目录」中可见。')
-    + card('导出发布版', 'muted', '命令行',
-      'release_export.py --all --apply 才写 09-发行/剧集/EpisodeNN.mp4；默认干跑。'
-      + '网页端暂不代跑（防误写盘），命令可在「流水线」页复制。')
+    + '<section class="card"><div class="card-h"><h3>导出发布版</h3>'
+    + '<span class="spacer"></span>'
+    + (exPlans.length ? badge('ok', '可导出 ' + exPlans.length + ' 集')
+      : badge('warn', exFails.length ? '被拦 ' + exFails.length + ' 项' : '没有可导出的集'))
+    + '</div><div class="card-b">'
+    + '<div class="small muted">落点 <span class="mono">'
+    + esc((ex && ex.dst_dir) || '09-发行/剧集') + '</span>，命名严格 '
+    + '<span class="mono">EpisodeNN.mp4</span>；同名文件会被覆盖（覆盖前请确认已定稿）。</div>'
+    + (exPlans.length
+      ? '<div style="margin-top:8px">' + exPlans.slice(0, 6).map((p) => '<div class="row" style="padding:3px 0">'
+        + '<span class="mono small" style="width:120px">' + esc(p.dst || '') + '</span>'
+        + '<span class="tiny dim" style="flex:1;overflow:hidden;text-overflow:ellipsis">'
+        + esc((p.src || '').split(/[\\/]/).pop() || '') + '</span></div>').join('')
+        + (exPlans.length > 6 ? '<div class="tiny dim">…等共 ' + exPlans.length + ' 集</div>' : '')
+        + '</div>'
+      : '')
+    + (exFails.length
+      ? '<div class="alert warn" style="margin-top:8px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
+        + '<div><b>出口门禁拦下 ' + exFails.length + ' 项</b>，导出会被拒：<br>'
+        + exFails.slice(0, 3).map((x) => '· ' + esc(String(x).slice(0, 160))).join('<br>')
+        + (exFails.length > 3 ? '<br>…' : '') + '</div></div>'
+      : '')
+    + (exFails.some((x) => /SAR|规格|分辨率/.test(String(x)))
+      ? '<div class="small" style="margin-top:6px">规格类问题：去「后期制作」重跑 '
+        + '<b>③ 字幕生成与烧录</b> —— 烧字幕那步会做 crop-to-fill 归一化（SAR 1:1），'
+        + '回来再点「重新干跑」。</div>'
+      : '')
+    + (exWarns.length ? '<div class="tiny dim" style="margin-top:6px">另有 ' + exWarns.length + ' 条提醒</div>' : '')
+    + '<div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">'
+    + '<button class="btn quiet" id="btnExPreview">' + icon('refresh', 14) + ' 重新干跑</button>'
+    + '<button class="btn primary" id="btnExApply"' + (exPlans.length ? '' : ' disabled')
+    + '>' + icon('upload', 14) + ' 导出到 09-发行</button>'
+    + (exFails.length ? '<button class="btn quiet" id="btnExAllFails">看全部拦截原因</button>' : '')
+    + '</div>'
+    + '<div class="card-foot">' + stamp('release_export.py --all --json（干跑）· 20 秒缓存 · 写盘要二次确认') + '</div>'
+    + '</div></section>'
     + '</div>';
 
   return {
@@ -104,6 +143,55 @@ export async function render(ctx) {
           });
         };
       });
+      // ---- 导出发布版 ----
+      const ex1 = root.querySelector('#btnExPreview');
+      if (ex1) ex1.onclick = () => ctx.refresh();
+
+      const exAll = root.querySelector('#btnExAllFails');
+      if (exAll) exAll.onclick = () => openDrawer({
+        title: '导出被拦下的原因',
+        html: '<div class="small muted" style="margin-bottom:8px">每条都对应一个必须解决的规格/内容问题；'
+          + '改完重跑「重新干跑」。</div>'
+          + exFails.map((x, i) => '<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)">'
+            + '<span class="mono tiny dim" style="width:26px">' + (i + 1) + '</span>'
+            + '<span class="small" style="flex:1">' + esc(String(x)) + '</span></div>').join(''),
+        foot: '<span class="spacer"></span><button class="btn quiet" data-close="drawer">关闭</button>'
+      });
+
+      const exBtn = root.querySelector('#btnExApply');
+      if (exBtn) exBtn.onclick = () => {
+        const n = exPlans.length;
+        openModal({
+          title: '导出 ' + n + ' 集到 09-发行/剧集',
+          icon: 'upload',
+          html: '<div class="small">会写入 <b>' + n + ' 个</b> <span class="mono">EpisodeNN.mp4</span>，'
+            + '同名文件<b>直接覆盖</b>（不做备份）。</div>'
+            + '<div class="cost-line" style="margin-top:8px"><span class="k">落点</span><span class="v mono">'
+            + esc((ex && ex.dst_dir) || '09-发行/剧集') + '</span></div>'
+            + '<div class="cost-line"><span class="k">来源</span><span class="v mono small">'
+            + esc(((ex && ex.src_dirs) || []).map((x) => x.split(/[\\/]/).pop()).join(' / ')) + '</span></div>'
+            + '<div class="cost-line"><span class="k">费用</span><span class="v">￥0（本地复制，可勾硬链接省空间）</span></div>'
+            + '<label class="chk" style="margin-top:10px"><input type="checkbox" id="exLink">'
+            + '<span>用硬链接代替复制（同盘才可用，省空间）</span></label>'
+            + '<div class="alert info" style="margin-top:10px"><span class="nav-ico">' + esc(icon('alert', 14))
+            + '</span><div>导出前会再跑一次出口门禁（规格 + 硬字幕）；不过的不写。</div></div>',
+          foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+            + '<button class="btn primary" id="exGo">确认导出</button>',
+          mount: (m) => {
+            m.querySelector('#exGo').onclick = () => {
+              const link = !!(m.querySelector('#exLink') || {}).checked;
+              m.querySelector('#modal').classList.remove('on');
+              runAction(ctx, {
+                specId: 'release.export',
+                title: '导出发布版 · ' + n + ' 集',
+                params: { all: true, apply: true, link, target: '1080x1920' },
+                onDone: () => setTimeout(() => ctx.refresh(), 1200)
+              });
+            };
+          }
+        });
+      };
+
       const g = root.querySelector('#btnG9All');
       if (g) g.onclick = () => {
         openDrawer({

@@ -33,6 +33,7 @@ SCRIPTS = {
     "ingest": paths.PROD_SCRIPTS / "ingest_check.py",
     "compliance": paths.PROD_SCRIPTS / "compliance_precheck.py",
     "prepare_refs": paths.PROD_SCRIPTS / "prepare_refs.py",
+    "release_export": paths.PROD_SCRIPTS / "release_export.py",
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
     "preflight_ep": paths.PROD_SCRIPTS / "episode_preflight.py",
     "rhdoctor": paths.PROD_SCRIPTS / "rh_doctor.py",
@@ -252,6 +253,7 @@ WS_FLAG = {
     "halfcheck": ("--workspace", "suffix"),
     "compliance": ("--workspace", "suffix"),
     "prepare_refs": ("--workspace", "suffix"),
+    "release_export": ("--workspace", "suffix"),
     "subtitle": ("--workspace", "suffix"),
     "upscale": ("--workspace", "suffix"),
     "workflow": ("--workspace", "suffix"),
@@ -714,6 +716,22 @@ _add(_c("episode.preflight", "12 验收结账", "集级前置体检", "preflight
         params=[Param("eps", "集号（可多个）", "str", required=True, placeholder="ep01 ep02")],
         help="交付前的集级体检。",
         agent="列出未过项与其影响的交付物。"))
+
+_add(_c("release.export", "13 合规发行", "导出发布版（EpisodeNN.mp4）", "release_export",
+        argv=[], billing=FREE, danger=WRITE,
+        flags={"--ep": "ep", "--target": "target", "--digits": "digits"},
+        bools={"--all": "all", "--apply": "apply", "--link": "link",
+               "--no-media-check": "no_media_check", "--json": "as_json"},
+        params=[Param("ep", "只导出这一集", "str", placeholder="ep01（留空=全部）"),
+                Param("target", "目标规格", "str", default="1080x1920"),
+                Param("digits", "编号位数", "int", default=2),
+                Param("all", "导出全部找到的集", "bool", default=True),
+                Param("apply", "真的写盘（默认干跑）", "bool", default=False),
+                Param("link", "用硬链接代替复制（省空间，需同盘）", "bool", default=False),
+                Param("no_media_check", "跳过出口门禁（仅供预览，正式发行别用）", "bool", default=False)],
+        help="命名严格 EpisodeNN.mp4，落 09-发行/剧集/。默认干跑；--apply 才写。"
+             "出口门禁会查规格（1080x1920/SAR 1:1）与硬字幕，不过的不进 plans。",
+        agent="干跑先让用户看「会导出哪几集、从哪来」；写盘前必须确认，并说清会覆盖同名文件。"))
 
 # ===== 环节 13 合规与发行 ==================================================
 _add(_c("compliance.ep", "13 合规发行", "发布前合规预检（G8 · 单集）", "compliance",
