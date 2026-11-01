@@ -90,10 +90,10 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | ------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | 工作台     | 项目数/产出/花费、待处理事项、运行中任务、**接入状态**（LLM 提供商与用途就绪数、出图/出片通道、工作流 API、ComfyUI 体检按钮） | `/api/workspaces`、`/api/jobs`、`/api/studio/workflow`、`/api/studio/setup`、`/api/llm/providers`、`/api/llm/purposes`、`/api/run`(`diag.comfy`) |
 | 项目管理    | 登记、扫描本机、搜索/筛选/排序、打开、**新建项目**（调 `creation.py scaffold`，建完自动登记）、**失效目录提示与一键清理**（只清注册表，不碰磁盘） | `/api/workspaces*`、`/api/workspaces/prune`、`/api/projects/create`                                                                          |
-| 项目详情    | 11 环节判据、集数规划、产物目录、G-0 九项、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
-| 创作中心    | S1–S5 完成度（引擎 probes）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
+| 项目详情    | **7 环节 / 23 节点**判据（`drama nodes --json`）、集数规划、产物目录、开工前置、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
+| 创作中心    | 前 5 个环节完成度（research / script / asset / board / prompt，取自节点状态）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
 | 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
-| 流水线 | **11 个环节串成一条可执行的线**：连跑 / 逐步确认两种模式、预算内自动放行、遇「前置未齐 / 需人工 / 计费估不出来」停下并说明原因；**每行一个可点的大按钮**（运行此步 `only=` 只跑这一条 / 打开对应页面） | `/api/pipeline/plan`（只读计划）、`/api/pipeline/run`（执行，默认 dry_run） |
+| 流水线 | **7 个环节、23 个节点串成一条可执行的线**：连跑 / 逐步确认两种模式、预算内自动放行、遇「前置未齐 / 需人工 / 计费估不出来」停下并说明原因；**每行一个可点的大按钮**（运行此步 `only=` 只跑这一条 / 打开对应页面） | `/api/pipeline/plan`（只读计划）、`/api/pipeline/run`（执行，默认 dry_run） |
 | 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**出片**（计费五步）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
 | 发行中心    | 发布版剧集/封面/文案/发布清单/版权资料的存在性核对                                                | `/api/artifacts`、`/api/file`、`release_check`（未接入，见 §7）                                                                                     |
@@ -688,7 +688,7 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
 
 模型输出不是 JSON 时整段当回答、动作置空（宁可少做）。实测三句：
 
-* 「现在卡在哪一步？」→ 准确说出停在 S1、0/11 完成、下一步是调研，`action=none`；
+* 「现在卡在哪一步？」→ 准确说出停在 research、0/7 环节完成、下一步是调研，`action=none`；
 * 「带我看看资产」→ `navigate assets`；
 * 「跑一下转分镜」→ 模型主动发现「可执行命令里没有这一项」，反问要哪个，并说明「真跑会写盘，我不替你按」。
 
@@ -702,7 +702,7 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
 | 开场引导 | `GET /api/assistant/welcome`（**不调模型**） | 服务端按状态拼 | 打开抽屉 |
 | 接着问 + 去 XX | `POST /api/assistant/chat` 的 `suggestions` / `goto` | 模型 + 服务端各一条 | 每次回答后 |
 
-**提示词**里放的是产品知识，不是话术：15 个页面的 route 与用途、S1–S11 与页面的对应、
+**提示词**里放的是产品知识，不是话术：16 个页面的 route 与用途、7 环节与页面的对应、
 五条不能给错的规矩（画风不可换 / 发布版唯一来源 / 资产目录 / 按段计费 / 字幕真对齐）、
 80 字口径、以及六种常见问法的接法。它是**产品说明书**，改页面就要改它。
 
@@ -727,9 +727,9 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
 
 | 输入 | 输出 |
 | --- | --- |
-| （打开抽屉） | 「《2、母亲之路》已完成 0/11，停在 调研」+ 三条 chips + 页脚「模型：DeepSeek（云端）」 |
-| 点「现在卡在哪一步？」 | 报 0/11 + S1 + 建议生成调研模板；下方「去创作中心（卡在「调研」）」 |
-| 「帮我直接出片，云端跑」 | 拒绝并说明「0/11、S6 没有输入、27 币/任务 + 1 币/秒」，指回创作中心，**不给 run** |
+| （打开抽屉） | 「《2、母亲之路》已完成 0/7，停在 调研」+ 三条 chips + 页脚「模型：DeepSeek（云端）」 |
+| 点「现在卡在哪一步？」 | 报 0/7 + research + 建议生成调研模板；下方「去创作中心（卡在「调研」）」 |
+| 「帮我直接出片，云端跑」 | 拒绝并说明「0/7、出片节点没有输入、27 币/任务 + 1 币/秒」，指回创作中心，**不给 run** |
 | 「出片大概要花多少钱？」 | 说清按段计费与「段数定不下来，总价算不出」，`navigate cost` |
 | 无项目「我想做一部海外短剧，从哪开始？」 | 讲新建时要选路径/画幅/分辨率/画风，`navigate projects` |
 

@@ -19,18 +19,23 @@ export async function render(ctx) {
     + (x.subbed ? '<span class="nav-badge">字</span>' : '') + '</button>'
   )).join('') || '<div class="dim small" style="padding:10px">还没有集</div>';
 
+  // 三步：母版（首帧封面 + 片段 + BGM）→ 放大 → 字幕。
+  // ★ 2026-11-01：原来这里是四步，第 4 步写死「BGM 混音 未接入」——
+  //   V0.7.43 起 BGM 已经并进母版拼接（stage_master），页面还在说做不到，
+  //   用户会绕去找一个不存在的入口。
   const steps = e ? [
-    { n: 1, t: '拼接母版', ok: !!e.master, file: e.master, hint: '逐段合并 + 帧数校验' },
-    { n: 2, t: '高清放大', ok: !!e.upscaled, file: e.upscaled, hint: '1080x1920（Topaz 独占 GPU）' },
-    { n: 3, t: '字幕', ok: !!e.subbed, file: e.subbed, hint: 'G6：不问你就不烧' },
-    { n: 4, t: 'BGM 混音', ok: !!e.mix, file: e.mix, hint: '配乐脚本未纳入白名单（未接入）' }
+    { n: 1, t: '拼接母版', ok: !!e.master, file: e.master,
+      hint: '首帧封面（0.8s）+ 片段 + BGM（有 plan 才混）+ 帧数校验' },
+    { n: 2, t: '高清放大', ok: !!e.upscaled, file: e.upscaled,
+      hint: 'Topaz（本机）/ RunningHub（计费）/ 跳过，产物 _master_WxH.mp4' },
+    { n: 3, t: '字幕', ok: !!e.subbed, file: e.subbed, hint: 'G6：不问你就不烧' }
   ] : [];
 
   const stepsHtml = steps.map((s) => (
     '<div class="clitem"><span class="mk ' + (s.ok ? 'ok' : 'off') + '">'
     + (s.ok ? icon('check', 12) : s.n) + '</span>'
     + '<div class="body"><div class="ttl"><span>' + esc(s.t) + '</span>'
-    + (s.ok ? badge('ok', '已完成') : badge('muted', s.n === 4 ? '未接入' : '未生成')) + '</div>'
+    + (s.ok ? badge('ok', '已完成') : badge('muted', '未生成')) + '</div>'
     + '<div class="desc">' + esc(s.hint) + (s.file ? ' · <span class="mono">' + esc(s.file) + '</span>' : '') + '</div></div>'
     + '<div>' + (s.n === 3 && e.upscaled && !e.subbed
       ? '<button class="btn quiet sm" data-ask-sub="1">要不要字幕</button>' : '') + '</div></div>'
@@ -44,7 +49,8 @@ export async function render(ctx) {
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
     + '<h1 class="page-title">后期制作</h1>'
     + '<div class="page-sub">产物按真实文件名判定（<span class="mono">_master</span> / '
-    + '<span class="mono">_master_WxH</span> / <span class="mono">_subbed</span> / <span class="mono">_mix</span>）</div></div>'
+    + '<span class="mono">_master_WxH</span> / <span class="mono">_subbed*</span>）· '
+    + 'BGM 已混在母版里，不再单独出 <span class="mono">_mix</span> 文件</div></div>'
     + '<div class="page-actions"><span class="badge outline" title="GPU 为独占资源">GPU 独占</span></div></div>'
 
     + '<div class="grid" style="grid-template-columns:110px minmax(0,1fr);gap:16px;align-items:start">'
@@ -74,13 +80,13 @@ export async function render(ctx) {
     + '<section class="card"><div class="card-h"><h3>执行</h3><span class="card-sub">本地 GPU · 不花钱</span></div>'
     + '<div class="card-b">'
     + '<div class="row-gap">'
-    + '<button class="btn quiet" data-run="media.master">' + icon('film', 14) + ' 只拼母版（快速核对节奏）</button>'
-    + '<button class="btn quiet" data-run="media.assemble">' + icon('cpu', 14) + ' 拼接 + 高清放大（8–10 分钟/集）</button>'
-    + '<button class="btn quiet" data-run="media.render">' + icon('upload', 14) + ' 烧字幕（G6 停点后）</button>'
-    + '</div>'
+    + '<button class="btn quiet" data-run="media.master">' + icon('film', 14) + ' ① 拼接母版（封面 + 片段 + BGM）</button>'
+    + '<button class="btn quiet" data-run="media.upscale">' + icon('cpu', 14) + ' ② 高清放大（Topaz 8–10 分钟/集）</button>'
+    + '<button class="btn quiet" data-run="media.render">' + icon('upload', 14) + ' ③ 烧字幕（G6 停点后）</button>'     + '</div>'
     + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
     + '<div>这三个动作会占用本机 GPU 并写入工作区；开始前会弹确认，显示影响范围。'
-    + 'BGM 混音尚未接入（<span class="mono">bgm.py</span> 不在白名单）。</div></div>'
+    + 'BGM 已并入第 ① 步（有 <span class="mono">&lt;ep&gt;_bgm-plan.json</span> 才混，'
+    + '可用 <span class="mono">--no-bgm</span> 关闭）。</div></div>'
     + '</div></section></div></div></div>';
 
   return {
@@ -93,8 +99,8 @@ export async function render(ctx) {
         b.onclick = () => {
           if (!curEp) { toast('先选一集', 'warn'); return; }
           const spec = b.dataset.run;
-          const label = spec === 'media.master' ? '只拼母版'
-            : spec === 'media.assemble' ? '拼接 + 高清放大' : '烧字幕';
+          const label = spec === 'media.master' ? '拼接母版'
+            : spec === 'media.upscale' ? '高清放大' : '烧字幕';
           confirmGpu(ctx, label, spec, curEp);
         };
       });

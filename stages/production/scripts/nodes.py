@@ -309,6 +309,8 @@ class Ctx:
         except Exception:                                        # noqa: BLE001
             self.data = ws / "06-提示词"
             self.out = ws / "07-成片"
+        # 节点状态的「一轮内备忘录」不放这里，而是 `evaluate()` 里的局部 dict
+        # —— 挂在 Ctx 上会让「改完文件再判一次」拿到上一轮的结论。
 
     def ep_path(self, node: dict) -> pathlib.Path:
         """把节点 output 里的 `<ep>` 换成实际集号。
@@ -766,8 +768,30 @@ def _run_checker_cmd(ctx: Ctx, node: dict, cmd: str) -> tuple:
 # ===========================================================================
 # 状态推导
 # ===========================================================================
-def node_state(ctx: Ctx, node: dict) -> dict:
-    """→ {id, state, detail, mtime, upstream_ok}。**只看磁盘**。"""
+def node_state(ctx: Ctx, node: dict, _memo: dict | None = None) -> dict:
+    """→ {id, state, detail, mtime, upstream_ok}。**只看磁盘**。
+
+    `_memo` 是**一次评估内**的备忘录：`node_state` 递归查上游，同一个节点会被问很多次，
+    而 `cmd:` 判据每次都要起一个 Python 子进程 —— 不缓存就是「22 秒一张流程页」
+    （实测 553 次递归 → 62 次子进程 → 22 秒）。
+
+    ⚠ 缓存**不挂在 Ctx 上**：Ctx 会被反复使用（测试里改完文件再判一次），
+      挂在 Ctx 上就会拿到上一轮的结论。只有 `evaluate()` 显式传 `_memo`，
+      直接调 `node_state(ctx, node)` 永远是最新结果。
+    """
+    oid = node["id"]
+    if _memo is not None:
+        hit = _memo.get(oid)
+        if hit is not None:
+            return hit
+    res = _node_state_uncached(ctx, node, _memo)
+    if _memo is not None:
+        _memo[oid] = res
+    return res
+
+
+def _node_state_uncached(ctx: Ctx, node: dict, _memo: dict | None = None) -> dict:
+    """真正的判定（自身不缓存，但把 `_memo` 透传给上游）。"""
     oid = node["id"]
 
     # 显式跳过
@@ -781,7 +805,7 @@ def node_state(ctx: Ctx, node: dict) -> dict:
         u = NODE_BY_ID.get(up)
         if not u:
             continue
-        st = node_state(ctx, u)["state"]
+        st = node_state(ctx, u, _memo)["state"]
         if st not in ("passed", "skipped"):
             blocked_by.append("%s(%s)" % (up, st))
     if blocked_by:
@@ -849,9 +873,10 @@ def evaluate(ctx: Ctx) -> dict:
     """全量状态快照。★ 2026-11-01：每条节点带 `stage`，并附 `stages` 定义 ——
     Studio 的流程视图（adapters.norm_workflow）据此把 23 节点聚合成 7 环节，
     不再依赖已删除的 `workflow.py`（S1–S11 那套）。"""
+    memo = {}                    # 一轮评估一份备忘录：上游节点会被反复问
     rows = []
     for n in NODES:
-        r = node_state(ctx, n)
+        r = dict(node_state(ctx, n, memo))
         r["stage"] = n["stage"]
         rows.append(r)
     return {"ws": str(ctx.ws), "ep": ctx.ep, "nodes": rows,

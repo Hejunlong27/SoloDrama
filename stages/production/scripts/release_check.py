@@ -161,6 +161,8 @@ def main() -> int:
     ap.add_argument("--min-side", type=int, default=MIN_LONG_SIDE,
                     help="版权资料长边下限，默认 %d px" % MIN_LONG_SIDE)
     ap.add_argument("--json", action="store_true", help="输出 JSON（给控制台/CI 用）")
+    ap.add_argument("--no-write", dest="no_write", action="store_true",
+                    help="只算不写：不落 09-发行/release-manifest.json（给只读接口用）")
     ap.add_argument("--material-only", dest="material_only", action="store_true",
                     help="只校验物料：连载/未杀青阶段把「成片未出」降为 WARN（反馈 P0-6）")
     a = ap.parse_args()
@@ -382,17 +384,20 @@ def _report(a, ws, release, fails, warns, notes, summary, downstream=None) -> in
             print("  · %s" % n)
 
     # 落痕到 09-发行/release-manifest.json
-    try:
-        release.mkdir(parents=True, exist_ok=True)
-        rec = {"at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
-               "workspace": str(ws), "fails": all_fails,
-               "material_fails": list(fails), "downstream": list(downstream),
-               "warns": warns, "found": summary, "min_side": a.min_side,
-               "verdict": code, "verdict_cn": verdict_cn}
-        (release / "release-manifest.json").write_text(
-            json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-    except OSError:
-        pass
+    # ★ 2026-11-01：`--no-write` 供 Studio 的只读接口调用 —— GET 请求不该改工作区。
+    #   检查结论本身是纯计算，写盘只为留痕；要不要留痕由调用方决定。
+    if not getattr(a, "no_write", False):
+        try:
+            release.mkdir(parents=True, exist_ok=True)
+            rec = {"at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
+                   "workspace": str(ws), "fails": all_fails,
+                   "material_fails": list(fails), "downstream": list(downstream),
+                   "warns": warns, "found": summary, "min_side": a.min_side,
+                   "verdict": code, "verdict_cn": verdict_cn}
+            (release / "release-manifest.json").write_text(
+                json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        except OSError:
+            pass
 
     if code == "ok":
         print("\n[OK] 发行资料机器校验通过（人工项见上）。", file=human)

@@ -1,7 +1,7 @@
 /* 资产中心：缺口（引擎判定）+ 参考图超限 + 资产图片预览（工作区白名单）+ 真实出图
    出图走引擎既有的两条通道：
      本地 ComfyUI  ￥0，占 GPU（需 8188 在线）      → assets.local  --submit
-     云端 RunningHub ★计费（人物约 27 点/张）        → assets.rh     --submit
+     云端 RunningHub ★计费（按张结算）              → assets.rh_wf  --submit
    前置：引擎的 gen_assets_local.py **只认环境变量 SOLODRAMA_ASSET_MD**，
    所以这里必须先选「资产提示词 md」，由后端注入（浏览器永远不拼命令）。 */
 import { api, mediaUrl } from '../api.js';
@@ -245,19 +245,25 @@ function openGenPanel(ctx, md) {
         const r = root.querySelector('input[name="gEng"]:checked');
         return r ? r.value : 'local';
       };
-      const params = (submit) => ({
-        kind: val('#gKind') || 'all',
-        only: (val('#gOnly') || '').trim(),
-        force: checked('#gForce'),
-        submit,
-        asset_md: val('#gMd')
-      });
+      // 两条通道的「资产提示词」参数名不同：本地靠环境变量（asset_md → SOLODRAMA_ASSET_MD），
+      // 云端工作流要 CLI 参数（md）。两个键都给，多出来的会被命令校验忽略。
+      const params = (submit) => {
+        const md = val('#gMd');
+        return {
+          kind: val('#gKind') || 'all',
+          only: (val('#gOnly') || '').trim(),
+          force: checked('#gForce'),
+          submit,
+          md,
+          asset_md: md
+        };
+      };
 
       root.querySelector('#gDry').onclick = () => {
         const p = params(false);
         closeDrawer();
         doRun(ctx, {
-          specId: engine() === 'rh' ? 'assets.rh' : 'assets.local',
+          specId: engine() === 'rh' ? 'assets.rh_wf' : 'assets.local',
           title: (engine() === 'rh' ? '云端出图' : '本地出图') + ' · 干跑（列出清单与单价，不提交）',
           params: p,
           onDone: () => setTimeout(() => ctx.refresh(), 1200)
@@ -296,16 +302,16 @@ function openGenPanel(ctx, md) {
         } else {
           closeDrawer();
           runAction(ctx, {
-            specId: 'assets.rh',
-            title: '云端出图（★计费）',
+            specId: 'assets.rh_wf',
+            title: '云端工作流出图（★计费）',
             params: p,
             costTitle: '云端出图（按张计费）',
             cost: {
               lines: [
                 ['通道', 'RunningHub 云端'],
                 ['类型', p.kind + (p.only ? ' · 只做 ' + p.only : '')],
-                ['单价参考', '人物约 27 点/张 · 场景约 $0.01/张'],
-                ['合计', '按张数 × 单价，以平台实际用量结算']
+                ['计费', '按张结算（RunningHub 工作流），以平台实际用量为准'],
+                ['合计', '张数 × 平台单价；干跑会先给出清单']
               ],
               note: '提交后不可撤回；已生成的资产若勾了「重跑」会重复计费。'
             },

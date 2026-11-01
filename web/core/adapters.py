@@ -176,6 +176,16 @@ STATE_OF = {True: "done", False: "todo"}
 NODE_DONE = ("passed", "skipped")
 
 
+def release_status(ws) -> dict:
+    """G9 发行资料齐全度（**只读**：`--no-write` 不落 release-manifest.json）。
+
+    发行页原来写「G9 未接入」，理由是「release_check 会写盘，不当只读接口」。
+    这个理由成立，但结论不必是「不接」—— 给脚本加一个 `--no-write` 就行：
+    检查结论是纯计算，写盘只是为了留痕。
+    """
+    return run_json("release_check", ["--json", "--no-write"], ws, ttl=20)
+
+
 def norm_workflow(res: dict) -> dict:
     """23 节点 → 7 环节视图：`{ok, current, complete, stages[], nodes[]}`。
 

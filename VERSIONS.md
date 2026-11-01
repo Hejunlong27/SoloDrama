@@ -1,6 +1,52 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.46 · Studio 实测：三页读空气 + 4 个按钮点的命令不存在 + 首屏 22 秒）**
+  记录见 `docs/patches/2026-11-01_Studio实测缺陷清单.md`。方法是起真服务、用 Node 直跑
+  16 个视图模块（真后端）并真调命令，不是读代码猜。
+
+  **① 首屏从 22 秒降到 1 秒（两个「重复求值」）**
+  | 接口 | 修前 | 修后 | 根因 |
+  |---|---|---|---|
+  | `/api/studio/workflow` | 21.7s | 1.1s | `node_state` 递归无缓存 → 553 次调用、`cmd:` 判据真跑 62 次子进程 |
+  | `/api/studio/overview` | 24.9s | 2.0s | 同上 |
+  | `/api/health/checks` | 29.0s | 1.0s | `env_check` 用 `glob(recursive)` 扫整棵 Program Files：52,776 次目录列举 |
+  | `/api/studio/env` | 13.6s | 1.0s | 同上 |
+
+  节点备忘录放在 `evaluate()` 的**局部变量**里并显式向下传，**不挂 Ctx**
+  —— 挂 Ctx 会让「改完文件再判一次」拿到旧结论（`test_nodes.py` 的 B04 当场抓到）。
+  `env_check` 改为限深遍历 + 命中即停，三个二进制结果与修前一致。
+
+  **② 三页读不到真实项目（最严重）**
+  `studio.batches()` 只认 `^\d{8}_\d{6}$` 目录名**且**必须有 `summary.json`，而引擎支持
+  `--batch-id EP01` —— 磁盘上 8 个段都在，后期制作/分镜/发行三页全显示「还没有集」。
+  改为**按内容认批次**（目录下有 shot 级 `final.mp4` 即可），没有 summary 就现场数；
+  产物名从写死改成前缀 glob（`_subbed_1080p.mp4` 以前识别不到）；
+  只有字幕的集（ep02–ep04）也列出，标「无批次记录」。
+
+  **③ 四个按钮点的命令已被删**
+  `media.assemble`（后期页）、`assets.rh`（资产页 ×2）、`ux.py` 的任务动作表 ——
+  全部在 V0.7.44 改名/删除，前端没跟。现在视图引用的 67 条命令 id 与 70 个 `api.*`
+  方法都能对上（这条已做成脚本可复查）。
+
+  **④ 把「未接入」换成真数据**
+  发行页原写「G9 未接入（release_check 会写盘）」—— 理由成立但结论不必是不接：
+  给 `release_check.py` 加 `--no-write`，新增只读接口 `/api/studio/release`，
+  页面显示 verdict / fails / warns 与「看全部缺项」抽屉。
+
+  **⑤ 新项目开箱可用**
+  `subtitle.load_config` 缺 `config.subtitle.json` 时直接 `SystemExit`，而 `drama init`
+  只生成 `config.local.json` —— **每个新项目第一次拼接母版都会失败**，报的是一句绝对路径。
+  现在回退到仓库自带的 example 配置（stderr 说明一次）。
+
+  **⑥ 文案与口径**
+  总览「S1–S11 / workflow.py / 退出码 4」、创作中心与设置页的 `workflow.py`、
+  后期页第 4 步「BGM 未接入」（V0.7.43 已并入母版）、总览「4 集 · ? 秒」
+  （新增 `_ep_meta()`，从 blueprint/drama.json 取）—— 全部改掉；
+  `web/STUDIO.md` 的 11 环节口径同步为 7 环节 23 节点，两份旧流程文档加失效声明。
+
+  **测试**：新增 `web/tests/test_studio_episodes.py`（13 例：批次识别 / 产物 glob /
+  集号归一）与 `test_node_state_memo.py`（求值纪律）；生产层 22 个 + Studio 19 个全绿。
 - **2026-11-01 更新（V0.7.45 · 流程堵点复查：7 个「永远过不去」的节点 + 4 个坑）**
   详细记录见 `docs/patches/2026-11-01_流程堵点复查.md`。根因一句话：
   **`convert_storyboard` 把 data 按集分目录后，读侧有 5 处还写死根目录**，

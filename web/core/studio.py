@@ -74,6 +74,17 @@ def data_dir(ws) -> Path:
         return Path(ws) / "video-pipeline" / "data"
 
 
+def script_dir(ws) -> Path:
+    """剧本目录（布局真源 `_layout.stage_dir(ws, "script")`）。"""
+    L = _layout()
+    if L is not None:
+        try:
+            return Path(L.stage_dir(str(ws), "script"))
+        except Exception:  # noqa: BLE001
+            pass
+    return Path(ws) / "03-剧本"
+
+
 def assets_dir(ws) -> Path:
     """资产目录（布局真源 `_layout.stage_dir(ws, "assets")`）。"""
     L = _layout()
@@ -169,35 +180,89 @@ def _rel(ws, p) -> str:
 # ---------------------------------------------------------------------------
 # 批次与镜头
 # ---------------------------------------------------------------------------
+# 出片目录里**不是批次**的子目录（母版/字幕/日志/中间产物）
+_NOT_BATCH = {"subs", "logs", "_gen", "_preview", "images", "video", "cache", "tmp"}
+
+
+def _shot_videos(d: Path) -> list:
+    """→ [(shot 目录名, final.mp4 路径)]。段可能在 `<shot>/final.mp4` 或 `<shot>/video/final.mp4`。"""
+    rows = []
+    try:
+        subs = sorted(d.iterdir())
+    except OSError:
+        return rows
+    for sd in subs:
+        if not sd.is_dir():
+            continue
+        for cand in (sd / "final.mp4", sd / "video" / "final.mp4"):
+            try:
+                if cand.is_file() and cand.stat().st_size > 2048:
+                    rows.append((sd.name, cand))
+                    break
+            except OSError:
+                continue
+    return rows
+
+
+def _ep_from_name(name: str) -> str:
+    """目录名 → 集号 `epNN`。认 `EP01` / `ep01` / `ep_01` / `01`；时间戳批次返回空串。"""
+    m = re.fullmatch(r"(?:ep|Ep|EP)?[_-]?(\d{1,3})", (name or "").strip())
+    return ("ep%02d" % int(m.group(1))) if m else ""
+
+
 def batches(ws) -> list:
-    """所有出片批次（新→旧）。字段直接取自 summary.json，不重算。"""
+    r"""所有出片批次（新→旧）。
+
+    ★ 2026-11-01：原来**只认** `^\d{8}_\d{6}$` 目录名 **且** 必须有 summary.json。
+      结果是「引擎用 `--batch-id EP01` 出的片、或人工整理过目录的项目」在 Studio 里
+      完全看不见 —— 后期制作/分镜/发行三页显示「还没有集」，而磁盘上 8 个段都在。
+      现在改成**按内容认**：目录下有 shot 级 final.mp4 就是批次；有 summary.json 就
+      顺带读它的 totals/usage，没有就现场数一遍（标记 synthetic）。
+    """
     out = out_dir(ws)
     rows = []
     if not out.is_dir():
         return rows
     try:
-        dirs = [d for d in out.iterdir() if d.is_dir() and BATCH_RE.match(d.name)]
+        dirs = [d for d in out.iterdir()
+                if d.is_dir() and not d.name.startswith(("_", "."))
+                and d.name.lower() not in _NOT_BATCH]
     except OSError:
         return rows
     for d in dirs:
         s = _read_json(d / "summary.json")
-        if not isinstance(s, dict):
+        segs = _shot_videos(d)
+        if not isinstance(s, dict) and not segs:
             continue
-        try:
-            mtime = int((d / "summary.json").stat().st_mtime)
-        except OSError:
-            mtime = 0
+        if isinstance(s, dict):
+            try:
+                mtime = int((d / "summary.json").stat().st_mtime)
+            except OSError:
+                mtime = 0
+        else:
+            try:
+                mtime = int(max(p.stat().st_mtime for _n, p in segs))
+            except (OSError, ValueError):
+                mtime = 0
+        s = s if isinstance(s, dict) else {}
         fuse = s.get("fuse") or {}
+        totals = s.get("totals") or {}
+        if not totals and segs:
+            ok = sum(1 for _n, p in segs if p.stat().st_size > 2048) if segs else 0
+            totals = {"total": len(segs), "ok": ok, "fail": len(segs) - ok}
         rows.append({
             "batch": d.name,
+            "ep": _ep_from_name(d.name),
             "mtime": mtime,
-            "totals": s.get("totals") or {},
+            "totals": totals,
             "usage": s.get("usage") or {},
             "elapsed": s.get("elapsed_seconds"),
             "dry_run": bool(s.get("dry_run")),
             "resumed": bool(s.get("resumed")),
             "fuse": {"blown": bool(fuse.get("blown")), "reason": fuse.get("reason") or ""},
             "finished_at": s.get("finished_at") or "",
+            "synthetic": not isinstance(_read_json(d / "summary.json"), dict),
+            "segments": len(segs),
         })
     rows.sort(key=lambda r: r["mtime"], reverse=True)
     return rows
@@ -217,7 +282,17 @@ def shots(ws) -> dict:
         merged = {}
         for b in reversed(bl):                     # 旧 → 新
             s = _read_json(out_dir(ws) / b["batch"] / "summary.json") or {}
-            for sh in s.get("shots") or []:
+            shot_rows = list(s.get("shots") or [])
+            if not shot_rows:
+                # 没有 summary.json（`--batch-id EP01` 或人工整理过的目录）：
+                # 直接按磁盘上的段补一行，否则整条「逐镜状态」都是空的。
+                ep_guess = b.get("ep") or ""
+                for name, p in _shot_videos(out_dir(ws) / b["batch"]):
+                    sid = name if (not ep_guess or name.lower().startswith(ep_guess)) \
+                        else "%s_%s" % (ep_guess, name)
+                    shot_rows.append({"shot_id": sid, "video_status": "SUCCESS",
+                                      "final_mp4": str(p), "_ep": ep_guess})
+            for sh in shot_rows:
                 sid = sh.get("shot_id") or ""
                 if not sid:
                     continue
@@ -231,13 +306,18 @@ def shots(ws) -> dict:
                     "rel": _rel(ws, sh.get("final_mp4")) if sh.get("final_mp4") else "",
                     "batch": b["batch"],
                     "mtime": b["mtime"],
+                    "ep": sh.get("_ep") or "",
                 }
                 cur = merged.get(sid)
                 if cur is None or _priority(cand["status"]) >= _priority(cur["status"]):
                     merged[sid] = cand
         eps = {}
         for it in merged.values():
-            ep = it["shot_id"].split("_")[0]
+            ep = it.get("ep") or ""
+            if not ep:
+                m = re.match(r"^(ep[_-]?\d+)", it["shot_id"], re.I)
+                ep = m.group(1).lower().replace("-", "").replace("_", "") if m \
+                    else it["shot_id"].split("_")[0]
             e = eps.setdefault(ep, {"ep": ep, "total": 0, "ok": 0, "fail": 0, "pending": 0})
             e["total"] += 1
             p = _priority(it["status"])
@@ -263,21 +343,27 @@ def shots(ws) -> dict:
 # ---------------------------------------------------------------------------
 # 集级聚合（母版 / 放大 / 字幕 / 发布版）
 # ---------------------------------------------------------------------------
-_SUFFIX = [("master", "_master.mp4"), ("upscaled", "_master_1080x1920.mp4"),
-           ("mix", "_mix.mp4"), ("subbed", "_subbed.mp4"), ("ass", ".ass")]
+# 产物识别用 glob，不写死文件名。
+# ★ 2026-11-01：原来写死 `_subbed.mp4` / `_master_1080x1920.mp4`，而实际出片脚本
+#   产的是 `ep01_subbed_1080p.mp4`（烧完再归一化），于是「字幕明明烧了」却显示未生成。
+#   文件名里的分辨率/码率会随规格变，认前缀才稳。
+_ART_GLOBS = [("master", "%s_master.mp4"), ("upscaled", "%s_master_*x*.mp4"),
+              ("mix", "%s_mix*.mp4"), ("subbed", "%s_subbed*mp4"), ("ass", "%s.ass")]
 
 
 def _ep_artifacts(ws, ep: str) -> dict:
     d = out_dir(ws) / "subs" / ep
     out = {}
-    for key, suffix in _SUFFIX:
-        p = d / ("%s%s" % (ep, suffix))
-        out[key] = _rel(ws, p) if p.is_file() else ""
-    # 放大产物可能不是 1080x1920（换过目标分辨率），按前缀兜底
-    if not out["upscaled"] and d.is_dir():
-        for p in sorted(d.glob("%s_master_*x*.mp4" % ep)):
-            out["upscaled"] = _rel(ws, p)
-            break
+    for key, pat in _ART_GLOBS:
+        hit = ""
+        exact = d / (pat % ep)
+        if exact.is_file():
+            hit = exact
+        elif d.is_dir():
+            cands = sorted((q for q in d.glob(pat % ep) if q.is_file()),
+                           key=lambda q: q.stat().st_mtime, reverse=True)
+            hit = cands[0] if cands else ""
+        out[key] = _rel(ws, hit) if hit else ""
     return out
 
 
@@ -297,8 +383,10 @@ def episodes(ws) -> list:
             if m:
                 rel_map[int(m.group(1))] = p.name
     out = []
+    seen = set()
     for e in sh.get("episodes") or []:
         ep = e["ep"]
+        seen.add(ep)
         art = _ep_artifacts(ws, ep)
         idx = _release_index(ep)
         out.append({
@@ -310,6 +398,30 @@ def episodes(ws) -> list:
             "mix": art["mix"], "subbed": art["subbed"], "ass": art["ass"],
             "release": rel_map.get(idx, "") if idx is not None else "",
         })
+    # 只有母版/字幕、没有批次记录的集（早期出片或人工整理过的项目）也要列出来，
+    # 否则「后期制作」页会把已经烧好字幕的集整集藏起来。
+    subs_root = out_dir(ws) / "subs"
+    if subs_root.is_dir():
+        for d in sorted(subs_root.iterdir()):
+            if not d.is_dir():
+                continue
+            ep = _ep_from_name(d.name)
+            if not ep or ep in seen:
+                continue
+            art = _ep_artifacts(ws, ep)
+            if not any(art[k] for k in ("master", "upscaled", "subbed", "ass")):
+                continue
+            seen.add(ep)
+            idx = _release_index(ep)
+            out.append({
+                "ep": ep, "total": 0, "ok": 0, "fail": 0, "pending": 0,
+                "state": "done" if art["subbed"] else "doing",
+                "master": art["master"], "upscaled": art["upscaled"],
+                "mix": art["mix"], "subbed": art["subbed"], "ass": art["ass"],
+                "release": rel_map.get(idx, "") if idx is not None else "",
+                "note": "无批次记录（按 subs/ 目录列出）",
+            })
+        out.sort(key=lambda x: x["ep"])
     return out
 
 
@@ -400,6 +512,28 @@ def cost(ws) -> dict:
 # ---------------------------------------------------------------------------
 # 一屏聚合
 # ---------------------------------------------------------------------------
+def _ep_meta(ws) -> dict:
+    """集数 / 单集秒数：blueprint 优先，`drama.json` 兜底。都读不到就返回 0。
+
+    ★ 2026-11-01：总览页原来显示「4 集 · ? 秒」—— `?` 是因为它去 `setup.items`
+      里找 `detail.seconds`，而 `detail` 现在是一句人话（`集数：4`），取不到字段。
+      数据来源该是蓝图，不是展示文案。
+    """
+    bp = _read_json(script_dir(ws) / "blueprint.json") or {}
+    dr = _read_json(Path(ws) / "drama.json") or {}
+    eps = dr.get("episodes") or {}
+    try:
+        total = int(bp.get("total_ep") or eps.get("count") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    try:
+        sec = int(bp.get("ep_seconds") or eps.get("seconds") or 0)
+    except (TypeError, ValueError):
+        sec = 0
+    return {"total": total, "seconds": sec,
+            "source": "blueprint.json" if bp.get("ep_seconds") else ("drama.json" if sec else "")}
+
+
 def overview(ws) -> dict:
     """Studio 首屏：项目元信息 + 流程 + 九项 + 双门禁 + 计数 + 花费。"""
     def go():
@@ -458,6 +592,7 @@ def overview(ws) -> dict:
             },
             "refs_over": [{"key": r.get("key"), "size": r.get("size")} for r in refs_over],
             "counts": counts,
+            "ep_meta": _ep_meta(ws),
             "episodes": eps,
             "batches": sh["batches"][:5],
             "latest_batch": sh["latest_batch"],

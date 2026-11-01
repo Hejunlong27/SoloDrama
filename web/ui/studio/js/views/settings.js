@@ -38,7 +38,7 @@ export async function render(ctx) {
       + '</div><div class="desc">' + esc(it.label || '') + (it.missing && it.missing.length
         ? ' · 缺：' + esc(it.missing.join('、')) : '') + '</div></div></div>').join('')
     : '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-      + (ctx.ws ? '未取到 G-0 九项：' + esc(setup.reason || 'project_setup.py 未返回 JSON')
+      + (ctx.ws ? '未取到开工前置：' + esc(setup.reason || 'drama.json 读不到')
         : '先选择项目，再看开工前置。') + '</div></div>';
 
   const capabilityKeys = Object.keys(caps);
@@ -84,7 +84,7 @@ export async function render(ctx) {
     + '<span class="card-sub">缺一项，计费动作会被引擎拦下（退出码 4）</span>'
     + '<span class="spacer"></span>' + (setup.ready ? badge('ok', '齐备') : badge('warn', '有缺项')) + '</div>'
     + '<div class="card-b" style="padding-top:4px">' + setupHtml + '</div>'
-    + '<div class="card-foot">' + stamp('project_setup.py show --json · 10 秒缓存') + '</div></section>'
+    + '<div class="card-foot">' + stamp('drama.json（读档案，不起子进程）· 20 秒缓存') + '</div></section>'
 
     + '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>能力清单</h3>'
     + '<span class="card-sub">哪些是真的接了、哪些没接以及为什么</span></div>'

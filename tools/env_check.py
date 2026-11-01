@@ -147,33 +147,104 @@ def _probe_alt(py: str, module: str) -> tuple:
         return False, ""
 
 
+_SKIP_DIRS = {"windowsapps", "node_modules", ".git", "$recycle.bin", "temp",
+              "cache", "system volume information", "winsxs", "installer"}
+
+
+def _walk_find(root: Path, exe: str, max_depth: int = 4) -> list:
+    """在 root 下**限深**找 exe，命中即返回。
+
+    ★ 2026-11-01：这里原来用 `glob.glob(base/*/**/exe, recursive=True)`，等于把
+      `C://Program Files` 整棵树走一遍 —— 实测 52,776 次目录列举、8 秒，
+      而 `env_check` 一次只为了找 3 个 exe。体检页因此要 8 秒，Studio 的环境页 15 秒。
+      限深 + 命中即停后是毫秒级。
+    """
+    out, stack = [], [(root, 0)]
+    while stack:
+        d, depth = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_file(follow_symlinks=False) and e.name.lower() == exe:
+                            return [e.path]
+                        if (e.is_dir(follow_symlinks=False) and depth < max_depth
+                                and e.name.lower() not in _SKIP_DIRS):
+                            stack.append((Path(e.path), depth + 1))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return out
+
+
+def _find_named(base: Path, name: str, exe: str, max_depth: int = 4) -> list:
+    """只在「名字像这个工具」的子目录里找（ffmpeg 装在 <PF>\ffmpeg\bin 这种）。
+
+    全树递归是 8 秒的根源；目录名先筛一遍就够，找不到再退回浅层 bin 模式。
+    """
+    if not base.is_dir():
+        return []
+    key = name.lower().replace("-", "").replace("_", "")
+    try:
+        tops = [e for e in os.scandir(base) if e.is_dir(follow_symlinks=False)]
+    except OSError:
+        return []
+    for e in tops:
+        k = e.name.lower().replace("-", "").replace("_", "")
+        if key and key not in k:
+            continue
+        got = _walk_find(Path(e.path), exe, max_depth)
+        if got:
+            return got
+    return []
+
+
 def _bin_candidates(name: str) -> list:
-    """常见安装位置候选（Windows 为主，其它平台返回 PATH 之外的空列表）。"""
+    """常见安装位置候选（Windows 为主，其它平台返回 PATH 之外的空列表）。
+
+    性能纪律：**不做无限深递归**。每条候选都是「限深遍历 + 命中即停」，
+    名字不像这个工具的目录直接跳过。旧实现扫一遍 Program Files 要 8 秒。
+    """
     if not IS_WIN:
         return []
-    exe = name if name.lower().endswith(".exe") else name + ".exe"
+    exe = (name if name.lower().endswith(".exe") else name + ".exe").lower()
     home = Path.home()
     la = os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
-    cands = [
-        # winget 安装的可执行文件实际落在这里，但只有**新开**的终端才在 PATH 里
-        Path(la) / "Microsoft" / "WinGet" / "Links" / exe,
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
-        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
-    ]
-    out = [str(p) for p in cands if str(p).lower().endswith(".exe") and Path(p).is_file()]
-    # 用户目录下的常见解压式安装（whisper-cli / ffmpeg 静态包等）
-    for pat in (str(home / name / "**" / exe), str(home / "*" / name / "**" / exe)):
-        out += glob.glob(pat, recursive=True)[:5]
-    # 项目自带的 envs/ 与同级工具目录
-    for pat in (str(ROOT / "envs" / "*" / exe), str(ROOT / "tools" / "bin" / exe),
-                str(ROOT / "vendor" / "**" / exe)):
-        out += glob.glob(pat, recursive=True)[:5]
-    # Program Files 下两层内（ffmpeg 常是 <PF>\ffmpeg\bin\ffmpeg.exe）
+    out = []
+
+    # ① 精确候选：winget 装的可执行文件实际落在这里，但只有**新开**的终端才在 PATH 里
+    exact = Path(la) / "Microsoft" / "WinGet" / "Links" / exe
+    if exact.is_file():
+        out.append(str(exact))
+
+    # ② 项目自带 / 用户目录下的解压式安装（whisper-cli、ffmpeg 静态包等）
+    for base, depth in ((ROOT / "envs", 3), (ROOT / "tools" / "bin", 1),
+                        (ROOT / "vendor", 4), (home, 4)):
+        if depth == 1:
+            p = base / exe
+            if p.is_file():
+                out.append(str(p))
+            continue
+        out += _find_named(base, name, exe, depth)
+        if depth == 4:                       # home 下还有 `home/<随便>/<name>/...` 这种一层
+            if not out:
+                try:
+                    for e in os.scandir(home):
+                        if e.is_dir(follow_symlinks=False) and e.name.lower() not in _SKIP_DIRS:
+                            got = _find_named(Path(e.path), name, exe, 3)
+                            if got:
+                                out += got
+                                break
+                except OSError:
+                    pass
+
+    # ③ Program Files 下（ffmpeg 常是 <PF>\ffmpeg\bin\ffmpeg.exe）
     # ⚠ 这里曾经写成 `r"C://Program Files"` —— 反斜杠被写盘过程吃成斜杠，
     #   而这几个路径**永远不会命中**，于是「装在 Program Files 里的工具」被判成没装。
-    #   正是「明明装了却说没装」的又一条来源，且不报错、不告警。
-    for base in (r"C:\Program Files", r"C:\Program Files (x86)", r"D:\Program Files"):
-        out += glob.glob(os.path.join(base, "*", "**", exe), recursive=True)[:5]
+    for base in (r"C://Program Files", r"C://Program Files (x86)", r"D://Program Files"):
+        out += _find_named(Path(base), name, exe, 4)
+
     # 去重保序
     seen, uniq = set(), []
     for p in out:

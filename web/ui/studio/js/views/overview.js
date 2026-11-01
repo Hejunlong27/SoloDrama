@@ -1,4 +1,4 @@
-/* 项目详情：流程 S1–S11（引擎判据）+ G-0/G-1/G0/G2 + 集列表 + 产物目录 */
+/* 项目详情：7 环节 / 23 节点（引擎判据）+ G-0/G-1/G0/G2 + 集列表 + 产物目录 */
 import { api } from '../api.js';
 import { S } from '../store.js';
 import {
@@ -67,15 +67,18 @@ export async function render(ctx) {
     + '<div class="empty-h">出片后会在这里按集汇总（来源：<span class="mono">07-成片/&lt;批次&gt;/summary.json</span>）。</div>'
     + '<button class="btn quiet" data-go="storyboard">去分镜与视频</button></div></td></tr>';
 
-  const epItem = (setup.items || []).find((i) => i.key === 'episodes') || {};
-  const epCount = (wf.ctx && wf.ctx.episodes) || (epItem.detail && epItem.detail.count) || eps.length || '?';
-  const epSec = (epItem.detail && epItem.detail.seconds) || '?';
+  // 集数/秒数取引擎数据（blueprint.json → drama.json），不取展示文案 ——
+  // 原来去 setup.items 找 `detail.seconds`，而 detail 现在是一句「集数：4」，
+  // 于是页面显示「4 集 · ? 秒」。
+  const meta = ov.ep_meta || {};
+  const epCount = meta.total || eps.length || '—';
+  const epSec = meta.seconds || '—';
 
   const adapterWarn = [];
   if (!wf.ok) {
     adapterWarn.push('流程状态未取到（reason=' + esc(wf.reason || '?') + '）：可能工作区缺少 layout.json 或引擎解释器不可用。');
   }
-  if (!setup.items.length) adapterWarn.push('开工前置（G-0）未取到：project_setup.py 未返回 JSON。');
+  if (!setup.items.length) adapterWarn.push('开工前置未取到：工作区里没有可读的 drama.json（用 drama init 建项目）。');
 
   const html = ''
     + '<div class="page-head"><div>'
@@ -91,21 +94,21 @@ export async function render(ctx) {
       + icon('alert', 14) + '</span><div>' + adapterWarn.map(esc).join('<br>') + '</div></div>' : '')
 
     + '<section class="card" style="margin-bottom:16px">'
-    + '<div class="card-h"><h3>生产阶段</h3><span class="card-sub">S1–S11 顺序不可跳（G10）</span>'
+    + '<div class="card-h"><h3>生产阶段</h3><span class="card-sub">7 环节 23 节点，顺序不可跳（G10）</span>'
     + '<span class="spacer"></span>'
     + (wf.current ? badge('live', '当前 ' + wf.current) : badge('ok', '全部完成'))
     + '</div><div class="card-b">'
     + (rail || '<div class="dim small">无阶段数据</div>')
     + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
-    + '<div>阶段完成度来自引擎的产物判据（<span class="mono">workflow.py status --json</span> 的 probes），'
-    + '不靠手动勾选。进入下一环节前会先校验前置（未过 = 退出码 4）。</div></div>'
+    + '<div>阶段完成度来自引擎的产物判据（<span class="mono">drama nodes --json</span> 的节点状态），'
+    + '不靠手动勾选。下一环节只在上游全过时才可推进（未过 = 退出码 3，需人工确认 = 4）。</div></div>'
     + '</div></section>'
 
     + '<div class="grid g12" style="margin-bottom:16px">'
     + '<section class="card"><div class="card-h"><h3>基本信息</h3></div><div class="card-b">'
     + kv([
       ['路径', ctx.ws, true],
-      ['集数 / 单集秒数', epCount + ' 集 · ' + epSec + ' 秒'],
+      ['计划集数 / 单集秒数', epCount + ' 集 · ' + epSec + ' 秒'],
       ['镜头 / 提示词', (counts.shots || 0) + ' 镜 · ' + (counts.prompts || 0) + ' 条'],
       ['画风', (ov.style && (ov.style.label || ov.style.choice)) || '未确认'],
       ['图片', (counts.images && (counts.images.total + ' 张（角色 ' + counts.images.characters + ' / 场景 '

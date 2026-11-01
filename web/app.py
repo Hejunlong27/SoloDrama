@@ -737,6 +737,22 @@ def studio_prompt(ws: str = Query(...), shot: str = Query(...)):
     return studio.prompt_of(str(_require_ws(ws)), shot)
 
 
+@app.get("/api/studio/release")
+def studio_release(ws: str = Query(...)):
+    """G9 发行资料齐全度（只读）。verdict ∈ ok / ready_for_export / blocked。"""
+    res = adapters.release_status(str(_require_ws(ws)))
+    d = res.get("data") or {}
+    # `ok` 只表示「算出来了」；通过与否看 verdict（blocked 时 rc=2 是正常的门禁结果，
+    # 不是接口故障 —— 混用会让页面把「缺 15 项」显示成「接口不可用」）。
+    return {"ok": bool(d), "reason": "" if d else res.get("reason"),
+            "verdict": d.get("verdict") or "",
+            "verdict_cn": d.get("verdict_cn") or "",
+            "fails": d.get("fails") or [],
+            "warns": d.get("warns") or [],
+            "found": d.get("found") or {},
+            "text_tail": res.get("text_tail") if not res.get("ok") else ""}
+
+
 @app.get("/api/studio/cost")
 def studio_cost(ws: str = Query(...)):
     return studio.cost(str(_require_ws(ws)))

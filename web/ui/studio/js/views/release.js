@@ -1,12 +1,22 @@
-/* 发行中心：发布版剧集（真实文件）+ 发行目录清单 + 明确标注未接入的 G9/导出 */
+/* 发行中心：发布版剧集（真实文件）+ G9 资料齐全度（只读）+ 发行目录清单 */
 import { api, mediaUrl } from '../api.js';
 import { esc, icon, badge, dot, stamp, openDrawer, toast, emptyBox } from '../ui.js';
 
 export async function render(ctx) {
-  const [eps, relDir] = await Promise.all([
+  const [eps, relDir, g9] = await Promise.all([
     api.episodes(ctx.ws).catch(() => ({ items: [] })),
-    api.artifacts(ctx.ws, '09-发行').catch((e) => ({ items: [], error: e.detail || e.message }))
+    api.artifacts(ctx.ws, '09-发行').catch((e) => ({ items: [], error: e.detail || e.message })),
+    api.releaseStatus(ctx.ws).catch((e) => ({ ok: false, reason: e.detail || e.message }))
   ]);
+
+  // G9：ok / ready_for_export / blocked（release_check.py --json --no-write，纯只读）
+  const g9ok = g9 && g9.ok && g9.verdict === 'ok';
+  const g9Fails = (g9 && g9.fails) || [];
+  const g9Warns = (g9 && g9.warns) || [];
+  const g9tone = g9ok ? 'ok' : (g9 && g9.verdict ? 'warn' : 'muted');
+  const g9text = g9ok ? 'G9 通过'
+    : (g9 && g9.verdict === 'ready_for_export' ? 'G9 待导出'
+    : (g9Fails.length ? 'G9 缺 ' + g9Fails.length + ' 项' : (g9 && g9.reason ? 'G9 读不到' : 'G9 未检查')));
 
   const list = (eps.items || []).filter((e) => e.release);
   const rows = list.map((e) => (
@@ -27,7 +37,9 @@ export async function render(ctx) {
     + '<h1 class="page-title">发行中心</h1>'
     + '<div class="page-sub">发布版命名必须 <span class="mono">EpisodeNN.mp4</span>，落 '
     + '<span class="mono">09-发行/剧集/</span></div></div>'
-    + '<div class="page-actions"><span class="badge muted" title="G9 发行检查与导出尚未接入">G9 未接入</span></div></div>'
+    + '<div class="page-actions"><span class="badge ' + g9tone + '" title="'
+    + esc(g9 && g9.verdict_cn ? g9.verdict_cn : 'release_check.py --json --no-write（只读）') + '">'
+    + esc(g9text) + '</span></div></div>'
 
     + '<div class="grid g12" style="margin-bottom:16px">'
     + '<section class="card"><div class="card-h"><h3>发布版剧集</h3>'
@@ -48,14 +60,31 @@ export async function render(ctx) {
     + '</div></section></div>'
 
     + '<div class="grid g3">'
-    + card('资料齐备度（G9）', 'muted', '未接入',
-      'release_check.py 会写 09-发行/release-manifest.json（属写操作），本版不把它当只读接口。'
-      + '下一批接入时会作为「显式动作」提供，并展示 fails / warns / verdict。')
-    + card('封面', 'muted', '未接入',
-      '封面主路径是 cover_prompt.py（AI 直出带字），尚未纳入命令白名单。'
-      + '工作区里已有的封面会在「发行目录」中可见。')
-    + card('导出发布版', 'muted', '未接入',
-      'release_export.py 默认干跑、--apply 才写盘。需先补白名单与二次确认，再开放网页端。')
+    + '<section class="card"><div class="card-h"><h3>资料齐备度（G9）</h3>'
+    + '<span class="spacer"></span>' + badge(g9tone, g9text) + '</div>'
+    + '<div class="card-b">'
+    + (g9Fails.length
+      ? '<div class="small muted" style="margin-bottom:6px">还缺 '
+        + g9Fails.length + ' 项（点开看全部）</div>'
+        + g9Fails.slice(0, 6).map((x) => '<div class="row" style="padding:3px 0">'
+          + '<span class="dot bad"></span><span class="small" style="flex:1">'
+          + esc(x) + '</span></div>').join('')
+        + (g9Fails.length > 6 ? '<div class="tiny dim">…等共 ' + g9Fails.length + ' 项</div>' : '')
+        + '<div style="margin-top:8px"><button class="btn ghost sm" id="btnG9All">看全部缺项</button></div>'
+      : (g9ok ? '<div class="small">机器校验已通过，剩下的是人工项（见发行清单）。</div>'
+        : '<div class="small muted">' + esc((g9 && (g9.reason || g9.verdict_cn)) || '还没算') + '</div>'))
+    + (g9Warns.length ? '<div class="tiny dim" style="margin-top:6px">另有 '
+      + g9Warns.length + ' 条提醒</div>' : '')
+    + '</div>'
+    + '<div class="card-foot">' + stamp('release_check.py --json --no-write · 只读，不写 manifest · 20 秒缓存') + '</div></section>'
+    + card('封面', g9 && (g9.found || {}).covers && (g9.found.covers || []).length ? 'ok' : 'muted',
+      g9 && (g9.found || {}).covers && (g9.found.covers || []).length
+        ? ((g9.found.covers || []).join(' / ') + ' 已备') : '缺封面',
+      '封面档位固定 cover_9x16.png / cover_3x4.png，由封面出图流程直出（带字）。'
+      + '现有文件在右侧「发行目录」中可见。')
+    + card('导出发布版', 'muted', '命令行',
+      'release_export.py --all --apply 才写 09-发行/剧集/EpisodeNN.mp4；默认干跑。'
+      + '网页端暂不代跑（防误写盘），命令可在「流水线」页复制。')
     + '</div>';
 
   return {
@@ -75,6 +104,20 @@ export async function render(ctx) {
           });
         };
       });
+      const g = root.querySelector('#btnG9All');
+      if (g) g.onclick = () => {
+        openDrawer({
+          title: 'G9 还缺什么',
+          html: '<div class="small muted" style="margin-bottom:8px">'
+            + esc(g9.verdict_cn || '') + '</div>'
+            + g9Fails.map((x, i) => '<div class="row" style="padding:4px 0;border-bottom:1px solid var(--line)">'
+              + '<span class="mono tiny dim" style="width:28px">' + (i + 1) + '</span>'
+              + '<span class="small" style="flex:1">' + esc(x) + '</span></div>').join('')
+            + (g9Warns.length ? '<div class="ttl" style="margin-top:10px">提醒</div>'
+              + g9Warns.map((x) => '<div class="small dim">· ' + esc(x) + '</div>').join('') : ''),
+          foot: '<span class="spacer"></span><button class="btn quiet" data-close="drawer">关闭</button>'
+        });
+      };
       const b = root.querySelector('#btnBrowseRel');
       if (b) b.onclick = async () => {
         try {

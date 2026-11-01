@@ -1,6 +1,6 @@
 /* 创作中心：S1–S5 的真实完成度（引擎 probes）+ 免费校验 + AI 剧本正文闭环
    两条纪律：
-     1. 完成度只看引擎判据（workflow.py status 的 probes），不靠勾选；
+     1. 完成度只看引擎判据（drama nodes --json 的节点状态），不靠勾选；
      2. AI 正文走「草稿 → 人工编辑 → 确认落盘」：生成阶段绝不碰 03-剧本/ep_NN.md。 */
 import { api } from '../api.js';
 import { esc, icon, badge, dot, stamp, openDrawer, closeDrawer, closeModal, paintIcons, toast, confirmCost, kv } from '../ui.js';
@@ -76,7 +76,7 @@ export async function render(ctx) {
     + '</div></section>'
 
     + '<section class="card"><div class="card-h"><h3>数据来源</h3></div><div class="card-b">'
-    + stamp('workflow.py status --json · 5 秒缓存') + '</div></section>'
+    + stamp('drama nodes --json · 8 秒缓存') + '</div></section>'
     + '</div></div>';
 
   return {

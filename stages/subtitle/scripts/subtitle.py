@@ -183,11 +183,35 @@ def dump_json(p, obj):
 
 # ---------------------------------------------------------------- 配置与素材
 
+def _example_config_path():
+    """随脚本发布的默认配置（`stages/subtitle/assets/config.subtitle.example.json`）。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = os.path.join(os.path.dirname(here), "assets", "config.subtitle.example.json")
+    return cand if os.path.isfile(cand) else ""
+
+
 def load_config(ws):
+    """读项目配置；**没有就用随仓库发布的默认值**。
+
+    ★ 2026-11-01：原先没有 `<engine>/config.subtitle.json` 就直接 `SystemExit`，
+      而 `drama init` 只生成 `config.local.json` —— 于是**每个新项目**第一次点
+      「拼接母版」都会失败，报的是一句绝对路径（"找不到配置：D://...//config.subtitle.json"），
+      用户既不知道要复制哪个文件，也不知道默认值在哪。
+      现在回退到 example（并在 stderr 说明一次），新项目开箱可用；
+      要改就把它复制到 `video-pipeline/config.subtitle.json`。
+    """
     p = os.path.join(engine_root_of(ws), "config.subtitle.json")
-    if not os.path.exists(p):
-        raise SystemExit("找不到配置：%s" % p)
-    cfg = load_json(p)
+    if os.path.exists(p):
+        cfg = load_json(p)
+    else:
+        ex = _example_config_path()
+        if not ex:
+            raise SystemExit("找不到字幕配置，且仓库里没有默认配置：%s" % p)
+        cfg = load_json(ex)
+        cfg["_config_path"] = ex
+        cfg["_config_is_default"] = True
+        sys.stderr.write("[i] 本集没有 config.subtitle.json，先用仓库默认配置：%s\n" % ex)
+        sys.stderr.write("    要改断句/时序：把它复制到 %s 再改\n" % p)
     cfg = apply_style_sheet(cfg, load_style_sheet(ws, cfg))
     if not cfg.get("_style_sheet"):
         # ★ 2026-11-01：不再回退旧的百分比算法。回退的代价是「同一份规范在不同剧里

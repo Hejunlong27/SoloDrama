@@ -141,6 +141,7 @@ export const api = {
   shots: (ws, ep) => get('/api/studio/shots', { ws, ep }),
   episodes: (ws) => get('/api/studio/episodes', { ws }),
   cost: (ws) => get('/api/studio/cost', { ws }),
+  releaseStatus: (ws) => get('/api/studio/release', { ws }),
   env: () => get('/api/studio/env'),
   refresh: (ws) => post('/api/studio/refresh', {}, { ws }),
 
