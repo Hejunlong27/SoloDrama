@@ -225,9 +225,12 @@ NODES: list = [
      "trigger": "drama do edit.upscale --ep ep01",
      "reads": ["edit.master"], "output": "07-成片/<ep>/*_master_1080x1920.mp4",
      "check": "upscaled", "next": "edit.audio", "reflow": ["edit.master"],
-     # 放大是 `subtitle.py` 的一个 stage（本地 Topaz / RH 由 provider 决定），
-     # 没有独立的 upscale.py —— 旧 `run` 指向一个不存在的脚本。
-     "run": "python stages/subtitle/scripts/subtitle.py --stage upscale"},
+     # ★ 2026-11-01 更正：这个脚本**存在**，原写法本来就是对的。
+     #   我先前只在一个筛过的文件名列表里没看到它，就断言「文件不存在」，把它改成了
+     #   `subtitle.py --stage upscale` —— 而那个 stage 受 `upscale.enabled` 开关控制，
+     #   默认关着就什么都不做，节点会永远过不去。现改回直连：
+     #   `upscale.py` 自带 `--ep/--workspace/--target`，产物名就是 `_master_<W>x<H>.mp4`。
+     "run": "python stages/subtitle/scripts/upscale.py"},
     {"id": "edit.audio", "stage": "edit", "ep": True,
      "trigger": "drama do edit.audio --ep ep01",
      "reads": ["edit.upscale"], "output": "07-成片/<ep>/*_bgm.mp4",
