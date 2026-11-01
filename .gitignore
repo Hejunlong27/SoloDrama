@@ -80,3 +80,6 @@ stages/production/assets/bgm/**
 
 # 排查用临时文件（probe 输出、跑批日志、一次性脚本产物），不入库
 _scratch/
+_*.log
+stages/**/_*.log
+stages/**/_*.txt
