@@ -255,6 +255,15 @@ def apply_style_sheet(cfg, sheet):
         return cfg
     for lang, st in (sheet.get("styles") or {}).items():
         lc = cfg.setdefault("languages", {}).setdefault(lang, {})
+        if not [k for k in lc if not str(k).startswith("_")]:
+            # 老项目的 config.subtitle.json 只有 zh/es，没有 en。样式表能补视觉字段，
+            # 但断句/时序字段（`min_duration_s`、`wrap`、`cps_*`）是**硬访问**的 ——
+            # 缺了会在 build_cues 里 KeyError。按语系继承一份：中文取 zh，拉丁取 es。
+            proto = "zh" if lang == "zh" else "es"
+            for k, v in ((cfg.get("languages") or {}).get(proto) or {}).items():
+                if not str(k).startswith("_"):
+                    lc.setdefault(k, v)
+            lc["_inherited_from"] = proto
         for src, dst in (("font", "font"), ("font_px", "font_px"),
                          ("char_width_em", "char_width_em"), ("bold", "bold"),
                          ("max_line_chars", "max_line_chars"), ("max_lines", "max_lines"),
