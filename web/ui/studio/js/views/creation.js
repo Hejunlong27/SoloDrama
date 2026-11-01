@@ -1,4 +1,4 @@
-/* 创作中心：S1–S5 的真实完成度（引擎 probes）+ 免费校验 + AI 剧本正文闭环
+/* 创作中心：前 5 个环节（research/script/asset/board/prompt）的完成度 + 免费校验 + AI 剧本正文闭环
    两条纪律：
      1. 完成度只看引擎判据（drama nodes --json 的节点状态），不靠勾选；
      2. AI 正文走「草稿 → 人工编辑 → 确认落盘」：生成阶段绝不碰 03-剧本/ep_NN.md。 */
@@ -56,7 +56,8 @@ export async function render(ctx) {
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>'
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
     + '<h1 class="page-title">创作中心</h1>'
-    + '<div class="page-sub">S1 调研 → S2 剧本 → S3 资产设计；完成度来自产物判据</div></div>'
+    + '<div class="page-sub">调研 → 剧本 → 资产 → 分镜 → 提示词；完成度来自 23 节点判据（'
+    + '<span class="mono">drama nodes --json</span>）</div></div>'
     + '<div class="page-actions"><button class="btn quiet" id="btnWfRefresh">'
     + icon('refresh', 14) + ' 重新读取</button></div></div>'
 
@@ -244,9 +245,13 @@ function variablesOf(c) {
 }
 
 async function openDraft(ctx, did, reload) {
-  let d;
+  let d, targetSha = '';
   try {
-    d = (await api.draft(ctx.ws, did)).draft;
+    const det = await api.draft(ctx.ws, did);
+    d = det.draft;
+    // 目标剧本当前的指纹：确认落盘时带回去做乐观锁。
+    // 不传的话后端那道「目标文件被改动过就拒绝覆盖」的检查等于没开。
+    targetSha = det.target_sha || '';
   } catch (e) {
     toast('读取草稿失败：' + (e.detail || e.message), 'bad');
     return;
@@ -315,7 +320,8 @@ async function openDraft(ctx, did, reload) {
           cf.innerHTML = '<span class="spinner"></span>写入中';
           try {
             const res = await api.draftConfirm(ctx.ws, did,
-              { confirm: true, overwrite: over, allow_simulated: simulated });
+              { confirm: true, overwrite: over, allow_simulated: simulated,
+                expected_sha: targetSha });
             toast((res.simulated ? '演练稿已写入 ' : '已写入 ')
               + (res.target || '').split(/[\\/]/).pop()
               + (res.backup ? '（旧版已备份）' : ''));
@@ -325,7 +331,11 @@ async function openDraft(ctx, did, reload) {
             const d2 = e.detail;
             const msg = typeof d2 === 'string' ? d2 : (d2 && d2.message) || e.message;
             toast('落盘失败：' + msg, 'bad');
-            if (String(msg).indexOf('覆盖') >= 0) r.querySelector('#dOver').checked = false;
+            if (String(msg).indexOf('指纹') >= 0) {
+              toast('这份剧本在你审稿期间被改过：重新打开草稿再确认，或先备份再覆盖', 'bad');
+            } else if (String(msg).indexOf('覆盖') >= 0) {
+              r.querySelector('#dOver').checked = false;
+            }
           } finally {
             cf.disabled = false;
             cf.textContent = '确认落盘';

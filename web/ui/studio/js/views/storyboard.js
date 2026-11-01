@@ -67,7 +67,7 @@ export async function render(ctx) {
     + '<div class="page-sub">逐镜状态来自 <span class="mono">07-成片/&lt;批次&gt;/summary.json</span>'
     + '（跨批次按镜头去重）· 最近批次 <span class="mono">' + esc(data.latest_batch || '无') + '</span></div></div>'
     + '<div class="page-actions">'
-    + '<button class="btn quiet" id="btnCheckG10">' + icon('check', 14) + ' 校验前置（G10）</button>'
+    + '<button class="btn quiet" id="btnCheckG10">' + icon('check', 14) + ' 集级前置体检（G10）</button>'
     + '<button class="btn quiet" id="btnIngest">' + icon('alert', 14) + ' 入门口禁</button>'
     + '<button class="btn" id="btnPlan">' + icon('coins', 14) + ' 出片计划（免费）</button>'
     + '</div></div>'
@@ -173,9 +173,15 @@ export async function render(ctx) {
       }
       const g10 = root.querySelector('#btnCheckG10');
       if (g10) {
-        g10.onclick = () => runAction(ctx, {
-          specId: 'workflow.check', title: '前置环节校验（G10）', params: { stage: 'S6' }
-        });
+        // ★ 2026-11-01：原来调 `workflow.check --stage S6` —— 那条命令随 workflow.py 一起删了。
+        //   现在用集级前置体检（`episode_preflight.py`），查的是「这一集能不能出片」。
+        g10.onclick = () => {
+          if (!epFilter) { toast('先在右侧选一个集号，再跑前置体检', 'warn'); return; }
+          runAction(ctx, {
+            specId: 'episode.preflight', title: '集级前置体检（G10）· ' + epFilter,
+            params: { eps: epFilter }
+          });
+        };
       }
       const ing = root.querySelector('#btnIngest');
       if (ing) {

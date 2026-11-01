@@ -128,8 +128,28 @@ def scene_key_of(text: str):
     return None
 
 
+def _belongs(sid, ep) -> bool:
+    """段 id 是否属于该集。
+
+    · 带集号（`ep01_shot_01`）→ 只收本集
+    · **不带集号**（`shot_001`）→ 收（这类项目的 shots.json 本身就是按集放的）
+
+    ★ 2026-11-01：原来严格要求 `ep01_` 前缀，而真实项目的 shot_id 就是 `shot_001`
+      —— 前置体检对它们恒报「段数 0 / 没有缺口」，看起来一切正常，其实一个镜头都没查。
+      同一套规则在 `nodes._ep_segments` 与 `studio.shots` 里已经用过，这里对齐。
+    """
+    s_ = str(sid or "")
+    if not s_:
+        return False
+    m = re.search(r"(?:^|[_-])ep0*(\d+)(?:[_-]|$)", s_, re.I)
+    if m:
+        want = re.sub(r"[^0-9]", "", str(ep)) or "0"
+        return int(m.group(1)) == int(want)
+    return True
+
+
 def analyze(ep, shots, prompts, chars, char_sections):
-    segs = sorted([s for s in shots if s.get("shot_id", "").startswith(ep + "_")],
+    segs = sorted([s for s in shots if _belongs(s.get("shot_id"), ep)],
                   key=lambda s: s["shot_id"])
     available = {k for k in chars if not k.startswith("_")}
     rows, missing_objs = [], {}
@@ -197,7 +217,32 @@ def main() -> int:
     char_sections, scene_sections = parse_asset_md()
     disk = on_disk_assets()
     available = {k for k in chars if not k.startswith("_")}
-    report = [analyze("ep%02d" % int(e), shots, prompts, chars, char_sections) for e in args.episodes]
+    # 集号两种写法都认：`--ep 1` 与 `--ep ep01`。
+    # ★ 2026-11-01：原来只认纯数字，而 Studio 里选出来的是 `ep01` —— 直接 ValueError。
+    #   用户在全站看到的都是 epNN，报错却是「invalid literal for int()」，等于把人挡在门外。
+    def _ep_no(x):
+        d = re.sub(r"[^0-9]", "", str(x))
+        if not d:
+            ap.error("集号无法解析：%r（要 1 或 ep01 这种）" % (x,))
+        return int(d)
+
+    def _per_ep(name, ep, fallback):
+        """按集目录优先：`<data>/_eps/<ep>/<name>`（convert 的分集产物）→ 全局。"""
+        for d in (DATA / "_eps" / ep, DATA / ep):
+            f = d / name
+            if f.is_file():
+                try:
+                    return json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    break
+        return fallback
+
+    report = []
+    for e in args.episodes:
+        ep = "ep%02d" % _ep_no(e)
+        report.append(analyze(ep, _per_ep("shots.json", ep, shots),
+                              _per_ep("h3_prompts.json", ep, prompts),
+                              chars, char_sections))
 
     if args.json:
         print(json.dumps({"available": sorted(available), "disk": disk, "eps": report},

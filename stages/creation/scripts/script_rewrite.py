@@ -16,7 +16,7 @@
 2. **FFS 骨架 `build`**：按 `docs/creation/ffs-spec.md` 生成某集的文件头 + N 个空镜头块，
    字段与顺序合规，LLM 只需替换占位符。
 3. **结构自检 `lint`**：对填充后的剧本做确定性检查（头字段/镜头块/禁字段/DUR/时长口径/
-   镜头数/台词长度），把错误挡在 `tools/cli.py check` 之前。
+   镜头数/台词长度），把错误挡在 `drama do script.gate` 之前。
 
 输入：`creation/02-positioning/positioning.json`（rank N 定位卡）+ `creation/brief.json`
      + `creation/03-script/source-script.md`（可选，待改写的源剧本）
@@ -608,7 +608,7 @@ def render_script_brief(o: dict) -> str:
          "", "## 五、交付与自检", "",
          "1. 逐集输出 FFS 正文到 `<工作区>/script/ep_XX.md`（HEADER 六字段 + 镜头块 8 字段 + 可选 DUR）。",
          "2. 台词为口语西语；同时给中文译稿（bilingual）。",
-         "3. 自检：`python script_rewrite.py lint --ep N` → 全 [OK] 后跑 `tools/cli.py check --ep N`。",
+         "3. 自检：`python script_rewrite.py lint --ep N` → 全 [OK] 后跑 `drama do script.gate --ep epNN`。",
          ""]
     return "\n".join(L)
 
@@ -832,9 +832,9 @@ def lint(ws: pathlib.Path, ep: int) -> int:
         print("  [WARN] %s" % w)
     print("-" * 74)
     if errors:
-        print("[NG] 结构自检未通过（%d 项错误）。修好再跑 tools/cli.py check。" % len(errors))
+        print("[NG] 结构自检未通过（%d 项错误）。修好再跑 drama do script.gate。" % len(errors))
         return 1
-    print("[OK] 结构自检通过。下一步：python tools/cli.py check --ep %d" % ep)
+    print("[OK] 结构自检通过。下一步：drama do script.gate --ep ep%02d" % ep)
     return 0
 
 

@@ -400,8 +400,19 @@ def _draft_path(ws, did: str) -> Path:
 
 
 def get_draft(ws, did: str) -> dict:
+    """草稿详情。额外给出 `target_exists` / `target_sha`。
+
+    ★ 2026-11-01：`confirm` 一直支持 `expected_sha` 乐观锁（「目标文件被改动过就拒绝覆盖」），
+      但界面从来不传 —— 于是这道锁在网页端**从来没生效过**。
+      把目标文件的指纹放进详情里，前端确认时带回来，锁才真的锁上。
+    """
     j = _read_json(_draft_path(ws, did)) or {}
-    return {"ok": True, "draft": j}
+    target = str(j.get("target") or "")
+    tp = Path(target) if target else None
+    exists = bool(tp and tp.is_file())
+    return {"ok": True, "draft": j,
+            "target_exists": exists,
+            "target_sha": sha256_file(tp) if exists else ""}
 
 
 def update_draft(ws, did: str, patch: dict) -> dict:
@@ -484,5 +495,6 @@ def confirm(ws, did: str, *, overwrite=False, expected_sha=None,
     return {"ok": True, "target": str(target), "ep": j.get("ep"),
             "simulated": bool(j.get("simulated")),
             "backup": j.get("backup"), "bytes": len(md.encode("utf-8")),
+            # ★ 2026-11-01：`tools/cli.py` 已删（V0.7.44），这里还把它当「下一步」推给用户。
             "next": ["script_rewrite.py lint --ep %d" % int(j.get("ep") or 1),
-                     "tools/cli.py check --ep %d" % int(j.get("ep") or 1)]}
+                     "drama do script.gate --ep ep%02d" % int(j.get("ep") or 1)]}

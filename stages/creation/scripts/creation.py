@@ -9,7 +9,7 @@
     ③ 选题定位        topic_analysis.py 候选 + 七维评分 + 三维交叉（A）
                       hit_selection.py  多样性排期 + 对标匹配 → 定位卡（B）
     ④ 剧本改写        script_rewrite.py 诊断(A/B/C) → N 集规划（默认 30 集 × 60 秒）→ 结构审查 → FFS 骨架/自检 → 观众审稿
-    ── 交付 ──        tools/cli.py      init / import-bible / check / convert
+    ── 交付 ──        drama.py          init / do script.gate / do convert.apply
     ── 执行 ──        stages/production/drama.py  模型门禁 → 资产 → 出片 → 字幕
 
 本脚本只做三件事：
@@ -140,17 +140,17 @@ def cmd_scaffold(a) -> int:
     else:
         print("  [WARN] 仓库内未找到 tools/（%s），跳过" % tools_src)
 
-    # 4) 调 tools/cli.py init（写 project.json + 目录树 + stylelock）
-    if (tools_dst / "cli.py").is_file():
-        style_lock = a.style_lock or ""
-        cmd = [_py(), str(tools_dst / "cli.py"), "init", "--slug", a.slug, "--title", a.title,
-               "--platform", a.platform, "--ep", str(a.ep), "--sec", str(a.sec)]
-        if style_lock:
-            cmd += ["--style-lock", style_lock]
-        print("\n  ── 对接创作层工具链 ──")
-        _run(cmd, cwd=ws)
+    # 4) 引擎骨架（layout.json / config.local.json）：缺了才补
+    #
+    # ★ 2026-11-01：这里原来调 `tools/cli.py init` 写 project.json —— 那个工作台已在
+    #   V0.7.44 删除，于是这一步永远打印「[WARN] 未找到 tools/cli.py，project.json 未生成」，
+    #   而 project.json 现在没有任何读者（引擎只认 layout.json + drama.json）。
+    #   改成：只在缺 layout.json 时提示用 `drama init` 补骨架，不再假装能自动对接。
+    if (ws / "layout.json").is_file():
+        print("\n  [OK] 引擎骨架已就位（layout.json）")
     else:
-        print("  [WARN] 未找到 tools/cli.py，project.json 未生成")
+        print("\n  [WARN] 还没有引擎骨架（layout.json）：跑一次 "
+              "`python stages/production/scripts/drama.py init --workspace \"%s\"`" % ws)
 
     # 5) 市场数据模板
     mk = C.pdir(ws, C.MARKET_FILE)
@@ -226,7 +226,7 @@ def cmd_status(a) -> int:
     print("-" * 74)
     missing = [rel for _, rel in STEPS if not (ws / rel).is_file()]
     if not missing:
-        print("[OK] 四部分齐备。可进入交付：tools/cli.py check/convert → drama.py 门禁→资产→出片")
+        print("[OK] 四部分齐备。可进入交付：drama do script.gate → do convert.apply → 门禁→资产→出片")
     else:
         print("待办：见上方 [缺失] 项；或跑 creation.py guide 看流程。")
     return 0

@@ -5,11 +5,6 @@ import {
   esc, icon, badge, dot, stateEl, money, coins, dt, ago, stamp, kv, openDrawer, toast, paintIcons
 } from '../ui.js';
 
-const STAGE_HINT = {
-  S1: '调研', S2: '剧本', S3: '资产设计', S4: '资产生成', S5: '视频提示词',
-  S6: '视频生成', S7: '发行资料', S8: '拼接', S9: '放大', S10: '字幕', S11: '定稿'
-};
-
 export async function render(ctx) {
   const ov = await api.overview(ctx.ws);
   const wf = ov.workflow || { ok: false, stages: [], reason: 'no_data' };
