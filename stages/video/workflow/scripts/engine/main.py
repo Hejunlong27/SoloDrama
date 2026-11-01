@@ -760,7 +760,7 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
         "account": str(getattr(C, "ACCOUNT", "") or ""),
         "config": {
             "image_provider": C.ACTIVE_IMAGE_PROVIDER,
-            "image_workflow_id": C.IMAGE_PROVIDERS.get(C.ACTIVE_IMAGE_PROVIDER, {}).get("id"),
+            "image_workflow_id": C.IMAGE_PROVIDERS.get(C.resolve_image_provider(), {}).get("id"),
             "h3_workflow_id": C.H3.get("id"),
             "concurrency": args.concurrency,
             "batch_size": args.batch_size,

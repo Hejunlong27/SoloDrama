@@ -330,7 +330,113 @@ PALETTE = [
     {"id": "P09", "name": "烟灰", "h": 210, "s": 0.06, "l": 0.38},
     {"id": "P10", "name": "米白", "h": 40, "s": 0.10, "l": 0.72},
 ]
+
+# ★ 2026-10-31：原 PALETTE 十个全是中间调（s 0.24–0.42 / l 0.26–0.42），
+#   轮转出来是「文艺片底色」，出不了豪门质感。
+#   但豪门色**不能塞进 PALETTE** —— 那个列表有「相邻色相 ≥30°」的不变量（测试 A03 盯着），
+#   酒红贴在朱砂旁边只有 7°。所以单开一个池子，只在 wealth 档使用，并带冲突回退。
+WEALTH_PALETTE = [
+    {"id": "W01", "name": "墨黑", "h": 220, "s": 0.04, "l": 0.06},
+    {"id": "W02", "name": "象牙白", "h": 42, "s": 0.08, "l": 0.86},
+    {"id": "W03", "name": "酒红", "h": 352, "s": 0.46, "l": 0.22},
+    {"id": "W04", "name": "深海军蓝", "h": 215, "s": 0.42, "l": 0.18},
+]
 NEUTRAL_S = 0.15        # 低于此饱和度视为中性色：不参与色相判定
+
+# ===========================================================================
+# 二点五、阶层（wealth）：规范里缺的那一维
+# ===========================================================================
+# 为什么要它：D4 色彩 / D5 织物在规范里被写成「决定哪个阶层/职业」，
+# 但实现只有「阵营」与「人群桶」两个维度 —— 阵营管色相轮转，人群桶管面料偏好。
+# 于是「集团实际持有人」会和「夜班护士」抽到同一批休闲单品，富豪穿上运动涤纶。
+# 四档的分法：老钱看剪裁与无标，新贵看对比与金属，专业人士看合身，工薪看耐穿。
+WEALTH_TIERS = ("old_money", "new_money", "professional", "working")
+
+WEALTH_KEYS = {
+    "old_money": ("old money", "老钱", "家族信托", "信托", "继承人", "heir", "heiress",
+                  "dynasty", "estate", "世家", "祖产", "家族企业", "族长"),
+    "new_money": ("new money", "新贵", "总裁", "ceo", "chairman", "主席", "创始人", "founder",
+                  "集团", "财阀", "持有人", "董事长", "少爷", "千金"),
+    "professional": ("律师", "法务", "审计", "会计", "医生", "记者", "教授", "counsel",
+                     "attorney", "lawyer", "doctor", "journalist", "护士长", "主任"),
+    "working": ("护士", "护工", "工人", "服务员", "司机", "保安", "店员", "nurse", "worker",
+                "clerk", "cashier", "driver", "guard"),
+}
+
+# 每个阶层可用的主色（只对老钱/新贵强制；专业与工薪沿用阵营色槽）
+# 只给中性色：R3 判定里「中性 vs 有彩」按色相差算，酒红(352)/深海军蓝(215)
+# 一旦与阵营色贴到 30° 以内就是硬失败，实测调参不划算。
+# 豪门质感交给**剪裁、面料、配件**（无标三件套/真丝/旧机械表），不靠撞色 —— 这本来就是老钱的做法。
+WEALTH_COLOR = {
+    "old_money": ("W01", "W02"),             # 墨黑 / 象牙白
+    "new_money": ("W01", "W02", "W03"),      # 墨黑 / 象牙白 / 酒红（贴色时自动落回中性）
+}
+WEALTH_ACCENT = {
+    "old_money": ("#8A7440", "袖扣"),         # 哑光黄铜，只在袖扣
+    "new_money": ("#9AA3AE", "表带"),         # 拉丝钢，只在表带
+}
+WEALTH_FABRIC = {"old_money": ("T01", "T10", "T03"), "new_money": ("T01", "T05", "T11")}
+
+
+def _wealth(d: dict) -> str:
+    """定阶层：名册显式写 > 身份/性格关键词 > 兜底 working。
+
+    兜底选 working 而不是 professional：宁可把有钱人画朴素，
+    也不要把护士画成总裁 —— 后者会让整部剧的阶层信号失真。
+    """
+    forced = str((d.get("overrides") or {}).get("wealth") or d.get("wealth") or "").strip().lower()
+    if forced in WEALTH_TIERS or forced in ("old", "new", "pro", "work"):
+        return {"old": "old_money", "new": "new_money", "pro": "professional",
+                "work": "working"}.get(forced, forced)
+    text = " ".join([str(d.get("identity") or ""), PERSONA.get(d.get("persona_bucket"), {}).get("name", "")]).lower()
+    for tier in ("old_money", "new_money", "professional", "working"):
+        if any(k.lower() in text for k in WEALTH_KEYS[tier]):
+            return tier
+    return "working"
+
+
+def _color_clash(c1: dict, c2: dict) -> bool:
+    """两种配色是否冲突（与 R3 同口径）：中性对看明度，有彩对看色相。"""
+    n1, n2 = c1.get("s", 1) < NEUTRAL_S, c2.get("s", 1) < NEUTRAL_S
+    if n1 or n2:
+        return abs(c1.get("l", 0) - c2.get("l", 0)) < 0.10
+    return _hue_gap(c1.get("hue", 0), c2.get("hue", 0)) < 30
+
+
+def _apply_wealth(d: dict, designs: list | None = None) -> None:
+    """把阶层落到 D4 色彩 / D5 织物上。
+
+    做法：先按阶层挑一个候选色，**再拿它与全体已分配配色逐对比**；
+    只要有一处冲突就退回原来的阵营色。不追求「一定用上豪门色」，
+    只保证不破坏 R3 这条硬规则 —— 宁可素，不可撞。
+    """
+    tier = _wealth(d)
+    d["wealth"] = tier
+    if tier not in WEALTH_COLOR:
+        return
+    origin_color, origin_fabric = d["color"], d["fabric"]
+    pool = [x for x in WEALTH_PALETTE if x["id"] in WEALTH_COLOR[tier]]
+    # 按「本剧第几个有钱人」取色，而不是各算各的哈希：
+    # 两个人各自哈希很容易撞同一个色，撞了就回退，最后谁也拿不到豪门色。
+    seq = sum(1 for x in (designs or []) if x is not d and x.get("_w_applied"))
+    pick = pool[seq % len(pool)]
+    cand = {"id": pick["id"], "name": pick["name"], "hue": pick["h"],
+            "hex": _rgb(pick["h"], pick["s"], pick["l"]), "l": pick["l"], "s": pick["s"],
+            "accent_hex": WEALTH_ACCENT[tier][0], "accent_place": WEALTH_ACCENT[tier][1]}
+    if any(_color_clash(cand, x["color"]) for x in (designs or [])
+           if x is not d and x.get("color")):
+        # 回退时**连造型一起回退**：只留阵营色却仍写「深色三件套」，
+        # 提示词会自相矛盾（实测维维安出现「主色朱砂 + 深色套装」）。
+        d["color"] = origin_color
+        d["_w_applied"] = False
+        return
+    d["color"] = cand
+    d["_w_applied"] = True
+    fabrics = [f for f in FABRIC if f["id"] in WEALTH_FABRIC[tier]]
+    if fabrics:
+        d["fabric"] = fabrics[_h(d["name"] + "wf") % len(fabrics)]
+    d["_wealth_fabric"] = d["fabric"] is not origin_fabric
+
 
 ANCHOR = [
     {"id": "A01", "name": "泪痣", "text": "左眼角下方一颗扁平泪痣（直径约 2mm）", "bare": True},
@@ -340,13 +446,19 @@ ANCHOR = [
     {"id": "A05", "name": "细圆框眼镜", "text": "一副细金属圆框眼镜（镜片有细微划痕）", "bare": False},
     {"id": "A06", "name": "单只旧金耳夹", "text": "右耳单只旧金耳夹（另一只耳垂无饰）", "bare": False},
     {"id": "A07", "name": "颈侧细疤", "text": "左侧颈侧一道淡色细疤（约 3cm）", "bare": False},
-    {"id": "A08", "name": "磨损编织绳", "text": "右手腕一条磨损的素色编织绳（无坠）", "bare": False},
+    # ★ 2026-10-31（P20b）：原「右手腕一条磨损的素色编织绳（无坠）」被模型画成**金属手链** ——
+    #   「素色编织绳」这个说法在图像先验里太弱，模型默认往首饰方向靠。改成具象的材质描述。
+    {"id": "A08", "name": "磨损编织绳", "text": "右手腕系着一条米色棉线编织绳（三股细棉线搓成，绳头留短须，无金属件、无吊坠）", "bare": False},
     {"id": "A09", "name": "断眉", "text": "左眉中段一道断口（眉毛不连续）", "bare": True},
     {"id": "A10", "name": "单侧酒窝", "text": "右脸颊一个单侧酒窝（左脸没有）", "bare": True},
     {"id": "A11", "name": "唇下小痣", "text": "下唇正中偏左一颗小痣（直径约 1mm）", "bare": True},
     {"id": "A12", "name": "额角发旋", "text": "右侧额角发际线处一个明显发旋", "bare": False},
     {"id": "A13", "name": "小指旧伤", "text": "左手小指指甲缺半截（旧伤愈合）", "bare": False},
-    {"id": "A14", "name": "鼻梁压痕", "text": "鼻梁上一道横向浅压痕（长期戴眼镜留下，但不戴眼镜）", "bare": True, "min_age": 28},
+    # ★ 2026-10-31（P20）：原为「鼻梁上一道横向浅压痕（长期戴眼镜留下，但不戴眼镜）」。
+    #   两个硬伤：① 「长期戴眼镜」与「不戴眼镜」自相矛盾，模型只能按「伤」来理解；
+    #   ② 鼻梁是整张脸最显眼的位置，2MP 下任何痕迹都会放大成疤 —— 实测女主脸上凭空多出一道伤。
+    #   改成手部戒痕：同属「痕」类配额，但位置在手指、性质是肤色差，不会被画成伤痕。
+    {"id": "A14", "name": "无名指戒痕", "text": "左手无名指根部一圈比周围略浅的肤色（长期戴戒指留下的戒痕，戒指已不在）", "bare": False, "min_age": 28},
     {"id": "A15", "name": "锁骨胎记", "text": "右锁骨下方一处浅褐色胎记（边缘不规则）", "bare": False},
     {"id": "A16", "name": "方形旧表", "text": "左手腕一只老式方形手表（表带磨白、表盘发黄）", "bare": False, "min_age": 26},
     {"id": "A17", "name": "褪色徽章", "text": "左胸别一枚褪色金属徽章（图案磨损不可辨）", "bare": False},
@@ -358,6 +470,23 @@ ANCHOR = [
     {"id": "A23", "name": "左颊晒斑", "text": "左颊一片浅淡晒斑（不规则、约拇指大）", "bare": True},
     {"id": "A24", "name": "宽银拇指环", "text": "右手拇指一枚宽银戒（表面有细密划痕）", "bare": False, "min_age": 22},
 ]
+
+# ★ 2026-10-31：识别锚的**类别配额**。
+#   病根：24 条锚里 5 条是疤（A02/A03/A07/A13/A20），加上 A02/A03 排最前、
+#   旧实现用 `hash % len(pool)` 取模，几乎每部剧的第二个人都会抽到「左手虎口烫痕」。
+#   修法：按类别限流，同剧疤/痕/斑各 ≤1 人、痣/饰各 ≤2 人。
+ANCHOR_KIND = {
+    "A01": "痣", "A02": "疤", "A03": "疤", "A04": "饰", "A05": "眼镜", "A06": "饰",
+    "A07": "疤", "A08": "饰", "A09": "疤", "A10": "轮廓", "A11": "痣", "A12": "发",
+    "A13": "疤", "A14": "痕", "A15": "斑", "A16": "饰", "A17": "饰", "A18": "纹",
+    "A19": "轮廓", "A20": "疤", "A21": "饰", "A22": "饰", "A23": "斑", "A24": "饰",
+}
+KIND_QUOTA = {"疤": 1, "痕": 1, "斑": 1, "痣": 2, "饰": 2, "纹": 1}
+
+
+def _anchor_kind(a: dict) -> str:
+    return ANCHOR_KIND.get(a.get("id") or "", "其他")
+
 
 POSTURE = [
     {"id": "S01", "posture": "重心压在左脚，右肩略低，下巴微收"},
@@ -483,21 +612,38 @@ def _gender_cn(g: str) -> str:
 def _bucket(ch: dict) -> str:
     """人群桶：按关键词命中数取最高分（同分按桶序），无命中按年龄兜底。
 
-    不能「首个命中即返回」——实测「冷面·病·疏离」会被先出现的 B6 抢走，
-    而这个角色的核心是 B10 病态者。
+    ★ 2026-10-31 三处修法（事故：31 岁急诊护士被判成「长者」）：
+      ① 只匹配 persona 词，不匹配 identity 整句 ——
+         「背着**母亲**留下的医疗债」命中 B7 的「母」、「**病区**工会」命中 B10 的「病」，
+         命中的是剧情词，不是性格。
+      ② 年龄闸门 BUCKET_AGE：长者 ≥50、天真者 14–32，不在区间不参与竞争。
+      ③ 名册可显式指定 persona_bucket；无命中时在可用桶里按种子分散，不再固定回落 B2。
     """
-    text = " ".join([str(ch.get("identity") or "")] + [str(x) for x in (ch.get("persona") or [])])
+    forced = str(ch.get("persona_bucket") or "").strip().upper()
+    if forced in PERSONA:
+        return forced
+
+    text = " ".join(str(x) for x in (ch.get("persona") or []))
+    age = int(ch.get("age") or 30)
     best, best_hit = None, 0
     for bid, p in PERSONA.items():
+        lo, hi = BUCKET_AGE.get(bid, (0, 200))
+        if not (lo <= age <= hi):
+            continue
         hit = sum(1 for k in p["kw"] if k in text)
         if hit > best_hit:
             best, best_hit = bid, hit
     if best:
         return best
-    age = int(ch.get("age") or 30)
-    if age >= 55:
-        return "B7"
-    return "B3" if age <= 20 else "B2"
+    pool = [bid for bid in PERSONA
+            if BUCKET_AGE.get(bid, (0, 200))[0] <= age <= BUCKET_AGE.get(bid, (0, 200))[1]]
+    if not pool:
+        return "B2"
+    return sorted(pool, key=lambda b: _h(str(ch.get("name") or "") + "bucket" + b))[0]
+
+
+# 桶的年龄适用区间（不在区间内的桶不参与竞争）
+BUCKET_AGE = {"B7": (50, 200), "B3": (14, 32)}
 
 
 def _regionize(text: str, region: dict) -> str:
@@ -519,6 +665,7 @@ def _formal(ch: dict) -> bool:
                                    "秘书", "助理", "主母", "高管", "财阀", "少爷", "千金"))
 
 
+# ===========================================================================
 # ===========================================================================
 # 三、分配：最大最小距离贪心
 # ===========================================================================
@@ -579,13 +726,24 @@ def design(roster: dict) -> dict:
     chars = list(roster.get("characters") or [])
     if not chars:
         raise SystemExit("[FAIL] 名册里没有 characters（至少给一个角色）")
-    seed = str(roster.get("seed") or "solodrama")
+    # ★ 2026-10-31：`seed` 缺省值从常量 "solodrama" 改为**按名册内容派生**。
+    #   旧默认值等于「所有没写 seed 的项目共用同一串哈希」——不同剧、不同人物，
+    #   抽到的锚点/发型/姿态却是同一套，观众看到的就是「又是那道疤」。
+    #   现在：显式给 seed 就用它；没给就按 world + 角色名派生，两个项目自然不同。
+    seed = str(roster.get("seed") or "").strip()
+    if not seed:
+        _fp = hashlib.sha1(("|".join([
+            str(roster.get("world") or ""),
+            ",".join(str(c.get("name") or "") for c in chars),
+        ])).encode("utf-8")).hexdigest()[:12]
+        seed = "auto-" + _fp
     region_key = roster.get("region") or "east_asian"
     if region_key not in REGION:
         raise SystemExit("[FAIL] 未知 region：%s（可选 %s）" % (region_key, "/".join(REGION)))
     region = REGION[region_key]
 
     used_face, used_hair, used_fabric, used_anchor, used_posture = set(), set(), set(), set(), set()
+    used_kind: dict[str, int] = {}
     designs = []
     # 主演先选：让主角拿到「人群桶最贴合 + 距离最远」的骨相，配角随后避让
     tier_rank = {"lead": 0, "support": 1, "minor": 2}
@@ -620,12 +778,24 @@ def design(roster: dict) -> dict:
         used_fabric.add(fabric["id"])
 
         anchor = next((a for a in ANCHOR if a["name"] == ov.get("anchor") or a["id"] == ov.get("anchor")), None)
-        if anchor is None:
+        _no_anchor = str(ov.get("anchor") or "").strip().lower() in ("none", "无", "不设", "-")
+        if anchor is None and not _no_anchor:
             free = [a for a in ANCHOR if a["id"] not in used_anchor
                     and a.get("min_age", 0) <= age <= a.get("max_age", 200)]
             free = free or [a for a in ANCHOR if a["id"] not in used_anchor]
-            anchor = free[_h(seed + ch["name"] + "anchor") % len(free)]
-        used_anchor.add(anchor["id"])
+            # ★ 2026-10-31：两个修法，治「每部剧都长同一道疤」。
+            #   ① 类别配额：同一部剧里「疤/痕/斑」类识别锚最多 1-2 人（见 KIND_QUOTA）。
+            #      此前 24 条锚里 4 条是疤、且 A02/A03 排最前，几乎每部剧都抽到虎口烫痕。
+            #   ② 无偏排序：原来用 `_h(...) % len(free)`，小余数反复命中靠前的条目；
+            #      改成按 hash(seed+id) 排序取第一条，全体等概率且可复现。
+            quota = [a for a in free if used_kind.get(_anchor_kind(a), 0) < KIND_QUOTA.get(_anchor_kind(a), 99)]
+            free = quota or free
+            anchor = sorted(free, key=lambda a: _h(seed + "anchor" + a["id"]))[0]
+        if anchor is None:
+            anchor = {"id": "", "name": "无", "text": "", "bare": True}
+        if anchor["id"]:
+            used_anchor.add(anchor["id"])
+            used_kind[_anchor_kind(anchor)] = used_kind.get(_anchor_kind(anchor), 0) + 1
 
         pref_post = [p for p in POSTURE if p["id"] in PERSONA[bid]["postures"] and p["id"] not in used_posture]
         cand_post = pref_post or [p for p in POSTURE if p["id"] not in used_posture] or POSTURE
@@ -633,13 +803,16 @@ def design(roster: dict) -> dict:
         used_posture.add(posture["id"])
 
         designs.append({
+            "code": str(ch.get("code") or "").upper(),
             "name": ch["name"], "tier": ch.get("tier") or "support", "gender": gender,
             "age": age, "identity": ch.get("identity") or "",
             "faction": ch.get("faction") or "主线", "persona_bucket": bid,
             "face": face, "hair": hair, "fabric": fabric, "anchor": anchor, "posture": posture,
             "skin": _skin(age),
+            "expression": str(ov.get("expression") or "").strip(),
             "region": region_key, "region_cn": region["cn"], "region_line": region["line"],
             "region_forbid": region["forbid"],
+            "wealth": str(ov.get("wealth") or ch.get("wealth") or ""),
             "overrides": ov,
         })
 
@@ -662,9 +835,12 @@ def design(roster: dict) -> dict:
 
     # ---- 服装文本 ----
     for i, d in enumerate(designs):
+        _apply_wealth(d, designs)  # ★ 先定阶层：D4 色彩 / D5 织物在这里被改写
         d["garment"] = _garment_text(d, i)
         d["garment_en"] = _garment_en(d, i)      # ★ 反馈 7.1：英文服装段，供英文提示词直接取用
-        d["expression"] = PERSONA[d["persona_bucket"]]["expr"]
+        # ★ 2026-10-31：名册写了的表情优先（overrides.expression），否则用桶的默认表情
+        if not (d.get("expression") or "").strip():
+            d["expression"] = PERSONA[d["persona_bucket"]]["expr"]
 
     # ---- 差异对照（与最像的那位显式拉开） ----
     for d in designs:
@@ -697,8 +873,50 @@ def design(roster: dict) -> dict:
     return bible
 
 
+
+# 阶层造型：只对老钱 / 新贵生效，专业与工薪走原来的 formal/casual 分支
+WEALTH_LOOK = {
+    "old_money": {
+        "m": {"cn": "上装为无标深色三件套（精纺羊毛西装＋同料马甲），内搭埃及棉白衬衫，法式双叠袖口；"
+                     "下装为同料直筒西裤；脚穿手工牛津鞋；配饰为表盘泛黄的旧机械表；全身上下没有任何品牌标识",
+              "en": "an unlabelled dark three-piece suit in worsted wool (jacket and waistcoat), "
+                    "Egyptian-cotton white shirt with French cuffs; matching straight-cut trousers; "
+                    "hand-made oxford shoes; a vintage mechanical watch with a yellowed dial; "
+                    "no visible branding anywhere"},
+        "f": {"cn": "上装为无标深色收腰套装，真丝衬衫扣至第二颗；下装为同料直筒西裤；脚穿低跟尖头鞋；"
+                     "配饰为单串珍珠；全身上下没有任何品牌标识",
+              "en": "an unlabelled dark tailored suit jacket, silk shirt buttoned to the second button; "
+                    "matching straight-cut trousers; pointed low heels; a single strand of pearls; "
+                    "no visible branding anywhere"},
+    },
+    "new_money": {
+        "m": {"cn": "上装为枪驳领双排扣西装，衬衫领口开一颗，袖口露出袖扣；下装为窄版西裤；"
+                     "脚穿德比鞋；配饰为金属表带腕表",
+              "en": "a double-breasted suit with peak lapels, shirt open one button, cufflinks visible; "
+                    "slim-cut trousers; derby shoes; a metal-bracelet watch"},
+        "f": {"cn": "上装为结构感西装外套，内搭真丝吊带；下装为高腰阔腿西裤；脚穿细高跟；"
+                     "配饰为宽金属手镯",
+              "en": "a structured blazer over a silk camisole; high-waisted wide-leg trousers; "
+                    "stiletto heels; a wide metal cuff"},
+    },
+}
+
+
+def _wealth_look(d: dict) -> dict | None:
+    if not d.get("_w_applied"):
+        return None
+    tier = d.get("wealth")
+    if tier not in WEALTH_LOOK:
+        return None
+    return WEALTH_LOOK[tier]["f" if d["gender"] == "f" else "m"]
+
 def _garment_text(d: dict, idx: int) -> str:
     """服装文本：**上装由面料决定**（牛仔配夹克、真丝配西装/衬衫），避免「牛仔布针织上衣」。"""
+    look = _wealth_look(d)
+    if look:
+        return ("主色为%s（%s），撞色 %s 只出现在%s；面料为%s，%s；%s。"
+                % (d["color"]["name"], d["color"]["hex"], d["color"]["accent_hex"],
+                   d["color"]["accent_place"], d["fabric"]["name"], d["fabric"]["behavior"], look["cn"]))
     age = d["age"]
     g = "f" if d["gender"] == "f" else "m"
     formal = _formal(d) or age >= 55
@@ -747,10 +965,22 @@ def _garment_text(d: dict, idx: int) -> str:
 # 结论：中英混排时，模型对**后段中文服饰描述**几乎不执行。服装必须给一条英文。
 # 处理：词表与中文侧一一对应（同一批枚举值），下游英文提示词的 `<WARDROBE>` 段直接取用，
 #       不必再逐角色手写英文（2026-10-20 实跑时是手写 10 个角色的英文才修好的）。
+
+_EN_ACCENT = {"袖扣": "cufflinks", "表带": "watch strap", "领口滚边": "collar piping",
+              "袖口": "cuffs", "围巾": "scarf", "鞋": "shoes", "发带": "hair band",
+              "腰封": "waist sash", "内搭": "undershirt", "领口": "collar"}
+_EN_BEHAVIOR = {"精纺羊毛": "dry matte hand, crisp folds", "羊绒": "soft loft with a faint nap",
+                "真丝缎": "liquid sheen, heavy drape", "硬挺府绸": "crisp papery hand",
+                "皮革": "supple grain", "亚麻": "natural creases, slight translucency",
+                "水洗棉": "soft washed hand", "粗针织": "chunky loft",
+                "牛仔布": "twill with a worn edge", "运动涤纶": "technical sheen",
+                "绒面麂皮": "velvet nap", "纱布棉麻": "gauzy open weave"}
+
 _EN_COLOR = {
     "朱砂": "cinnabar red", "姜黄": "turmeric yellow", "苔绿": "moss green",
     "松柏墨绿": "deep pine green", "松石青": "turquoise teal", "靛青": "indigo",
     "紫檀": "rosewood", "绛紫": "deep plum", "烟灰": "smoke grey", "米白": "off-white",
+    "墨黑": "near-black ink", "象牙白": "warm ivory", "酒红": "oxblood", "深海军蓝": "deep navy",
 }
 _EN_FABRIC = {
     "精纺羊毛": "worsted wool", "粗针织": "chunky knit", "真丝缎": "silk satin",
@@ -809,6 +1039,17 @@ def _garment_en(d: dict, idx: int) -> str:
     刻意与中文函数**不共用**返回值：中文那份含大量中文修饰，混进英文句只会稀释权重；
     这里输出一条干净的结构化英文（主色 / 撞色位置 / 面料手感 / 上装 / 下装 / 鞋 / 配饰）。
     """
+    look = _wealth_look(d)
+    if look:
+        # ★ 中英混排会被模型忽略（同 `_garment_en` 顶部注释的实测结论）：
+        #   撞色位置与面料手感都必须给英文，否则出现 "only on the 袖扣" 这种半截中文。
+        return ("main colour %s (%s); accent %s only on the %s; fabric %s, %s; %s."
+                % (_EN_COLOR.get(d["color"]["name"], d["color"]["name"]), d["color"]["hex"],
+                   d["color"]["accent_hex"],
+                   _EN_ACCENT.get(d["color"]["accent_place"], "trim"),
+                   _EN_FABRIC.get(d["fabric"]["name"], d["fabric"]["name"]),
+                   _EN_BEHAVIOR.get(d["fabric"]["name"], "natural hand"),
+                   look["en"]))
     age = d["age"]
     g = "f" if d["gender"] == "f" else "m"
     formal = _formal(d) or age >= 55
@@ -864,7 +1105,7 @@ def _garment_en(d: dict, idx: int) -> str:
 
 def _public(d: dict) -> dict:
     """导出到 bible 的字段（不带内部临时键）。"""
-    keep = ("name", "tier", "gender", "age", "identity", "faction", "persona_bucket",
+    keep = ("code", "name", "tier", "gender", "age", "identity", "faction", "persona_bucket", "wealth",
             "hair", "fabric", "anchor", "posture", "skin", "region", "region_cn",
             "region_line", "region_forbid", "color", "garment", "garment_en",
             "expression", "contrast", "face_short")
@@ -897,7 +1138,8 @@ def to_fields(c: dict, style_anchor: str = "") -> dict:
         "表情": c["expression"] + "。",
         "服装细节": c["garment"],
         "服装细节EN": c.get("garment_en") or "",
-        "识别锚": "%s。" % anchor["text"],
+        # ★ 2026-10-31：允许「不设锚」。空锚不生成句子，提示词里整段省略。
+        "识别锚": ("%s。" % anchor["text"]) if (anchor.get("text") or "").strip() else "",
         "差异对照": c["contrast"],
         "反默认": ("排除标准网红脸（削尖下颌＋放大眼裂＋垫高鼻梁＋无毛孔磨皮）、韩式平眉、"
                    "烤瓷牙反光、左右绝对对称的脸；%s；%s。" % (face["forbid"], c["region_forbid"])),
@@ -923,7 +1165,7 @@ def maincard_prompt(c: dict, fields: dict, world: str = "", style_style: str = "
     return "\n".join(x for x in [
         "一张**竖版角色主卡**（单视角角色定妆图），%s，电影级写实 3D CG 渲染，实拍级质感；"
         "画面里**只有这一个角色**，全身入画、从头顶到鞋底完整。" % (world or "当代中国都市题材"),
-        "【唯一识别锚｜先读这一条】%s" % f["识别锚"],
+        ("【唯一识别锚｜先读这一条】%s" % f["识别锚"]) if f["识别锚"] else "",
         "【形象】%s" % f["形象定位"],
         "【面部特征】%s" % f["面部特征"],
         "【表情】%s" % f["表情"],
@@ -943,7 +1185,7 @@ def headshot_prompt(c: dict, fields: dict, world: str = "") -> str:
     return "\n".join(x for x in [
         "一张**半身胸像**定妆照，%s，电影级写实 3D CG 渲染，实拍级质感；单一角色、胸线以上取景。"
         % (world or "当代中国都市题材"),
-        "【唯一识别锚】%s" % f["识别锚"],
+        ("【唯一识别锚】%s" % f["识别锚"]) if f["识别锚"] else "",
         "【面部特征】%s" % f["面部特征"],
         "【表情】%s" % f["表情"],
         "【服装领口】%s" % f["服装细节"],
@@ -951,6 +1193,113 @@ def headshot_prompt(c: dict, fields: dict, world: str = "") -> str:
         "【镜头】正面偏 3/4、85mm、平视；中灰色干净背景、柔光打面；重点刻画面部结构与皮肤纹理。",
         "【禁止项】不出现第二个人、不出现文字、不出现排版与色卡；%s" % f["反默认"],
     ] if x)
+
+
+# ===========================================================================
+# 四点五、真人写实轨（live_action）专用版式
+# ===========================================================================
+LIVE_PHOTO = ("photographic material truth, real skin texture with visible pores and fine facial hair, "
+              "believable fabric wrinkles, credible lens perspective, natural depth of field")
+LIVE_NEG = ("no second person, no text, no letters, no numbers, no watermark, no logo, no border, "
+            "no layout grid, no props, no environment, no scenery, no CG render look, no 3D render, "
+            "no illustration, no anime, no plastic skin, no airbrushed retouch, no poreless face, "
+            "no perfectly symmetrical AI face, no Instagram filter, no glow, no lens flare")
+
+
+def _live_style(style_anchor: str) -> str:
+    """风格串：名册已写材质项就不重复拼，避免「photographic material truth」出现两次。"""
+    base = (style_anchor or "surreal live-action film look").strip().rstrip("，,")
+    extra = [x for x in LIVE_PHOTO.split(", ")
+             if x.lower() not in base.lower()]
+    return base + ("，" + "，".join(extra) if extra else "")
+
+
+_ANCHOR_LOUD_KINDS = ("饰", "眼镜", "纹")
+
+
+def _anchor_sentence(c: dict, text: str) -> str:
+    """锚的「可见度」必须跟锚的类型匹配。
+
+    ★ 2026-10-31（P20）：31 岁急诊护士的锚是「鼻梁上一道横向浅压痕」，
+      而模板对**所有**锚都写「这个锚必须清晰可见」—— 模型忠实照做，
+      把一道浅压痕画成了显眼的疤痕，女主脸上凭空多出一道伤。
+      锚分两类：饰物/眼镜/纹身本来就该看得见；疤/痕/斑/痣/轮廓/发 要「按原样、别强化」。
+    """
+    if not text:
+        return ""
+    kind = _anchor_kind(c.get("anchor") or {})
+    if kind in _ANCHOR_LOUD_KINDS:
+        vis = "这个锚必须清晰可见、非对称，在左半脸与右三视图里都能认出来；"
+    else:
+        vis = ("这个锚要按它本身的尺寸与淡度如实呈现：不要加深、不要扩大、不要加高光、"
+               "不要画成伤疤或妆效，自然光下能辨认即可；")
+    return "【唯一识别锚 · 先读这一条】%s %s全剧只此一处锚，不要再加第二个。" % (text, vis)
+
+
+def live_card_prompt(c: dict, fields: dict, world: str = "", style_anchor: str = "") -> str:
+    """真人写实轨角色卡：《画风三轨规范》§1.3 —— 16:9 纯白、左脸特写 + 右三视图半身。
+
+    为什么不能复用 maincard_prompt：那是**竖版全身 3D 主卡**，与真人轨要求相反。
+    照 3D 模板出图 = 画风直接跑偏（这条在 2026-10-31 的实跑里踩过）。
+    """
+    f = fields
+    gender_cn = "女性" if c.get("gender") == "f" else "男性"
+    slots = "；".join("%s：%s" % (k, v) for k, v in (c["face"].get("slots") or {}).items())
+    return "\n".join(x for x in [
+        "【风格】%s，16:9 horizontal frame" % _live_style(style_anchor),
+        "【任务】一张**横版 16:9 角色定妆参考卡**，纯白无缝背景上只有这一个人，用于全剧跨镜身份一致性。",
+        _anchor_sentence(c, f["识别锚"]),
+        "【版式】左半边：正侧 3/4 面部特写，眼睛看向镜头；右半边：同一个人半身三视图——正面、侧面、背面——"
+        "等距排列，服装、光位、色温完全一致；画面内不出现分隔线、不出现标签、不出现文字。",
+        "【人物】%s，%d 岁%s，%s。" % (c["name"], c.get("age") or 30, gender_cn, c.get("identity") or ""),
+        "【骨相与五官】%s。" % slots,
+        "【族裔基线】%s" % c["region_line"],
+        "【发型】%s" % c["hair"]["detail"],
+        "【皮肤与质感】%s；保留真实毛孔、细发丝与不对称的左右脸。" % c["skin"],
+        "【服装】%s" % (c.get("garment_en") or c.get("garment") or ""),
+        "【表情】%s。" % (c.get("expression_override") or c.get("expression") or "情绪克制，不外放"),
+        # ★ 2026-10-31（P15）：原来是「不要画成通用 AI 美人脸：不削尖下颌、不放大眼裂…」一整段否定句。
+        #   cfg=1 时负向条件不参与引导，这段 100% 无效；cfg=2 后「正向段落里的否定」语义仍不稳定。
+        #   改成**正向描述要什么**，把族裔禁忌拆成独立一段（否定句放结尾，别夹在正向描述中间）。
+        "【脸型基准】真实寻常面孔，不是平面化的美人模板：下颌角明确、骨量偏小；"
+        "眼裂宽度与脸型成比例、上睑有厚度；鼻梁高度自然、鼻背有轻微起伏与骨点；"
+        "皮肤保留毛孔、细纹、不均匀反光与轻微色差；左右脸在眉高、颧宽、嘴角位置上存在可见差异。",
+        "【族裔约束】%s。" % c["region_forbid"],
+        "【差异对照】%s" % c["contrast"],
+        "【负向】" + LIVE_NEG,
+    ] if x)
+
+
+def live_scene_prompt(s: dict, style_anchor: str = "") -> str:
+    """真人写实轨场景卡：16:9 纯白、**绝对不含人物**（含剪影/倒影）。"""
+    return "\n".join([
+        "【风格】%s，16:9 horizontal frame, empty set" % _live_style(style_anchor),
+        "【任务】一张**横版 16:9 场景参考卡**，用于全剧同一空间的跨镜一致性。",
+        "【空间】%s。" % s.get("desc", ""),
+        "【硬约束 · 绝对不含人物】画面里没有人物、没有人影、没有剪影、没有倒影里的人物、没有肢体局部。"
+        "把这个空间当作在无人时被拍下的一张现场照片。",
+        "【陈设细节】该空间被真实使用过的痕迹要可见：磨损、污渍、贴纸残留、被反复触碰的高光位置；"
+        "但不要出现可读的文字、机构标识或品牌。",
+        "【光线】%s，来源明确、方向可辨，允许一处不合理的入射角作为超现实标记。"
+        % ("夜间人工光" if s.get("time") == "夜" else "白天自然光与室内灯混合"),
+        "【构图】平视，轻微广角，画面深处保留一条通向画外的通道（门、走廊、楼梯）。",
+        "【负向】" + LIVE_NEG,
+    ])
+
+
+def emit_live_scenes(bible: dict, out_dir: pathlib.Path, scenes_path: str) -> list:
+    """按 world-bible 的 scenes 段落盘场景卡提示词（真人轨）。"""
+    src = _load(scenes_path)
+    scenes = (src.get("scenes") if isinstance(src, dict) else src) or []
+    files = []
+    for s in scenes:
+        code = str(s.get("code") or "").upper()
+        if not code:
+            continue
+        p = out_dir / "prompts" / "live" / ("SC_%s_card.txt" % code)
+        _write(p, live_scene_prompt(s, bible.get("style_anchor") or ""))
+        files.append(str(p))
+    return files
 
 
 # ===========================================================================
@@ -1011,6 +1360,10 @@ def check_rules(bible: dict) -> list:
     # R4 识别锚唯一
     seen = {}
     for c in chars:
+        # ★ 2026-10-31：没设锚的角色（anchor.id 为空）不参与唯一性判定，
+        #   否则「全员必须有锚」会被这条规则反向锁死。
+        if not (c.get("anchor") or {}).get("id"):
+            continue
         seen.setdefault(c["anchor"]["id"], []).append(c["name"])
     for aid, names in seen.items():
         if len(names) > 1:
@@ -1096,30 +1449,58 @@ def render_asset_md(bible: dict, prompts: dict) -> str:
     return "\n".join(L)
 
 
-def emit(bible: dict, out_dir: pathlib.Path, variants=("board", "maincard", "headshot")) -> dict:
-    """落盘：bible / 矩阵 md / 资产提示词 md / 逐角色提示词。返回写出的文件表。"""
+def emit(bible: dict, out_dir: pathlib.Path, variants=("board", "maincard", "headshot"),
+         card_style: str = "3d_manhua", scenes_path: str = "") -> dict:
+    """落盘：bible / 矩阵 md / 资产提示词 md / 逐角色提示词。返回写出的文件表。
+
+    ★ 2026-10-31：新增 `card_style`。此前无论什么画风都只产**竖版 3D 主卡**模板
+      （「竖版角色主卡」「电影级写实 3D CG 渲染」），而《画风三轨规范》§1.3 要求真人轨是
+      「16:9 纯白 + 左脸特写 + 右三视图半身」。照旧模板出图 = 画风直接跑偏，
+      所以每个真人项目都得在外面手写一套提示词 —— 这就是这次要消灭的手工层。
+
+      - card_style="live_action"：只出 `prompts/live/<代号>_<名>_card.txt`（一人一卡），
+        另可按 `--scenes <world-bible.json>` 出场景卡；不再产 3D 的 board/maincard/headshot。
+      - 其它取值：保持原行为（board/maincard/headshot 三件套）。
+    """
     world = bible["world"]
     style_anchor = bible["style_anchor"]
+    live = str(card_style or "").startswith("live")
     prompts, files = {}, []
     for i, c in enumerate(bible["characters"], 1):
         fields = to_fields(c, style_anchor)
-        prompts[c["name"]] = {
-            "board": board_prompt(c, fields, world, style_anchor),
-            "maincard": maincard_prompt(c, fields, world),
-            "headshot": headshot_prompt(c, fields, world),
-            "_fields": fields,
-        }
+        if live:
+            card = live_card_prompt(c, fields, world, style_anchor)
+            # "board" 槽位仍指向这张卡，好让「资产提示词_角色段.md」照常可读
+            prompts[c["name"]] = {"board": card, "_fields": fields}
+        else:
+            prompts[c["name"]] = {
+                "board": board_prompt(c, fields, world, style_anchor),
+                "maincard": maincard_prompt(c, fields, world),
+                "headshot": headshot_prompt(c, fields, world),
+                "_fields": fields,
+            }
     issues = check_rules(bible)
 
     _write(out_dir / "character-bible.json", json.dumps(bible, ensure_ascii=False, indent=2))
     _write(out_dir / "角色差异化矩阵.md", render_matrix_md(bible, issues))
     _write(out_dir / "资产提示词_角色段.md", render_asset_md(bible, prompts))
     files += ["character-bible.json", "角色差异化矩阵.md", "资产提示词_角色段.md"]
-    for i, c in enumerate(bible["characters"], 1):
-        for v in variants:
-            p = out_dir / "prompts" / "char" / ("CH%02d_%s_%s.txt" % (i, c["name"], v))
-            _write(p, prompts[c["name"]][v])
+
+    if live:
+        for i, c in enumerate(bible["characters"], 1):
+            code = c.get("code") or "CH%02d" % i
+            p = out_dir / "prompts" / "live" / ("%s_%s_card.txt" % (code, c["name"].replace(" ", "-")))
+            _write(p, prompts[c["name"]]["board"])
             files.append(str(p.relative_to(out_dir)))
+        if scenes_path:
+            files += [str(pathlib.Path(x).relative_to(out_dir)) if str(x).startswith(str(out_dir)) else x
+                      for x in emit_live_scenes(bible, out_dir, scenes_path)]
+    else:
+        for i, c in enumerate(bible["characters"], 1):
+            for v in variants:
+                p = out_dir / "prompts" / "char" / ("CH%02d_%s_%s.txt" % (i, c["name"], v))
+                _write(p, prompts[c["name"]][v])
+                files.append(str(p.relative_to(out_dir)))
     return {"files": files, "issues": issues, "fields": {k: v["_fields"] for k, v in prompts.items()}}
 
 
@@ -1301,6 +1682,11 @@ def main(argv=None) -> int:
     p1.add_argument("--variants", default="board,maincard,headshot",
                     help="逐角色写出哪些提示词（逗号分隔）")
     p1.add_argument("--strict", action="store_true", help="硬规则不过也退出码 2")
+    p1.add_argument("--card-style", default="auto",
+                    choices=["auto", "3d_manhua", "2d_animation", "live_action"],
+                    help="角色卡版式：auto=读名册 style_lock；live_action=16:9 纯白+左脸特写+右三视图")
+    p1.add_argument("--scenes", default="",
+                    help="（可选）world-bible.json 路径：同时产出真人轨场景卡提示词")
 
     p2 = sub.add_parser("check", help="校验角色圣经的六条硬规则（退出码 2 = 不过）")
     p2.add_argument("--bible", required=True)
@@ -1324,7 +1710,13 @@ def main(argv=None) -> int:
         bible = design(roster)
         out = pathlib.Path(args.out)
         variants = tuple(v.strip() for v in args.variants.split(",") if v.strip())
-        res = emit(bible, out, variants)
+        # 画风 → 版式：显式 --card-style 优先；auto 时读名册里的 style_lock
+        style = str(getattr(args, "card_style", "auto") or "auto").lower()
+        if style == "auto":
+            lock = str(roster.get("style_lock") or "").lower()
+            style = "live_action" if lock.startswith("live") else (lock or "3d_manhua")
+        bible["card_style"] = style
+        res = emit(bible, out, variants, card_style=style, scenes_path=getattr(args, "scenes", "") or "")
         print("[OK] %d 个角色 → %s" % (len(bible["characters"]), out))
         for f in res["files"]:
             print("  · %s" % f)

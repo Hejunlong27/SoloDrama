@@ -127,7 +127,10 @@ def cmd_import_bible(a) -> None:
 
     cfg = _load_project()
     slug = cfg["meta"]["slug"]
-    wb = json.loads((ROOT / cfg["artifacts"]["world_bible"]).read_text(encoding="utf-8"))
+    # ★ 2026-10-31 修：此前读 `ROOT / cfg["artifacts"]["world_bible"]`（= <ws>/bible/…），
+    #   而同一个脚本写 characters.md/scenes.md 用的是 BIBLE（= 03-剧本/bible/），
+    #   分阶段目录启用后**读与写落在两个目录**，import-bible 必然 FileNotFoundError。
+    wb = json.loads((BIBLE / "world-bible.json").read_text(encoding="utf-8"))
     conn = _conn()
 
     chars = world_bible_to_char_anchors(wb)

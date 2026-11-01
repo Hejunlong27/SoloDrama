@@ -1,0 +1,485 @@
+{
+  "2": {
+    "inputs": {
+      "noise": [
+        "7",
+        0
+      ],
+      "guider": [
+        "12",
+        0
+      ],
+      "sampler": [
+        "8",
+        0
+      ],
+      "sigmas": [
+        "9",
+        0
+      ],
+      "latent_image": [
+        "35",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "自定义采样器（高级）"
+    }
+  },
+  "4": {
+    "inputs": {
+      "filename_prefix": "video/MiniMax_H3",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto",
+      "video": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "保存视频"
+    }
+  },
+  "5": {
+    "inputs": {
+      "samples": [
+        "2",
+        0
+      ],
+      "vae": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "6": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "color_space": "sRGB",
+      "codec": "none",
+      "images": [
+        "11",
+        0
+      ],
+      "audio": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "创建视频"
+    }
+  },
+  "7": {
+    "inputs": {
+      "noise_seed": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "随机噪波"
+    }
+  },
+  "8": {
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "9": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 4,
+      "denoise": 1,
+      "model": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "基本调度器"
+    }
+  },
+  "10": {
+    "inputs": {
+      "seed": 847181417704469
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "11": {
+    "inputs": {
+      "samples": [
+        "2",
+        0
+      ],
+      "vae": [
+        "26",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "12": {
+    "inputs": {
+      "model": [
+        "23",
+        0
+      ],
+      "conditioning": [
+        "35",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "基本引导器"
+    }
+  },
+  "13": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "数学表达式"
+    }
+  },
+  "14": {
+    "inputs": {
+      "aspect_ratio": "9:16 (Portrait Widescreen)",
+      "megapixels": 0.5,
+      "multiple": 32
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "分辨率选择器"
+    }
+  },
+  "15": {
+    "inputs": {
+      "value": 5
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float (duration)"
+    }
+  },
+  "18": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "19": {
+    "inputs": {
+      "unet_name": "Cobijada_H3_Hybrid_Uncensored_pruned_hybrid_int8_convrot_pruned.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "20": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int4_convrot.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "21": {
+    "inputs": {
+      "lora_name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "strength_model": 0.75,
+      "model": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA加载器（仅模型）"
+    }
+  },
+  "22": {
+    "inputs": {
+      "model": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+    "_meta": {
+      "title": "MiniMax H3 Mem Eff Sage Attention Patch"
+    }
+  },
+  "23": {
+    "inputs": {
+      "processing_control_value": 1,
+      "processing_percent_1": 0.1,
+      "processing_percent_2": 0.9,
+      "mcs": 2,
+      "device": "auto",
+      "mode": "4-step LoRA",
+      "model": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "TESpeedMiniMaxH3",
+    "_meta": {
+      "title": "TE-Speed-MiniMaxH3"
+    }
+  },
+  "24": {
+    "inputs": {
+      "image": "LQ-_00001_zpvta_1791429799.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "26": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "30": {
+    "inputs": {
+      "value": "【核心主体与场景】\n大长老（白发白须，深蓝金纹长袍，手持散发金色符文的发光长剑）与血煞天魔（红发长裙，黑红战甲，手持猩红魔剑）在暗黑混沌的虚空法阵中对峙。\n\n【动作时间线 (0-5秒)】\n\n0-2秒：大长老怒目挥剑，施展“万剑归宗”，万千金色剑影伴随符文环绕周身。血煞天魔嘴角冷笑，猩红魔气如血海般翻涌。\n\n2-4秒：两人瞬间冲刺交锋，金色长剑与血色魔剑在空中剧烈碰撞。\n\n4-5秒：兵器交击处产生金红双色的能量风暴，瞬间炸裂席卷全屏。\n\n【运镜设计】\n环绕双人半圈快速拉近，推至双剑交击的局部特写，最后瞬间拉远展现能量爆炸的冲击波。\n\n【光影与特效】\n璀璨的金色真气与暗红色的猩红煞气形成极致色彩对比，漫天飞舞的金色符文与血色雾气交织，高对比度，电影级光影。\n\n【画风与质感】\n3A游戏CG级，仙侠玄幻风格，极高画质，史诗感，动感模糊，粒子特效，8K分辨率，光影追踪。"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "提示词"
+    }
+  },
+  "31": {
+    "inputs": {
+      "image": "LQ-_00001_pjvkp_1791430421.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "35": {
+    "inputs": {
+      "prompt": [
+        "30",
+        0
+      ],
+      "width": [
+        "14",
+        0
+      ],
+      "height": [
+        "14",
+        1
+      ],
+      "length": [
+        "13",
+        1
+      ],
+      "ref_image_size": "match",
+      "clip": [
+        "20",
+        0
+      ],
+      "vae": [
+        "26",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "42",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "41",
+        0
+      ],
+      "ref_images.ref_image_2": [
+        "43",
+        0
+      ],
+      "ref_images.ref_image_3": [
+        "44",
+        0
+      ],
+      "ref_images.ref_image_4": [
+        "61",
+        0
+      ],
+      "ref_images.ref_image_5": [
+        "62",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "_meta": {
+      "title": "MiniMax H3 参考转视频"
+    }
+  },
+  "36": {
+    "inputs": {
+      "image": "LQ-_00001_pjvkp_1791430421.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "39": {
+    "inputs": {
+      "image": "LQ-_00001_zpvta_1791429799.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "41": {
+    "inputs": {
+      "image": [
+        "31",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.28,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（总像素）"
+    }
+  },
+  "42": {
+    "inputs": {
+      "image": [
+        "24",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.28,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（总像素）"
+    }
+  },
+  "43": {
+    "inputs": {
+      "image": [
+        "39",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.28,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（总像素）"
+    }
+  },
+  "44": {
+    "inputs": {
+      "image": [
+        "36",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.28,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（总像素）"
+    }
+  },
+  "59": {
+    "inputs": {
+      "image": "LQ-_00001_pjvkp_1791430421.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "60": {
+    "inputs": {
+      "image": "LQ-_00001_zpvta_1791429799.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "61": {
+    "inputs": {
+      "image": [
+        "60",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.28,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（总像素）"
+    }
+  },
+  "62": {
+    "inputs": {
+      "image": [
+        "59",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 1.28,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（总像素）"
+    }
+  }
+}

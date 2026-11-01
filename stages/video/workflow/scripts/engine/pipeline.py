@@ -1151,11 +1151,11 @@ async def process_shot(ctx: ShotContext, shot: Dict[str, Any], h3_prompts: Dict[
             frame_url = state.get("frame_url")
             grid_url = state.get("grid_url")
         else:
+            # ★ 2026-11-01：frame_source 已随九宫格链下线。非 video_only 时首帧一律取
+            #   裁剪结果的第 1 格；没有裁剪结果才算错（预演除外，用原图占位）。
             cropped = state.get("cropped") or []
             if ctx.dry_run and not cropped:
                 frame_local = raw_path          # 预演时还没裁剪，用原图占位
-            elif C.H3.get("frame_source") == "grid_raw":
-                frame_local = raw_path
             else:
                 if not cropped:
                     raise RunningHubError("裁剪结果为空，无法确定首帧图", retriable=False)

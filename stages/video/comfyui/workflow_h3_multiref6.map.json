@@ -1,0 +1,47 @@
+{
+  "_comment": "workflow_h3_multiref6.json 的节点映射。改这里，不要改 comfy_local_video.py。",
+  "_substitutions": {
+    "unet": {
+      "from": "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors",
+      "to": "Cobijada_H3_Hybrid_Uncensored_pruned_hybrid_int8_convrot_pruned.safetensors",
+      "why": "原 ref2va 权重本机未下载；本机在用的是 Cobijada 混合版"
+    },
+    "scalers": {
+      "nodes": [
+        "41",
+        "42",
+        "43",
+        "44",
+        "61",
+        "62"
+      ],
+      "from": "LayerUtility: ImageScaleByAspectRatio V2",
+      "to": "ImageScaleToTotalPixels(1.28MP, lanczos)",
+      "why": "layerstyle 依赖 blend_modes 未安装，节点类型不存在",
+      "extra": {
+        "resolution_steps": 1,
+        "why": "本机 ImageScaleToTotalPixels 版本把 resolution_steps 列为必需（默认 1）"
+      }
+    },
+    "audio_vae": {
+      "node": "5",
+      "from": "VAEDecodeAudio 只有 samples，vae 未接（节点 18 孤立）",
+      "to": "5.vae <- 18（minimax_h3_audio_vae_fp32）",
+      "why": "VAEDecodeAudio 的 vae 是必需输入；原导出漏接，提交必 400 且成片没有音轨"
+    }
+  },
+  "prompt": "30",
+  "images": [
+    "24",
+    "31",
+    "39",
+    "36",
+    "60",
+    "59"
+  ],
+  "seconds": "15",
+  "steps": "9",
+  "seed": "10",
+  "aspect": "14",
+  "prefix": "4"
+}

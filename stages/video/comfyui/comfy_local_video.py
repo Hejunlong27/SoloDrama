@@ -4,9 +4,11 @@
 
 工作流怎么设定（三层，改哪层都行）
 ----------------------------------
-1. **工作流 JSON**：默认 `stages/video/comfyui/workflow_h3_local.json`（本机在用的
-   「minimax 多参(4步采样)」）。要换就换文件，或 `--workflow <路径>`，或环境变量
-   `COMFYUI_VIDEO_WORKFLOW`。**不需要上传到 ComfyUI**：这两份文件是 ComfyUI 的
+1. **工作流 JSON**：默认 `stages/video/comfyui/workflow_h3_multiref6.json`
+   （「minimax 多参一采 · 6 参考图 + 4 步 LoRA」，2026-11-01 起）。原件与替换说明见
+   `workflows_src/h3_multiref6_raw.json` 与同名 `.map.json` 的 `_substitutions`。
+   要换就换文件，或 `--workflow <路径>`，或环境变量 `COMFYUI_VIDEO_WORKFLOW`；
+   旧的 4 步单图版仍在 `workflow_h3_local.json`，可随时切回。**不需要上传到 ComfyUI**：这两份文件是 ComfyUI 的
    "API 格式" JSON，由本脚本直接 POST 给 `/prompt`。
 2. **节点映射**：默认读**同名 sidecar** `workflow_h3_local.map.json`
    （约定：`<工作流文件名去掉 .json>.map.json`）。换一份工作流时，把映射文件放在它旁边
@@ -48,10 +50,12 @@ import uuid
 
 # 同目录模块：端口识别 / 槽位裁剪（引擎侧唯一实现，见 comfy_ports.py 顶部说明）
 try:
-    from comfy_ports import describe as ports_describe, prune_for_refs
+    from comfy_ports import (describe as ports_describe, prune_for_refs,
+                             missing_required_inputs)
 except ImportError:                                      # 缺了就降级：不裁也不报错
     ports_describe = None
     prune_for_refs = None
+    missing_required_inputs = None
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -62,7 +66,7 @@ except Exception:  # noqa: BLE001
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 DEFAULT_WORKFLOW = os.environ.get(
-    "COMFYUI_VIDEO_WORKFLOW", os.path.join(HERE, "workflow_h3_local.json"))
+    "COMFYUI_VIDEO_WORKFLOW", os.path.join(HERE, "workflow_h3_multiref6.json"))
 
 # ---------------------------------------------------------------------------
 # 节点映射的角色表
@@ -322,6 +326,19 @@ def check(workflow_path: str = "", map_path: str = "") -> int:
         print("[OK] 节点类齐全（%d 个 class_type 全部可用）"
               % len({v.get("class_type") for v in wf.values()}))
 
+    # ★ 2026-11-01：连线缺失也要拦。节点类齐全 + 模型齐全 ≠ 能跑 ——
+    #   `VAEDecodeAudio` 少了必需的 `vae` 输入时，前两项全绿、一提交就 400。
+    #   这是换工作流（尤其别人导出的）时最高频的坑，必须在体检阶段拦下来。
+    if missing_required_inputs is not None:
+        miss_in = missing_required_inputs(wf, oi)
+        if miss_in:
+            print("[FAIL] 以下节点缺必需输入（提交必 400）：")
+            for nid, cls, fields in miss_in[:12]:
+                print("   - 节点 %s(%s) 缺：%s" % (nid, cls, "、".join(fields)))
+            print("   修法：在 ComfyUI 里把该端口接上再重新「导出（API）」。")
+            return 2
+        print("[OK] 必需输入齐全（%d 个节点逐个核对）" % len(wf))
+
     miss_models = []
     for nid, node in wf.items():
         cls = node.get("class_type")
@@ -382,15 +399,21 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
     if ids and ids[0] in wf:
         wf[ids[0]]["inputs"]["value"] = prompt
 
-    # 参考图按序铺到每个 LoadImage 槽位；不够就循环复用第一张。
+    # 参考图按序铺到每个 LoadImage 槽位。
     # ★ 不能只看映射里的 images：裁剪/换工作流后映射可能是旧的，没列到的加载器会带着
     #   模板里的占位文件名提交 → ComfyUI 报「image not found」，而报错看起来像工作流坏了。
+    #
+    # ★ 2026-11-01：槽位多于参考图时，**剩余槽位重复最后一张（通常是场景），不再循环复用第一张**。
+    #   原因：6 参考槽的工作流只给 3 张图时，旧逻辑填成 角色1/角色2/场景/角色1/角色2/场景，
+    #   等于把两张人脸各喂了两遍 —— 与 RH 侧「未覆盖槽位沿用残留图导致串景」是同一类问题，
+    #   只是这里由循环造成。多绑场景无害，多绑人脸会加剧「同一张脸复制出多人」。
     img_ids = [x for x in _roles(m, "images") if x in wf]
     extra = [nid for nid, n in wf.items()
              if str(n.get("class_type")) == "LoadImage" and nid not in img_ids]
     img_ids += sorted(extra, key=lambda x: (0, int(x)) if str(x).isdigit() else (1, str(x)))
-    for i, nid in enumerate(img_ids):
-        wf[nid]["inputs"]["image"] = ref_names[i % len(ref_names)]
+    if img_ids and ref_names:
+        for i, nid in enumerate(img_ids):
+            wf[nid]["inputs"]["image"] = ref_names[i] if i < len(ref_names) else ref_names[-1]
 
     # ★ None / 空串 = 「沿用工作流原值」：不传就别覆盖，否则会把工作流里调好的
     #   分辨率/时长冲成代码默认值，用户会以为「换了个工作流结果画质变差了」。

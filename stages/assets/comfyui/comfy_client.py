@@ -26,12 +26,15 @@
 可配置项（环境变量，缺省即本机默认工作流的实测值）
 --------------------------------------------------
   COMFYUI_URL           ComfyUI 地址，默认 http://127.0.0.1:8188
-  COMFYUI_WORKFLOW      工作流 JSON 路径，默认本目录 workflow_qwen_image21.json
-  COMFYUI_NODE_PROMPT   正向提示词节点，默认 "6"
-  COMFYUI_NODE_PREFIX   保存图像节点（决定输出文件名前缀），默认 "2"
-  COMFYUI_NODE_SEED     种子节点，默认 "10"
+  COMFYUI_WORKFLOW      工作流 JSON 路径，默认本目录 workflow_qwen21_t2i_hq.json
+  COMFYUI_NODE_PROMPT   正向提示词节点，默认 "488"
+  COMFYUI_NODE_PREFIX   保存图像节点（决定输出文件名前缀），默认 "487"
+  COMFYUI_NODE_SEED     种子节点，默认 "497"
   COMFYUI_NODE_ASPECT   分辨率节点，默认 "13"
-  COMFYUI_NODE_LATENT   空 Latent 节点（batch_size），默认 "7"
+  COMFYUI_NODE_LATENT   空 Latent 节点（batch_size），默认 "474"
+  COMFYUI_NODE_LOADIMAGE 逗号分隔的 LoadImage 节点（图生图用），如 "489" 或 "489,490"
+  COMFYUI_NODE_MODE     布尔开关节点（文生图/编辑切换），如 "494"；有参考图时自动写 False
+  COMFYUI_NODE_SAVE     只取哪个 SaveImage 的输出；留空时多输出按**像素数**取最大
 """
 import argparse
 import json
@@ -40,6 +43,7 @@ import re
 import sys
 import time
 import uuid
+import urllib.error
 import urllib.request
 import urllib.parse
 
@@ -54,15 +58,78 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
 DEFAULT_WORKFLOW = os.environ.get("COMFYUI_WORKFLOW",
-                                  os.path.join(HERE, "workflow_qwen_image21.json"))
+                                  os.path.join(HERE, "workflow_qwen21_t2i_hq.json"))
 
-# ★ 节点映射：默认值对应本目录 workflow_qwen_image21.json（Qwen-Image 2.1）。
-#   换工作流**必须**核对节点 id —— 见 references/workflow-qwen-image21.md「换工作流的适配清单」。
-PROMPT_NODE = os.environ.get("COMFYUI_NODE_PROMPT", "6")    # PrimitiveStringMultiline
-PREFIX_NODE = os.environ.get("COMFYUI_NODE_PREFIX", "2")    # SaveImage
-SEED_NODE = os.environ.get("COMFYUI_NODE_SEED", "10")       # Seed (rgthree)
-ASPECT_NODE = os.environ.get("COMFYUI_NODE_ASPECT", "13")   # ResolutionSelector
-LATENT_NODE = os.environ.get("COMFYUI_NODE_LATENT", "7")    # EmptyLatentImage
+# ★ 2026-11-01：节点映射改成「按工作流文件名套预设」。
+#   此前每换一次工作流都要 --probe 一遍、再手工 export 五个环境变量 ——
+#   这类「每次重新推理」的活儿应该沉淀成数据，而不是每次重来。
+#   规则：文件名命中关键词就用预设；**环境变量仍然优先**（可只覆盖某一个键）。
+#
+#   t2i   workflow_qwen21_t2i_hq.json / _9x16 / 桌面原版（Qwen 2.1 turbo 文生图）
+#   edit  workflow_qwen21_edit.json（桌面「Qwen 2.1 turbo 图生图」，两个 LoadImage）
+WORKFLOW_PRESETS = {
+    "t2i": {
+        "prompt": "488", "prefix": "487", "seed": "497",
+        "aspect": "13", "latent": "474",
+        "load": "", "mode": "", "save": "",
+    },
+    "edit": {
+        "prompt": "488", "prefix": "487", "seed": "497",
+        "aspect": "13", "latent": "474",
+        "load": "489,490",   # 两个 LoadImage，按顺序吃 ref_images
+        "mode": "494",       # PrimitiveBoolean，标题「自定义比例」
+        # ★ 这个布尔不是「开不开编辑」，而是「画幅听谁的」：
+        #     true  → 开关取 on_true = EmptyLatentImage，尺寸由 13 ResolutionSelector 决定
+        #             （参考图仍作为 conditioning 喂给 471，身份照样生效）——**默认**
+        #     false → 开关取 on_false = 471[2]，即参考图编码出来的 latent，画幅跟随参考图
+        #   2026-11-01 更正：此前见 refs 就写 false，等于把画幅控制权交还给参考图，
+        #   于是 --aspect 空转、出图跟着 ref1 的比例走。用户指出后改正。
+        "mode_when_refs": True,
+        "save": "",
+    },
+}
+
+# 全局节点映射（由 apply_preset 填；build() 在调用时读这几个全局）
+PROMPT_NODE = PREFIX_NODE = SEED_NODE = ASPECT_NODE = LATENT_NODE = ""
+LOAD_NODES: list = []
+MODE_NODE = SAVE_NODE = ""
+MODE_WHEN_REFS = True     # 有参考图时该布尔节点写什么（语义随工作流而异，见 preset）
+ACTIVE_PRESET = ""
+
+
+def preset_key_for(path: str) -> str:
+    """按文件名认工作流类型。认不出就按 t2i（纯文生图，无图输入）。"""
+    name = os.path.basename(str(path or "")).lower()
+    return "edit" if "edit" in name else "t2i"
+
+
+def apply_preset(path: str) -> str:
+    """套用节点映射预设；环境变量显式设过的键不覆盖。返回命中的预设名。"""
+    global PROMPT_NODE, PREFIX_NODE, SEED_NODE, ASPECT_NODE, LATENT_NODE
+    global LOAD_NODES, MODE_NODE, SAVE_NODE, MODE_WHEN_REFS, ACTIVE_PRESET
+    key = preset_key_for(path)
+    p = WORKFLOW_PRESETS[key]
+    PROMPT_NODE = os.environ.get("COMFYUI_NODE_PROMPT") or p["prompt"]
+    PREFIX_NODE = os.environ.get("COMFYUI_NODE_PREFIX") or p["prefix"]
+    SEED_NODE = os.environ.get("COMFYUI_NODE_SEED") or p["seed"]
+    ASPECT_NODE = os.environ.get("COMFYUI_NODE_ASPECT") or p["aspect"]
+    LATENT_NODE = os.environ.get("COMFYUI_NODE_LATENT") or p["latent"]
+    LOAD_NODES = [x.strip() for x in
+                  (os.environ.get("COMFYUI_NODE_LOADIMAGE") or p["load"]).split(",") if x.strip()]
+    MODE_NODE = os.environ.get("COMFYUI_NODE_MODE") or p["mode"]
+    MODE_WHEN_REFS = bool(p.get("mode_when_refs", True))
+    SAVE_NODE = os.environ.get("COMFYUI_NODE_SAVE") or p["save"]
+    ACTIVE_PRESET = key
+    return key
+
+
+apply_preset(DEFAULT_WORKFLOW)
+
+
+def set_follow_ref_ratio(on: bool) -> None:
+    """命令行开关：画幅是否跟随参考图。默认 False（按 --aspect 自定义画幅）。"""
+    global MODE_WHEN_REFS
+    MODE_WHEN_REFS = not bool(on)
 
 
 # ★ 本客户端只连**本机 / 局域网的 ComfyUI**，必须**绕开系统代理**：
@@ -78,6 +145,77 @@ def _req(url, data=None, headers=None, timeout=60):
         return r.read()
 
 
+# ---------------------------------------------------------------------------
+# ★ 2026-10-31（反馈 P13）：图生图必须先把本地图「放进 ComfyUI 的 input 目录」
+# ---------------------------------------------------------------------------
+# `LoadImage.image` 只认 ComfyUI 服务器 input 目录里的**文件名**，写本地绝对路径无效
+# （提交后报 `FileNotFoundError` 或直接出糊图）。标准做法是走 /upload/image 上传。
+# 这里用纯标准库手写 multipart —— 该文件顶部承诺「零第三方依赖」，不引入 requests。
+def _ascii_name(path: str) -> str:
+    """上传名一律转 ASCII：ComfyUI 对中文文件名的 multipart 处理有版本差异，
+    且落进 input 目录后无法追溯来源。这里用「内容哈希 + 原扩展名」，同一张图重复上传可复用。"""
+    import hashlib
+    ext = os.path.splitext(path)[1].lower() or ".png"
+    with open(path, "rb") as f:
+        h = hashlib.sha1(f.read()).hexdigest()[:16]
+    return "sd_%s%s" % (h, ext)
+
+
+def upload_image(path: str) -> str:
+    """上传一张本地图到 ComfyUI input 目录，返回可写进 LoadImage.image 的文件名。"""
+    name = _ascii_name(path)
+    boundary = "----sd" + uuid.uuid4().hex
+    parts = []
+    for field, value in (("type", "input"), ("overwrite", "true")):
+        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                      % (boundary, field, value)).encode("utf-8"))
+    parts.append(("--%s\r\nContent-Disposition: form-data; name=\"image\"; filename=\"%s\"\r\n"
+                  "Content-Type: application/octet-stream\r\n\r\n" % (boundary, name)).encode("utf-8"))
+    with open(path, "rb") as f:
+        parts.append(f.read())
+    parts.append(("\r\n--%s--\r\n" % boundary).encode("utf-8"))
+    body = b"".join(parts)
+    raw = _req(COMFY + "/upload/image", data=body,
+               headers={"Content-Type": "multipart/form-data; boundary=" + boundary},
+               timeout=180)
+    res = json.loads(raw.decode("utf-8"))
+    got = res.get("name") or name
+    sub = (res.get("subfolder") or "").strip()
+    return "%s/%s" % (sub, got) if sub else got
+
+
+def _img_size(path: str):
+    """读 PNG / JPEG 的像素数（纯标准库）。用于「多输出时挑最大那张」。"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(32)
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w = int.from_bytes(head[16:20], "big")
+                h = int.from_bytes(head[20:24], "big")
+                return w * h
+            if head[:2] == b"\xff\xd8":                     # JPEG：扫 SOF
+                f.seek(2)
+                while True:
+                    b = f.read(1)
+                    while b and b != b"\xff":
+                        b = f.read(1)
+                    marker = f.read(1)
+                    while marker == b"\xff":
+                        marker = f.read(1)
+                    if not marker:
+                        return 0
+                    if marker[0] in (0xC0, 0xC1, 0xC2, 0xC3):
+                        f.read(3)
+                        h = int.from_bytes(f.read(2), "big")
+                        w = int.from_bytes(f.read(2), "big")
+                        return w * h
+                    seg = int.from_bytes(f.read(2), "big")
+                    f.seek(seg - 2, 1)
+    except Exception:                                       # noqa: BLE001
+        pass
+    return 0
+
+
 def check():
     """体检：读 /system_stats（不占用出图显存），返回 ComfyUI 版本 / 显卡 / 空闲显存。"""
     raw = _req(COMFY + "/system_stats", timeout=10).decode("utf-8")
@@ -91,10 +229,63 @@ def check():
     }
 
 
+def _explain_prompt_error(body: bytes) -> str:
+    """把 /prompt 的 400 响应翻译成「哪个节点、哪个字段、为什么」。
+
+    ★ 2026-11-01：原来 `_req` 抛 HTTPError 后只显示 `HTTP Error 400: Bad Request`，
+      真正的原因（`value_not_in_list` / `Invalid image file` / 缺必需输入）全在响应体里
+      被丢掉了。排查一次要手工构造请求才看得见 —— 这类错误必须一眼可见。
+    """
+    try:
+        d = json.loads(body.decode("utf-8", "replace"))
+    except Exception:                                          # noqa: BLE001
+        return body.decode("utf-8", "replace")[:800]
+    lines = []
+    err = (d.get("error") or {})
+    if err.get("message"):
+        lines.append(str(err["message"]))
+    for nid, info in (d.get("node_errors") or {}).items():
+        cls = info.get("class_type") or "?"
+        for e in (info.get("errors") or []):
+            lines.append("  节点 %s(%s)：%s —— %s"
+                         % (nid, cls, e.get("message") or "", str(e.get("details") or "")[:200]))
+    return "\n".join(lines) or "（响应体里没有可读信息）"
+
+
 def submit(workflow, client_id):
     payload = json.dumps({"prompt": workflow, "client_id": client_id}).encode("utf-8")
-    raw = _req(COMFY + "/prompt", data=payload, headers={"Content-Type": "application/json"})
+    try:
+        raw = _req(COMFY + "/prompt", data=payload,
+                   headers={"Content-Type": "application/json"})
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError("ComfyUI 拒收这段工作流：\n" + _explain_prompt_error(exc.read())) from None
     return json.loads(raw.decode("utf-8"))
+
+
+_OBJECT_INFO = None
+
+
+def object_info(refresh: bool = False) -> dict:
+    """拉一次 `/object_info` 并缓存（约 1s）。用于提交前的必需输入校验。"""
+    global _OBJECT_INFO
+    if _OBJECT_INFO is None or refresh:
+        _OBJECT_INFO = json.loads(_req(COMFY + "/object_info", timeout=60).decode("utf-8"))
+    return _OBJECT_INFO
+
+
+def check_required_inputs(workflow: dict) -> list:
+    """提交前校验「必需输入是否齐全」→ [(node_id, class_type, [缺的字段])]。
+
+    节点类在、模型在，**不代表能跑**：`VAEDecodeAudio` 少了必需的 `vae`、
+    `ImageScaleToTotalPixels` 少了 `resolution_steps`，都会在这一步才暴露。
+    复用 comfy_ports 的实现，两边同一套判据。
+    """
+    if PORTS is None:
+        return []
+    try:
+        return PORTS.missing_required_inputs(workflow, object_info())
+    except Exception:                                          # noqa: BLE001
+        return []
 
 
 def wait(pid, timeout=1200, poll=2.0):
@@ -127,6 +318,30 @@ def fetch_image(meta, out_path):
 
 _NEG_RE = re.compile(r"(?i)\b(no|not|without|never|avoid|exclude)\b|禁止|不要|无[A-Za-z\u4e00-\u9fff]|不得")
 _CFG_WARNED = set()
+
+
+def _load_ports():
+    """按路径加载 `stages/video/comfyui/comfy_ports.py`（端口/槽位操作的唯一实现）。
+
+    为什么按路径加载而不是复制一份：槽位裁剪、必需输入校验这类逻辑一旦出现第二个实现，
+    两个通道就会各自漂移 —— 「本地关掉了 4 个槽、云端没关」这类问题就是这么来的。
+    加载失败就返回 None，调用方降级为「不裁剪」而不是崩掉。
+    """
+    try:
+        import importlib.util
+        import pathlib
+        f = pathlib.Path(__file__).resolve().parents[2] / "video" / "comfyui" / "comfy_ports.py"
+        if not f.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location("_sd_comfy_ports", f)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+PORTS = _load_ports()
 
 
 def _min_cfg(wf: dict):
@@ -169,12 +384,66 @@ def _warn_negation(prompt: str, wf: dict) -> None:
 _SEED_KEYS = ("noise_seed", "seed", "random_seed")
 
 
-def build(base, prompt, prefix, seed=None, aspect=None, count=1):
-    """把「提示词 / 文件名前缀 / 种子 / 画幅 / 张数」写进工作流副本（不改原文件）。"""
+# ResolutionSelector 只认带人话后缀的枚举，裸 "9:16" 会被判 value_not_in_list。
+# 这张表就是本地侧最小的一份映射（与 RH 侧 config 里的 value_map 同源同义）。
+ASPECT_LABELS = {
+    "1:1": "1:1 (Square)",
+    "2:3": "2:3 (Portrait Photo)",
+    "3:2": "3:2 (Photo)",
+    "3:4": "3:4 (Portrait Standard)",
+    "4:3": "4:3 (Standard)",
+    "9:16": "9:16 (Portrait Widescreen)",
+    "16:9": "16:9 (Widescreen)",
+    "21:9": "21:9 (Ultrawide)",
+}
+
+
+def normalize_aspect(value):
+    """把裸比例补成 ResolutionSelector 认的枚举；已经是枚举就原样返回。
+
+    ★ 2026-11-01 实测：传 "9:16" 会 400 `value_not_in_list`，
+    而报错信息埋在 /prompt 的 node_errors 里，命令行只看到 "HTTP Error 400"。
+    所以这一步必须在提交前做掉。
+    """
+    v = str(value or "").strip()
+    if not v:
+        return v
+    if v in ASPECT_LABELS.values():
+        return v
+    return ASPECT_LABELS.get(v, v)
+
+
+def build(base, prompt, prefix, seed=None, aspect=None, count=1, refs=None):
+    """把「提示词 / 文件名前缀 / 种子 / 画幅 / 张数 / 参考图」写进工作流副本（不改原文件）。
+
+    `refs` 非空即进入**图生图/编辑**模式：写进 LoadImage 节点，并把 MODE_NODE 置 False。
+    工作流没有 MODE_NODE 时（纯文生图），refs 会被忽略并告警 —— 不静默丢参数。
+    """
     wf = json.loads(json.dumps(base))
     wf[PROMPT_NODE]["inputs"]["value"] = prompt
     wf[PREFIX_NODE]["inputs"]["filename_prefix"] = prefix
     _warn_negation(prompt, wf)
+    if refs:
+        if not LOAD_NODES:
+            print("[WARN] 给了 ref_images 但未设 COMFYUI_NODE_LOADIMAGE，参考图被忽略（当前工作流是纯文生图）",
+                  file=sys.stderr)
+        # ★ 2026-11-01：**按实际参考图数量关掉多余节点**，而不是让它们继续跑。
+        #   槽位多于参考图时，多出来的 LoadImage 会用工作流里保存的旧图 → 串景、白占显存。
+        #   这里真的从图里删节点（连同指向它们的边与孤立上游），不是填占位图。
+        if PORTS is not None:
+            wf, _rep = PORTS.prune_for_refs(wf, len(refs))
+            if _rep.get("dropped_nodes"):
+                print("[端口] 图片槽 %s → %s，已关闭 %d 个多余槽（节点 %s）"
+                      % (_rep["before"], _rep["after"], len(_rep["dropped_nodes"]),
+                         "、".join(_rep["dropped_nodes"])), file=sys.stderr)
+        for i, node_id in enumerate([n for n in LOAD_NODES if n in wf]):
+            if i >= len(refs):
+                break
+            wf[node_id]["inputs"]["image"] = refs[i]
+        if MODE_NODE:
+            wf[MODE_NODE]["inputs"]["value"] = bool(MODE_WHEN_REFS)
+    elif MODE_NODE:
+        wf[MODE_NODE]["inputs"]["value"] = True
     if seed is not None:
         ins = wf.setdefault(SEED_NODE, {}).setdefault("inputs", {})
         for k in _SEED_KEYS:
@@ -187,7 +456,7 @@ def build(base, prompt, prefix, seed=None, aspect=None, count=1):
                            "请用 COMFYUI_NODE_SEED 指到真正的种子节点"
                            % (SEED_NODE, ", ".join(sorted(ins)) or "无"))
     if aspect:
-        wf[ASPECT_NODE]["inputs"]["aspect_ratio"] = aspect
+        wf[ASPECT_NODE]["inputs"]["aspect_ratio"] = normalize_aspect(aspect)
     if count and int(count) > 1:
         wf[LATENT_NODE]["inputs"]["batch_size"] = int(count)
     return wf
@@ -195,22 +464,77 @@ def build(base, prompt, prefix, seed=None, aspect=None, count=1):
 
 def run_one(base, item, out_dir):
     prefix = item.get("prefix") or item.get("id")
-    wf = build(base, item["prompt"], prefix, item.get("seed"), item.get("aspect"), item.get("count", 1))
+    # ★ 2026-10-31（P13）：参考图先上传换名，再写进 LoadImage
+    refs = []
+    for p in (item.get("ref_images") or []):
+        if not os.path.isfile(p):
+            raise FileNotFoundError("参考图不存在：%s" % p)
+        refs.append(upload_image(p))
+    wf = build(base, item["prompt"], prefix, item.get("seed"), item.get("aspect"),
+               item.get("count", 1), refs=refs)
+    miss = check_required_inputs(wf)
+    if miss:
+        raise RuntimeError("工作流缺必需输入（提交必被拒）：\n" + "\n".join(
+            "  节点 %s(%s) 缺：%s" % (nid, cls, "、".join(f)) for nid, cls, f in miss[:12]))
     res = submit(wf, str(uuid.uuid4()))
     # node_errors 非空 = 参数错误（提示词节点 id 错 / 模型没装），直接中止不要重试
     if res.get("node_errors"):
         raise RuntimeError("node errors: " + json.dumps(res["node_errors"], ensure_ascii=False)[:800])
     pid = res["prompt_id"]
     entry = wait(pid)
-    outs = []
-    for _node_id, out in sorted(entry.get("outputs", {}).items()):
+
+    # ★ 2026-10-31（P14）：Moss+SeedVR2 这类工作流有**两个 SaveImage**（低清 / 高清）。
+    #   若两个都落盘，一张资产会变成 `x_00.png` + `x_01.png` 两个文件，
+    #   下游 refs.json 的 glob 与 --skip-existing 判重都会被污染。规则：
+    #   ① 显式 COMFYUI_NODE_SAVE 优先；② 否则下载后按**像素数**只留最大那张。
+    cand = []
+    for node_id, out in sorted(entry.get("outputs", {}).items()):
+        if SAVE_NODE and str(node_id) != str(SAVE_NODE):
+            continue
         for img in out.get("images", []):
-            ext = os.path.splitext(img.get("filename", ""))[1] or ".png"
-            safe = "{}_{:02d}{}".format(prefix, len(outs), ext)
-            path = os.path.join(out_dir, safe)
-            n = fetch_image(img, path)
-            outs.append((path, n))
-    return outs
+            cand.append(img)
+    if not cand:
+        raise RuntimeError("工作流没有产出图片（outputs 为空或 SAVE_NODE=%s 不匹配）" % SAVE_NODE)
+
+    tmp = []
+    for i, img in enumerate(cand):
+        ext = os.path.splitext(img.get("filename", ""))[1] or ".png"
+        path = os.path.join(out_dir, ".__tmp_{}_{:02d}{}".format(prefix, i, ext))
+        n = fetch_image(img, path)
+        tmp.append((path, n, _img_size(path)))
+    if len(tmp) > 1:
+        tmp.sort(key=lambda x: x[2], reverse=True)
+        print("[note] 工作流有 %d 个输出，按分辨率保留最大的一张（%d px）"
+              % (len(tmp), tmp[0][2]), flush=True)
+    for p, _n, _s in tmp[1:]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    path, n, _s = tmp[0]
+    final = os.path.join(out_dir, "{}_{:02d}{}".format(prefix, 0, os.path.splitext(path)[1]))
+    # ★ 2026-10-31（P18）：Windows 上目标文件被占用（预览器/资源管理器/杀软扫描）时
+    #   `os.replace` 直接抛 `[WinError 5] 拒绝访问`，整张图白跑。实测批量 19 张里必有 1 张撞上。
+    #   降级链：直接换 → 先删再换 → 覆盖写 → 放弃但保留临时文件并报清楚。
+    try:
+        os.replace(path, final)
+    except OSError as e1:
+        try:
+            os.remove(final)
+        except OSError:
+            pass
+        try:
+            os.replace(path, final)
+        except OSError:
+            try:
+                import shutil
+                shutil.copyfile(path, final)
+                os.remove(path)
+            except OSError as e3:
+                raise RuntimeError(
+                    "无法写入 %s（目标被占用）。临时文件已保留在 %s，关掉看图程序后重跑该资产即可。原始错误：%s / %s"
+                    % (final, path, e1, e3))
+    return [(final, n)]
 
 
 KIND_DIR = {"char": "characters", "scene": "scenes", "prop": "props"}
@@ -268,19 +592,30 @@ def _has_output(d, prefix):
 
 def main():
     ap = argparse.ArgumentParser(description="本地 ComfyUI 批量出图（零成本、零账号、纯标准库）")
-    ap.add_argument("--workflow", default=DEFAULT_WORKFLOW, help="工作流 JSON（默认本目录 workflow_qwen_image21.json）")
+    ap.add_argument("--workflow", default=DEFAULT_WORKFLOW, help="工作流 JSON（默认 workflow_qwen21_t2i_hq.json；文件名含 edit 自动切图生图预设）")
     ap.add_argument("--spec", help="资产清单 JSON（格式见 references/本地ComfyUI出图.md §五）")
     ap.add_argument("--kind", help="按 kind 过滤: char/scene/prop")
     ap.add_argument("--only", help="逗号分隔的资产 id")
+    # ★ 2026-11-01：必须 action="append" —— 原来是可重复传但**只保留最后一个**，
+    #   传两张图实际只用了一张，而且日志只字不提（于是「槽位顺序不对」查无可查）。
+    #   逗号分隔仍然支持，两种写法等价。
+    ap.add_argument("--image", action="append", default=None,
+                    help="（单张模式）参考图路径，给了就走图生图/编辑；可重复，或用逗号分隔")
     ap.add_argument("--prompt")
     ap.add_argument("--prefix")
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--aspect")
+    ap.add_argument("--aspect", help="画幅，如 9:16 / 16:9 / 3:4（自动补成节点认的枚举）")
+    ap.add_argument("--follow-ref-ratio", action="store_true",
+                    help="画幅跟随第一张参考图（默认按 --aspect 自定义画幅）")
     ap.add_argument("--count", type=int, default=1)
     ap.add_argument("--skip-existing", action="store_true", help="跳过已有产物的资产（断点续跑）")
     ap.add_argument("--out", default=".", help="产物落盘目录（按 kind 自动分 characters/scenes/props 子目录）")
     ap.add_argument("--check", action="store_true", help="只体检：确认 ComfyUI 在线，然后退出")
     args = ap.parse_args()
+    # ★ 换工作流必须换节点映射：在动手之前按 --workflow 重新套一次预设（环境变量仍优先）
+    _preset = apply_preset(args.workflow)
+    if getattr(args, "follow_ref_ratio", False):
+        set_follow_ref_ratio(True)
 
     if args.check:
         try:
@@ -311,6 +646,12 @@ def main():
         with open(args.spec, "r", encoding="utf-8") as f:
             spec = json.load(f)
         items = spec.get("assets", spec if isinstance(spec, list) else [])
+        # ★ 参考图相对路径统一按**清单文件所在目录**解析（与 refs.json 的约定一致）
+        _spec_dir = os.path.dirname(os.path.abspath(args.spec))
+        for _it in items:
+            if _it.get("ref_images"):
+                _it["ref_images"] = [p if os.path.isabs(p) else os.path.join(_spec_dir, p)
+                                     for p in _it["ref_images"]]
         # ★ 清单级 style_lock：统一风格串，逐条拼到 prompt 前，保证系列一致
         style_lock = (spec.get("style_lock") or "").strip() if isinstance(spec, dict) else ""
         spec_aspect = (spec.get("aspect") or "").strip() if isinstance(spec, dict) else ""
@@ -346,7 +687,8 @@ def main():
         print("[done] generated={} skipped={} failed={}".format(done, skipped, failed), flush=True)
     else:
         it = {"id": args.prefix or "out", "prefix": args.prefix or "out", "prompt": args.prompt,
-              "seed": args.seed, "aspect": args.aspect, "count": args.count}
+              "seed": args.seed, "aspect": args.aspect, "count": args.count,
+              "ref_images": [x.strip() for chunk in (args.image or []) for x in str(chunk).split(",") if x.strip()]}
         outs = run_one(base, it, args.out)
         for p, n in outs:
             print("-> {} ({:.0f} KB)".format(p, n / 1024.0), flush=True)

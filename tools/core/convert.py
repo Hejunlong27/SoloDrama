@@ -20,19 +20,24 @@ def world_bible_to_char_anchors(wb: dict) -> list:
       {"characters": [{"name":..., "code":..., "visual_anchor":...,
                        "palette":..., "voice":...}],
        "scenes":     [{"code":..., "desc":..., "int_ext":..., "time":...}]}
-    缺 code 时按姓名首字生成拼音占位，缺 visual_anchor 时报错（不能猜）。
+    缺 code 时按姓名首字生成拼音占位。
+
+    ★ 2026-10-31：`visual_anchor` 改为**可选**。
+      此前缺锚点直接 `raise ValueError`，等于逼着剧本阶段先定长相：
+      剧作家必须先想好「左眉中段一道断口」才能写第 1 集，创作被资产卡绑死，
+      而且所有人最后都长成同一套模板（疤/痣/眼镜）。
+      现在：剧本阶段只登记「代号 + 身份」，长相留给 S3 的 character_design.py；
+      真要写锚点仍然可以写，但不再是义务，也不再是硬校验项。
     """
     chars = []
     for i, c in enumerate(wb.get("characters", []), 1):
         code = c.get("code") or ""
         if not code:
             code = f"CH{i:02d}"
-        anchor = c.get("visual_anchor") or c.get("anchor_text") or ""
-        if not anchor:
-            raise ValueError(f"角色 {c.get('name')} 缺 visual_anchor，无法冻结锚点")
+        anchor = (c.get("visual_anchor") or c.get("anchor_text") or "").strip()
         chars.append(Character(
             code=code.upper(), name=c.get("name", code),
-            anchor_text=anchor.strip(),
+            anchor_text=anchor,
             palette=c.get("palette", ""), voice=c.get("voice", ""),
             trigger_word=c.get("trigger_word", ""),
             lora_path=c.get("lora_path", ""),

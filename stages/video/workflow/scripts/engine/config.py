@@ -77,6 +77,15 @@ HTTP_TIMEOUT: float = 60.0
 #   empty   传空字符串。省一次上传，但 ComfyUI 的 LoadImage 可能报 Invalid image file
 #   keep    保留工作流默认值。**危险**，必须写 reason；只有确知残留图无害才允许
 #
+# ★ 2026-11-01（用户要求「必须有开关节点的能力」）——**能力边界必须说清楚**：
+#   本地 ComfyUI：真的关。我们手里就是那张图（API 格式的 prompt dict），
+#                 按参考图数量删掉多余 LoadImage + 指向它的边 + 孤立上游
+#                 （实现见 comfy_ports.prune_for_refs，本地出图/出片两条路都已接上）。
+#   RunningHub ：关不了。`nodeInfoList` 是**值覆盖表**，没有任何「禁用节点」语义；
+#                 没发的槽位沿用工作流保存值。所以这里只能「顶替」——blank/empty/keep 三选一。
+#                 要真正减少槽位，只能改平台侧那份工作流（少接几个 LoadImage）或换工作流。
+#                 每次出片 SlotGuard.summary() 会把「实际用几个 / 顶掉几个」打出来，不静默。
+#
 # discover=True 时每次运行会调一次只读接口拉工作流节点清单，自动找出全部图片槽位
 #   （免费、不排队），并把快照落到 <工作区>/slots_*.json 供 --dry-run 用。
 # discover=False 时用 slot_ids 手工指定，例如 ["146", "160", "161"]。
@@ -111,50 +120,73 @@ SLOT_HYGIENE: dict = {
 #   multi      是否数组型输入（true 时多个值会被序列化成 JSON 数组字符串）
 #
 IMAGE_PROVIDERS: dict = {
-    "banana": {
-        "label": "香蕉（图生图）",
-        "kind": "workflow",       # workflow = 自建 ComfyUI 工作流 | ai-app = RunningHub AI 应用
-        "id": "",                 # TODO[3] 填香蕉的 workflowId（若 kind=ai-app 则填 webappId）
-        "instance_type": "default",
-        "unused_slots": dict(SLOT_HYGIENE),   # 未使用图片槽位的处置，见 [1.5]
-        "nodes": {
-            # TODO[3] 用 python main.py --probe 打印后回填下面 4 行
-            "prompt":    {"nodeId": "", "fieldName": "text"},         # TODO 不确定是 text 还是 prompt
-            "ratio":     {"nodeId": "", "fieldName": "aspectRatio"},  # TODO
-            "char_ref":  {"nodeId": "", "fieldName": "image", "multi": True},   # TODO 图生图必填
-            "scene_ref": {"nodeId": "", "fieldName": "image", "multi": True},   # TODO 图生图必填
-        },
-    },
-    "gpt_image": {
-        "label": "GPT 图像",
-        "kind": "workflow",       # 若 GPT 图像是 RunningHub 的 AI 应用，改成 "ai-app"
-        "id": "",                 # TODO 填 GPT 图像工作流 ID
-        "instance_type": "default",
-        "unused_slots": dict(SLOT_HYGIENE),   # 未使用图片槽位的处置，见 [1.5]
-        "nodes": {
-            "prompt":    {"nodeId": "", "fieldName": "text"},         # TODO
-            "ratio":     {"nodeId": "", "fieldName": "aspectRatio"},  # TODO
-            "char_ref":  {"nodeId": "", "fieldName": "image", "multi": True},   # TODO
-            "scene_ref": {"nodeId": "", "fieldName": "image", "multi": True},   # TODO
-        },
-    },
-    "jimeng": {
-        "label": "即梦",
+    # ★ 2026-11-01：从「香蕉 / GPT / 即梦」三个空 TODO 收敛为**唯一一条真实通道**。
+    #   预配置给的文生图工作流就是这条：Qwen Image 2.1 turbo，纯文生图（工作流里没有 LoadImage）。
+    #   旧配置写 active_image_provider = "banana" 仍可用，见下面的别名表。
+    "rh_t2i": {
+        "label": "RH 文生图 · Qwen 2.1 turbo",
         "kind": "workflow",
-        "id": "",                 # TODO 填即梦工作流 ID
+        "id": "2113267040969646081",
         "instance_type": "default",
-        "unused_slots": dict(SLOT_HYGIENE),   # 未使用图片槽位的处置，见 [1.5]
+        # False = 该工作流没有图片输入。missing_configs 不再索要 char_ref / scene_ref，
+        # 否则「纯文生图」会被判成「没配好」，永远过不了启动检查。
+        "image_input": False,
+        "unused_slots": dict(SLOT_HYGIENE),
+        # 该工作流有 57 个可填节点（含 SeedVR2 二段超分），但**没有任何 LoadImage**，
+        # 所以它确实是纯文生图 —— 由 `run.py probe` 实测确认，不是靠命名猜的。
         "nodes": {
-            "prompt":    {"nodeId": "", "fieldName": "text"},         # TODO
-            "ratio":     {"nodeId": "", "fieldName": "aspectRatio"},  # TODO
-            "char_ref":  {"nodeId": "", "fieldName": "image", "multi": True},   # TODO
-            "scene_ref": {"nodeId": "", "fieldName": "image", "multi": True},   # TODO
+            # 已实测：正向提示词是 57 PrimitiveStringMultiline.value。
+            # 探针会把它猜成 36 CLIPTextEncode.text（那是**负向词**），必须手写，不能靠猜。
+            "prompt": {"nodeId": "57", "fieldName": "value"},
         },
     },
 }
 
-# ← 切换图片模型只改这一行
-ACTIVE_IMAGE_PROVIDER: str = "banana"
+# 历史名 → 现名（只做映射，不复制一份配置，避免同一事实两个源）
+_IMAGE_PROVIDER_ALIASES = {"banana": "rh_t2i", "gpt_image": "rh_t2i", "jimeng": "rh_t2i"}
+
+ACTIVE_IMAGE_PROVIDER: str = "rh_t2i"
+
+
+# ==============================================================================
+# [2.1] 图像编辑通道（img2img）
+# ==============================================================================
+# 与 [2] 分开的理由：文生图没有图输入、编辑必须带图，两者的 node 结构不同，
+# 塞进同一个字典就得靠 if 分支猜，属于「同一字段表达两件事」——串味的典型来源。
+IMAGE_EDIT_PROVIDERS: dict = {
+    "rh_edit": {
+        "label": "RH 图像编辑 · Qwen 2.1 turbo 图生图",
+        "kind": "workflow",
+        "id": "2111261410541006850",
+        "instance_type": "default",
+        "image_input": True,
+        "unused_slots": dict(SLOT_HYGIENE),
+        # ★ 2026-11-01 由 `run.py probe --kind workflow --id 2111261410541006850` 实测回填。
+        #   注意：这条的提示词节点是 **74（CR Prompt Text）**，不是文生图那条的 57，
+        #   两条工作流不是同一套图 —— 别照着 t2i 的 id 抄。
+        "nodes": {
+            "prompt": {"nodeId": "74", "fieldName": "prompt"},
+            # 6 个 LoadImage（91 / 177–181）。少于 6 张时，多余槽位复用最后一张，
+            # 不循环复用第一张 —— 循环会把同一张脸喂多遍（见 comfy_local_video 同类修正）。
+            "load_image": {"value": "fileName", "slots": [
+                {"nodeId": "91",  "fieldName": "image"},
+                {"nodeId": "177", "fieldName": "image"},
+                {"nodeId": "178", "fieldName": "image"},
+                {"nodeId": "179", "fieldName": "image"},
+                {"nodeId": "180", "fieldName": "image"},
+                {"nodeId": "181", "fieldName": "image"},
+            ]},
+        },
+        # 观测值（只读参考，不要当输入发）：
+        #   32 KSampler  cfg=1 / steps=25 / denoise=1 / euler
+        #   27 ResolutionSelector 2:3 (Portrait Photo) / 1.5MP / multiple 32
+        #   95 SaveImage filename_prefix="LQ-"
+        #   33 TextEncodeQwenImage21.negative_prompt（负向词）
+        "probe_required": False,
+    },
+}
+
+ACTIVE_IMAGE_EDIT_PROVIDER: str = "rh_edit"
 
 
 # ==============================================================================
@@ -162,7 +194,8 @@ ACTIVE_IMAGE_PROVIDER: str = "banana"
 # ==============================================================================
 H3: dict = {
     "kind": "workflow",           # 你自己的 H3 工作流 -> workflow
-    "id": "",                     # TODO[4] 填 H3 workflowId
+    # ★ 预配置给定的视频工作流（zh 站）。实测：8 步 / 0.8MP / 9:16 / 8~10 秒。
+    "id": "2113319585146560513",
     "instance_type": "default",
 
     # ★ 2026-10-22 新增：未使用图片槽位的处置（见 [1.5]）
@@ -170,19 +203,20 @@ H3: dict = {
     #   如果不顶掉，平台会沿用工作流里保存的图（实测 6 个槽只覆盖 3 个）。
     "unused_slots": dict(SLOT_HYGIENE),
 
-    # 首帧图取哪张： "cell_01" = 九宫格裁出的第 01 格 | "grid_raw" = 整张九宫格原图
-    # 依据你的 H3 工作流实际接收什么来定。默认 cell_01（更像"首帧"）。
-    "frame_source": "cell_01",
-
+    # ★ 2026-11-01 实测回填（工作流 2113319585146560513，已跑通 47 币/9s 段）。
+    #   只登记**引擎会消费**的键；工作流里其余可填节点记在下面注释，不要塞进来当成输入。
     "nodes": {
-        # TODO[4] 用 python main.py --probe 打印后回填
-        "prompt":      {"nodeId": "", "fieldName": ""},   # TODO 文本提示词节点
-        "first_frame": {"nodeId": "", "fieldName": ""},   # TODO 首帧图节点（图生视频必需）
-        "char_ref":    {"nodeId": "", "fieldName": ""},   # TODO 角色参考图节点（无则留空，自动跳过）
-        "scene_ref":   {"nodeId": "", "fieldName": ""},   # TODO 场景参考图节点（无则留空，自动跳过）
-        "grid_ref":    {"nodeId": "", "fieldName": ""},   # TODO 九宫格整图作为参考（无则留空）
-        "duration":    {"nodeId": "", "fieldName": ""},   # TODO 时长（无则留空）
-        "ratio":       {"nodeId": "", "fieldName": ""},   # TODO 画幅（无则留空）
+        "prompt":   {"nodeId": "138", "fieldName": "value"},    # PrimitiveStringMultiline
+        "duration": {"nodeId": "132", "fieldName": "value"},    # PrimitiveFloat（秒）
+        "char_ref": {"nodeId": "282", "fieldName": "image"},    # LoadImage
+        "scene_ref":{"nodeId": "283", "fieldName": "image"},    # LoadImage
+        # 说明（勿改）：
+        #   284–287 是另外 4 个 LoadImage 槽位，由 SLOT_HYGIENE 自动顶成中性灰；
+        #   不要登记 —— 登记了会被当成「本镜要用的图」，反而占掉策略位。
+        #   163 = INTConstant 采样步数（工作流内已是 8）
+        #   115 = ResolutionSelector（已是 9:16 / 0.8MP / multiple 32）
+        #   156 = VHS_VideoCombine 输出
+        #   参考图提交形态沿用默认 "url"（历史 30 集批量实证），此工作流的 LoadImage 吃 url。
     },
 }
 
@@ -192,6 +226,41 @@ H3: dict = {
 # ==============================================================================
 DATA_DIR: str = "data"            # 输入 JSON 目录（相对「工作区」，也可写绝对路径）
 OUTPUT_DIR: str = "output"        # 批次输出根目录（相对「工作区」，也可写绝对路径）
+
+
+# ==============================================================================
+# [3.5] 放大通道（RH_Astra · Iris）
+# ==============================================================================
+# ⚠ 名字要准：这条放大**不是 Topaz**，是 RunningHub 的 RH_Astra + Iris 模型。
+#   历史文档按「Topaz 放大工作流」叫过一阵，排查时会被名字带偏。
+#
+# 节点 4/5 是**短边/长边**，不是宽/高：
+#   竖版给 4=1080, 5=1920；给反了（4=1920,5=1080）输出会变成 598×1080。
+UPSCALE_PROVIDERS: dict = {
+    "rh_astra_iris": {
+        "label": "RH 放大 · RH_Astra Iris",
+        "kind": "workflow",
+        "id": "2110614419863592961",
+        "instance_type": "default",
+        "nodes": {
+            "video_in":   {"nodeId": "2", "fieldName": "file", "value": "fileName"},
+            "video_out":  {"nodeId": "3", "fieldName": "filename_prefix"},
+            "short_edge": {"nodeId": "4", "fieldName": "value"},
+            "long_edge":  {"nodeId": "5", "fieldName": "value"},
+            "model":      {"nodeId": "6"},                          # RH_Astra：模型 / 增强强度 / 输入质量
+            "cleaner":    {"nodeId": "7", "fieldName": "model_action"},
+        },
+        "keep_audio": True,          # LoadVideo.keep_audio 必须 true，否则台词丢失
+        "target": {"short_edge": 1080, "long_edge": 1920},
+        "constraints": [
+            "输入必须先转 h264 / yuv420p / 8bit：RH 原始产物是 hevc Main10，服务端 LoadVideo 解不动（805）",
+            "提交必须走 /openapi/v2/run/workflow/{id}；v1 legacy 通道同样报 805",
+            "输出宽会按源宽高比吸附（672×1216 → 1062×1920），交付前必须 crop-to-fill 归一化到 1080×1920",
+            "实测：整集 61 秒一次放大 ≈ 35 币 / 174 秒",
+        ],
+    },
+}
+ACTIVE_UPSCALE_PROVIDER: str = "rh_astra_iris"
 
 
 # ==============================================================================
@@ -257,14 +326,51 @@ UPLOAD_CACHE_TTL_HOURS: float = 20.0          # 上传链接 1 天有效，超�
 KEEP_RAW_ZIP: bool = False                    # 香蕉若回传 zip 包，是否保留原包
 
 
+def resolve_image_provider(name: str | None = None) -> str:
+    """把历史名解析成现名。
+
+    旧项目 config.local.json 里可能还写着 banana / gpt_image / jimeng
+    （2026-11-01 之前的三个空 TODO 槽）。这里只做映射，不复制配置 ——
+    同一事实只留一个源，别名表是唯一允许的第二处。
+    """
+    key = str(name if name is not None else ACTIVE_IMAGE_PROVIDER or "").strip()
+    if key in IMAGE_PROVIDERS:
+        return key
+    return _IMAGE_PROVIDER_ALIASES.get(key, key)
+
+
 def get_active_provider() -> dict:
     """返回当前激活的图片模型配置；顺便做基础校验。"""
-    if ACTIVE_IMAGE_PROVIDER not in IMAGE_PROVIDERS:
+    key = resolve_image_provider()
+    if key not in IMAGE_PROVIDERS:
         raise KeyError(
             f"ACTIVE_IMAGE_PROVIDER='{ACTIVE_IMAGE_PROVIDER}' 不在 IMAGE_PROVIDERS 里，"
-            f"可选：{list(IMAGE_PROVIDERS.keys())}"
+            f"可选：{list(IMAGE_PROVIDERS.keys())}；"
+            f"历史别名：{sorted(_IMAGE_PROVIDER_ALIASES)}"
         )
-    return IMAGE_PROVIDERS[ACTIVE_IMAGE_PROVIDER]
+    return IMAGE_PROVIDERS[key]
+
+
+def get_active_edit_provider() -> dict:
+    """当前激活的图像编辑通道（img2img）。"""
+    key = str(ACTIVE_IMAGE_EDIT_PROVIDER or "").strip()
+    if key not in IMAGE_EDIT_PROVIDERS:
+        raise KeyError(
+            f"ACTIVE_IMAGE_EDIT_PROVIDER='{key}' 不在 IMAGE_EDIT_PROVIDERS 里，"
+            f"可选：{list(IMAGE_EDIT_PROVIDERS.keys())}"
+        )
+    return IMAGE_EDIT_PROVIDERS[key]
+
+
+def get_active_upscale_provider() -> dict:
+    """当前激活的放大通道。"""
+    key = str(ACTIVE_UPSCALE_PROVIDER or "").strip()
+    if key not in UPSCALE_PROVIDERS:
+        raise KeyError(
+            f"ACTIVE_UPSCALE_PROVIDER='{key}' 不在 UPSCALE_PROVIDERS 里，"
+            f"可选：{list(UPSCALE_PROVIDERS.keys())}"
+        )
+    return UPSCALE_PROVIDERS[key]
 
 
 def _node_ready(spec: Any) -> bool:
@@ -303,13 +409,18 @@ def missing_configs(video_only: bool = False) -> list:
     if not RUNNINGHUB_API_KEY:
         miss.append("RUNNINGHUB_API_KEY（环境变量未设置，config.local.json 也没有）")
     if not video_only:
-        prov = IMAGE_PROVIDERS.get(ACTIVE_IMAGE_PROVIDER) or {}
+        name = resolve_image_provider()
+        prov = IMAGE_PROVIDERS.get(name) or {}
         if not prov.get("id"):
-            miss.append(f"image_providers['{ACTIVE_IMAGE_PROVIDER}'].id（图片工作流 ID）")
+            miss.append(f"image_providers['{name}'].id（图片工作流 ID）")
         pnodes = prov.get("nodes") or {}
-        for key in ("prompt", "char_ref", "scene_ref"):
+        # ★ 2026-11-01：只索要该通道**真有**的节点。
+        #   纯文生图（image_input=False）没有 LoadImage，此前无条件索要
+        #   char_ref / scene_ref，等于把「配置正确」判成「没配好」，永远过不了启动检查。
+        need = ["prompt"] + (["char_ref", "scene_ref"] if prov.get("image_input", True) else [])
+        for key in need:
             if not _node_ready(pnodes.get(key)):
-                miss.append(f"image_providers['{ACTIVE_IMAGE_PROVIDER}'].nodes.{key}.nodeId")
+                miss.append(f"image_providers['{name}'].nodes.{key}.nodeId")
     if not H3.get("id"):
         miss.append("h3.id（H3 视频工作流 ID）")
     hnodes = H3.get("nodes") or {}
@@ -337,6 +448,10 @@ _KEY_ALIASES = {
     "http_timeout": "HTTP_TIMEOUT",
     "active_image_provider": "ACTIVE_IMAGE_PROVIDER",
     "image_providers": "IMAGE_PROVIDERS",
+    "active_image_edit_provider": "ACTIVE_IMAGE_EDIT_PROVIDER",
+    "image_edit_providers": "IMAGE_EDIT_PROVIDERS",
+    "active_upscale_provider": "ACTIVE_UPSCALE_PROVIDER",
+    "upscale_providers": "UPSCALE_PROVIDERS",
     "h3": "H3",
     "concurrency": "CONCURRENCY",
     "batch_size": "BATCH_SIZE",
@@ -363,7 +478,7 @@ _KEY_ALIASES = {
 }
 
 # 需要深合并的 dict 键
-_DEEP_KEYS = {"IMAGE_PROVIDERS", "H3", "DEFAULT_CROP"}
+_DEEP_KEYS = {"IMAGE_PROVIDERS", "IMAGE_EDIT_PROVIDERS", "UPSCALE_PROVIDERS", "H3", "DEFAULT_CROP"}
 
 OVERLAY_WARNINGS: list = []      # apply_overlay 产生的非致命警告（供 doctor / main 打印）
 
@@ -569,13 +684,12 @@ def apply_overlay(path) -> list:
                 if coerced.get("kind") not in (None, "workflow", "ai-app"):
                     _warn(f"h3.kind='{coerced.get('kind')}' 非法（可选 workflow/ai-app），已忽略该字段")
                     coerced.pop("kind", None)
-                if coerced.get("frame_source") not in (None, "cell_01", "grid_raw"):
-                    _warn(f"h3.frame_source='{coerced.get('frame_source')}' 非法"
-                          "（可选 cell_01/grid_raw），已忽略该字段")
-                    coerced.pop("frame_source", None)
+                # frame_source（九宫格裁哪一格当首帧）已于 2026-11-01 随九宫格链下线。
+                # 旧覆盖层里残留这个键不报错，只忽略 —— 免得老项目升级时被一条无意义告警打断。
+                if coerced.pop("frame_source", None) is not None:
+                    _warn("h3.frame_source 已废弃（九宫格链已下线），该键被忽略")
                 _validate_nodes("h3", coerced.get("nodes"))
                 _validate_slots("h3", coerced.get("unused_slots"))
-                _validate_nodes("h3", coerced.get("nodes"))
         elif target == "RUNNINGHUB_API_KEY":
             if os.getenv("RUNNINGHUB_API_KEY"):
                 _warn(f"{p.name}: 已设置环境变量 RUNNINGHUB_API_KEY，文件里的 key 已被忽略（环境变量优先）")

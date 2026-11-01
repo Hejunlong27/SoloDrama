@@ -221,6 +221,36 @@ def prune_for_refs(wf: dict, want_images) -> tuple:
     }
 
 
+def missing_required_inputs(wf: dict, object_info: dict) -> list:
+    """按 `/object_info` 校验「必需输入是否齐全」→ [(node_id, class_type, [缺的字段])]。
+
+    为什么要有这一条：原来的 `--check` 只查两件事 —— 节点类在不在、模型文件在不在。
+    **连线缺失**照样能全绿，直到提交那一刻才 400。最典型的是 `VAEDecodeAudio`
+    少了必需的 `vae`：节点在、模型在、检查通过，一提交就报 "Required input is missing"。
+    换工作流（尤其是别人导出的）时这是最高频的坑，必须在校验阶段拦下来。
+
+    只查 required。optional 缺了是正常的（例如 H3 的 `audio_vae`）。
+    动态输入（`ref_images.ref_image_0`）按父键判定，父键出现在 inputs 里即算满足。
+    """
+    out = []
+    for nid, node in (wf or {}).items():
+        cls = str(node.get("class_type") or "")
+        req = ((object_info or {}).get(cls) or {}).get("input", {}).get("required") or {}
+        if not req:
+            continue
+        ins = node.get("inputs") or {}
+        miss = []
+        for field in req:
+            if field in ins:
+                continue
+            if any(str(k).startswith(str(field) + ".") for k in ins):
+                continue
+            miss.append(str(field))
+        if miss:
+            out.append((str(nid), cls, miss))
+    return out
+
+
 def plan_slots(info: dict, have: int) -> dict:
     """云端用：算「该喂哪几个槽、多出来的怎么处理」。
 

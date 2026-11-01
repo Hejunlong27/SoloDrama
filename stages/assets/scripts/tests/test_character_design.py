@@ -158,13 +158,21 @@ def _():
     for p in b["_matrix"]["pairs"]:
         if p["same_faction"]:
             continue
+        # ★ 2026-10-31：与 check_rules 的口径对齐 —— 任一侧为中性色时，
+        #   色相无意义（墨黑 h=220 与靛青 h=222 只差 2°，肉眼是黑与蓝的明度差），
+        #   改判明度差 ≥ 0.10。此前测试比规则更严，一旦有人用中性色就误报。
+        if p.get("a_neutral") or p.get("b_neutral"):
+            A_(p["light_gap"] >= 0.10, "%s↔%s 中性色明度差 %.2f"
+               % (p["a"], p["b"], p["light_gap"]))
+            continue
         A_(p["hue_gap"] >= 30, "%s↔%s 色相 %.0f°" % (p["a"], p["b"], p["hue_gap"]))
     same = [p for p in b["_matrix"]["pairs"] if p["same_faction"]]
     A_(same, "样本里应当有同阵营对照（财阀 3 人）")
     for p in same:
         A_(p["light_gap"] >= 0.10, "%s↔%s 同阵营明度差 %.2f" % (p["a"], p["b"], p["light_gap"]))
-    return "跨阵营 min %.0f° / 同阵营 %d 对" % (
-        min(p["hue_gap"] for p in b["_matrix"]["pairs"] if not p["same_faction"]), len(same))
+    chrom = [p["hue_gap"] for p in b["_matrix"]["pairs"]
+             if not p["same_faction"] and not (p.get("a_neutral") or p.get("b_neutral"))]
+    return "跨阵营有彩 min %.0f° / 同阵营 %d 对" % (min(chrom) if chrom else -1, len(same))
 
 
 @reg("B", "B07 性别适配：男角色不出现裙装与尖头高跟")

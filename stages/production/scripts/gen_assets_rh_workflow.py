@@ -230,7 +230,7 @@ def workflow_id_for(prov: dict, mode: str) -> str:
 
 
 def provider_or_die(mode: str = 't2i'):
-    name = C.ACTIVE_IMAGE_PROVIDER
+    name = C.resolve_image_provider()
     prov = (C.IMAGE_PROVIDERS or {}).get(name) or {}
     if not prov:
         raise SystemExit('[FAIL] config.local.json 里没有 image_providers["%s"]' % name)

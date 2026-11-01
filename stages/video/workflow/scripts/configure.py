@@ -7,7 +7,7 @@ configure.py —— 工作区初始化 + 配置回填（只写 <工作区>/confi
     set-key    --value <key> | --from-env            写 API Key（建议直接配环境变量，本命令是兜底）
     set-workspace <路径>                             更新 .workspace 指针
     set-provider --provider banana --kind workflow --id <ID>
-    set-h3       --kind workflow --id <ID> [--frame-source cell_01|grid_raw]
+    set-h3       --kind workflow --id <ID> 
     apply-nodes  --from probe.json --target banana|h3 [--yes]
     set          --key a.b.c --value <v>             按点路径写白名单键
     unset        --key a.b.c
@@ -176,8 +176,6 @@ def cmd_set_h3(args) -> int:
     h3 = data.setdefault("h3", {})
     if args.kind:
         h3["kind"] = args.kind
-    if args.frame_source:
-        h3["frame_source"] = args.frame_source
     if args.id:
         h3["id"] = str(args.id).strip()
     if not h3.get("id"):
@@ -225,8 +223,6 @@ def cmd_apply_nodes(args) -> int:
         h3 = data.setdefault("h3", {})
         h3.setdefault("kind", frag.get("kind", "workflow"))
         h3["id"] = frag.get("id") or h3.get("id", "")
-        if frag.get("frame_source"):
-            h3["frame_source"] = frag["frame_source"]
         h3["nodes"] = {k: {kk: vv for kk, vv in v.items() if kk != "confidence"}
                        for k, v in nodes.items() if isinstance(v, dict)}
     return _finish(ws, data, f"{args.target} 节点映射已回填")
@@ -269,19 +265,32 @@ def cmd_show(args) -> int:
           + ("  [来源: 环境变量]" if __import__('os').getenv("RUNNINGHUB_API_KEY")
              else "  [来源: 覆盖层或未设置]"))
     print(f"RH 入口    : {cfg.RH_BASE_URL}")
-    print(f"激活模型   : {cfg.ACTIVE_IMAGE_PROVIDER}")
-    for name, prov in cfg.IMAGE_PROVIDERS.items():
-        mark = "*" if name == cfg.ACTIVE_IMAGE_PROVIDER else " "
-        print(f" {mark} image_providers.{name}: kind={prov.get('kind')} id={prov.get('id') or '(空)'}")
-        for role, node in (prov.get("nodes") or {}).items():
-            print(f"      nodes.{role:<11} nodeId={str(node.get('nodeId') or '(空)'):<10} "
-                  f"fieldName={node.get('fieldName') or '(空)'}"
-                  + ("  multi" if node.get("multi") else ""))
-    print(f"h3         : kind={cfg.H3.get('kind')} id={cfg.H3.get('id') or '(空)'} "
-          f"frame_source={cfg.H3.get('frame_source')}")
-    for role, node in (cfg.H3.get("nodes") or {}).items():
-        print(f"      nodes.{role:<11} nodeId={str(node.get('nodeId') or '(空)'):<10} "
-              f"fieldName={node.get('fieldName') or '(空)'}")
+    def _dump_nodes(prefix: str, nodes: dict) -> None:
+        """打印一组节点映射；`slots` 形态要展开，否则只看到 (空) 会以为没配。"""
+        for role, node in (nodes or {}).items():
+            slots = node.get("slots") if isinstance(node, dict) else None
+            if isinstance(slots, list) and slots:
+                ids = "/".join(str(s.get("nodeId") or "-") for s in slots if isinstance(s, dict))
+                print(f"      nodes.{role:<11} slots={ids:<26} fieldName={slots[0].get('fieldName') or '(空)'}")
+            else:
+                print(f"      nodes.{role:<11} nodeId={str(node.get('nodeId') or '(空)'):<10} "
+                      f"fieldName={node.get('fieldName') or '(空)'}"
+                      + ("  multi" if node.get("multi") else ""))
+
+    def _dump_channel(title: str, active: str, table: dict, key: str) -> None:
+        resolved = cfg.resolve_image_provider(active) if key == "image_providers" else active
+        print(f"{title:<11}: {active}" + (f" → {resolved}" if resolved != active else ""))
+        for name, prov in table.items():
+            mark = "*" if name == resolved else " "
+            print(f" {mark} {key}.{name}: kind={prov.get('kind')} id={prov.get('id') or '(空)'}")
+            _dump_nodes(key, prov.get("nodes"))
+
+    print("---- 四条通道 ------------------------------------------------------------")
+    _dump_channel("图片-文生图", cfg.ACTIVE_IMAGE_PROVIDER, cfg.IMAGE_PROVIDERS, "image_providers")
+    _dump_channel("图片-编辑", cfg.ACTIVE_IMAGE_EDIT_PROVIDER, cfg.IMAGE_EDIT_PROVIDERS, "image_edit_providers")
+    print(f"视频       : kind={cfg.H3.get('kind')} id={cfg.H3.get('id') or '(空)'}")
+    _dump_nodes("h3", cfg.H3.get("nodes"))
+    _dump_channel("放大", cfg.ACTIVE_UPSCALE_PROVIDER, cfg.UPSCALE_PROVIDERS, "upscale_providers")
     print(f"并发/批次  : concurrency={cfg.CONCURRENCY} (max {cfg.CONCURRENCY_MAX}) "
           f"batch_size={cfg.BATCH_SIZE} poll_channel={cfg.POLL_CHANNEL}")
     print(f"熔断       : 连续失败>={cfg.FUSE_CONSECUTIVE_FAILS} 或 失败率>{cfg.FUSE_FAIL_RATE:.0%} "
@@ -331,7 +340,6 @@ def main() -> int:
     p = sub.add_parser("set-h3", help="写 H3 工作流 ID")
     p.add_argument("--kind", choices=["workflow", "ai-app"], default="workflow")
     p.add_argument("--id", default=None)
-    p.add_argument("--frame-source", choices=["cell_01", "grid_raw"], default=None)
     p.add_argument("--workspace", default=None)
     p.set_defaults(fn=cmd_set_h3)
 

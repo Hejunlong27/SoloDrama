@@ -31,14 +31,27 @@ SENT_SPLIT_RE = re.compile(r"[。！？!?…；;]+|\.(?=\s|$)")
 #   用「点后跟空白或行尾」判定，避免把小数（3.5）与版本号切开。
 # ★ 2026-10-21（反馈 2.2）：20 字上限对拉丁语系过严（20 字符西语 ≈ 3–4 个词，
 #   等于把台词压到主谓宾都不全）。按内容分档：含中日韩字符 → 20；拉丁/西里尔 → 55 字符。
+# ★ 2026-10-31（US-BATCH-01 用户口径）：**取消拉丁语系 55 字符单句上限**。
+#   理由：高密度对白是短剧冲突感的主要来源，按字符卡句子会把攻防写成陈述句。
+#   替代约束不是「不设限」，而是**时长预算**：一句台词必须能在本镜 DUR 内说完
+#   （上限 3.8 词/秒，见 LATIN_WORDS_PER_SEC_MAX）。字符数不再参与判定。
 CJK_SENT_MAX = 20
-LATIN_SENT_MAX = 55
+LATIN_SENT_MAX = 0             # 0 = 不限制（仅对拉丁/西里尔生效）
+LATIN_SENTS_PER_SHOT = 4       # 单镜对白句数上限（原 2 句）：高密度对话需容纳 3–4 轮攻防
+LATIN_WORDS_PER_SEC_MAX = 3.8  # 生理语速上限（词/秒），台词时长预算的硬边界
 DUR_TOLERANCE_SEC = 2      # 总时长边界容差（反馈 4.x：设定 60 秒，成片 59 秒就判死太硬）
 
 
+def _is_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
 def _sent_limit(text: str) -> tuple:
-    """→ (上限, 单位说明)。按字符集分档，不按项目语种猜（混排剧本也稳）。"""
-    if any("\u4e00" <= ch <= "\u9fff" for ch in text):
+    """→ (上限, 单位说明)。按字符集分档，不按项目语种猜（混排剧本也稳）。
+
+    上限为 0 表示**不限字符数**；此时由 `_check_dialog` 的词/秒预算兜底。
+    """
+    if _is_cjk(text):
         return CJK_SENT_MAX, "字"
     return LATIN_SENT_MAX, "字符"
 
@@ -92,6 +105,17 @@ def _parse_char_header(text: str) -> dict:
     return out
 
 
+def _split_codes(v: str) -> list:
+    """把 `CHAR` 字段拆成代号列表。
+
+    ★ 2026-11-01（P31）：引擎原先假定 `CHAR: X` 只能写**一个**代号，
+      `CHAR: ELLE, KANE` 会被整串拿去比对，于是同时报 E002「未声明锚点」
+      与 E003「未登记代号」——而一镜两个角色是短剧的常态（对白交锋镜）。
+      这里统一按中英文逗号/顿号/分号/斜杠切分，单代号行为不变。
+    """
+    return [x.strip() for x in re.split(r"[,，、;；/]", v or "") if x.strip()]
+
+
 def _check_char_anchor(conn, project, ep) -> list:
     out = []
     declared = _parse_char_header(ep.header.get("CHAR", ""))
@@ -101,23 +125,35 @@ def _check_char_anchor(conn, project, ep) -> list:
             (project, code)).fetchone()
         if not row:
             continue  # E003 已报未登记
+        # ★ 2026-10-31：HEADER 只写「身份/关系」时不做锚点比对。
+        #   剧本阶段不该承担长相设定（见 convert.world_bible_to_char_anchors 的注释）；
+        #   只有两边都写了锚才逐字比对，避免「不写就报错」逼人抄资产卡。
+        if not anchor or anchor.strip() in ("-", "无", "待定", "N/A"):
+            continue
+        if not (row["anchor_text"] or "").strip():
+            continue
         if sha1(anchor) != row["anchor_hash"]:
             out.append(Issue("E002", LEVEL_ERROR, f"HEADER#CHAR:{code}",
                              f"锚点与库不一致\n  剧本：{anchor}\n  库内：{row['anchor_text']}"))
-    # 集内出场但未在 HEADER 声明的
+    # 集内出场但未在 HEADER 声明的（一镜多角色按代号逐个比对，见 _split_codes）
     for s in ep.shots:
-        if s.char and s.char != "无" and s.char not in declared:
-            out.append(Issue("E002", LEVEL_ERROR, s.sc_id,
-                             f"角色 {s.char} 出场但 HEADER 未声明锚点"))
+        if not s.char or s.char == "无":
+            continue
+        for code in _split_codes(s.char):
+            if code not in declared:
+                out.append(Issue("E002", LEVEL_ERROR, s.sc_id,
+                                 f"角色 {code} 出场但 HEADER 未声明锚点"))
     return out
 
 
 def _check_codes(ep, known_chars: set, known_scenes: set) -> list:
     out = []
     for s in ep.shots:
-        if s.char and s.char != "无" and s.char not in known_chars:
-            out.append(Issue("E003", LEVEL_ERROR, s.sc_id,
-                             f"CHAR 引用未登记代号：{s.char}"))
+        if s.char and s.char != "无":
+            for code in _split_codes(s.char):
+                if code not in known_chars:
+                    out.append(Issue("E003", LEVEL_ERROR, s.sc_id,
+                                     f"CHAR 引用未登记代号：{code}"))
         if s.location and s.location not in known_scenes:
             out.append(Issue("E003", LEVEL_ERROR, s.sc_id,
                              f"LOCATION 引用未登记代号：{s.location}"))
@@ -233,14 +269,25 @@ def _check_dialog(ep) -> list:
         quoted = QUOTED_RE.findall(s.dialog)
         body = "".join(quoted) if quoted else s.dialog.strip('“”"')
         sents = [x for x in SENT_SPLIT_RE.split(body) if x.strip()]
-        if len(sents) > 2:
+        cjk = _is_cjk(body)
+        max_sents = 2 if cjk else LATIN_SENTS_PER_SHOT
+        if len(sents) > max_sents:
             out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
-                             f"对白 {len(sents)} 句，超过 2 句上限"))
+                             f"对白 {len(sents)} 句，超过 {max_sents} 句上限"))
         for x in sents:
             lim, unit = _sent_limit(x.strip())
-            if len(x.strip()) > lim:
+            if lim > 0 and len(x.strip()) > lim:
                 out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
                                  f"单句 {len(x.strip())} {unit}超过 {lim} {unit}：{x.strip()}"))
+        # ★ 2026-10-31：拉丁语系取消单句字符上限后，用「词/秒 × 本镜时长」兜底，
+        #   防止把 15 秒的镜头写成 90 词的独白（写得出、拍不出、配音也塞不进）。
+        if not cjk:
+            words = len(body.split())
+            budget = int(s.est_sec * LATIN_WORDS_PER_SEC_MAX)
+            if words > budget:
+                out.append(Issue("E007", LEVEL_ERROR, s.sc_id,
+                                 f"对白 {words} 词，超出本镜 {s.est_sec} 秒可容纳的 {budget} 词"
+                                 f"（{LATIN_WORDS_PER_SEC_MAX} 词/秒上限）"))
     return out
 
 

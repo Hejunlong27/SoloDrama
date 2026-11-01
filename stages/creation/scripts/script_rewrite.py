@@ -665,13 +665,17 @@ def render_skeleton(ws: pathlib.Path, b: dict, ep: int, shots: int) -> str:
     row = b.get("_ep_row") or {}
     # 角色/场景骨架：优先读 bible（若有），否则用占位
     bible = C.pdir(ws, "bible")
-    char_line, scene_line = "<CHAR 代号>: <锚点>", "<SCENE 代号>: <描述>"
+    char_line, scene_line = "<CHAR 代号>: <身份/关系>", "<SCENE 代号>: <描述>"
     chars_md = C.read_text(bible / "characters.md")
     scenes_md = C.read_text(bible / "scenes.md")
     if chars_md:
         codes = re.findall(r"\|\s*`([A-Z_]{2,})`", chars_md)
         if codes:
-            char_line = "; ".join("%s: <锚点>" % c for c in codes[:6])
+            # ★ 2026-10-31：这里原来写的是 `<锚点>`。
+            #   锚点是**资产阶段**的视觉概念，写进剧本骨架等于要求剧作家先定长相，
+            #   于是每部剧都被逼着给每个人编一道疤/一颗痣，最后全员同款。
+            #   改成只登记「身份/关系」，长相留给 04-资产/design。
+            char_line = "; ".join("%s: <身份/关系>" % c for c in codes[:6])
     if scenes_md:
         codes = re.findall(r"\|\s*`([A-Z_]{2,})`", scenes_md)
         if codes:
@@ -747,9 +751,20 @@ def lint(ws: pathlib.Path, ep: int) -> int:
                 errors.append("%s DUR=%d 越界（%d-%d）" % (sid, d, DUR_MIN, DUR_MAX))
         dl = re.search(r"(?m)^\s*DIALOG\s*:\s*(.+)$", b)
         if dl and dl.group(1).strip() not in ("无", ""):
-            for sent in re.findall(r"[“\"']([^”\"']+)[”\"']", dl.group(1)):
-                if len(sent.strip()) > 40:
-                    warns.append("%s 台词偏长（%d 字）：%s" % (sid, len(sent.strip()), sent[:24]))
+            body = dl.group(1)
+            # ★ 2026-10-31：拉丁语系取消单句字符上限（与 tools/core/validate.py 的 E007 同口径），
+            #   改按「词/秒 × 本镜时长」给警告；中文仍按字符。
+            if any("\u4e00" <= ch <= "\u9fff" for ch in body):
+                for sent in re.findall(r"[“\"']([^”\"']+)[”\"']", body):
+                    if len(sent.strip()) > 40:
+                        warns.append("%s 台词偏长（%d 字）：%s" % (sid, len(sent.strip()), sent[:24]))
+            else:
+                secs = int(dur.group(1)) if dur else 8
+                words = len(re.findall(r"[A-Za-z][A-Za-z']*", body))
+                budget = int(secs * 3.8)
+                if words > budget:
+                    warns.append("%s 台词 %d 词超出本镜 %d 秒预算 %d 词（3.8 词/秒）"
+                                 % (sid, words, secs, budget))
 
     # ★ 按本剧 blueprint 的 ep_seconds 选口径：老项目 70 秒、新项目 60 秒各按各的，
     #   不要用全局常量硬套（否则口径下调会把在跑的老项目判死）。

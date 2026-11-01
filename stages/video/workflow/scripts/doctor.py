@@ -135,7 +135,7 @@ def _run(args) -> dict:
             "" if key else "告诉我“帮我配置环境变量 RUNNINGHUB_API_KEY”，"
                           "或 configure.py set-key --value <key>")
 
-        prov = cfg.IMAGE_PROVIDERS.get(cfg.ACTIVE_IMAGE_PROVIDER) or {}
+        prov = cfg.IMAGE_PROVIDERS.get(cfg.resolve_image_provider()) or {}
         add("provider_id", "PASS" if prov.get("id") else "FAIL",
             f"图片模型 [{cfg.ACTIVE_IMAGE_PROVIDER}] id = {prov.get('id') or '(未填写)'}",
             "" if prov.get("id") else "configure.py set-provider --provider "

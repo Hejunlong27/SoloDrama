@@ -4,6 +4,20 @@
   "note": "prompt 为官方原文，未改写。track 决定走哪条生产规格（真人 / 2D / 3D），选错会连带资产数量与单镜时长一起错。",
   "styles": [
     {
+      "id": "surreal-cinema",
+      "name": "电影超现实",
+      "name_en": "Cinematic Surrealism",
+      "rh_key": "surreal-cinema",
+      "track": "live_action",
+      "tags": [
+        "真人",
+        "超现实",
+        "文艺"
+      ],
+      "prompt": "surreal live-action film look, impossible spatial logic, symbolic visual logic, dreamlike continuity, poetic composition, unexpected juxtaposition, restrained but uncanny color, soft haze, philosophical mood, visually intelligent absurdity, cinematic art-house surrealism, no fantasy spectacle overload.",
+      "prompt_en": "surreal live-action film look, impossible spatial logic, symbolic visual logic, dreamlike continuity, poetic composition, unexpected juxtaposition, restrained but uncanny color, soft haze, philosophical mood, visually intelligent absurdity, cinematic art-house surrealism, no fantasy spectacle overload."
+    },
+    {
       "id": "cinematic",
       "name": "电影超写实",
       "name_en": "Cinematic Hyper-realistic",

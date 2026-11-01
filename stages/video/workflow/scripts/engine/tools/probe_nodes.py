@@ -104,7 +104,6 @@ def build_fragment(nodes: list, target: str, wf_id: str, kind: str) -> dict:
             frag["nodes"]["char_ref"] = {"nodeId": "", "fieldName": "", "multi": True}
             frag["nodes"]["scene_ref"] = {"nodeId": "", "fieldName": "", "multi": True}
     else:  # h3
-        frag["frame_source"] = C.H3.get("frame_source", "cell_01")
         frag["nodes"] = {
             "prompt": node_of(text_nodes[0] if text_nodes else None),
             "first_frame": node_of(image_nodes[0] if image_nodes else None),

@@ -382,10 +382,24 @@ class TestFfsRules(unittest.TestCase):
         issues = V._check_dialog(self._ep(line))
         self.assertEqual([i.code for i in issues], [], "西语 55 字符以内应放行")
 
-    def test_72_latin_over_limit(self):
+    def test_72_latin_char_cap_removed(self):
+        # 2026-10-31：取消拉丁语系 55 字符单句上限，改由「词/秒 × 本镜时长」兜底
         line = "“" + "a" * 60 + "”"
         issues = V._check_dialog(self._ep(line))
-        self.assertTrue(any(i.code == "E007" for i in issues))
+        self.assertEqual([i.code for i in issues], [], "长单句不再按字符判死")
+
+    def test_72b_latin_word_budget_enforced(self):
+        line = "“" + " ".join(["word"] * 30) + "”"      # 30 词 > 6s × 3.8 = 22 词
+        issues = V._check_dialog(self._ep(line))
+        self.assertTrue(any("22 词" in i.message for i in issues), "超出本镜语速预算必须报错")
+
+    def test_72c_latin_four_sentences_allowed(self):
+        issues = V._check_dialog(self._ep("“One. Two. Three. Four.”"))
+        self.assertEqual([i.code for i in issues], [], "高密度对白允许单镜 4 句")
+
+    def test_72d_latin_five_sentences_rejected(self):
+        issues = V._check_dialog(self._ep("“One. Two. Three. Four. Five.”"))
+        self.assertTrue(any("4 句上限" in i.message for i in issues))
 
     def test_73_chinese_still_20(self):
         issues = V._check_dialog(self._ep("“" + "字" * 25 + "”"))
