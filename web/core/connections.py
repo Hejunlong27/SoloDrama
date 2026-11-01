@@ -349,17 +349,47 @@ def _rh_site_ok(base: str) -> bool:
     return any(host == s or host.endswith("." + s) for s in RH_SITES)
 
 
+def _engine_site() -> tuple:
+    """→ (引擎实际使用的站点, 来源说明, 被忽略的旧环境变量值)。
+
+    ★ 2026-11-01：连接中心一直让用户「选站点」并存进 `connections.json`，
+      再把 `RUNNINGHUB_BASE_URL` 注进子进程环境 —— 而引擎从 **2026-10-29** 起就不再读
+      这个环境变量了（真源是 `configs/channels.json`，见 `_site.project_site`）。
+      于是界面显示 `.ai`、引擎实际打 `.cn`，测试连的是 `.ai`、出片走的是 `.cn` ——
+      三方各说各话。现在这里直接问那个唯一真源。
+    """
+    try:
+        import sys
+        from . import paths
+        p = str(paths.PROD_SCRIPTS)
+        if p not in sys.path:
+            sys.path.insert(0, p)
+        from _site import runtime_site
+        return runtime_site()
+    except Exception as exc:                                   # noqa: BLE001
+        return ("", "站点真源读取失败（%s）" % type(exc).__name__, "")
+
+
 def _test_runninghub() -> dict:
     cfg = load()["runninghub"]
-    base = (cfg.get("base_url") or "").strip().rstrip("/")
+    stored = (cfg.get("base_url") or "").strip().rstrip("/")
+    eff, src, ignored = _engine_site()
+    # 测的必须是**引擎真正会用的**那个站点；连接中心存的那份只在引擎没有真源时兜底。
+    base = (eff or stored).strip().rstrip("/")
+    site_info = {"used": base, "source": src or ("连接中心保存的（引擎无站点配置）" if base else ""),
+                 "stored": stored, "ignored_env": ignored,
+                 "stored_ignored": bool(eff and stored and stored != eff)}
     key = get_key("runninghub").strip()
     if not base:
-        return {"ok": False, "reason": "no_url", "detail": "还没填 RunningHub 站点",
-                "next": "国内填 https://www.runninghub.cn，海外填 https://www.runninghub.ai"}
+        return {"ok": False, "reason": "no_url", "detail": "还没有可用的 RunningHub 站点",
+                "next": "在 configs/channels.json 里配 runninghub 站点，"
+                        "或在连接中心填 https://www.runninghub.cn / .ai（仅兜底）",
+                "site": site_info}
     if not _rh_site_ok(base):
         return {"ok": False, "reason": "bad_site",
                 "detail": "站点只支持 runninghub.ai / runninghub.cn",
-                "next": "把地址改成 https://www.runninghub.ai 或 https://www.runninghub.cn"}
+                "next": "把地址改成 https://www.runninghub.ai 或 https://www.runninghub.cn",
+                "site": site_info}
     if not key:
         return {"ok": False, "reason": "no_key", "detail": "还没填 API Key",
                 "next": "RunningHub 控制台 → 个人中心 → API（Key 只存本机，不会回显）"}
@@ -391,6 +421,7 @@ def _test_runninghub() -> dict:
         "currency": d.get("currency") or "",
         "running": d.get("currentTaskCounts"),
         "base_url": base,
+        "site": site_info,
     }
 
     # 第二步：如果填了工作流/AI 应用，顺便确认它在这个账号下可读（仍然 0 费用）。
@@ -629,6 +660,9 @@ def overview() -> dict:
             "last_next": c.get("last_next") or "",
             "doc": _DOC.get(kind, ""),
             "providers": _llm_providers() if kind == "llm" else None,
+            # 只有 runninghub 有「引擎真源 vs 界面保存」的分歧，如实摊开
+            "effective": (lambda t: {"base_url": t[0], "source": t[1], "ignored_env": t[2]})(
+                _engine_site()) if kind == "runninghub" else None,
         })
     return {
         "ok": True,

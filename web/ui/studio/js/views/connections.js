@@ -129,11 +129,20 @@ function cardRh(it) {
     + '<span class="spacer"></span>' + badge('warn', '★ 按次计费') + '</div>'
     + '<div class="card-b">'
     + '<div class="small muted" style="margin-bottom:12px">' + esc(it.doc) + '</div>'
-    + field('rSite', '站点（Key 与站点必须同区）',
-      '<select class="select" id="rSite">'
-      + '<option value="https://www.runninghub.ai"' + (/\.ai$/.test(f.base_url || '') ? ' selected' : '') + '>runninghub.ai（海外）</option>'
-      + '<option value="https://www.runninghub.cn"' + (/\.cn$/.test(f.base_url || '') ? ' selected' : '') + '>runninghub.cn（国内）</option>'
-      + '</select>')
+    // 站点：引擎从 2026-10-29 起读 configs/channels.json，不再读 RUNNINGHUB_BASE_URL。
+    // 这里如实标出来，避免「界面上改了、出片却打另一个站点」。
+    + (function () {
+      const eff = it.effective || {};
+      const note = eff.base_url
+        ? '引擎实际使用：' + eff.base_url + (eff.source ? '（来源：' + eff.source + '）' : '')
+          + (eff.stored_ignored ? '。这里选的 ' + (f.base_url || '') + ' 引擎不读。' : '')
+        : '引擎站点未知（读不到 configs/channels.json）';
+      return field('rSite', '站点（兜底值；引擎读 configs/channels.json）',
+        '<select class="select" id="rSite">'
+        + '<option value="https://www.runninghub.ai"' + (/\.ai$/.test(f.base_url || '') ? ' selected' : '') + '>runninghub.ai（海外）</option>'
+        + '<option value="https://www.runninghub.cn"' + (/\.cn$/.test(f.base_url || '') ? ' selected' : '') + '>runninghub.cn（国内）</option>'
+        + '</select>', note);
+    })()
     + field('rKind', '调用方式',
       '<select class="select" id="rKind">'
       + '<option value="workflow"' + (!isApp ? ' selected' : '') + '>工作流（workflowId）</option>'
@@ -212,7 +221,9 @@ async function renderChannels(ctx) {
          变量名属于实现细节，写出来只会让人以为要自己去设。 */
       ['出图地址', '出图任务启动时自动带上'],
       ['RH Key', '出片任务自动带上，不回显'],
-      ['RH 站点', '与 Key 一起带上'],
+      // ★ 2026-11-01：引擎从 2026-10-29 起不再读 RUNNINGHUB_BASE_URL，站点真源是
+      //   configs/channels.json。原来这里写「与 Key 一起带上」，等于承诺了一个不生效的东西。
+      ['RH 站点', '由 configs/channels.json 决定（上方已显示实际值）'],
       ['大模型', '走内部网关，子进程不接触 Key']
     ])
     + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('lock', 14) + '</span><div>'

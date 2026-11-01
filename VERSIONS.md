@@ -1,6 +1,32 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.48 · 连接中心站点口径：测的站点 ≠ 花钱的站点）**
+  第三轮按页面继续验写路径（连接中心 / AI 模型中心 / 环境体检 / 任务中心），
+  两页三条路径正确，**一条错得严重**。
+
+  **核心问题：RunningHub 站点三处不一致**
+  | | 值 |
+  |---|---|
+  | 界面保存的（`connections.json`） | `runninghub.ai` |
+  | 引擎实际用的（`configs/channels.json`） | `runninghub.cn` |
+  | 测试连接原来打 | `.ai` |
+  | 出片实际打 | `.cn` |
+  | 两个站余额 | **13687 vs 32689 RH币（两套账户）** |
+
+  原来「测试连接」显示已连接 + 13687，花的却是另一个站的钱。根因：连接中心注
+  `RUNNINGHUB_BASE_URL`，而引擎从 2026-10-29 起不读它了（真源 `_site.project_site`）。
+  修法：`_engine_site()` 问真源 → `_test_runninghub()` 改测 effective 并回传
+  `site{used,source,stored,stored_ignored}` → `overview()` 只对 runninghub 暴露
+  `effective` → 页面把「引擎实际使用」直接印出来，选择器降级为「兜底值」。
+
+  **其余**：保存连接语义（空串=清除/不传=保持）正确；模型自检与浅测都免费且
+  明说「未产生生成费用」；非法 provider 400、删除不存在 404；体检修复对
+  不可自动修项返回 `not_auto`、对已好的项幂等、未知 id 给 `unknown_item`；
+  取消已结束作业幂等、未知作业 404。
+
+  新增 `web/tests/test_runninghub_site.py`（站点真源 / overview 形状 / 测试打 effective）；
+  引擎层 30 + Studio 20 测试全绿；manifest 316 条一致。
 - **2026-11-01 更新（V0.7.47 · 资产/创作写操作真跑：真出图 1 张 + 真生成 1 集剧本）**
   接 V0.7.46（只验了读）。这轮把两页的**写**跑通，然后修掉 11 处「只在写的时候才炸」的问题。
   记录见 `docs/patches/2026-11-01_Studio实测缺陷清单.md` 第二节。
