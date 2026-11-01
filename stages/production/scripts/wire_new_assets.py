@@ -32,13 +32,15 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402
 from _ws import WS, DATA, ASSETS  # noqa: E402  ★ 工作区解析 + 分阶段目录真源
+from prepare_refs import (  # noqa: E402  ★ 缩放/转码的唯一实现点（D2 收口）
+    DEFAULT_MAX_EDGE, DEFAULT_QUALITY, thin_one)
 VP = WS / "video-pipeline"      # 引擎技术目录
 OUT = ASSETS                    # ★ 2026-10-19 资产落点 = 04-资产（原 07-成片/assets）
 REFS_H3 = DATA / "refs_h3"
 CFG = DATA / "characters.json"
 
-MAX_EDGE = 2048          # 与 prepare_refs.py 的 DEFAULT_MAX_EDGE 一致
-QUALITY = 92             # 与 prepare_refs.py 的 DEFAULT_QUALITY 一致
+MAX_EDGE = DEFAULT_MAX_EDGE   # 直接取 prepare_refs 的值，不再抄一份数字
+QUALITY = DEFAULT_QUALITY
 
 
 def collect() -> list[tuple[str, Path]]:
@@ -62,22 +64,6 @@ def collect() -> list[tuple[str, Path]]:
                 out.append((key, src))
     return out
 
-
-def thin(src: Path, dst: Path) -> tuple[int, int]:
-    with Image.open(src) as im:
-        im = im.convert("RGB")
-        w, h = im.size
-        longest = max(w, h)
-        if longest > MAX_EDGE:
-            k = MAX_EDGE / longest
-            nw = max(2, int(round(w * k)) // 2 * 2)
-            nh = max(2, int(round(h * k)) // 2 * 2)
-            im = im.resize((nw, nh), Image.LANCZOS)
-        else:
-            nw, nh = w, h
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        im.save(dst, "JPEG", quality=QUALITY, optimize=True, progressive=True)
-        return nw, nh
 
 
 def main() -> int:
@@ -114,7 +100,7 @@ def main() -> int:
         nw = nh = 0
         new_mb = 0.0
         if args.apply:
-            nw, nh = thin(src, dst)
+            nw, nh = thin_one(src, dst, max_edge=MAX_EDGE, quality=QUALITY)
             new_mb = dst.stat().st_size / 1048576
         rows.append((key, dst))
         print("  %-10s %-46s %-16s %s"

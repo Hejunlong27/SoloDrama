@@ -131,6 +131,27 @@ def target_size(w: int, h: int, max_edge: int) -> tuple[int, int]:
     return nw, nh
 
 
+def thin_one(src: Path, dst: Path, *, max_edge: int = DEFAULT_MAX_EDGE,
+             quality: int = DEFAULT_QUALITY, fmt: str = "jpg") -> tuple[int, int]:
+    """把一张图缩到长边 <= max_edge 并落盘，返回落盘尺寸。**原图一律不动。**
+
+    这是「缩放 + 转码」的唯一实现点：`prepare_refs` 主流程与 `wire_new_assets.py`
+    都调它。★ 2026-11-02 收口 D2 —— 此前两处各写一遍，连常量都靠注释互相抄
+    （`# 与 prepare_refs.py 的 DEFAULT_MAX_EDGE 一致`），改一边就漂。
+    """
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        nw, nh = target_size(*im.size, max_edge)
+        if (nw, nh) != im.size:
+            im = im.resize((nw, nh), Image.LANCZOS)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if fmt == "png":
+            im.save(dst, "PNG", optimize=True)
+        else:
+            im.save(dst, "JPEG", quality=quality, optimize=True, progressive=True)
+        return nw, nh
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="参考图瘦身（默认只报告）")
     ap.add_argument("--workspace", default=None, help="工作区；默认脚本所在目录的 video-pipeline/")
@@ -190,15 +211,8 @@ def main() -> int:
         new_bytes = 0
         if args.apply:
             try:
-                out_dir.mkdir(parents=True, exist_ok=True)
-                with Image.open(src) as im:
-                    im = im.convert("RGB")
-                    if (nw, nh) != im.size:
-                        im = im.resize((nw, nh), Image.LANCZOS)
-                    if args.format == "jpg":
-                        im.save(dst, "JPEG", quality=args.quality, optimize=True, progressive=True)
-                    else:
-                        im.save(dst, "PNG", optimize=True)
+                thin_one(src, dst, max_edge=args.max_edge,
+                         quality=args.quality, fmt=args.format)
                 new_bytes = dst.stat().st_size
             except OSError as exc:
                 print(f"{src.name:<14}{'':>12}{'':>12}{'':>12}{'':>12}  [FAIL] 写入失败: {exc}")
