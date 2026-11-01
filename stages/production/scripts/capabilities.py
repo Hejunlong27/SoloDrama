@@ -78,23 +78,77 @@ def _check_comfy(cap: dict, online: bool) -> list:
     return res
 
 
+def _rh_runtime_site() -> tuple:
+    """→ (运行时站点, 来源, 被忽略的旧环境变量值)。
+
+    必须问**引擎自己**，不能自己再算一遍：站点解析规则（channels.json → 旧环境变量 →
+    默认）只该有一份实现，否则「卡说要 .cn、体检说运行时是 .cn、真跑却是 .ai」这种
+    三方不一致会永远修不完。
+    """
+    try:
+        eng = ROOT / "stages" / "video" / "workflow" / "scripts" / "engine"
+        if str(eng) not in sys.path:
+            sys.path.insert(0, str(eng))
+        import config as _C                                    # noqa: E402
+        return (str(_C.RH_BASE_URL), str(getattr(_C, "RH_SITE_SOURCE", "engine")),
+                str(getattr(_C, "RH_SITE_IGNORED", "") or ""))
+    except Exception as exc:                                   # noqa: BLE001
+        return (os.environ.get("RUNNINGHUB_BASE_URL") or "", "回退环境变量（引擎配置导入失败：%s）"
+                % type(exc).__name__, "")
+
+
+def _node_ready(v) -> bool:
+    """节点映射是否可用：**平铺写法**（nodeId）与**分段写法**（slots）都认。
+
+    为什么两种都要认：出片改成「分镜图 + 角色 + 场景」后，`char_ref` 从一个 nodeId
+    变成一组槽位（283/284/285）。旧校验只读 `nodeId`，于是一张分段写法的卡
+    会被判成「缺 char_ref」；反过来，如果只认 slots，老卡又会全红。
+    两种都认，才不会出现「卡改了但校验没跟上」这种假绿/假红。
+    """
+    v = v or {}
+    if str(v.get("nodeId") or "").strip():
+        return True
+    slots = v.get("slots") or []
+    return bool(slots) and all(str((s or {}).get("nodeId") or "").strip() for s in slots)
+
+
 def _check_rh(cap: dict, online: bool) -> list:
     res = []
     wid = str(cap.get("workflow_id") or "").strip()
     res.append((bool(wid), "workflow_id = %s" % (wid or "（空）")))
     nodes = cap.get("nodes") or {}
-    need = ("prompt", "duration", "char_ref", "scene_ref")
-    miss = [k for k in need if not str((nodes.get(k) or {}).get("nodeId") or "").strip()]
-    res.append((not miss, "节点映射：%s" % ("齐全" if not miss else "缺 " + "、".join(miss))))
+    need = ("prompt", "duration", "board_ref", "char_ref", "scene_ref")
+    miss = [k for k in need if not _node_ready(nodes.get(k))]
+    res.append((not miss, "节点映射：%s" % ("齐全（含分镜图槽）" if not miss
+                                            else "缺 " + "、".join(miss))))
     slot = cap.get("slots") or {}
-    res.append((int(slot.get("total") or 0) >= 1, "槽位：%s 个（声明 %s）"
-                % (slot.get("total"), slot.get("declared"))))
+    declared = slot.get("declared") or []
+    total = int(slot.get("total") or 0)
+    roles = slot.get("roles") or {}
+    ok_slots = total >= 1 and bool(declared)
+    detail = "槽位：%d 个（声明 %d 个）" % (total, len(declared))
+    if roles:
+        detail += "；分段 " + "、".join("%s×%d" % (k, len(v or [])) for k, v in roles.items())
+    res.append((ok_slots, detail))
+    if roles and total and sum(len(v or []) for v in roles.values()) != total:
+        res.append((False, "槽位分段之和 %d ≠ total %d —— 有槽位没分段，会退化成「顶灰」"
+                    % (sum(len(v or []) for v in roles.values()), total)))
     site = str(cap.get("site") or "").strip()
-    env_site = os.environ.get("RUNNINGHUB_BASE_URL") or ""
-    if site and env_site:
-        ok = site.rstrip("/") == env_site.rstrip("/")
-        res.append((ok, "站点：卡=%s ｜ 环境=%s%s"
-                    % (site.rstrip("/"), env_site.rstrip("/"), "" if ok else "  ← 不一致，key 可能对不上站")))
+    # ★ 2026-11-01：比的必须是「运行时真正会用的站点」，不是裸环境变量。
+    #   以前拿 os.environ["RUNNINGHUB_BASE_URL"] 比，而那个值可能是**进程启动快照**：
+    #   用户级变量早改成 .cn，当前终端还是 .ai，于是报「不一致」——
+    #   但引擎再怎么跑也不会用那个值（真源是 configs/channels.json），
+    #   这条「不一致」于是变成纯噪音，还把人往「换 Key」上引。
+    runtime_site, src, ignored = _rh_runtime_site()
+    if site and runtime_site:
+        ok = site.rstrip("/") == runtime_site.rstrip("/")
+        res.append((ok, "站点：卡=%s ｜ 运行时=%s（%s）%s"
+                    % (site.rstrip("/"), runtime_site.rstrip("/"), src,
+                       "" if ok else "  ← 不一致，key 可能对不上站")))
+        if ignored:
+            # 不判失败：它不参与任何请求，但要说出来，否则「改了变量没生效」永远查不到。
+            res.append((True, "环境变量 RUNNINGHUB_BASE_URL=%s 已过期，被忽略（真源是 channels.json，"
+                              "要改请用 configure.py set-site）" % ignored))
     if not online:
         return res
     key = os.environ.get("RUNNINGHUB_API_KEY") or ""
@@ -103,7 +157,7 @@ def _check_rh(cap: dict, online: bool) -> list:
         try:
             import urllib.request
             req = urllib.request.Request(
-                f"{(env_site or site).rstrip('/')}/openapi/v2/run/workflow/{wid}",
+                f"{(runtime_site or site).rstrip('/')}/openapi/v2/run/workflow/{wid}",
                 data=json.dumps({"nodeInfoList": []}).encode(), method="POST",
                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
             op = urllib.request.build_opener(urllib.request.ProxyHandler({}))

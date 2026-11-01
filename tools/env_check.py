@@ -64,8 +64,13 @@ BINS = [
 
 ENV_KEYS = [
     ("RUNNINGHUB_API_KEY", "云端出片通道（缺了只能走本地 ComfyUI）"),
-    ("RUNNINGHUB_BASE_URL", "必须显式 https://www.runninghub.ai，否则上传报「API Key 不存在」"),
+    ("RUNNINGHUB_BASE_URL", "已降级：站点真源改为 configs/channels.json，本变量只在没有该文件时兜底"),
 ]
+
+# 这些变量的坑不在「有没有设置」，而在「设了但当前进程读不到」——
+# 进程环境是**启动快照**：改完用户级变量不重开终端，永远读到旧值。
+# 症状千奇百怪（装了说没装、改了站点说 Key 错、工作区说找不到），唯独不像变量过期。
+SNAPSHOT_KEYS = ("RUNNINGHUB_BASE_URL", "RUNNINGHUB_API_KEY", "SOLODRAMA_WORKSPACE")
 
 IS_WIN = os.name == "nt"
 EXE = "python.exe" if IS_WIN else "python3"
@@ -169,6 +174,34 @@ def _bin_candidates(name: str) -> list:
             seen.add(k)
             uniq.append(p)
     return uniq
+
+
+def _persisted_env(name: str) -> tuple:
+    """→ (值, 作用域)。读 Windows 注册表里的**持久化**用户/机器环境变量。
+
+    为什么需要它：`os.environ` 只是**本进程启动时的快照**。用户 `setx` 之后，
+    已经开着的终端、Studio、以及由它们派生的子进程全都读不到新值。
+    只有同时拿到「进程值」和「持久化值」，才能区分「没设」与「设了但本进程没读到」——
+    这两件事的修法完全相反（一个去填值，一个去重开终端）。
+    """
+    if not IS_WIN:
+        return ("", "")
+    try:
+        import winreg
+    except Exception:                                          # noqa: BLE001
+        return ("", "")
+    for scope, root, path in (
+            ("User", winreg.HKEY_CURRENT_USER, "Environment"),
+            ("Machine", winreg.HKEY_LOCAL_MACHINE,
+             r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+        try:
+            with winreg.OpenKey(root, path) as h:
+                v, _ = winreg.QueryValueEx(h, name)
+                if v not in (None, ""):
+                    return (str(v), scope)
+        except OSError:
+            continue
+    return ("", "")
 
 
 def _probe_bin(name: str) -> tuple:
@@ -287,6 +320,58 @@ def collect() -> dict:
         "detail": "127.0.0.1:8188 " + ("可达" if _port_open("127.0.0.1", 8188) else "未监听（出图时会自动启动）"),
         "hint": "本地出图默认￥0；没启动时 Studio 会拉起一个后台实例，不用先开桌面版",
     })
+
+    # 4.5) 环境快照 —— 治「设了但当前进程没读到」这类假阴性
+    #      以前这些全被归成「未设置 / 不存在」，于是同样的现象反复被当成新问题排查。
+    for key in SNAPSHOT_KEYS:
+        proc = os.environ.get(key) or ""
+        pers, scope = _persisted_env(key)
+
+        def _fmt(v: str) -> str:
+            if not v:
+                return "（空）"
+            if "KEY" in key:
+                return "长度 %d / 前 4 位 %s…" % (len(v), v[:4])
+            return v
+
+        dangling = []
+        if key == "SOLODRAMA_WORKSPACE":
+            for label, val in (("进程", proc), ("持久化", pers)):
+                if val and not Path(val).expanduser().is_dir():
+                    dangling.append("%s:%s" % (label, val))
+
+        if not proc and not pers:
+            state, ok = "missing", True
+            detail = "未设置（不带 --workspace 时才需要；也可以一直显式传）"
+            hint = ""
+        elif proc and pers and proc == pers:
+            state, ok = "present", True
+            detail = "进程与持久化一致：%s" % _fmt(proc)
+            hint = ""
+        elif pers and not proc:
+            state, ok = "stale", False
+            detail = "持久化有（%s）：%s，但**本进程没读到**" % (scope, _fmt(pers))
+            hint = "关掉所有终端 / Studio 重开 —— 进程环境是启动快照，setx 只对**新**进程生效"
+        elif proc and not pers:
+            state, ok = "process_only", True
+            detail = "仅当前进程有效：%s（没有持久化值）" % _fmt(proc)
+            hint = "这是临时 export，重开终端就丢；要长期生效请 setx"
+        else:
+            state, ok = "stale", False
+            detail = "进程=%s ｜ 持久化(%s)=%s" % (_fmt(proc), scope, _fmt(pers))
+            hint = "重开终端让持久化值生效；若持久化那个才是旧的，就改它"
+
+        if dangling:
+            ok = False
+            state = "dangling"
+            detail += "；目录不存在（%s）" % "、".join(dangling)
+            hint = ("这个变量指向的项目已删除/改名 —— 每次不带 --workspace 都会落到死路径，"
+                    "而报错看起来像「找不到剧本」。改指向真实项目，或删掉它（推荐：显式传 --workspace）")
+
+        items.append({
+            "group": "环境快照", "name": key, "ok": ok, "required": False,
+            "state": state, "detail": detail, "hint": hint,
+        })
 
     # 5) 仓库完整性
     total, bad, found = _manifest_state()

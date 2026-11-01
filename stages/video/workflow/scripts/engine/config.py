@@ -50,11 +50,111 @@ from pathlib import Path
 # ==============================================================================
 RUNNINGHUB_API_KEY: str = os.getenv("RUNNINGHUB_API_KEY", "")  # ← 建议用环境变量，别写这里
 
-# RunningHub 统一入口（注意是 .cn）
-RH_BASE_URL: str = os.getenv("RUNNINGHUB_BASE_URL", "https://www.runninghub.cn")
-# ⚠️ 站点必须与账号一致：账号在「国际站/AI 站」(.ai) 时，上传接口在 .cn 会返回
+# ==============================================================================
+# [1.1] RunningHub 站点 —— 真源是 configs/channels.json，不是环境变量
+# ==============================================================================
+# 为什么改：`RUNNINGHUB_BASE_URL` 是**进程启动快照**。用户把用户级变量改对了，
+#   已经开着的终端 / Studio / 由它派生的子进程仍读旧值，而症状是上传接口报
+#   `code=1 API Key不存在` —— 看起来像 Key 错、像账号错、像站点错，唯独不像
+#   「变量过期」。实测踩过：能力卡写 .cn、进程里是 .ai，`capabilities check`
+#   报「站点不一致」，而人第一反应是去换 Key。
+#
+#   站点不是机密，就该跟仓库走：改一次，所有进程、所有人、所有子进程都一致。
+#   环境变量保留两条口子：SOLODRAMA_RH_SITE（单次覆盖）、旧名 RUNNINGHUB_BASE_URL
+#   （仅在没有 channels.json 时兜底）。
+#
+# 优先级：显式参数 > SOLODRAMA_RH_SITE > channels.json > 旧环境变量 > 常量默认 .cn
+#   注意「项目覆盖层」config.local.json 的 runninghub_base_url 仍然最优先 ——
+#   它是单个项目的显式选择，覆盖层在 import 之后 apply，天然压过这里。
+_SITE_ALIASES = {
+    "cn": "https://www.runninghub.cn",
+    "zh": "https://www.runninghub.cn",
+    "runninghub.cn": "https://www.runninghub.cn",
+    "ai": "https://www.runninghub.ai",
+    "intl": "https://www.runninghub.ai",
+    "runninghub.ai": "https://www.runninghub.ai",
+}
+_DEFAULT_SITE = "https://www.runninghub.cn"
+
+
+def _find_repo_root() -> Path | None:
+    """向上找带 `configs/channels.json` 的仓库根。
+
+    ★ **不数 parents[N]**：这个仓库里 `parents[n]` 数错一层已经发生过五次
+      （gen_boards / nodes / main / init_project / test_init_project），
+      每次的症状都是「文件不存在 / 模块找不到」，排查时先怀疑数据。
+      改成「向上找特征文件」，层级怎么变都不会错。
+    """
+    for up in Path(__file__).resolve().parents[:7]:
+        if (up / "configs" / "channels.json").is_file():
+            return up
+    return None
+
+
+def load_channels() -> dict:
+    """读通道配置；读不到返回 {}（不让配置缺失变成启动失败）。"""
+    root = _find_repo_root()
+    if root is None:
+        return {}
+    try:
+        return json.loads((root / "configs" / "channels.json").read_text(encoding="utf-8-sig"))
+    except Exception:                                          # noqa: BLE001
+        return {}
+
+
+def normalize_site(value: str) -> str:
+    """`cn` / `ai` / 完整 URL → 完整 URL。认不出的别名原样返回，交给上层报错。"""
+    v = str(value or "").strip().rstrip("/")
+    if not v:
+        return ""
+    if v.lower().startswith(("http://", "https://")):
+        return v
+    return _SITE_ALIASES.get(v.lower(), v)
+
+
+def resolve_rh_site(explicit: str | None = None) -> tuple:
+    """→ (base_url, 来源说明, 被忽略的旧环境变量值)。
+
+    第三项专门给「体检 / 配置总览」用：不警告是因为这条路径被大量 import，
+    一次跑批会打印几十遍；但**必须能查得到**，所以做成返回值而不是 print。
+    """
+    ch = (load_channels().get("runninghub") or {})
+    sites = (ch.get("sites") or {})
+    cfg_raw = str(ch.get("site") or "").strip()
+    cfg_url = ""
+    if cfg_raw:
+        if cfg_raw.lower() in sites:
+            cfg_url = normalize_site((sites[cfg_raw.lower()] or {}).get("url") or cfg_raw)
+        else:
+            cfg_url = normalize_site(cfg_raw)
+
+    legacy_name, legacy_val = "", ""
+    for name in (ch.get("legacy_env") or ["RUNNINGHUB_BASE_URL", "RH_BASE_URL"]):
+        v = os.getenv(str(name))
+        if v:
+            legacy_name, legacy_val = str(name), normalize_site(v)
+            break
+
+    if explicit:
+        return normalize_site(explicit), "显式参数", ""
+    env_site = os.getenv("SOLODRAMA_RH_SITE")
+    if env_site:
+        return normalize_site(env_site), "环境变量 SOLODRAMA_RH_SITE", ""
+    if cfg_url:
+        ignored = legacy_val if (legacy_val and legacy_val != cfg_url) else ""
+        src = "configs/channels.json"
+        if ignored:
+            src += "（已忽略过期的 %s=%s）" % (legacy_name, ignored)
+        return cfg_url, src, ignored
+    if legacy_val:
+        return legacy_val, "环境变量 %s（回退：没有 channels.json）" % legacy_name, ""
+    return _DEFAULT_SITE, "常量默认", ""
+
+
+RH_BASE_URL, RH_SITE_SOURCE, RH_SITE_IGNORED = resolve_rh_site()
+# ⚠️ 站点必须与账号一致：账号在「国际站」(.ai) 时，上传接口在 .cn 会返回
 #    code=1「API Key不存在」（账号类接口两站共用所以能过，唯独上传不行 —— 极易误判成 Key 错）。
-#    AI 站账号请设 RUNNINGHUB_BASE_URL=https://www.runninghub.ai
+#    换站点：`configure.py set-site cn|ai`（写 channels.json），或 SOLODRAMA_RH_SITE=ai 临时覆盖。
 # RH币 -> 人民币 折算率。用户 2026-09-18 提供：1 人民币 ≈ 400 RH币。
 # 仅用于台账把消耗换算成可比金额，不影响任何提交行为。
 RH_CNY_PER_COIN: float = float(os.getenv("RUNNINGHUB_CNY_PER_COIN", "0.0025"))

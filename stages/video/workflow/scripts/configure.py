@@ -12,6 +12,7 @@ configure.py —— 工作区初始化 + 配置回填（只写 <工作区>/confi
     set          --key a.b.c --value <v>             按点路径写白名单键
     unset        --key a.b.c
     show                                             打印生效配置（Key 打码 + 层级回执）
+    set-site     cn|ai|https://...                   切换 RH 站点（写 configs/channels.json）
 """
 from __future__ import annotations
 
@@ -311,6 +312,55 @@ def cmd_show(args) -> int:
 # ===========================================================================
 # CLI
 # ===========================================================================
+def cmd_set_site(args) -> int:
+    """写站点真源 `configs/channels.json`（cn / ai / 完整 URL）。
+
+    ★ 为什么单独给一条命令：站点曾经靠环境变量 `RUNNINGHUB_BASE_URL`，
+      而环境变量是**进程启动快照** —— 改完不重开终端，子进程照样读旧值，
+      报错却是「API Key 不存在」。站点不是机密，写进仓库配置才是可复现的。
+    """
+    root = None
+    for up in Path(__file__).resolve().parents[:7]:
+        if (up / "configs" / "channels.json").is_file():
+            root = up
+            break
+    if root is None:
+        print("[FAIL] 找不到 configs/channels.json —— 这不是仓库内的引擎副本？")
+        return 2
+    p = root / "configs" / "channels.json"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8-sig"))
+    except Exception as exc:                                   # noqa: BLE001
+        print("[FAIL] %s 读不了：%s" % (p, exc))
+        return 2
+
+    want = str(getattr(args, "site", "") or "").strip()
+    if not want:
+        print("[FAIL] 给一个站点：cn | ai | https://...")
+        return 2
+    rh = d.setdefault("runninghub", {})
+    sites = rh.get("sites") or {}
+    key = want.lower()
+    if key in sites:
+        rh["site"] = key
+        url = (sites[key] or {}).get("url")
+    elif key.startswith(("http://", "https://")):
+        rh["site"] = want.rstrip("/")
+        url = rh["site"]
+    else:
+        print("[FAIL] 认不出的站点：%s（可用 %s，或给完整 URL）"
+              % (want, "|".join(sites) or "cn|ai"))
+        return 2
+
+    if getattr(args, "dry_run", False):
+        print("[DRY-RUN] 将把 %s 的 runninghub.site 写成 %r（%s）" % (p, rh["site"], url))
+        return 0
+    p.write_bytes((json.dumps(d, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    print("[OK] 站点已写：%s（%s）" % (rh["site"], url))
+    print("     引擎、能力卡、体检下次启动即读到这里 —— 不再依赖 RUNNINGHUB_BASE_URL。")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="ai-video-pipeline 配置引导与回填")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -364,6 +414,11 @@ def main() -> int:
     p = sub.add_parser("show", help="打印生效配置（Key 打码）")
     p.add_argument("--workspace", default=None)
     p.set_defaults(fn=cmd_show)
+
+    p = sub.add_parser("set-site", help="切换 RH 站点（写 configs/channels.json，非环境变量）")
+    p.add_argument("site", help="cn | ai | https://...")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_set_site)
 
     args = ap.parse_args()
     return args.fn(args)

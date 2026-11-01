@@ -1,6 +1,54 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.36 · 环境整改：站点真源、快照可见、死路径清理）**
+  起因是用户点名「本地环境识别的功能经常误判，明明已装好的工具却说没装」。查下来是两个真问题，
+  而且是同一类根因：**进程环境是启动快照，而系统里没有一处地方说清楚「以谁为准」**。
+
+  **① 站点从「环境变量」搬到「仓库配置」**（`configs/channels.json` 新建）
+  `RUNNINGHUB_BASE_URL` 是进程启动快照：用户级早就改成 `.cn`，已开着的终端 / Studio / 由其派生的
+  子进程仍读 `.ai`。症状是上传接口报 `code=1 API Key不存在` —— 看起来像 Key 错、像账号错、像站点错，
+  唯独不像「变量过期」。而站点根本不是机密，没有理由放环境变量里。
+  现在解析链是：**显式参数 > `SOLODRAMA_RH_SITE` > `configs/channels.json` > 旧环境变量（仅当没有该配置）> 常量默认 `.cn`**。
+  模块暴露 `RH_SITE_SOURCE`（这次站点从哪来）与 `RH_SITE_IGNORED`（被忽略的过期值），
+  但**不在 import 时 print** —— 这条路径被大量 import，一次跑批会刷几十遍；要查的时候能查到即可。
+
+  **② 能力卡与引擎共用同一个数**
+  以前 `capabilities.py` 拿裸环境变量跟卡里的 `site` 比，于是报「站点不一致」，而引擎根本不会用那个值 ——
+  纯噪音，还把人往「换 Key」上引。现在通过 `_rh_runtime_site()` 问引擎自己（解析规则只留一份实现）。
+  顺带修两处卡与代码脱节：
+  - `_node_ready()` 同时认**平铺**（`nodeId`）与**分段**（`slots`）两种写法。出片改六槽后
+    `char_ref` 变成 283/284/285 三个槽，旧校验只读 `nodeId`，会把分段写法的卡判成「缺 char_ref」。
+  - 卡里 `slots` 从旧的 `declared: [282,283]` 同步为六槽分段（282 分镜 / 283-285 角色 / 286-287 场景），
+    并新增「分段之和 ≠ total」判据 —— 否则「有槽位没分段」会静默退化成顶灰。
+
+  **③ 环境体检新增「环境快照」组，能区分「没设」与「设了但没读到」**
+  读 Windows 注册表拿**持久化值**，与进程值对照，四态：`present`（一致）/ `stale`（持久化有、进程没读到）/
+  `process_only`（临时 export，重开就丢）/ `dangling`（指向的目录已不存在）。
+  这两种情况的修法完全相反（一个去填值，一个去重开终端），以前全被归成「未设置」，于是同样的现象反复被当成新问题。
+  实测抓到两条：
+  - `RUNNINGHUB_BASE_URL` 进程 `.ai` ｜ 持久化 `.cn` → 标 stale，但**已不影响运行**（引擎读配置）。
+  - `SOLODRAMA_WORKSPACE` = `D:/剧本/海外剧/1013新建`，**目录已不存在** → 标 dangling。
+    这个变量会让每次不带 `--workspace` 的命令都落到死路径，报错却像「找不到剧本」。
+    已从用户级环境变量删除（空值也一并清掉），改由命令显式传 `--workspace`。
+
+  **④ `configure.py set-site cn|ai|https://...`**
+  换站点不再手改 JSON、更不再改环境变量。带 `--dry-run`，认不出的站点直接拒。
+
+  **⑤ 顺手改掉一个反复出错的写法**：`_find_repo_root()` 不再数 `parents[N]`，而是**向上找
+  `configs/channels.json`**。`parents[n]` 数错一层在本仓库已发生五次，症状全是「文件不存在/模块找不到」。
+
+  **验证（都不花钱）**
+  - `capabilities check`：三张卡全过；站点行显示 `卡=.cn ｜ 运行时=.cn（configs/channels.json，已忽略过期的 .ai）`
+  - `video.resolve` 判据由 **failed → PASS**（此前就是被「站点不一致」拦下的）；`prompt.contract` 判据亦 PASS
+  - `drama nodes`：通过 7 ｜ 不过 0 ｜ 过期 2 ｜ 阻塞 12 ｜ 跳过 2。两条「过期」是资产图按**旧 bible**出的
+    （7 维→3 项那次改动），属内容侧重出，不是环境问题
+  - 新增 `test_channels.py` 9 例（配置压过过期快照 / 显式覆盖 / 别名 / 无配置回退 / 忽略留痕 /
+    卡与引擎同数 / set-site dry-run 不写盘）
+
+  **回归**：新增 9 例；存量全绿（nodes 25 / convert 17 / gen_boards 16 / init 14 / style 23 / model 29 /
+  release 15+14 / migrate 16 / workflow 57 / slot_hygiene 32 / character_design 28 / env_check 22 /
+  comfy_ports / workflow_map / escape 3 / repo_paths 3）。
 - **2026-11-01 更新（V0.7.35 · `drama init` 建项目骨架 + 两条新判据）**
   第 13 项。在此之前，开一部新剧要手工建 9 个阶段目录、手写 `layout.json`、
   抄 roster、抄分镜骨架 —— 漏一个就出现「引擎去 `video-pipeline/data/` 找、布局写在 `06-提示词/`」这类错位。

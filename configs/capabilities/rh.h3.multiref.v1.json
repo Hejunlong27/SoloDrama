@@ -14,29 +14,68 @@
       "nodeId": "132",
       "fieldName": "value"
     },
-    "char_ref": {
+    "board_ref": {
       "nodeId": "282",
       "fieldName": "image"
     },
+    "char_ref": {
+      "value": "url",
+      "slots": [
+        {
+          "nodeId": "283",
+          "fieldName": "image"
+        },
+        {
+          "nodeId": "284",
+          "fieldName": "image"
+        },
+        {
+          "nodeId": "285",
+          "fieldName": "image"
+        }
+      ]
+    },
     "scene_ref": {
-      "nodeId": "283",
-      "fieldName": "image"
+      "value": "url",
+      "slots": [
+        {
+          "nodeId": "286",
+          "fieldName": "image"
+        },
+        {
+          "nodeId": "287",
+          "fieldName": "image"
+        }
+      ]
     }
   },
   "slots": {
     "total": 6,
     "declared": [
       "282",
-      "283"
-    ],
-    "spare": [
+      "283",
       "284",
       "285",
       "286",
       "287"
     ],
+    "roles": {
+      "board_ref": [
+        "282"
+      ],
+      "char_ref": [
+        "283",
+        "284",
+        "285"
+      ],
+      "scene_ref": [
+        "286",
+        "287"
+      ]
+    },
+    "spare": [],
     "policy": "blank",
-    "note": "RH 无法禁用节点，未发槽位沿用保存值，只能顶中性灰"
+    "note": "六槽全部登记并按用途分段，顺序即 <Picture n>：分镜图 1 → 角色 2-4 → 场景 5-6。RH 无法禁用节点，未发槽位只能顶中性灰。"
   },
   "hard_limits": {
     "megapixels": 0.8,
