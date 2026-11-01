@@ -1,6 +1,62 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.43 · 剪辑三步定型 + 三语字幕锁死）**
+  剪辑环节此前是五节点（master → upscale → audio → subtitle → release），顺序与用户口径不符：
+  BGM 排在放大之后，且 `_master.mp4` 与 `_mix.mp4` 谁是真母版说不清。本次按用户明确定义重排，
+  并把「三语字幕规范」从运行期算出来的百分比改成**锁死的绝对像素**。
+
+  **① 顺序定型：母版拼接（首帧封面 + 片段 + BGM）→ 高清放大 → 字幕生成与烧录**
+  | 变更 | 内容 |
+  |---|---|
+  | 删 | `edit.audio` 节点（BGM 不再单独一步） |
+  | 改 | `stage_master()` 一次产出 `<ep>_master.mp4`，内部三步：① 首帧封面（`09-发行/封面/cover_9x16*.png` → 0.8s 片头，找不到就告警跳过）② 片段拼接（保留 120ms 切点淡入淡出）③ BGM 混音（有 `_bgm-plan.json` 才混，混完覆盖回 `_master.mp4`） |
+  | 改 | 节点数 24 → **23**；剪辑链 `edit.master → edit.upscale → edit.subtitle → edit.release` |
+
+  为什么 BGM 必须在放大前：放大只重编码视音频，混好的音轨跟着走；放最后则要再重编码一次容器，
+  且母版会有两个候选名。封面片头按**第一段实测编码参数**生成（同 codec/pix_fmt/fps/SAR），
+  否则 `-c copy` 拼不上、或静默丢段（沿用已有的帧数校验 + 失败重编码兜底）。
+
+  **② 放大后端三选一**（`config.upscale.json` 的 `backend`，命令行 `--backend` 覆盖）
+  | 后端 | 说明 |
+  |---|---|
+  | `topaz`（默认） | 本地 GPU，免费，整集 3–8 分钟 |
+  | `rh` | 新增。RunningHub `RH_Astra Iris`（`2110614419863592961`），约 35 币/61s 集、2–3 分钟；输入先转 h264/8bit（服务端解不动 hevc Main10），节点 4/5 传短边/长边，输出按源宽高比吸附后自动 crop 到精确目标 |
+  | `off` | 跳过（母版已是交付规格时用），落 `skipped` 报告，节点判据据此放行 —— 否则节点会永远等一个不会出现的文件 |
+
+  RH 分支**复用引擎的 `runninghub_client`**（协议层只有一份实现），不另写一套 HTTP；
+  找不到引擎目录就明确报「改用 --backend topaz」。新增能力卡 `configs/capabilities/rh.upscale.v1.json`；
+  `capabilities.py` 的节点校验改为**按卡声明**（`required_nodes`），不再写死视频卡的五个键 ——
+  否则放大卡会被判「缺 prompt / 缺 duration」，一张完好的卡永远红。
+
+  **③ 三语字幕规范锁死**（新增 `configs/subtitle-styles.json`）
+  以 1080×1920 的**绝对像素**为准，其它画布按 `min(W/1080, H/1920)` 等比缩放：
+
+  | 语言 | 字体 | 字号 | 每行 | 两行块高 |
+  |---|---|---|---|---|
+  | `zh` | Microsoft YaHei | 58px | 12 字 | 140px |
+  | `en` | Arial | 52px | 26 字符 | 126px |
+  | `es` | Arial | 50px | 26 字符 | 120px |
+
+  三语共用落点：文字块中心 `0.6 × H`（1080×1920 上 y=1152，6:4），`\an5\pos` 逐条定位。
+  两条硬规则：一行字宽超安全区（756px）→ **报错**，不静默缩字；落点进 UI 区（距底 <200px）→ **报错**，
+  不静默上顶。静默缩字/上顶正是「同一份规范在不同剧里长得不一样」且 qa 查不出来的成因。
+  样式表查找顺序：`config.subtitle.json` 的 `style_sheet` > 项目 `config.subtitle-styles.json` >
+  仓库 `configs/subtitle-styles.json`；**都找不到才回退旧的百分比算法**（老项目不受影响）。
+  `config.subtitle.example.json` 补 `en` 语言段（断句/语速口径），断句与时序仍归它管。
+
+  **④ 文档与测试**
+  新增 `docs/production/剪辑与字幕规范.md`（顺序、产物名、三语参数、失败定位一张表）；
+  `生产流程总纲.md` 第 11 行与字幕安全区两处改为新口径；
+  新增 `stages/subtitle/scripts/tests/test_subtitle_styles.py`（9 例：锁定值 / 同线 / 安全区 /
+  等比缩放 / 两处必须报错 / 回退兼容）；`test_nodes.py` 节点数断言 24 → 23。
+
+  **⑤ manifest 重新基线化**
+  `manifest.sha256` 停在 V0.7.41：13 条指向已删文件（S2/S6/B5/B7/L8 那批）、47 个文件哈希与磁盘不符
+  —— 于是 `env_check` 的完整性一项本来就是红的。本次按当前磁盘重算（47 条更新 + 13 条移除，
+  共 313 条），复核 `313 条受管文件全部一致`。新增的三份配置/文档不在受管范围内
+  （`configs/` 只收 example 两份，与 `channels.json`/`looks.json` 同规则）。
+
 - **2026-11-01 更新（V0.7.42 · 按 Owner 圈定删六项 + 新增台词复核 + 资产转手写）**
   两件事：把 Owner 圈定的六项能力删掉，再按他的三条口径改造剧本与资产环节。
 

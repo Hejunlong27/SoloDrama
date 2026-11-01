@@ -9,7 +9,7 @@
 
 这份测试用 `fixtures/mini_drama`（1 集 2 镜的最小项目）让引擎**自己证明自己**：
 
-* **A 节点表**：24 节点 / 七环节 / 六字段齐 / 回流白名单 / 判据可判
+* **A 节点表**：23 节点 / 七环节 / 六字段齐 / 回流白名单 / 判据可判
 * **B 状态推导**：absent / passed / blocked / skipped / stale 的判定，只读磁盘
 * **C 判据**：ffs / board / five / script / assets 的正反例
 * **D Loop**：variant_hash 防抖、L1 预算、L2 回流白名单
@@ -94,9 +94,9 @@ def state_of(ctx, node_id: str) -> str:
 
 
 # =========================================================================== A 节点表
-@reg("A", "A01 24 节点 / 七环节，顺序与环节归属自洽")
+@reg("A", "A01 23 节点 / 七环节，顺序与环节归属自洽")
 def _():
-    A_(len(N.NODES) == 24, "节点数 %d ≠ 24" % len(N.NODES))
+    A_(len(N.NODES) == 23, "节点数 %d ≠ 23" % len(N.NODES))
     A_(len(N.STAGES) == 7, "环节数 %d ≠ 7" % len(N.STAGES))
     stage_ids = {s["id"] for s in N.STAGES}
     for n in N.NODES:
@@ -446,8 +446,8 @@ def _():
     ev = N.evaluate(ctx)
     for k in ("ws", "ep", "nodes", "counts"):
         A_(k in ev, "缺字段 %s" % k)
-    A_(len(ev["nodes"]) == 24, "节点数不对")
-    A_(sum(ev["counts"].values()) == 24, "counts 合计应 24")
+    A_(len(ev["nodes"]) == 23, "节点数不对")
+    A_(sum(ev["counts"].values()) == 23, "counts 合计应 23")
     for r in ev["nodes"]:
         A_({"id", "state", "detail"} <= set(r), "节点行缺字段：%s" % r)
         A_(r["state"] in ("passed", "failed", "absent", "stale", "skipped", "blocked"),

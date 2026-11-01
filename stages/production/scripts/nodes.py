@@ -92,11 +92,11 @@ STAGES = [
     {"id": "board", "name": "分镜", "why": "把文字契约翻成视觉契约：每镜一张 9:16 单帧构图"},
     {"id": "prompt", "name": "提示词", "why": "只做装配不做决策；<Picture n> 由槽位机械生成"},
     {"id": "video", "name": "出片", "why": "★计费。分镜图 + 角色 + 场景三参"},
-    {"id": "edit", "name": "剪辑", "why": "母版 → 放大 → 配乐 → 字幕 → 发布版"},
+    {"id": "edit", "name": "剪辑", "why": "母版拼接（首帧封面+片段+BGM）→ 高清放大 → 字幕生成与烧录 → 发布版"},
 ]
 
 # ===========================================================================
-# 23 节点
+# 23 节点（剪辑 4 个：master / upscale / subtitle / release）
 # ---------------------------------------------------------------------------
 # 每个节点六个字段：
 #   trigger  触发命令（唯一入口，重复执行结果相同）
@@ -233,27 +233,28 @@ NODES: list = [
      "trigger": "drama do edit.master --ep ep01",
      "reads": ["video.audit"], "output": "07-成片/<ep>/*_master.mp4",
      "check": "master", "next": "edit.upscale", "reflow": ["video.batch"],
+     # ★ 2026-11-01：母版拼接 = 首帧封面 + 视频片段 + BGM（可选），一次产出
+     #   `<ep>_master.mp4`。此前 BGM 是独立节点、且在放大之后 —— 与用户定的顺序
+     #   「母版（封面+片段+BGM）→ 放大 → 字幕」不符，也导致 master 与 mix 两个
+     #   产物谁是真母版说不清。
      "run": "python stages/subtitle/scripts/subtitle.py --stage master"},
     {"id": "edit.upscale", "stage": "edit", "ep": True,
      "trigger": "drama do edit.upscale --ep ep01",
      "reads": ["edit.master"], "output": "07-成片/<ep>/*_master_1080x1920.mp4",
-     "check": "upscaled", "next": "edit.audio", "reflow": ["edit.master"],
+     "check": "upscaled", "next": "edit.subtitle", "reflow": ["edit.master"],
      # ★ 2026-11-01 更正：这个脚本**存在**，原写法本来就是对的。
      #   我先前只在一个筛过的文件名列表里没看到它，就断言「文件不存在」，把它改成了
      #   `subtitle.py --stage upscale` —— 而那个 stage 受 `upscale.enabled` 开关控制，
      #   默认关着就什么都不做，节点会永远过不去。现改回直连：
      #   `upscale.py` 自带 `--ep/--workspace/--target`，产物名就是 `_master_<W>x<H>.mp4`。
+     #   后端三选一由 config.upscale.json 的 backend 决定：topaz（默认）/ rh（计费）/ off。
      "run": "python stages/subtitle/scripts/upscale.py"},
-    {"id": "edit.audio", "stage": "edit", "ep": True,
-     "trigger": "drama do edit.audio --ep ep01",
-     "reads": ["edit.upscale"], "output": "07-成片/<ep>/*_bgm.mp4",
-     "check": "audio", "next": "edit.subtitle", "reflow": ["edit.upscale"],
-     # bgm.py 在 production/scripts 下；`mix` 默认干跑，必须显式 --apply
-     "run": "python stages/production/scripts/bgm.py mix --apply"},
     {"id": "edit.subtitle", "stage": "edit", "ep": True,
      "trigger": "drama do edit.subtitle --ep ep01",
-     "reads": ["edit.audio"], "output": "07-成片/<ep>/*_subbed.mp4",
-     "check": "subtitled", "next": "edit.release", "reflow": ["edit.audio"],
+     "reads": ["edit.upscale"], "output": "07-成片/<ep>/*_subbed.mp4",
+     "check": "subtitled", "next": "edit.release", "reflow": ["edit.upscale"],
+     # 字幕：生成（对齐 → cues → ASS）+ 烧录，样式按 configs/subtitle-styles.json 的
+     # 三语规范锁死（en/zh/es），不再按画布百分比临时算字号。
      "run": "python stages/subtitle/scripts/subtitle.py --stage render"},
     {"id": "edit.release", "stage": "edit", "ep": True,
      "trigger": "drama do edit.release --ep ep01",
@@ -559,14 +560,23 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         return (not bad), ("%d 段全部可读" % len(segs)) if not bad else \
             "%d 段异常：%s" % (len(bad), "、".join(bad[:5]))
 
-    # ---- 母版 / 放大 / 配乐 / 字幕 / 发布 都是「按名字找文件」 ----
-    if spec in ("master", "upscaled", "audio", "subtitled"):
+    # ---- 母版 / 放大 / 字幕 / 发布 都是「按名字找文件」 ----
+    if spec in ("master", "upscaled", "subtitled"):
         ep_dir = ctx.ep_dir(ctx.out)
         pat = {"master": "*_master.mp4",
                "upscaled": "*_master_1080x1920.mp4",
-               "audio": "*_bgm.mp4",
                "subtitled": "*_subbed.mp4"}[spec]
         hits = sorted(ep_dir.rglob(pat)) if ep_dir else []
+        if not hits and spec == "upscaled":
+            # ★ 2026-11-01：放大后端可以是 `off`（母版本来就是交付规格）。
+            #   那时永远不会出现 `_master_1080x1920.mp4` —— 判据若不认这份「跳过报告」，
+            #   节点会一直卡在「找不到文件」，而人看到的是「产物缺失」，方向全错。
+            #   报告由 upscale.py --backend off 落盘，含 skipped=true 与原因。
+            rep = sorted(ep_dir.rglob("*_upscale.json")) if ep_dir else []
+            for rp in rep:
+                d = _read_json(rp, {}) or {}
+                if d.get("skipped"):
+                    return True, "已跳过放大（%s）" % (d.get("note") or d.get("backend") or "off")
         if not hits:
             return False, "找不到 %s" % pat
         return True, "%s（%.1f MB）" % (hits[0].name, hits[0].stat().st_size / 1048576.0)
@@ -854,7 +864,7 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
     st = node_state(ctx, node)
     if st["state"] == "blocked":
         # ★ dry-run 是**检查接线**用的，不是执行。上游没通过时更要能看见命令 ——
-        #   否则「drama do edit.audio --dry-run」只会回一句 BLOCKED，
+        #   否则「drama do edit.subtitle --dry-run」只会回一句 BLOCKED，
         #   而人想看的是「这条命令到底拼成什么样」。只打印，绝不执行。
         if dry_run:
             print("[BLOCKED] %s" % st["detail"])

@@ -1,6 +1,8 @@
 {
   "version": 1,
-  "note": "字幕样式与规则配置 —— 改这里就能改全部字幕，不需要动代码。百分比基于 canvas 高度。",
+  "note": "字幕**时序与断句**配置。★ 视觉参数（字体/字号/边距/落点/描边）不在这里：见 configs/subtitle-styles.json（三语锁死，全剧复用）。这里只留「怎么断行、多快算异常」这类与语言相关但不与画布相关的规则。",
+  "style_sheet": "",
+  "_style_sheet_note": "留空 = 依次找 <项目>/video-pipeline/config.subtitle-styles.json，再找仓库 configs/subtitle-styles.json。想把某部剧整体换一套视觉，就在项目里放一份同名文件（或在这里写相对路径）。三语规范以 1080×1920 绝对像素为准，其它画布等比缩放；一行字宽超安全区直接报错，不静默缩字。",
   "canvas": {
     "width": 1440,
     "height": 832
@@ -41,10 +43,12 @@
     },
     "aligner_language_code": {
       "zh": "cmn",
+      "en": "eng",
       "es": "spa"
     }
   },
   "default_language": "zh",
+  "_languages_note": "这里的 font / font_px / max_line_chars / max_lines / margin_lr_px / outline / shadow 会被 configs/subtitle-styles.json 覆盖（那是唯一真源）。本段只负责：断句方式（wrap）、断点字符、语速口径（cps_*）、时长上下限。",
   "languages": {
     "zh": {
       "_desc": "中文：按字符断行，避头尾；微软雅黑已实测覆盖中文（黑体 simhei 缺西语字符，勿用于西语）",
@@ -100,6 +104,32 @@
       "forbid_line_end": "([{«",
       "strip_chars": " ",
       "_cps_note": "下限 3.0（原 6.0）—— 字幕停留时间含前后停顿，23 字台词铺在 6.2s 上就是 3.7 字/秒；低于下限只做参考计数，不报警（V0.7.6）"
+    },
+    "en": {
+      "_desc": "英语：按【单词边界】断行，绝不切断单词；一行 26 字符是 1080 竖屏下 52px 字号的上限（26 × 0.52em × 52px = 703px ≤ 756px 安全区）",
+      "font": "Arial",
+      "font_px": 52,
+      "char_width_em": 0.52,
+      "bold": true,
+      "outline": 3,
+      "shadow": 1,
+      "margin_lr_px": 162,
+      "max_line_chars": 26,
+      "line_tolerance_chars": 4,
+      "max_lines": 2,
+      "max_cue_chars": 52,
+      "cps_ok": [
+        3.0,
+        20.0
+      ],
+      "cps_hard_max": 25.0,
+      "min_duration_s": 0.8,
+      "max_duration_s": 6.0,
+      "wrap": "word",
+      "break_punct": ".,!?;:…—",
+      "forbid_line_start": ".,!?;:)]}»…—",
+      "forbid_line_end": "([{«",
+      "strip_chars": " "
     }
   },
   "audio": {

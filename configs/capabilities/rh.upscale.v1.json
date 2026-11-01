@@ -1,0 +1,45 @@
+{
+  "id": "rh.upscale.v1",
+  "stage": "edit",
+  "engine": "runninghub",
+  "label": "RunningHub 放大 · RH_Astra Iris（短边/长边）",
+  "workflow_id": "2110614419863592961",
+  "site": "https://www.runninghub.cn",
+  "nodes": {
+    "video_in": {
+      "nodeId": "2",
+      "fieldName": "file"
+    },
+    "prefix": {
+      "nodeId": "3",
+      "fieldName": "filename_prefix"
+    },
+    "short_edge": {
+      "nodeId": "4",
+      "fieldName": "value"
+    },
+    "long_edge": {
+      "nodeId": "5",
+      "fieldName": "value"
+    },
+    "cleaner": {
+      "nodeId": "7",
+      "fieldName": "model_action"
+    }
+  },
+  "required_nodes": [],
+  "keep_audio": true,
+  "measured": {
+    "coins_per_episode_61s": 35,
+    "wall_sec": 174,
+    "output": "1062x1920（按源宽高比吸附后裁到精确目标）"
+  },
+  "known_issues": [
+    "节点 4/5 是【短边/长边】不是宽/高：竖版给 4=1080、5=1920；给反输出 598×1080",
+    "输入必须先转 h264 / yuv420p / 8bit —— RH 的 LoadVideo 解不动 hevc Main 10（报 805）",
+    "提交必须走 /openapi/v2/run/workflow/{id}，v1 legacy 通道同样报 805",
+    "LoadVideo.keep_audio 必须 true，否则台词整轨丢失",
+    "输出宽会按源宽高比吸附，不能直接当交付规格；upscale.py 下载后自动 crop 到目标"
+  ],
+  "cost_note": "按整集计费，不做样片；--dry-run 只打印计划不提交"
+}

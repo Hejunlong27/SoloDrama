@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "_note": "★ 三语字幕规范（锁死，全剧共用）。英语 / 中文 / 西语各一组，以 1080×1920 竖屏为基准。改这一份，所有剧集、所有集数同步生效；字幕脚本不再按百分比临时算字号。",
+  "_why_locked": "此前字号是 H 的百分比 + 「文本框宽 ÷ 每行字数」反向压住 —— 同一部剧在 1080 与 2K 两版上字号不同，换语言又各算一套，返工三次。现在改成：以 1080×1920 的绝对像素为准，其它画布按 min(W/1080, H/1920) 等比缩放；越界（一行字宽超安全区）直接报错，不静默缩字。",
+
+  "base": {
+    "width": 1080,
+    "height": 1920,
+    "_desc": "锁定基准。字号/边距都是这个画布上的像素值。"
+  },
+
+  "placement": {
+    "anchor": "ratio",
+    "anchor_top": 0.6,
+    "line_height_em": 1.2,
+    "_desc": "三语共用同一条落点：文字块中心 = 0.6 × 画布高（距顶 6 : 距底 4），用 \\an5\\pos 逐条定位 ⇒ 一行与两行同线、折行不跳动、换分辨率不漂移。禁止按语言或旁白/对白分两套坐标。",
+    "_safety": "落点算完后校验「文字块下沿距底 ≥ safe_area.min_bottom_px」；不满足就报配置错误，不做静默上顶 —— 上顶会让实际位置与规范不符，而 qa 断言又查不出来。"
+  },
+
+  "safe_area": {
+    "min_bottom_px": 200,
+    "max_text_width_pct": 70,
+    "_desc": "平台硬性口径：字幕距底 ≥200px，文本框宽 ≤70% 画面宽。1080 宽 ⇒ 文本框上限 756px，左右各让 162px。"
+  },
+
+  "styles": {
+    "zh": {
+      "label": "中文",
+      "font": "Microsoft YaHei",
+      "font_px": 58,
+      "char_width_em": 1.0,
+      "bold": true,
+      "outline_px": 3,
+      "shadow_px": 1,
+      "max_line_chars": 12,
+      "max_lines": 2,
+      "max_cue_chars": 24,
+      "margin_lr_px": 162,
+      "_check": "12 字 × 1.0em × 58px = 696px ≤ 756px ✓；两行块高 = 2 × round(58×1.2) = 140px；中心 y=1152，下沿 1222，距底 698px ≥ 200px ✓",
+      "_font_note": "微软雅黑：Windows 自带且实测覆盖中文。simhei 缺西语重音字符，别拿它顶西语。"
+    },
+    "en": {
+      "label": "英语",
+      "font": "Arial",
+      "font_px": 52,
+      "char_width_em": 0.52,
+      "bold": true,
+      "outline_px": 3,
+      "shadow_px": 1,
+      "max_line_chars": 26,
+      "max_lines": 2,
+      "max_cue_chars": 52,
+      "margin_lr_px": 162,
+      "_check": "26 字 × 0.52em × 52px = 703px ≤ 756px ✓；两行块高 = 2 × round(52×1.2) = 126px",
+      "_font_note": "Arial：Windows / macOS 都有，Linux 由 fontconfig 映射到 Liberation Sans（字宽一致）。不要写 Arial Black 之类不一定装的变体，缺字体会 fallback 成别的字体，等于没锁。"
+    },
+    "es": {
+      "label": "西班牙语",
+      "font": "Arial",
+      "font_px": 50,
+      "char_width_em": 0.54,
+      "bold": true,
+      "outline_px": 3,
+      "shadow_px": 1,
+      "max_line_chars": 26,
+      "max_lines": 2,
+      "max_cue_chars": 52,
+      "margin_lr_px": 162,
+      "_check": "26 字 × 0.54em × 50px = 702px ≤ 756px ✓；两行块高 = 2 × round(50×1.2) = 120px",
+      "_font_note": "西语字符比英语平均宽 4–8%（重音、ñ、¿¡），所以字号比 en 低 2px 保持同样的行长。Arial 覆盖全部西语字符。"
+    }
+  }
+}

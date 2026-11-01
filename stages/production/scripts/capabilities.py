@@ -113,22 +113,35 @@ def _check_rh(cap: dict, online: bool) -> list:
     wid = str(cap.get("workflow_id") or "").strip()
     res.append((bool(wid), "workflow_id = %s" % (wid or "（空）")))
     nodes = cap.get("nodes") or {}
-    need = ("prompt", "duration", "board_ref", "char_ref", "scene_ref")
-    miss = [k for k in need if not _node_ready(nodes.get(k))]
-    res.append((not miss, "节点映射：%s" % ("齐全（含分镜图槽）" if not miss
-                                            else "缺 " + "、".join(miss))))
+    # ★ 2026-11-01：要查哪些节点由**卡自己声明**，不再写死视频卡的五个键。
+    #   写死的后果：新增的放大卡（只有 video_in/短边/长边）会被判「缺 prompt、缺 duration」，
+    #   一张完好的卡永远红 —— 假红比假绿更浪费人，因为真的坏掉时没人再看它。
+    #   ⚠ `[]` 是「显式声明不需要必填节点」，不能被 `or` 兜成默认值（空列表是 falsy）。
+    if "required_nodes" in cap:
+        need = tuple(cap.get("required_nodes") or ())
+    else:
+        need = ("prompt", "duration", "board_ref", "char_ref", "scene_ref")
+    if need:
+        miss = [k for k in need if not _node_ready(nodes.get(k))]
+        res.append((not miss, "节点映射：%s" % ("齐全（含分镜图槽）" if not miss
+                                                else "缺 " + "、".join(miss))))
+    else:
+        miss = [k for k in nodes if not _node_ready(nodes.get(k))]
+        res.append((not miss, "节点映射：%d 项%s"
+                    % (len(nodes), "" if not miss else "，缺 " + "、".join(miss))))
     slot = cap.get("slots") or {}
-    declared = slot.get("declared") or []
-    total = int(slot.get("total") or 0)
-    roles = slot.get("roles") or {}
-    ok_slots = total >= 1 and bool(declared)
-    detail = "槽位：%d 个（声明 %d 个）" % (total, len(declared))
-    if roles:
-        detail += "；分段 " + "、".join("%s×%d" % (k, len(v or [])) for k, v in roles.items())
-    res.append((ok_slots, detail))
-    if roles and total and sum(len(v or []) for v in roles.values()) != total:
-        res.append((False, "槽位分段之和 %d ≠ total %d —— 有槽位没分段，会退化成「顶灰」"
-                    % (sum(len(v or []) for v in roles.values()), total)))
+    if slot:
+        declared = slot.get("declared") or []
+        total = int(slot.get("total") or 0)
+        roles = slot.get("roles") or {}
+        ok_slots = total >= 1 and bool(declared)
+        detail = "槽位：%d 个（声明 %d 个）" % (total, len(declared))
+        if roles:
+            detail += "；分段 " + "、".join("%s×%d" % (k, len(v or [])) for k, v in roles.items())
+        res.append((ok_slots, detail))
+        if roles and total and sum(len(v or []) for v in roles.values()) != total:
+            res.append((False, "槽位分段之和 %d ≠ total %d —— 有槽位没分段，会退化成「顶灰」"
+                        % (sum(len(v or []) for v in roles.values()), total)))
     site = str(cap.get("site") or "").strip()
     # ★ 2026-11-01：比的必须是「运行时真正会用的站点」，不是裸环境变量。
     #   以前拿 os.environ["RUNNINGHUB_BASE_URL"] 比，而那个值可能是**进程启动快照**：

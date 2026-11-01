@@ -37,6 +37,7 @@
 import argparse
 import difflib
 import glob
+import glob
 import json
 import math
 import os
@@ -187,7 +188,92 @@ def load_config(ws):
     p = os.path.join(engine_root_of(ws), "config.subtitle.json")
     if not os.path.exists(p):
         raise SystemExit("找不到配置：%s" % p)
-    return load_json(p)
+    cfg = load_json(p)
+    return apply_style_sheet(cfg, load_style_sheet(ws, cfg))
+
+
+# ---------------------------------------------------------------------------
+# ★ 2026-11-01：三语字幕规范（锁死层）
+# ---------------------------------------------------------------------------
+# 为什么加这一层：字号原本是「画布高 × font_size_pct」，再被「文本框宽 ÷ 每行字数」
+# 反向压住 —— 同一部剧的 1080 与 2K 两版字号不同，三种语言各算一套，实测返工三次。
+# 现在把视觉参数（字体/字号/边距/行宽/描边）从 `config.subtitle.json` 抽出来，放进
+# 仓库级 `configs/subtitle-styles.json`，以 1080×1920 为基准写**绝对像素**。
+#   · 其它画布按 min(W/1080, H/1920) 等比缩放 ⇒ 视觉比例恒定；
+#   · 一行字宽超出安全区 = 规范写错了 ⇒ 直接报错，**不静默缩字**（静默缩字正是
+#     「同一份规范在不同剧里长得不一样」的成因）。
+STYLE_SHEET_NAME = "config.subtitle-styles.json"
+
+
+def style_sheet_candidates(ws, cfg):
+    """样式表的查找顺序：显式指定 > 项目副本 > 仓库真源。
+
+    项目副本（`<engine_root>/config.subtitle-styles.json`）是为了让某一部剧能整体换一套
+    视觉；不给就吃仓库真源 —— 那是「可直接复用」的那一份。
+    """
+    p = str((cfg or {}).get("style_sheet") or "").strip()
+    if p:
+        yield (os.path.abspath(p) if os.path.isabs(p)
+               else os.path.join(engine_root_of(ws), p))
+    yield os.path.join(engine_root_of(ws), STYLE_SHEET_NAME)
+    yield os.path.join(engine_root_of(ws), "subtitle-styles.json")
+    # 仓库真源：`configs/` 下的文件**不带 `config.` 前缀**（与 channels/looks/tracks 一致），
+    # 项目副本则跟 config.subtitle.json 同风格叫 config.subtitle-styles.json —— 两种都认。
+    # 本文件在 <repo>/stages/subtitle/scripts/ ⇒ 上溯四层才是仓库根。
+    # ★ 2026-11-01 实测踩点：只用三层会算到 <repo>/stages，于是「三语规范找不到、
+    #   静默回退旧的百分比算法」—— 规范明明存在却不生效，且没有任何报错。
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    yield os.path.join(repo, "configs", "subtitle-styles.json")
+    yield os.path.join(repo, "configs", STYLE_SHEET_NAME)
+
+
+def load_style_sheet(ws, cfg):
+    """→ 样式表 dict（附 `_path`）；一份都没有则返回 None（回退旧的百分比算法）。"""
+    for p in style_sheet_candidates(ws, cfg):
+        if not os.path.isfile(p):
+            continue
+        try:
+            sheet = load_json(p)
+        except Exception as e:                                             # noqa: BLE001
+            raise SystemExit("三语字幕规范读不了：%s（%s: %s）" % (p, type(e).__name__, e))
+        if not isinstance(sheet, dict) or not isinstance(sheet.get("styles"), dict):
+            raise SystemExit("三语字幕规范结构不对（缺 styles）：%s" % p)
+        sheet["_path"] = p
+        return sheet
+    return None
+
+
+def apply_style_sheet(cfg, sheet):
+    """把锁定层合并进 `cfg`：视觉字段覆盖 `languages.*`，落点/安全区固定。
+
+    合并而不是「另走一条分支」：下游（断行 build_cues、断言 qa_safe_area、自检
+    verify_render）都在读 `cfg["languages"][lang]`，保持同一份口径才不会出现
+    「算字号用一套、断言用另一套」。
+    """
+    if not sheet:
+        return cfg
+    for lang, st in (sheet.get("styles") or {}).items():
+        lc = cfg.setdefault("languages", {}).setdefault(lang, {})
+        for src, dst in (("font", "font"), ("font_px", "font_px"),
+                         ("char_width_em", "char_width_em"), ("bold", "bold"),
+                         ("max_line_chars", "max_line_chars"), ("max_lines", "max_lines"),
+                         ("max_cue_chars", "max_cue_chars"),
+                         ("margin_lr_px", "margin_lr_px"),
+                         ("outline_px", "outline"), ("shadow_px", "shadow")):
+            if st.get(src) is not None:
+                lc[dst] = st[src]
+        lc["_style_locked"] = True
+    pl = sheet.get("placement") or {}
+    if pl:
+        cfg["placement"] = {"anchor": "ratio",
+                            "anchor_top": pl.get("anchor_top", ANCHOR_TOP_DEFAULT)}
+    sa = sheet.get("safe_area") or {}
+    merged_sa = dict(cfg.get("safe_area") or {})
+    merged_sa.update({k: v for k, v in sa.items() if not str(k).startswith("_")})
+    cfg["safe_area"] = merged_sa
+    cfg["_style_sheet"] = sheet
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -1551,6 +1637,75 @@ def placement_of(cfg):
     return {"anchor": anchor, "anchor_top": top}
 
 
+def pixel_locked_metrics(cfg, lang, canvas):
+    """三语锁定口径：以样式表的 1080×1920 绝对像素为基准，等比缩放到当前画布。
+
+    与旧百分比算法的区别（这是「锁死」的全部含义）：
+      · 字号 = `font_px × scale`，**不被「文本框宽 ÷ 每行字数」二次压小**；
+        装不下就当场报错 —— 说明规范本身写错了，必须改规范，而不是让运行时偷偷缩字。
+      · 落点 = `anchor_top × H`，**不静默上顶**：安全区不满足同样报错。
+      · 左右边距 = `margin_lr_px × scale`，与安全区的「宽 ≤70%」取较大值。
+    """
+    sheet = cfg.get("_style_sheet") or {}
+    base = sheet.get("base") or {}
+    bw = float(base.get("width") or 1080)
+    bh = float(base.get("height") or 1920)
+    W, H = canvas
+    lim = safe_area_limits(cfg)
+    pl = placement_of(cfg)
+    line_em = float((sheet.get("placement") or {}).get("line_height_em") or LINE_HEIGHT_EM)
+    scale = min(W / bw, H / bh)
+    font_px = float(lc_font_px(cfg, lang))
+    font_size = max(1, int(round(font_px * scale)))
+    need_lr = int(math.ceil(W * (100.0 - lim["max_text_width_pct"]) / 200.0))
+    margin_lr = max(int(round(float(lc_get(cfg, lang, "margin_lr_px", W * 0.15)) * scale)), need_lr)
+    usable_w = W - 2 * margin_lr
+    cw = float(lc_get(cfg, lang, "char_width_em", 1.0))
+    ml = int(lc_get(cfg, lang, "max_line_chars", 12))
+    lines = int(lc_get(cfg, lang, "max_lines", 2))
+    need_w = ml * cw * font_size
+    if need_w > usable_w + 0.5:
+        raise SystemExit(
+            "断言失败（字幕规范）：%s 一行 %d 字 × %.2fem × %dpx = %.0fpx，"
+            "超出可用宽度 %dpx（安全区 %.0f%%，左右各 %dpx）。\n"
+            "  这不是运行期问题，是规范写错了：改 configs/subtitle-styles.json 的 "
+            "font_px / max_line_chars / char_width_em 三者之一，别让脚本自动缩字。"
+            % (lang, ml, cw, font_size, need_w, usable_w,
+               lim["max_text_width_pct"], margin_lr))
+    block_h = max(1, int(round(font_size * line_em))) * lines
+    top = min(max(float(pl["anchor_top"]), 0.05), 0.95)
+    center_y = int(round(H * top))
+    bottom_px = H - center_y - block_h // 2
+    if bottom_px < lim["min_bottom_px"] - 0.5:
+        raise SystemExit(
+            "断言失败（字幕规范）：%s 落点 y=%d、块高 %d ⇒ 下沿距底 %dpx < %.0fpx。\n"
+            "  改 anchor_top（当前 %.2f）或字号；不做静默上顶 —— 上顶后实际位置与规范不符，"
+            "而 qa_safe_area 会按上顶后的值判过，等于把偏差藏起来。"
+            % (lang, center_y, block_h, bottom_px, lim["min_bottom_px"], top))
+    return {"margin_v": 0, "margin_lr": margin_lr, "usable_w": usable_w,
+            "text_w_pct": 100.0 * usable_w / W, "font_size": font_size,
+            "font_size_by": "locked(%dpx@%dx%d ×%.3f)" % (int(font_px), int(bw), int(bh), scale),
+            "limits": lim, "char_width_em": cw,
+            "anchor": "ratio", "anchor_top": round(top, 4),
+            "anchor_label": ratio_label(top),
+            "center_y": center_y, "pos": (W // 2, center_y), "block_h": block_h,
+            "bottom_px": bottom_px, "clamped": False,
+            "_style_sheet": sheet.get("_path") or ""}
+
+
+def _pct_label(v):
+    """报告用：锁定层只给绝对像素，没有百分比 —— 打印时要说「锁定」而不是崩在格式化上。"""
+    return ("%.1f%%" % v) if isinstance(v, (int, float)) else "锁定"
+
+
+def lc_get(cfg, lang, key, default):
+    return (cfg["languages"].get(lang) or {}).get(key, default)
+
+
+def lc_font_px(cfg, lang):
+    return (cfg["languages"].get(lang) or {}).get("font_px") or 52
+
+
 def style_metrics(cfg, lang, canvas):
     """按**画布**算出字号、边距与纵向落点，并叠加平台安全区（硬下限）。
 
@@ -1573,6 +1728,9 @@ def style_metrics(cfg, lang, canvas):
     lim = safe_area_limits(cfg)
     pl = placement_of(cfg)
     need_lr = int(math.ceil(W * (100.0 - lim["max_text_width_pct"]) / 200.0))
+    # ★ 2026-11-01：三语锁定层优先 —— 有 `font_px` 就走绝对像素，不再按百分比推算。
+    if lc.get("font_px"):
+        return pixel_locked_metrics(cfg, lang, canvas)
     margin_lr = max(int(round(W * lc["margin_lr_pct"] / 100.0)), need_lr)
     usable_w = W - 2 * margin_lr
     font_h = int(round(H * lc["font_size_pct"] / 100.0))
@@ -1751,9 +1909,9 @@ def write_ass(cues, cfg, out_path, lang=None, canvas=None):
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(head + body) + "\n")
     return {"font": lc["font"], "font_size_px": font_size,
-            "font_size_pct": lc["font_size_pct"],
+            "font_size_pct": lc.get("font_size_pct"),
             "margin_v_px": margin_v, "margin_lr_px": margin_lr,
-            "margin_v_pct": lc["margin_v_pct"],
+            "margin_v_pct": lc.get("margin_v_pct"),
             "anchor": _m["anchor"], "anchor_top": _m["anchor_top"],
             "anchor_label": _m["anchor_label"],
             "center_y": _m["center_y"], "bottom_px": _m["bottom_px"],
@@ -1816,28 +1974,151 @@ def _fade_segment(tools, src, dst, fade_ms):
     return dst
 
 
-def stage_master(ws, ep, cfg, segs, subs_dir):
-    """拼接母版。默认**逐段做音频首尾淡入淡出**（反馈 P2-11），再无损拼接。
+def release_dir_of(ws):
+    """发行目录（09-发行）。口径与 stages/_layout.py 一致，缺 layout.json 时用默认名。"""
+    ws = os.path.abspath(ws)
+    rel = "09-发行"
+    lj = os.path.join(ws, "layout.json")
+    if os.path.isfile(lj):
+        try:
+            lay = json.load(open(lj, encoding="utf-8-sig"))
+            rel = ((lay.get("stages") or {}).get("release")) or rel
+        except Exception:                                                  # noqa: BLE001
+            pass
+    return os.path.join(ws, rel)
 
-    `audio.edge_fade_ms`：淡入淡出毫秒数（默认 %d；设 0 关闭）。
-    设 0 时行为与旧版完全一致（纯 `-c copy` 拼接，0.35s/集）。
+
+COVER_LEAD_DEFAULT_S = 0.8       # 首帧封面停留时长（短剧常用 0.5–1.0s；太长会被判「片头拖沓」）
+
+
+def _seg_video_info(ffprobe, path):
+    """读第一段的视频参数 —— 封面片头必须按它生成，否则 `-c copy` 拼不上。"""
+    _, out = run([ffprobe, "-v", "error", "-select_streams", "v:0",
+                  "-show_entries",
+                  "stream=codec_name,pix_fmt,width,height,r_frame_rate,sample_aspect_ratio",
+                  "-of", "json", path])
+    st = ((json.loads(out or "{}").get("streams") or [{}])[0]) or {}
+    try:
+        num, den = (st.get("r_frame_rate") or "24/1").split("/")
+        fps = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        fps = 24.0
+    return {"codec": (st.get("codec_name") or "h264").lower(),
+            "pix_fmt": st.get("pix_fmt") or "yuv420p",
+            "width": int(st.get("width") or 1080), "height": int(st.get("height") or 1920),
+            "fps": round(fps, 6) or 24.0,
+            "sar": st.get("sample_aspect_ratio") or "1:1"}
+
+
+def find_cover(ws, ep, cfg=None):
+    """找该集的封面图。→ (path, 说明) ／ (None, 为什么没有)。
+
+    查找顺序刻意是「发行目录优先」：`09-发行/封面/cover_9x16*.png` 是**已定稿**的那张
+    （release_check 认这个名字）；草稿图放 `subs/<ep>/<ep>_cover.png`，方便在定稿前先试片头。
+    """
+    subs = os.path.join(out_dir_of(ws), "subs", ep)
+    rel = release_dir_of(ws)
+    cands = []
+    for d in (os.path.join(rel, "封面"), rel):
+        if os.path.isdir(d):
+            for ext in ("png", "jpg", "jpeg", "webp"):
+                cands += sorted(glob.glob(os.path.join(d, "cover_9x16*.%s" % ext)))
+                cands += sorted(glob.glob(os.path.join(d, "cover_9x16*.%s" % ext.upper())))
+    for stem in ("%s_cover" % ep, "cover_%s" % ep, "cover"):
+        for ext in ("png", "jpg", "jpeg", "webp"):
+            cands.append(os.path.join(subs, "%s.%s" % (stem, ext)))
+    seen, uniq = set(), []
+    for p in cands:
+        ap = os.path.abspath(p)
+        if ap not in seen and os.path.isfile(ap):
+            seen.add(ap)
+            uniq.append(ap)
+    if not uniq:
+        return None, ("没找到封面（找过 %s/封面/cover_9x16*.png 与 %s/%s_cover.png）"
+                      % (os.path.basename(rel), os.path.basename(subs), ep))
+    return uniq[0], os.path.basename(uniq[0])
+
+
+def build_cover_lead(cfg, cover, ref, out_path, seconds, has_audio):
+    """把封面图转成「与第一段同参数」的短视频，好让 concat 直接 -c copy。
+
+    ★ 为什么必须同参数：`-f concat -c copy` 是**流级拼接**，编码器/像素格式/分辨率/
+      帧率/SAR 有一项不同就会报错或（更糟）静默丢段。这里按第一段实测参数生成；
+      生成完再比一次，不一致就让拼接走重编码（`stage_master` 里的兜底）。
+    """
+    W, H, fps = ref["width"], ref["height"], ref["fps"]
+    pix = ref["pix_fmt"] if ref["pix_fmt"] in ("yuv420p", "yuvj420p") else "yuv420p"
+    vf = ("scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,"
+          "crop=%d:%d,setsar=%s,fps=%s,format=%s"
+          % (W, H, W, H, ref["sar"] or "1:1", ("%g" % fps), pix))
+    enc = (["-c:v", "libx265", "-crf", "18", "-preset", "medium", "-tag:v", "hvc1",
+            "-x265-params", "log-level=error"]
+           if ref["codec"] in ("hevc", "h265")
+           else ["-c:v", "libx264", "-crf", "16", "-preset", "medium"])
+    cmd = [cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
+           "-loop", "1", "-t", "%.3f" % seconds, "-i", cover]
+    if has_audio:
+        cmd += ["-f", "lavfi", "-t", "%.3f" % seconds,
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    cmd += ["-vf", vf, "-r", "%g" % fps] + enc + ["-pix_fmt", pix,
+                                                  "-t", "%.3f" % seconds]
+    if has_audio:
+        cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-shortest"]
+    cmd += [out_path]
+    run(cmd)
+    if not os.path.isfile(out_path) or ffprobe_frames(cfg["tools"]["ffprobe"], out_path) < 1:
+        raise SystemExit("封面片头生成失败（0 帧）：%s" % out_path)
+    return out_path
+
+
+def stage_master(ws, ep, cfg, segs, subs_dir, cover=True, bgm=True):
+    """拼接母版 —— 剪辑第一道工序，一次产出 `<ep>_master.mp4`。
+
+    组成固定为三步（顺序即规范）：
+      ① **首帧封面**（可选）：`09-发行/封面/cover_9x16*.png` → 0.8s 静帧片头；
+         找不到就跳过并告警，**不阻塞出片**（封面是发行资料，可能晚于成片）。
+      ② **视频片段**：按镜头顺序拼接，逐段做音频首尾淡入淡出（反馈 P2-11）。
+      ③ **BGM**（可选）：检测到 `<ep>_bgm-plan.json` 就混一条；没有就跳过。
+    放大与字幕都在**这一步之后**，所以母版里已经带着 BGM —— 与用户定的顺序一致：
+      母版拼接（封面 + 片段 + BGM）→ 放大（RH / Topaz / 跳过）→ 字幕生成与烧录。
     """
     out = os.path.join(subs_dir, "%s_master.mp4" % ep)
+    raw = os.path.join(subs_dir, "%s_master_raw.mp4" % ep)
     lst = os.path.join(subs_dir, "_concat.txt")
     tools = cfg["tools"]
     fade_ms = int((cfg.get("audio") or {}).get("edge_fade_ms", DEFAULT_EDGE_FADE_MS) or 0)
+    notes = []
 
-    files = [s["file"] for s in segs]
-    if fade_ms > 0 and len(files) > 1:
+    seg_files = [s["file"] for s in segs]
+    if fade_ms > 0 and len(seg_files) > 1:
         prepped, changed = [], 0
-        for i, src in enumerate(files):
+        for i, src in enumerate(seg_files):
             dst = os.path.join(subs_dir, "_fade_%02d.mp4" % (i + 1))
             got = _fade_segment(tools, src, dst, fade_ms)
             prepped.append(got or src)
             changed += 1 if got else 0
-        files = prepped
+        seg_files = prepped
         sys.stderr.write("[i] 切点音频淡入淡出：%d ms，已处理 %d/%d 段（反馈 P2-11）\n"
-                         % (fade_ms, changed, len(files)))
+                         % (fade_ms, changed, len(seg_files)))
+
+    files = []
+    # ① 首帧封面
+    if cover:
+        cpath, cmsg = find_cover(ws, ep, cfg)
+        if not cpath:
+            notes.append("① 首帧封面：跳过 —— %s" % cmsg)
+        else:
+            ref = _seg_video_info(tools["ffprobe"], seg_files[0])
+            _, has_audio = _seg_probe(tools, seg_files[0])
+            secs = float((cfg.get("master") or {}).get("cover_seconds")
+                         or COVER_LEAD_DEFAULT_S)
+            lead = build_cover_lead(cfg, cpath, ref, os.path.join(
+                subs_dir, "_cover_lead.mp4"), secs, has_audio)
+            files.append(lead)
+            notes.append("① 首帧封面：%s → %.1fs 片头（%dx%d %s）"
+                         % (cmsg, secs, ref["width"], ref["height"], ref["codec"]))
+    # ② 视频片段
+    files += seg_files
 
     lines = []
     for f in files:
@@ -1845,7 +2126,7 @@ def stage_master(ws, ep, cfg, segs, subs_dir):
     with open(lst, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     run([cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
-         "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", out])
+         "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", raw])
     # ★ 2026-10-22：HEVC 多段 `-c copy` 拼接会间歇性产生**坏码流**
     #   （实测 ep17：解码报 `Could not find ref with POC 258`，母版只有 1259/1485 帧，
     #    下游 Topaz 直接崩溃 rc=3226505、产物 moov 缺失）。
@@ -1855,10 +2136,10 @@ def stage_master(ws, ep, cfg, segs, subs_dir):
         expect = 0
         for f in files:
             expect += ffprobe_frames(cfg["tools"]["ffprobe"], f)
-        got = ffprobe_frames(cfg["tools"]["ffprobe"], out)
+        got = ffprobe_frames(cfg["tools"]["ffprobe"], raw)
         if expect and got < expect * 0.98:
             sys.stderr.write("[!] 拷贝拼接丢帧（%d/%d）→ 改用 concat 滤镜重编码重建母版\n" % (got, expect))
-            tmp = out + ".reenc.mp4"
+            tmp = raw + ".reenc.mp4"
             # ★ 必须用 filter 版：并流器（-f concat）在 HEVC 段参数不一致时会静默丢段
             #   （实测 ep17 丢了整整一段 226 帧），filter 版逐帧解码重编码，帧数准确。
             cmd = [cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y"]
@@ -1869,20 +2150,36 @@ def stage_master(ws, ep, cfg, segs, subs_dir):
                     "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", tmp]
             run(cmd)
-            os.replace(tmp, out)
-            got = ffprobe_frames(cfg["tools"]["ffprobe"], out)
+            os.replace(tmp, raw)
+            got = ffprobe_frames(cfg["tools"]["ffprobe"], raw)
             sys.stderr.write("[i] 重编码后帧数：%d（期望 %d）\n" % (got, expect))
     except SystemExit as exc:
         sys.stderr.write("[!] 母版帧数校验跳过：%s\n" % exc)
-    # ★ 2026-10-07：不删 concat 清单（safe-delete 钩子会话级计数，批量必炸），残留收尾统一清
+
+    # ③ BGM（可选，非必选）
+    final = raw
+    if bgm:
+        mixed, msg = _try_bgm(ws, ep, raw)
+        if msg:
+            notes.append("③ BGM：%s" % msg.replace("⑤.6 BGM：", ""))
+        if mixed and os.path.abspath(mixed) != os.path.abspath(raw):
+            os.replace(mixed, out)      # 统一成 <ep>_master.mp4，下游不必知道有没有 BGM
+        else:
+            os.replace(raw, out)
+    else:
+        notes.append("③ BGM：已关闭（--no-bgm）")
+        os.replace(raw, out)
+    for n in notes:
+        print("  " + n)
     return out
 
 
 def _try_bgm(ws, ep, base_video, disabled=False):
-    """BGM 混音（★ 2026-10-21）：有铺排计划就混一条 `<ep>_mix.mp4`，并用它当烧字幕的底片。
+    """BGM 混音（★ 2026-11-01 起并入**母版拼接**，不再挂在烧字幕前）。
 
-    为什么放在这里：母版/放大之后、烧字幕之前 —— 只重编码音频（视频 `-c:v copy`），
-    与烧字幕合并成一次交付，用户不需要多跑一条命令。
+    顺序依据（用户 2026-11-01 定）：母版拼接（首帧封面 + 片段 + BGM）→ 高清放大 →
+    字幕生成与烧录。BGM 必须在放大之前混：放大只重编码视频/音频，混好的音轨会跟着
+    一起处理；若放在最后，则要再重编码一次视频容器。
 
     依赖方向是**单向可选**的：本脚本可能被拷进 Skill 包单独运行，那时仓库的
     `stages/production/scripts/bgm.py` 不在 sys.path 上。所以：
@@ -1898,7 +2195,7 @@ def _try_bgm(ws, ep, base_video, disabled=False):
     if os.path.isfile(mix):
         try:
             if not base_video or os.path.getmtime(mix) >= os.path.getmtime(base_video):
-                return mix, "⑤.6 BGM：复用已有混音版 %s" % os.path.basename(mix)
+                return mix, "复用已有混音版 %s" % os.path.basename(mix)
         except OSError:
             pass
     if not os.path.isfile(plan):
@@ -2144,7 +2441,9 @@ def main():
                          "★ 默认归一化：H3 出片是 672×1216（21:38≠9:16），不归一化会被平台判「画面有黑边」")
     ap.add_argument("--lang", default=None)
     ap.add_argument("--no-bgm", dest="no_bgm", action="store_true",
-                    help="不混 BGM（默认检测到 <ep>_bgm-plan.json 就自动混音；2026-10-21）")
+                    help="不混 BGM（默认检测到 <ep>_bgm-plan.json 就在母版拼接时混音；2026-11-01）")
+    ap.add_argument("--no-cover", dest="no_cover", action="store_true",
+                    help="母版不加首帧封面（默认用 09-发行/封面/cover_9x16*.png 做 0.8s 片头）")
 
     args = ap.parse_args()
     args.ep = canon_ep(args.ep)          # 26 / EP26 / ep026 → ep26（否则路径对不上）
@@ -2309,17 +2608,18 @@ def main():
         info = write_ass(cues, cfg, ass, canvas=canvas)
         print("③ ASS：%s" % ass)
         if info.get("anchor") == "ratio":
-            print("   字体=%s 字号=%dpx(%.1f%%) 落点=视觉中心 %s(y=%dpx) 块高=%dpx "
+            print("   字体=%s 字号=%dpx(%s) 落点=视觉中心 %s(y=%dpx) 块高=%dpx "
                   "下沿距底=%dpx 左右=%dpx 画布=%s 条目=%d"
-                  % (info["font"], info["font_size_px"], info["font_size_pct"],
+                  % (info["font"], info["font_size_px"], _pct_label(info["font_size_pct"]),
                      info["anchor_label"], info["center_y"], info["block_h_px"],
                      info["bottom_px"], info["margin_lr_px"], info["canvas"], info["cues"]))
             if info.get("anchor_clamped"):
                 print("      ⚠ 6:4 落点被安全区上顶（配置 anchor_top 偏低/画布过矮）")
         else:
-            print("   字体=%s 字号=%dpx(%.1f%%) 底部间距=%dpx(%.1f%%) 左右=%dpx 画布=%s 条目=%d"
-                  % (info["font"], info["font_size_px"], info["font_size_pct"],
-                     info["margin_v_px"], info["margin_v_pct"], info["margin_lr_px"],
+            print("   字体=%s 字号=%dpx(%s) 底部间距=%dpx(%s) 左右=%dpx 画布=%s 条目=%d"
+                  % (info["font"], info["font_size_px"], _pct_label(info["font_size_pct"]),
+                     info["margin_v_px"], _pct_label(info["margin_v_pct"]),
+                     info["margin_lr_px"],
                      info["canvas"], info["cues"]))
         print("   字号依据=%s ｜ 文本框宽=%dpx(%.1f%%) ｜ 安全区：底≥%dpx 宽≤%.0f%%"
               % (info["font_size_by"], info["text_w_px"], info["text_w_pct"],
@@ -2333,7 +2633,9 @@ def main():
 
     master = None
     if args.stage in ("master", "all", "render", "upscale"):
-        master = stage_master(ws, args.ep, cfg, segs, subs_dir)
+        master = stage_master(ws, args.ep, cfg, segs, subs_dir,
+                              cover=not getattr(args, "no_cover", False),
+                              bgm=not getattr(args, "no_bgm", False))
         fr = ffprobe_frames(cfg["tools"]["ffprobe"], master)
         print("④ 母版（无损拼接）：%s ｜ %d 帧" % (master, fr))
         report["master"] = {"path": master, "frames": fr}
@@ -2381,14 +2683,9 @@ def main():
     if up_on and os.path.exists(hi_res) and args.stage in ("upscale", "all", "render"):
         base_video = hi_res
 
-    # ---- ⑤.6 BGM 混音（★ 2026-10-21；有 bgm-plan.json 时自动做）------------
-    if args.stage in ("all", "render"):
-        base_video, _bgm_msg = _try_bgm(ws, args.ep, base_video,
-                                        disabled=bool(getattr(args, "no_bgm", False)))
-        if _bgm_msg:
-            print(_bgm_msg)
-            report["bgm"] = {"base_after": os.path.basename(base_video or ""),
-                             "note": _bgm_msg}
+    # ★ 2026-11-01：BGM 已并入母版拼接（stage_master 第 ③ 步），这里**不再混音**。
+    #   此前挂在烧字幕前，导致「放大后的视频再混一次音频」，且 master 与 mix 两个产物
+    #   谁才是母版说不清 —— 现在 `<ep>_master.mp4` 就是带 BGM 的母版，只有一个名字。
 
     # --stage all 的收尾语义：
     #   * 开了放大 → 跑到放大母版就【停】，等用户回答要不要字幕（这是用户明确要求的停点）

@@ -1,8 +1,29 @@
 {
   "version": 1,
-  "_note": "高清放大配置 —— 改这里就能改目标分辨率/模型/编码，不需要动代码。用法：python scripts/upscale.py --ep ep03",
+  "_note": "高清放大配置 —— 改这里就能改后端/目标分辨率/模型/编码，不需要动代码。用法：python scripts/upscale.py --ep ep03",
 
   "enabled": true,
+
+  "backend": "topaz",
+  "_backend_note": "三选一：topaz=本地 Topaz Video（免费、慢、画质最稳，默认）｜rh=RunningHub RH_Astra Iris（约 35 币/集，2–3 分钟，输出按源宽高比吸附后自动裁到精确目标）｜off=跳过（母版直接进字幕，只在母版已是交付规格时用）。命令行 --backend 可临时覆盖。",
+
+  "rh": {
+    "_note": "RunningHub 放大通道。节点 4/5 是【短边/长边】不是宽/高 —— 给反了输出会变成 598×1080。输入会先转 h264/yuv420p（RH 的 LoadVideo 解不动 hevc Main10）。",
+    "workflow_id": "2110614419863592961",
+    "label": "RH 放大 · RH_Astra Iris",
+    "instance_type": "default",
+    "nodes": {
+      "video_in": "2",
+      "prefix": "3",
+      "short_edge": "4",
+      "long_edge": "5",
+      "cleaner": "7"
+    },
+    "keep_audio": true,
+    "cleaner_action": "Purge Model",
+    "timeout_min": 40.0,
+    "poll_interval": 5.0
+  },
 
   "tool": {
     "_note": "留空 = 自动探测。本机实测：Topaz 装在 D 盘，模型权重也被挪到了 D 盘；独立跑 ffmpeg 必须把这两个目录用环境变量告诉它，否则报 'Model not found: prob-4'。",
