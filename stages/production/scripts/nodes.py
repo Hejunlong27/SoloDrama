@@ -198,7 +198,7 @@ NODES: list = [
     {"id": "video.resolve", "stage": "video", "ep": True,
      "trigger": "drama do video.resolve --ep ep01",
      "reads": ["prompt.contract"], "output": "_done/video.resolve.<ep>.json",
-     "check": "slots", "next": "video.batch", "reflow": ["prompt.contract"],
+     "check": "cmd:capabilities.py check", "next": "video.batch", "reflow": ["prompt.contract"],
      "run": "python stages/production/scripts/capabilities.py check"},
     {"id": "video.batch", "stage": "video", "ep": True,
      "trigger": "drama do video.batch --ep ep01 --yes",
@@ -478,17 +478,6 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         miss = [n for n in need if not (d / n).is_file()]
         return (not miss), ("5 文件齐（%d 镜）" % _shots_of(ctx)) if not miss else \
             "缺 %s" % "、".join(miss)
-
-    # ---- 槽位：能力卡 check ----
-    if spec == "slots":
-        try:
-            import capabilities as CAP                       # noqa: E402
-            rep = CAP.check_all(offline=True)
-            bad = [r for r in rep if not r.get("ok")]
-            return (not bad), ("三张能力卡齐") if not bad else \
-                "%d 张卡不过：%s" % (len(bad), "、".join(r.get("id", "?") for r in bad))
-        except Exception as exc:                             # noqa: BLE001
-            return False, "能力卡检查失败：%s" % exc
 
     # ---- 出片段数 ----
     if spec == "segments":

@@ -10,7 +10,7 @@
 
 校验项（逐条报，缺关键字段报错让人补，**不猜不编**）
 ----------------------------------------------------
-1. `shots.json`  非空 / `shot_id` 唯一 / 有 `banana_prompt`
+1. `shots.json`  非空 / `shot_id` 唯一 / 有 `board_ref`（分镜图 key）
 2. `h3_prompts.json` 覆盖全部 shot_id，且 `prompt` 非空
 3. `<Picture N>` 编号**从 1 连续、≤6、不留空号**（留空号会让后面全部错位）
 4. `<d>[lang] …</d>` 存在且非空（字幕真源）
@@ -165,8 +165,18 @@ def main() -> int:
 
     for sid in ids:
         s = next(x for x in shots if str(x.get("shot_id")) == sid)
-        if not s.get("banana_prompt"):
-            errs.append("%s: 缺 banana_prompt（九宫格图生图提示词）" % sid)
+        # 2026-11-01：`banana_prompt` 已删（九宫格链下线）。现在的出图契约是分镜图：
+        #   每镜一个 `board_ref`，图在 `04-资产/boards/<ep>/<shot_id>.png`。
+        #   缺 key 记 WARN（引擎会退化为「角色+场景」两参，还能出）；
+        #   有 key 但图不在记 ERROR（会静默退化，必须挡在计费之前）。
+        _bref = str(s.get("board_ref") or "").strip()
+        if not _bref:
+            warns.append("%s: 缺 board_ref（分镜图 key）——出片退化为两参" % sid)
+        else:
+            _ep = _bref.replace("board_", "").rsplit("_", 1)[0]
+            _bp = DATA.parent / "04-资产" / "boards" / _ep / ("%s.png" % sid)
+            if not _bp.is_file():
+                errs.append("%s: board_ref=%s 但没有分镜图 %s" % (sid, _bref, _bp))
         v = prompts.get(sid)
         if not isinstance(v, dict) or not v.get("prompt"):
             errs.append("%s: h3_prompts.json 里没有该段的 prompt（引擎会直接 FAILED，不猜）" % sid)
@@ -175,6 +185,10 @@ def main() -> int:
         #   所以 <Picture N> 的 N 上限按「两张表合并后的张数」算（2026-10-17 修正）。
         refs_all = list(s.get("character_refs") or []) + list(s.get("scene_refs") or [])
         refs_all = [REFS_MAP.get(x, x) for x in refs_all]
+        # 分镜图排在 `<Picture 1>`，所以要算进总张数，否则编号会判「超出一张」。
+        # 判据是「1 张分镜图 + 角色 + 场景」，与引擎 build_h3_node_list 的槽位顺序一致。
+        if s.get("board_ref"):
+            refs_all = ["__board__"] + refs_all
         e, w = check_shot(sid, v["prompt"], v.get("duration"), refs_all, DATA)
         errs += e
         warns += w
