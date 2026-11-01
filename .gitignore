@@ -83,3 +83,6 @@ _scratch/
 _*.log
 stages/**/_*.log
 stages/**/_*.txt
+
+# 测试夹具运行时产物（drama models/style 会在 fixture 里写 logs）
+stages/production/scripts/tests/fixtures/*/07-成片/
