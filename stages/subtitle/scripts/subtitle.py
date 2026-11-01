@@ -392,6 +392,25 @@ def _belongs_to_ep(sid, ep):
     return True
 
 
+def data_ep_dir(ws, ep):
+    """本集的数据目录：**优先 `<data>/<ep>/`，回退 `<data>/`**。
+
+    ★ 2026-11-01 修：`convert_storyboard` 从 V0.7.42 起把 data 按集分目录
+      （`data/ep01/shots.json`，为了修「跑 ep02 覆盖 ep01」），但字幕管线两处读取
+      仍写死 `data/shots.json` —— 于是新布局下**拼接阶段一个段都找不到**，
+      报「missing 全部镜头」，而肉眼在 `data/ep01/` 里明明看得见。
+      两种布局都认，老项目不用迁移。
+    """
+    base = data_dir_of(ws)
+    for cand in (os.path.join(base, ep or ""), base):
+        if cand and os.path.isfile(os.path.join(cand, "shots.json")):
+            return cand
+    # 两处都没有 shots.json：返回根目录。**不要**返回 `<data>/<ep>/`——
+    # 那个目录可能不存在，后续读 h3_prompts.json 会抛 FileNotFoundError，
+    # 而真正的症状（没跑 convert）反而看不见了。
+    return base
+
+
 def episode_segments(ws, ep):
     """返回该集的段列表（含成片路径与帧数），顺序 = shots.json 顺序。
 
@@ -400,7 +419,8 @@ def episode_segments(ws, ep):
       B. output/<引擎目录>/<批次>/<段>/final.mp4 —— 《贤妻不装了》的 h3_free / h3_free_acc2 两层结构
     同一段在多处存在时取 **mtime 最新**（错脸返工重出后必须用新版本）。
     """
-    shots = load_json(os.path.join(data_dir_of(ws), "shots.json"))
+    _sp = os.path.join(data_ep_dir(ws, ep), "shots.json")
+    shots = load_json(_sp) if os.path.isfile(_sp) else []
     ids = [s["shot_id"] for s in shots if _belongs_to_ep(s.get("shot_id"), ep)]
     outdir = out_dir_of(ws)
     segs, missing = [], []
@@ -426,7 +446,8 @@ def dialogue_lines(ws, ep):
       `<d>` 后必须紧跟 `[角色/语气]`，写成 `<d>台词</d>` 时整行被静默丢弃 ——
       表现为「台词明明有、字幕就是没有」，且不报任何错。
     """
-    prompts = load_json(os.path.join(data_dir_of(ws), "h3_prompts.json"))
+    _hp = os.path.join(data_ep_dir(ws, ep), "h3_prompts.json")
+    prompts = load_json(_hp) if os.path.isfile(_hp) else {}
     pat = re.compile(r"<d>(?:\s*\[[^\]]*\])?\s*([^<]*)</d>")
     out = {}
     for sid, v in prompts.items():

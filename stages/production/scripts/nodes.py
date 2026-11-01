@@ -154,14 +154,17 @@ NODES: list = [
     {"id": "script.continuity", "stage": "script", "ep": True, "optional": True,
      "trigger": "drama do script.continuity --ep ep01",
      "reads": ["script.dialogue"], "output": "_done/script.continuity.<ep>.json",
-     "check": "cmd:script_continuity.py", "next": "asset.roster",
+     # ★ 2026-11-01：这个脚本的 `--ep` 是 `type=int`（要 1，不要 ep01）。
+     #   不声明 ep_style 就会传 `--ep ep01` → argparse 直接 exit 2，
+     #   节点永远过不去，且报错是「invalid int value」——看起来像脚本坏了。
+     "check": "cmd:script_continuity.py", "ep_style": "int", "next": "asset.roster",
      "reflow": ["script.episode"], "run": "python stages/production/scripts/script_continuity.py"},
 
     # ---------------- 资产 ----------------
     {"id": "asset.roster", "stage": "asset", "ep": False,
      "trigger": "drama do asset.roster",
      "reads": ["script.blueprint"], "output": "04-资产/design/roster.json",
-     "check": "json:characters>=1", "next": "asset.prompt", "reflow": ["script.blueprint"],
+     "check": "roster", "next": "asset.prompt", "reflow": ["script.blueprint"],
      "run": "（手写：模板见 character_design.py template）"},
     {"id": "asset.prompt", "stage": "asset", "ep": False,
      "trigger": "drama do asset.prompt",
@@ -308,8 +311,18 @@ class Ctx:
             self.out = ws / "07-成片"
 
     def ep_path(self, node: dict) -> pathlib.Path:
-        """把节点 output 里的 `<ep>` 换成实际集号。"""
+        """把节点 output 里的 `<ep>` 换成实际集号。
+
+        ★ 2026-11-01：剧本文件存在三种命名（`ep_01.md` / `ep01.md` / `EP01.md`），
+          判据用 `ep_script()` 宽容查找，但这里原来只拼 `<ep>.md` —— 于是
+          `drama do script.episode` 打印的「产物：03-剧本/ep01.md」与实际文件
+          `ep_01.md` 不符，人会以为文件放错了地方。剧本类节点优先返回真实文件。
+        """
         rel = str(node.get("output") or "")
+        if "<ep>" in rel and rel.startswith("03-剧本"):
+            found = self.ep_script()
+            if found is not None:
+                return found
         return self.ws / rel.replace("<ep>", self.ep or "ep01")
 
     def ep_dir(self, parent: pathlib.Path) -> pathlib.Path | None:
@@ -349,6 +362,70 @@ class Ctx:
 
     def spend(self, node_id: str) -> pathlib.Path:
         return self.state_dir / "_spend" / ("%s.json" % node_id)
+
+
+def _belongs_to_ep(sid, ep) -> bool:
+    """段 id 是否属于该集（与 `subtitle._belongs_to_ep` 同一条规则）。
+
+    · 带集号（`ep01_shot_01` / `shot_ep01_01`）→ 只收本集
+    · 不带集号（`shot_01`）→ 全收（集号由 --ep 与批次区分）
+    """
+    s_ = str(sid or "")
+    if not s_:
+        return False
+    m = re.search(r"(?:^|[_-])ep0*(\d+)(?:[_-]|$)", s_, re.I)
+    if m:
+        want = re.sub(r"[^\d]", "", str(ep or "")) or "0"
+        return int(m.group(1)) == int(want)
+    return True
+
+
+def _ep_segments(ctx: Ctx) -> tuple:
+    """→ (本集段文件列表, 本集应有哪些段 id)。
+
+    段落在 `<out>/<批次>/<shot>/final.mp4`（或旧的两层 `<out>/<引擎>/<批次>/<shot>/final.mp4`），
+    **没有** `<out>/<ep>/` 这一层。原判据用 `ep_dir(out).rglob("*.mp4")` —— 目录都不存在，
+    于是 `video.batch` / `video.audit` 在标准布局下永远判不过。这里复刻字幕管线的定位方式。
+    """
+    d = ctx.data / (ctx.ep or "ep01")
+    if not (d / "shots.json").is_file():
+        d = ctx.data
+    shots = _read_json(d / "shots.json", []) or []
+    if isinstance(shots, dict):
+        shots = shots.get("shots") or []
+    ids = [x.get("shot_id") for x in shots
+           if isinstance(x, dict) and x.get("shot_id") and _belongs_to_ep(x.get("shot_id"), ctx.ep)]
+    segs = []
+    for sid in ids:
+        cands = list(ctx.out.glob("*/%s/final.mp4" % sid))
+        cands += list(ctx.out.glob("*/*/%s/final.mp4" % sid))
+        cands = [c for c in cands if c.is_file() and c.stat().st_size > 2048]
+        if cands:
+            segs.append(max(cands, key=lambda q: q.stat().st_mtime))
+    return segs, ids
+
+
+def _out_hits(ctx: Ctx, pat: str) -> list:
+    """在出片目录里找本集产物。★ 2026-11-01：`07-成片/` 下**没有** `ep01/` 子目录。
+
+    实际布局是 `07-成片/subs/ep01/<ep>_master.mp4`（母版/放大/字幕都在这儿），
+    而批次段在 `07-成片/<批次时间戳>/`。原实现只认 `07-成片/ep01/`，于是这三个
+    剪辑节点在标准布局下**永远判不过**（母版明明在，却报「找不到」）。
+
+    查找顺序：`<out>/<ep>/` → `<out>/subs/<ep>/` → `<out>/subs/` 下按集号宽容匹配 →
+    整个 `<out>` 递归但只认文件名含本集号的（防跨集误命中）。
+    """
+    cands = []
+    for d in (ctx.ep_dir(ctx.out), ctx.ep_dir(ctx.out / "subs"),
+              ctx.out / "subs" / (ctx.ep or "ep01")):
+        if d and d.is_dir():
+            cands += sorted(d.rglob(pat))
+    if cands:
+        return cands
+    num = re.sub(r"[^0-9]", "", ctx.ep or "01") or "01"
+    if ctx.out.is_dir():
+        cands = [q for q in sorted(ctx.out.rglob(pat)) if num in q.name]
+    return cands
 
 
 # ===========================================================================
@@ -409,6 +486,28 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         if need and n < int(need):
             return False, "%s 只有 %s 条，要求 ≥%s" % (key, n, need)
         return True, "%s=%s" % (key, n if not isinstance(val, (str, int)) else val)
+
+    # ---- 名册：占位角色不算数 ----
+    # ★ 2026-11-01：原来判 `json:characters>=1`，而 `drama init` 的名册模板里自带
+    #   两个占位角色（「主角姓名」「LEAD」）—— 新项目一建就直接通过，人以为名册填好了，
+    #   下游照样拿占位角色去出图。这里改成「占位检测」：名字或身份还是模板文案的不算数。
+    if spec == "roster":
+        d = _read_json(out, None)
+        if not isinstance(d, dict):
+            return False, "名册不存在或不是 JSON：%s" % out
+        chars = [c for c in (d.get("characters") or []) if isinstance(c, dict)]
+        if not chars:
+            return False, "名册里没有 characters"
+        PH = ("姓名", "占位", "TODO", "待填", "示例")
+        real = [str(c.get("name") or "") for c in chars
+                if str(c.get("name") or "")
+                and not any(x in str(c.get("name") or "") for x in PH)
+                and str(c.get("identity") or "").strip()
+                and not any(x in str(c.get("identity") or "") for x in PH)]
+        if not real:
+            return False, ("名册还是 init 模板（%d 个占位角色：%s）—— 换成真实角色再往下走"
+                           % (len(chars), "、".join(str(c.get("name") or "?") for c in chars[:3])))
+        return True, "%d 个角色（%s）" % (len(real), "、".join(real[:4]))
 
     # ---- 文件类：file>=N（字节）----
     if spec.startswith("file>="):
@@ -535,19 +634,18 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
 
     # ---- 出片段数 ----
     if spec == "segments":
-        ep_dir = ctx.ep_dir(ctx.out)
-        n = len([p for p in ep_dir.rglob("*.mp4") if p.is_file()]) if ep_dir else 0
-        need = _shots_of(ctx)
+        segs, ids = _ep_segments(ctx)
+        n = len(segs)
+        need = len(ids) or _shots_of(ctx)
         if not need:
             return (n > 0), "%d 段（没有 shots.json，无法比对）" % n
         return (n >= need), "%d 段 / 镜数 %d" % (n, need)
 
     # ---- 出片体检：逐段有音轨且时长 > 1s ----
     if spec == "audit":
-        ep_dir = ctx.ep_dir(ctx.out)
-        segs = sorted(p for p in ep_dir.rglob("*.mp4") if p.is_file()) if ep_dir else []
+        segs, _ids = _ep_segments(ctx)
         if not segs:
-            return False, "没有分段成片：%s" % ep_dir
+            return False, "没有分段成片（找过 %s 下 */<shot>/final.mp4）" % ctx.out
         bad = []
         for p in segs:
             try:
@@ -565,17 +663,16 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
 
     # ---- 母版 / 放大 / 字幕 / 发布 都是「按名字找文件」 ----
     if spec in ("master", "upscaled", "subtitled"):
-        ep_dir = ctx.ep_dir(ctx.out)
         pat = {"master": "*_master.mp4",
                "upscaled": "*_master_1080x1920.mp4",
                "subtitled": "*_subbed.mp4"}[spec]
-        hits = sorted(ep_dir.rglob(pat)) if ep_dir else []
+        hits = _out_hits(ctx, pat)
         if not hits and spec == "upscaled":
             # ★ 2026-11-01：放大后端可以是 `off`（母版本来就是交付规格）。
             #   那时永远不会出现 `_master_1080x1920.mp4` —— 判据若不认这份「跳过报告」，
             #   节点会一直卡在「找不到文件」，而人看到的是「产物缺失」，方向全错。
             #   报告由 upscale.py --backend off 落盘，含 skipped=true 与原因。
-            rep = sorted(ep_dir.rglob("*_upscale.json")) if ep_dir else []
+            rep = _out_hits(ctx, "*_upscale.json")
             for rp in rep:
                 d = _read_json(rp, {}) or {}
                 if d.get("skipped"):
@@ -857,7 +954,17 @@ def _build_args(ctx: Ctx, node: dict) -> list:
 
 
 def _print_plan(ctx: Ctx, node: dict, dry_run: bool = True) -> None:
-    """打印将要执行的命令（`--dry-run` 用，包括上游被阻塞时）。"""
+    """打印将要执行的命令（`--dry-run` 用，包括上游被阻塞时）。
+
+    ★ 2026-11-01：手写/内置节点的 `run` 是**说明文字**（`（手写：…）`），不是命令。
+      原来这里无脑拼 `[DRY-RUN] （手写：…） --workspace … --ep ep01` —— 看着像能跑，
+      真跑却什么都不执行（`run_node` 有专门分支）。干跑与真跑不一致，人会被带偏。
+    """
+    run_text = str(node.get("run") or "")
+    if run_text.startswith("（") or "手写" in run_text:
+        print("[NO-CMD] %s" % run_text)
+        print("         该节点没有可执行命令：产物由人或会话产出，产出后用 `drama nodes` 复核")
+        return
     args = _build_args(ctx, node)
     if args and args[0] in ("python", "python3"):
         args[0] = sys.executable

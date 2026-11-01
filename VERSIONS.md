@@ -1,6 +1,28 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.45 · 流程堵点复查：7 个「永远过不去」的节点 + 4 个坑）**
+  详细记录见 `docs/patches/2026-11-01_流程堵点复查.md`。根因一句话：
+  **`convert_storyboard` 把 data 按集分目录后，读侧有 5 处还写死根目录**，
+  加上剪辑/出片判据找的目录层级与现实不符 —— 于是一堆节点「产物明明在，判据说找不到」。
+
+  | # | 节点 | 修法 |
+  |---|---|---|
+  | 1 | `edit.master/upscale/subtitle` | 新增 `_out_hits()`：`<out>/<ep>` → `<out>/subs/<ep>` → 全 out 递归（限本集号） |
+  | 2 | `video.batch/audit` | 新增 `_ep_segments()`：按本集 shot_id 找 `<批次>/<shot>/final.mp4` |
+  | 3 | `edit.subtitle`（拼接） | `subtitle.data_ep_dir()`，两处读取容忍缺失 |
+  | 4 | `prompt.contract` | `ingest_check` 改用 `W.data_ep(ws, --ep)` |
+  | 5 | `script.continuity` | 节点加 `ep_style: int`（该脚本 `--ep` 要数字） |
+  | 6 | `script.continuity` | `_pick()` 认三种 data 摆法（`data/` · `06-提示词/` · `06-提示词/<ep>/`） |
+  | 7 | `drama status` | `data_f()`，按集目录优先、回退根 |
+
+  新增 `_ws.data_ep()` / `_ws.data_file()` 两个解析函数，读侧统一走它们（老布局零迁移）。
+  四个坑：dry-run 对「手写节点」打印假命令、`ep_path` 展示与宽容查找不一致、
+  `asset.roster` 被 init 的占位名册假绿（新增 `roster` 判据做占位检测）、
+  调研全 skipped 在 Studio 显示 done（展示层，未改）。
+
+  验证：空项目 `drama init` 后全链只剩「剧本还是骨架」一处失败，其余均为上游阻塞；
+  生产层 21 个测试文件全绿。
 - **2026-11-01 更新（V0.7.44 · 重复项清理：删 20 个文件 / 净减 4703 行 + Studio 接回节点真源）**
   按 `docs/reform/2026-11-01_重复项复核.md` 的 D1–D13 执行（Owner：按建议走）。
   清单里每条都写了决定与落地结果，这里只记影响面最大的四件。

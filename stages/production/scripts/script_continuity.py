@@ -204,13 +204,23 @@ def find_product(ws: pathlib.Path, ep: int) -> dict | None:
         return {"kind": "prompt-txt", "shots": shots, "path": str(prompts),
                 "count": len(shots)}
 
-    # ② 脚本链形态：data/h3_prompts.json
-    hp = prompts / "data" / "h3_prompts.json"
-    if hp.is_file():
+    # ② 脚本链形态：h3_prompts.json + shots.json
+    # ★ 2026-11-01：data 目录有三种摆法，都要认，否则「产物明明在，门禁说找不到」：
+    #   `<06-提示词>/data/`（旧）、`<06-提示词>/`（`_layout` 的 data_rel）、
+    #   `<06-提示词>/<ep>/`（2026-11-01 起按集分目录）。
+    def _pick(name):
+        for cand in (prompts / "data" / name, prompts / name,
+                     prompts / ("ep%02d" % ep) / name):
+            if cand.is_file():
+                return cand
+        return None
+
+    hp = _pick("h3_prompts.json")
+    if hp is not None:
         obj = json.loads(_read(hp) or "{}")
-        sp = prompts / "data" / "shots.json"
+        sp = _pick("shots.json")
         refs = {}
-        if sp.is_file():
+        if sp is not None:
             for row in (json.loads(_read(sp) or "[]") or []):
                 refs[str(row.get("shot_id"))] = (row.get("character_refs") or [])
         shots = []

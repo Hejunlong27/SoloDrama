@@ -167,6 +167,45 @@ def out_dir(ws=None) -> Path:
     return L.out_dir(w) if L else (w / "video-pipeline" / "output")
 
 
+def data_ep(ws=None, ep: str = "") -> Path:
+    """**本集**的数据目录：优先 `<data>/<ep>/`，回退 `<data>/`。
+
+    ★ 2026-11-01：`convert_storyboard` 从 V0.7.42 起把 data 按集分目录
+      （`data/ep01/shots.json`，为了修「跑 ep02 覆盖 ep01」）。但读侧还有一大片
+      写死 `DATA / "shots.json"`（根目录）—— 于是新布局下 `drama status` 显示「没有分镜」、
+      `episode_preflight` 报「缺文件」，而文件明明在 `data/ep01/` 里。
+      统一走这里：有集目录就用集目录，没有就是老布局，两边都不用改。
+    """
+    base = data_dir(ws)
+    ep = (ep or "").strip()
+    if ep:
+        cand = base / ep
+        if cand.is_dir():
+            return cand
+    return base
+
+
+def data_file(ws=None, name: str = "", ep: str = "") -> Path:
+    """找一个数据文件，返回**存在的那个**路径（找不到时返回首选路径，便于报错）。
+
+    顺序：`<data>/<ep>/<name>` → `<data>/<name>` → 各集目录里 mtime 最新的那个。
+    最后一步是给「全盘视图」用的（`drama status` 不指定集，但要读到资产表）。
+    """
+    base = data_dir(ws)
+    if ep:
+        p = base / ep / name
+        if p.is_file():
+            return p
+    p = base / name
+    if p.is_file():
+        return p
+    if base.is_dir():
+        hits = [q for q in base.glob("*/%s" % name) if q.is_file()]
+        if hits:
+            return max(hits, key=lambda q: q.stat().st_mtime)
+    return base / (ep + "/" + name if ep else name)
+
+
 def assets_dir(ws=None) -> Path:
     """按指定工作区解析**资产落点**（人物/场景/道具出图产物 + 参考图原图）。
 

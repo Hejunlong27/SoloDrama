@@ -51,10 +51,19 @@ SCENE_KEYS = [
 
 
 def load_all():
-    shots = json.loads((DATA / "shots.json").read_text(encoding="utf-8"))
-    prompts = json.loads((DATA / "h3_prompts.json").read_text(encoding="utf-8"))
-    chars = json.loads((DATA / "characters.json").read_text(encoding="utf-8"))
-    return shots, prompts, chars
+    """读三件数据。★ 2026-11-01：data 可能按集分了子目录（`data/ep01/shots.json`），
+    直接读根目录会报「文件不存在」，而文件就在子目录里。全盘视图取 mtime 最新的一份。"""
+    def _read(name, default):
+        p = DATA / name
+        if not p.is_file() and DATA.is_dir():
+            hits = [q for q in DATA.glob("*/%s" % name) if q.is_file()]
+            if hits:
+                p = max(hits, key=lambda q: q.stat().st_mtime)
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return default
+    return _read("shots.json", []), _read("h3_prompts.json", {}), _read("characters.json", {})
 
 
 def parse_asset_md():

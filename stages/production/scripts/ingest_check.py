@@ -123,7 +123,10 @@ def main() -> int:
 
     # ★ 按**参数里的工作区**解析输入目录（不要用导入期常量，否则 --workspace 被静默忽略）
     ws = pathlib.Path(a.workspace).expanduser().resolve() if a.workspace else W.WS
-    DATA = W.data_dir(ws)
+    # ★ 2026-11-01：data 可能按集分子目录（`data/ep01/shots.json`）。
+    #   直接读根目录会报「缺 shots.json / h3_prompts.json」，而文件就在子目录里 ——
+    #   于是 `prompt.contract` 节点永远过不去。`data_ep` 有集目录用集目录，没有就是老布局。
+    DATA = W.data_ep(ws, a.ep or "")
     if not DATA.is_dir():
         print("[FAIL] 找不到输入目录：%s" % DATA)
         print("       先跑 convert_storyboard.py，或检查 layout.json / config.local.json")

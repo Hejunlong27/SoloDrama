@@ -267,9 +267,9 @@ def _img_size(p: pathlib.Path):
 
 
 def collect_status() -> dict:
-    shots = read_json(DATA / 'shots.json', []) or []
-    prompts = read_json(DATA / 'h3_prompts.json', {}) or {}
-    chars = read_json(DATA / 'characters.json', {}) or {}
+    shots = read_json(data_f('shots.json'), []) or []
+    prompts = read_json(data_f('h3_prompts.json'), {}) or {}
+    chars = read_json(data_f('characters.json'), {}) or {}
     assets_cfg = read_json(VP / 'config.assets.json', {}) or {}
     char_man = read_json(DATA / 'char_assets_manifest.json', {}) or {}
     scene_man = read_json(DATA / 'scene_assets_manifest.json', {}) or {}
@@ -382,7 +382,7 @@ def collect_status() -> dict:
 
 
 def _selected_shots(limit=None, only=None) -> list:
-    shots = read_json(DATA / 'shots.json', []) or []
+    shots = read_json(data_f('shots.json'), []) or []
     if only:
         want = {o.strip() for o in only if o and o.strip()}
         shots = [s for s in shots if s.get('shot_id') in want]
@@ -392,7 +392,7 @@ def _selected_shots(limit=None, only=None) -> list:
 
 
 def _durations(shots) -> list:
-    prompts = read_json(DATA / 'h3_prompts.json', {}) or {}
+    prompts = read_json(data_f('h3_prompts.json'), {}) or {}
     out = []
     for s in shots:
         e = prompts.get(s.get('shot_id')) or {}
@@ -523,6 +523,24 @@ def cmd_nodes_graph(args) -> int:
 def cmd_skip_node(args) -> int:
     return _nodes_mod().main(["skip", args.node, "--reason", args.reason]
                              + _ws_argv(args))
+
+
+PER_EP_FILES = ("shots.json", "h3_prompts.json", "boards.json",
+                 "characters.json", "scenes.json")
+
+
+def data_f(name: str):
+    """数据文件路径：优先 `<DATA>/<name>`，再找各集子目录里最新的一份。
+
+    ★ 2026-11-01：`convert_storyboard` 起把 data 按集分目录（`data/ep01/shots.json`）。
+      本文件里十几处 `DATA / "shots.json"` 于是全部读空，`drama status` 显示「没有分镜」，
+      而文件就在 `data/ep01/` 里 —— 症状像「数据丢了」，其实是读错了目录。
+    """
+    p = DATA / name
+    if p.is_file() or not DATA.is_dir():
+        return p
+    hits = [q for q in DATA.glob("*/%s" % name) if q.is_file()]
+    return max(hits, key=lambda q: q.stat().st_mtime) if hits else p
 
 
 def cmd_status(args) -> int:
