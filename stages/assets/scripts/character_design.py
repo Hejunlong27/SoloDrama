@@ -33,10 +33,25 @@ r"""character_design.py —— 角色造型设计器（3 项签名，不是 7 �
 | R3 | 主演发型不重复 | 群演可复用，只告警 |
 | R4 | 文案不得含评价性美颜词 | 见 `BANNED_WORDS` |
 
+## 2026-11-01 第二次调整（Owner 口径）
+
+1. **A1 人物设计 / A2 角色卡提示词改由会话或技能产出**，引擎不再代做。
+   调度器里 `asset.prompt` 已是「手写」节点；本脚本退到两个职责：
+   **出骨架（plan，可选）** 与 **验收（check，必须）**。
+2. **风格段统一成变量**。以前角色卡分成「真人版 / 3D 版」两套文案，各自的风格句写死 ——
+   选了 look 也进不来。现在结构差异仍由 track 决定（要不要三视图是该它管），
+   但**风格只有一份**：`resolve_style_prompt()` 从 `drama.json` 的 `format{track,look,sub_mode}`
+   解析，经 `style_gate.compose_style_prompt()` 拼成「look.prompt + 渲染流.prompt」，
+   直接灌进 `bible["style_anchor"]`，所有模板共用。
+   临时替换：`--style-prompt "<一段风格>"`。
+
 ## 用法
 
 ```bash
+# 骨架（可选，会话也可以自己写 bible）
 python stages/assets/scripts/character_design.py plan --roster roster.json --out 04-资产/design
+#   风格默认取 <项目>/drama.json 的 look；覆盖用 --style-prompt "..."
+# 验收（节点 asset.prompt 的判据就是它）
 python stages/assets/scripts/character_design.py check --bible 04-资产/design/character-bible.json
 python stages/assets/scripts/character_design.py audit --md 资产提示词.md   # 老项目体检
 python stages/assets/scripts/character_design.py template --out roster.json
@@ -741,6 +756,34 @@ def render_asset_md(bible: dict, prompts: dict) -> str:
     return "\n".join(L)
 
 
+def resolve_style_prompt(ws=None) -> str:
+    """全局风格 → 一段 prompt（角色卡/场景卡的「风格段」变量）。
+
+    真源：`<ws>/drama.json` 的 `format{track, look, sub_mode}`，
+    经 `style_gate.compose_style_prompt()` 拼成 look.prompt + 渲染流.prompt。
+
+    ★ 2026-11-01（Owner 口径）：以前风格段是写死的两套文案（真人 / 3D），
+      选了 look 也进不来 —— 于是「两个版式」里其实只有结构不同，风格却各自硬编码。
+      现在结构仍由 track 决定（要不要三视图是该由它管），**风格统一成一个变量**。
+      取不到就返回空，调用方保留名册里的 style_anchor 兜底。
+    """
+    try:
+        import sys as _sys
+        root = pathlib.Path(__file__).resolve().parents[3]
+        _sys.path.insert(0, str(root / "stages" / "production" / "scripts"))
+        import style_gate as SG
+        import drama_profile as DP
+        w = pathlib.Path(ws) if ws else None
+        d = DP.load(w) if w else None
+        fmt = (d or {}).get("format") or {}
+        track, look = fmt.get("track"), fmt.get("look")
+        if not (track and look):
+            return ""
+        return SG.compose_style_prompt(str(look), str(track), fmt.get("sub_mode")).strip()
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
 def emit(bible: dict, out_dir: pathlib.Path, variants=("board", "maincard", "headshot"),
          card_style: str = "3d_manhua", scenes_path: str = "") -> dict:
     """落盘：bible / 矩阵 md / 资产提示词 md / 逐角色提示词。
@@ -965,6 +1008,9 @@ def main(argv=None) -> int:
                     help="角色卡版式：auto=读名册 style_lock；live_action=16:9 纯白+左脸特写+右三视图")
     p1.add_argument("--scenes", default="",
                     help="（可选）world-bible.json 路径：同时产出真人轨场景卡提示词")
+    p1.add_argument("--style-prompt", dest="style_prompt", default="",
+                    help="全局风格段（覆盖 drama.json 解析结果）。不给则读 <项目>/drama.json 的 look，"
+                         "经 style_gate 拼成 look.prompt + 渲染流.prompt")
 
     p2 = sub.add_parser("check", help="校验角色圣经的四条规则（退出码 2 = 不过）")
     p2.add_argument("--bible", required=True)
@@ -993,6 +1039,18 @@ def main(argv=None) -> int:
             lock = str(roster.get("style_lock") or "").lower()
             style = "live_action" if lock.startswith("live") else (lock or "3d_manhua")
         bible["card_style"] = style
+        # ★ 风格是**变量**，不是每套版式各写一份：选好全局 look 之后直接套用。
+        proj = out.parents[1] if len(out.parents) > 1 else out
+        _cli_style = str(getattr(args, "style_prompt", "") or "").strip()
+        _style = _cli_style or resolve_style_prompt(proj)
+        if _style:
+            bible["style_anchor"] = _style
+            bible["style_source"] = "cli --style-prompt" if _cli_style else "drama.json(format.look)"
+            print("[风格] 已套用全局风格（%s）：%s" % (bible["style_source"], _style[:80]))
+        else:
+            bible["style_source"] = "roster.style_anchor（未找到 drama.json 的 look）"
+            print("[风格] 未取到全局 look，沿用名册 style_anchor：%s"
+                  % (bible.get("style_anchor") or "(空)"))
         res = emit(bible, out, variants, card_style=style, scenes_path=getattr(args, "scenes", "") or "")
         print("[OK] %d 个角色 → %s" % (len(bible["characters"]), out))
         for f in res["files"]:

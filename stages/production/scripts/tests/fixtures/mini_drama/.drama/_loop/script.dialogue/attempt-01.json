@@ -1,0 +1,13 @@
+{
+  "node": "script.dialogue",
+  "attempt": 1,
+  "at": "2026-11-01T17:13:34",
+  "variant_hash": "08183eca6bfecc08",
+  "passed": true,
+  "detail": "[OK] 无硬失败、无提示（exit 0）",
+  "verdict": "ok",
+  "payload": {
+    "cmd": "python stages/production/scripts/dialogue_gate.py",
+    "ep": ""
+  }
+}

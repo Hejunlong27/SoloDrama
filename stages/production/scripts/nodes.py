@@ -142,9 +142,18 @@ NODES: list = [
      # 而实跑项目（US01 这类「引擎视角」工作区）没有那个文件 —— 挂它会永远 exit 1。
      "check": "ffs", "next": "script.continuity",
      "reflow": ["script.episode"], "run": "（内置 FFS 结构检查，无需执行）"},
+    {"id": "script.dialogue", "stage": "script", "ep": True,
+     "trigger": "drama do script.dialogue --ep ep01",
+     "reads": ["script.gate"], "output": "_done/script.dialogue.<ep>.json",
+     # ★ 2026-11-01 新增（Owner 要求）：台词逻辑复核。
+     #   规则来自 3d 技能的 dialogue-driven-rules.md，只取**能机器判**的那部分：
+     #   单镜句数 / 单句长度 / 旁白与对白同镜 / 旁白配额与位置 / 台词密度。
+     #   放在剧本环节而不是分镜环节 —— 台词是剧本的产物，等分镜才发现，改的是剧本。
+     "check": "cmd:dialogue_gate.py", "next": "script.continuity",
+     "reflow": ["script.episode"], "run": "python stages/production/scripts/dialogue_gate.py"},
     {"id": "script.continuity", "stage": "script", "ep": True, "optional": True,
      "trigger": "drama do script.continuity --ep ep01",
-     "reads": ["script.gate"], "output": "_done/script.continuity.<ep>.json",
+     "reads": ["script.dialogue"], "output": "_done/script.continuity.<ep>.json",
      "check": "cmd:script_continuity.py", "next": "asset.roster",
      "reflow": ["script.episode"], "run": "python stages/production/scripts/script_continuity.py"},
 
@@ -158,7 +167,11 @@ NODES: list = [
      "trigger": "drama do asset.prompt",
      "reads": ["asset.roster"], "output": "04-资产/design/character-bible.json",
      "check": "cmd:character_design.py check --bible {bible}", "next": "asset.render",
-     "reflow": ["asset.roster"], "run": "python stages/assets/scripts/character_design.py plan --roster {assets}/design/roster.json --out {assets}/design"},
+     "reflow": ["asset.roster"],
+     # ★ 2026-11-01（Owner 口径）：人物设计（A1）与角色卡提示词（A2）改由**会话/技能**产出，
+     #   引擎不再代做。`character_design.py plan` 仍可用作骨架生成器，但不是这个节点的执行体 ——
+     #   节点只负责「产物在不在、四条规则过不过」。
+     "run": "（手写：会话/技能产出 character-bible.json 与角色卡提示词；校验用 character_design.py check）"},
     {"id": "asset.render", "stage": "asset", "ep": False,
      "trigger": "drama do asset.render",
      "reads": ["asset.prompt"], "output": "04-资产/refs.json",

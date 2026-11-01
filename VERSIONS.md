@@ -1,6 +1,51 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.42 · 按 Owner 圈定删六项 + 新增台词复核 + 资产转手写）**
+  两件事：把 Owner 圈定的六项能力删掉，再按他的三条口径改造剧本与资产环节。
+
+  **① 删（六项）**
+  | 编号 | 对象 | 为什么 |
+  |---|---|---|
+  | S2 | `workflow.py` + `pipeline.py` | 与 `nodes.py` 是两套编排（S1–S11 vs 23 节点），口径不一致 |
+  | S6 | `project_setup.py` | 九项确认与 style/models/init 重叠，且被 S2 依赖 |
+  | B5 | `half_narrated_check.py` | 读 `05-分镜/storyboard.json`，全仓无生成器 → 永远跑不通 |
+  | B7 | 四个 `_check_*.py` | 零引用的一次性校验器 |
+  | L8 | `cost_report.py` + `cost_xlsx.py` | 与 cost_ledger 报表重叠；台账只留 markdown/JSON |
+  | V9 | `workflow_qwen21_blocking_16x9.json` | 九宫格链遗留，无人引用 |
+
+  连带：`drama.py` 去掉 setup/workflow/pipeline/halfcheck 四个入口、cost 去掉 Excel 参数、
+  成本估算改为直接读 `project-setup.json`（不再 import 已删模块）；
+  `commands.py` 81 → 73 条；`app.py` / `adapters.py` 去掉 workflow、setup 两条能力声明；
+  `cost_ledger.py` 移除 xlsx 导出。
+  `test_setup_workflow_pipeline.py`（57 例）拆为 `test_convert_ffs_release.py`（13 例）——
+  只保留仍然有效的三类契约：refs 分流 / FFS 规则 / 发行版本选取。
+
+  **② 新增：台词逻辑复核（剧本环节）**
+  `dialogue_gate.py` + 节点 `script.dialogue`（在 `script.gate` 与 `script.continuity` 之间，故节点 23 → 24）。
+  规则来自 `3d-short-drama-studio/references/dialogue-driven-rules.md`，**只取能机器判的部分**：
+  单镜 ≤2 句（E1）、单句 CJK≤20/拉丁≤55（E2）、同镜旁白与对白并存（E3，规则 R3）、
+  旁白条数超配额（E4）、旁白出现在中段（E5）、台词密度不足（E6，按本集实际时长折算）。
+  另有三条提示：连续 3 镜零台词（W1）、疑似空功能台词（W2，词表）、说话人不在本镜 CHAR（W3）。
+  判不了的（「这句有没有功能」「三拍落点是否可摘录」）**不假装能判** —— 那属内容评审。
+  实测 US01 ep01：5 条硬失败（2 处单镜 3 句、3 处单句超 55 字符）。
+
+  **③ 资产：A1/A2 改为会话或技能产出**
+  `asset.prompt` 节点从「跑 `character_design.py plan`」改为**手写**：
+  人物设计与角色卡提示词由会话/技能产出，引擎只留 `check`（四条规则验收，是节点判据）
+  与 `plan`（可选骨架）。`character_design.py` 因此从「生成器」退为「骨架 + 验收」。
+
+  **④ 资产：风格段统一为变量**
+  原来角色卡有「真人版 / 3D 版」两套文案，各自的风格句写死 —— 选了 look 也进不来，
+  这才是「为什么只有两个版式」的真正观感来源。现在：
+  结构差异仍由 track 决定（要不要三视图是该它管），但**风格只有一份** ——
+  `resolve_style_prompt()` 从 `drama.json` 的 `format{track,look,sub_mode}` 解析，
+  经 `style_gate.compose_style_prompt()` 拼成「look.prompt + 渲染流.prompt」，
+  灌进 `bible["style_anchor"]` 供所有模板共用；`--style-prompt` 可临时覆盖。
+  实测：US01 解析出 `surreal live-action film look, ...`（来自 drama.json 的 `surreal-cinema`）。
+
+  **回归**：生产层 23 个测试文件全绿（新增 test_dialogue_gate 12 例、test_convert_ffs_release 13 例）；
+  Studio 9 套全绿；节点 24 / 命令 73 与文档一致。
 - **2026-11-01 更新（V0.7.40 · 更正 V0.7.38 的一处错判；新增能力清单）**
   **更正**：V0.7.38 写的「`stages/subtitle/scripts/upscale.py` 这个文件不存在」是**错的**。
   该文件存在（49 KB，独立 CLI，自带 `--ep/--workspace/--target`，产物名 `<ep>_master_<W>x<H>.mp4`，

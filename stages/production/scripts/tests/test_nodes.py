@@ -9,7 +9,7 @@
 
 这份测试用 `fixtures/mini_drama`（1 集 2 镜的最小项目）让引擎**自己证明自己**：
 
-* **A 节点表**：23 节点 / 七环节 / 六字段齐 / 回流白名单 / 判据可判
+* **A 节点表**：24 节点 / 七环节 / 六字段齐 / 回流白名单 / 判据可判
 * **B 状态推导**：absent / passed / blocked / skipped / stale 的判定，只读磁盘
 * **C 判据**：ffs / board / five / script / assets 的正反例
 * **D Loop**：variant_hash 防抖、L1 预算、L2 回流白名单
@@ -94,9 +94,9 @@ def state_of(ctx, node_id: str) -> str:
 
 
 # =========================================================================== A 节点表
-@reg("A", "A01 23 节点 / 七环节，顺序与环节归属自洽")
+@reg("A", "A01 24 节点 / 七环节，顺序与环节归属自洽")
 def _():
-    A_(len(N.NODES) == 23, "节点数 %d ≠ 23" % len(N.NODES))
+    A_(len(N.NODES) == 24, "节点数 %d ≠ 24" % len(N.NODES))
     A_(len(N.STAGES) == 7, "环节数 %d ≠ 7" % len(N.STAGES))
     stage_ids = {s["id"] for s in N.STAGES}
     for n in N.NODES:
@@ -200,8 +200,23 @@ def _():
     A_(state_of(ctx, "board.script") in ("passed", "blocked"),
         "初始状态异常：%s" % state_of(ctx, "board.script"))
 
-    # 生成 bible（asset.prompt 是 board.script 的上游）
-    N.main(["do", "asset.prompt", "--workspace", str(ctx.ws)])
+    # ★ 2026-11-01：script.dialogue 插在 script.gate 之后，它是 asset.roster 的上游。
+    #   不先过它，asset.prompt 会被判 blocked（而不是 stale），这条用例就测不到 stale。
+    # 必须带 --ep：该节点的产物是 marker（_done/script.dialogue.<ep>.json），
+    # 不带 ep 会写到 `script.dialogue.json`，与 ctx.ep=ep01 的查询路径对不上 —— 看起来像「没通过」。
+    N.main(["do", "script.dialogue", "--ep", "ep01", "--workspace", str(ctx.ws)])
+    A_(state_of(ctx, "script.dialogue") == "passed",
+        "夹具剧本应通过台词复核，实际 %s" % state_of(ctx, "script.dialogue"))
+
+    # 生成 bible（asset.prompt 是 board.script 的上游）。
+    # ★ 2026-11-01：A1/A2 改为会话/技能产出后，`do asset.prompt` 只会回 TODO。
+    #   测试里用「会话会做的事」代替：直接调骨架生成器落 bible，再看节点是否认。
+    import subprocess
+    r = subprocess.run([sys.executable, str(pathlib.Path(SCRIPTS).parents[1] / "assets" / "scripts" / "character_design.py"),
+                        "plan", "--roster", str(ctx.ws / "04-资产" / "design" / "roster.json"),
+                        "--out", str(ctx.ws / "04-资产" / "design")],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    A_(r.returncode == 0, "骨架生成失败：%s" % (r.stderr or r.stdout)[-300:])
     A_(state_of(ctx, "asset.prompt") == "passed", "bible 生成后 asset.prompt 应通过")
 
     # ★ 关键断言：bible 刚生成、分镜 md 还是旧的 → board.script 必须报 stale。
@@ -431,8 +446,8 @@ def _():
     ev = N.evaluate(ctx)
     for k in ("ws", "ep", "nodes", "counts"):
         A_(k in ev, "缺字段 %s" % k)
-    A_(len(ev["nodes"]) == 23, "节点数不对")
-    A_(sum(ev["counts"].values()) == 23, "counts 合计应 23")
+    A_(len(ev["nodes"]) == 24, "节点数不对")
+    A_(sum(ev["counts"].values()) == 24, "counts 合计应 24")
     for r in ev["nodes"]:
         A_({"id", "state", "detail"} <= set(r), "节点行缺字段：%s" % r)
         A_(r["state"] in ("passed", "failed", "absent", "stale", "skipped", "blocked"),
