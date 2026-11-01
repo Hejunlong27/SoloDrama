@@ -1,6 +1,41 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.38 · 剪辑五节点接上执行体；节点执行体的错法从此可判）**
+  第 14 项。`edit.*` 五个节点此前**只有判据、没有可用执行体**：`run` 字段是「想当然写下的」，
+  四类错同时存在，而且都不会抛异常 —— 节点只会「一直过不去」，报错却是「找不到 `*_bgm.mp4`」，
+  看起来像数据缺失。这类错以前没有任何东西能挡住。
+
+  **① 改掉四个真错**
+  | 节点 | 原 run | 问题 | 现 run |
+  |---|---|---|---|
+  | `edit.upscale` | `subtitle/scripts/upscale.py` | **脚本不存在**（放大是 `subtitle.py` 的一个 stage） | `subtitle.py --stage upscale` |
+  | `edit.audio` | `subtitle/scripts/bgm.py mix` | 路径错（实在 `production/scripts`）+ 缺 `--apply` | `production/scripts/bgm.py mix --apply` |
+  | `edit.release` | `release_export.py --all --apply` | ep 级节点用 `--all`，跑 ep01 会重导全部 | `release_export.py --apply`（`--ep` 由调度器注入） |
+  | `edit.master` / `edit.subtitle` | 正确 | — | 保持 |
+
+  **② `release` 判据改成按集判**
+  旧实现拿「全剧总集数」跟已导出数比，于是跑 ep01 时因为另外 29 集还没导出**永远不过**，
+  报错是「发布版 1 / 目标 30 集」—— 看着像数据缺失，其实是判据越界。
+  现在 ep 级只看本集 `EpisodeNN.mp4`；全剧盘点归 `release_check.py`，不归这个节点。
+
+  **③ `--dry-run` 在上游阻塞时也打印命令**
+  以前 `do edit.audio --dry-run` 只回一句 `[BLOCKED]`，而人想看的是「这条命令拼成什么样」——
+  检查接线恰恰发生在上游还没跑通的时候。现在抽了 `_build_args()` / `_print_plan()`，
+  **dry-run 与真跑共用同一份命令拼装**（各写一份的下场是「干跑看着对、真跑报错」）。
+
+  **④ 新增 `tests/test_node_runs.py`（6 例，全静态、零执行）**
+  - R01 每个节点都有 `run`，且要么是 python 命令、要么显式声明为人工/内置
+  - R02 命令里的脚本**必须真实存在**（这条直接抓出 `upscale.py` 不存在）
+  - R03 目标脚本有 `--apply` 门闸而命令没带 → 判失败（抓「永远空转」）
+  - R04 ep 级节点不许用 `--all`（抓「跑到别的集去」）
+  - R05 `cmd:` 检查器必须能解析到脚本
+  - R06 **检测器自测**：正反两个方向都要能判出来 —— 永远返回 False 的检测器
+    会让 R03 永远通过，那种绿比红更有害
+
+  **回归**：新增 6 例；其余全绿（nodes 25 / convert 17 / gen_boards 16 / init 14 / style 23 /
+  model 29 / release 15+14 / migrate 16 / workflow 57 / channels 10 / slot_hygiene 32 /
+  character_design 28 / env_check 22 / comfy_ports / workflow_map / escape 3 / repo_paths 3）。
 - **2026-11-01 更新（V0.7.37 · 删冗余：站点只剩一条路，三份重复实现收敛成一份）**
   V0.7.36 把站点搬进配置后，`RUNNINGHUB_BASE_URL` 就成了**死变量** —— 但代码里还有 8 处读它、
   三处各写一份「先 env、再项目配置、最后引擎默认」。留着不是「兼容」，是给同一件事留三条路。

@@ -212,6 +212,10 @@ NODES: list = [
      "run": "（逐段校验：存在/时长/分辨率/音轨）"},
 
     # ---------------- 剪辑 ----------------
+    # 这五个节点的执行体 2026-11-01 才接上。此前只有判据、`run` 写的是「想当然的路径」——
+    # 两条是错的（`subtitle/scripts/upscale.py` 不存在、`bgm.py` 在 production 下），
+    # 两条是空转的（`bgm.py mix` / `release_export` 默认干跑，不带 `--apply` 永远不落盘）。
+    # 判据全绿、节点永远过不去，而报错只是「找不到 *_bgm.mp4」。
     {"id": "edit.master", "stage": "edit", "ep": True,
      "trigger": "drama do edit.master --ep ep01",
      "reads": ["video.audit"], "output": "07-成片/<ep>/*_master.mp4",
@@ -221,22 +225,27 @@ NODES: list = [
      "trigger": "drama do edit.upscale --ep ep01",
      "reads": ["edit.master"], "output": "07-成片/<ep>/*_master_1080x1920.mp4",
      "check": "upscaled", "next": "edit.audio", "reflow": ["edit.master"],
-     "run": "python stages/subtitle/scripts/upscale.py"},
+     # 放大是 `subtitle.py` 的一个 stage（本地 Topaz / RH 由 provider 决定），
+     # 没有独立的 upscale.py —— 旧 `run` 指向一个不存在的脚本。
+     "run": "python stages/subtitle/scripts/subtitle.py --stage upscale"},
     {"id": "edit.audio", "stage": "edit", "ep": True,
      "trigger": "drama do edit.audio --ep ep01",
      "reads": ["edit.upscale"], "output": "07-成片/<ep>/*_bgm.mp4",
      "check": "audio", "next": "edit.subtitle", "reflow": ["edit.upscale"],
-     "run": "python stages/subtitle/scripts/bgm.py mix"},
+     # bgm.py 在 production/scripts 下；`mix` 默认干跑，必须显式 --apply
+     "run": "python stages/production/scripts/bgm.py mix --apply"},
     {"id": "edit.subtitle", "stage": "edit", "ep": True,
      "trigger": "drama do edit.subtitle --ep ep01",
      "reads": ["edit.audio"], "output": "07-成片/<ep>/*_subbed.mp4",
      "check": "subtitled", "next": "edit.release", "reflow": ["edit.audio"],
      "run": "python stages/subtitle/scripts/subtitle.py --stage render"},
     {"id": "edit.release", "stage": "edit", "ep": True,
-     "trigger": "drama do edit.release",
+     "trigger": "drama do edit.release --ep ep01",
      "reads": ["edit.subtitle"], "output": "09-发行/剧集/EpisodeNN.mp4",
      "check": "release", "next": "", "reflow": ["edit.subtitle"],
-     "run": "python stages/production/scripts/release_export.py --all --apply"},
+     # 按集导出，不是 --all：节点本身是 ep 级的，--all 会把其它集一起过一遍，
+     # 于是「跑 ep01」变成「重导全部」，且失败时分不清是哪一集。
+     "run": "python stages/production/scripts/release_export.py --apply"},
 ]
 
 NODE_BY_ID = {n["id"]: n for n in NODES}
@@ -549,12 +558,24 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
     if spec == "release":
         d = ctx.ws / "09-发行" / "剧集"
         got = {p.name for p in d.glob("Episode*.mp4")} if d.is_dir() else set()
+        # 文件名必须是 EpisodeNN.mp4（补零），否则平台排序会乱
+        bad = [n for n in got if not re.fullmatch(r"Episode\d{2,3}\.mp4", n)]
+        if bad:
+            return False, "命名不规范：%s" % "、".join(bad[:5])
+        # ★ 2026-11-01：节点是 ep 级的，判据也必须按集判。
+        #   旧实现拿「全剧总集数」比，于是跑 ep01 时因为另外 29 集还没导出而永远不过，
+        #   报错是「发布版 1 / 目标 30 集」—— 看起来像数据缺失，其实是判据越界。
+        #   全剧盘点归 release_check.py，不归这个节点。
+        if ctx.ep:
+            nn = re.sub(r"[^0-9]", "", ctx.ep) or "01"
+            name = "Episode%s.mp4" % nn.zfill(2)
+            if name not in got:
+                return False, "本集发布版不存在：%s" % name
+            return True, name
         need = _eps_of(ctx.ws)
         if len(got) < need:
             return False, "发布版 %d / 目标 %d 集" % (len(got), need)
-        # 文件名必须是 EpisodeNN.mp4（两位数），否则平台排序会乱
-        bad = [n for n in got if not re.fullmatch(r"Episode\d{2,3}\.mp4", n)]
-        return (not bad), ("%d 集齐" % len(got)) if not bad else "命名不规范：%s" % "、".join(bad[:5])
+        return True, "%d 集齐" % len(got)
 
     # ---- cmd:xxx —— 调外部脚本，退出码 0 即通过 ----
     if spec.startswith("cmd:"):
@@ -765,6 +786,49 @@ def reflow_target(ctx: Ctx, node_id: str) -> str | None:
 # ===========================================================================
 # 执行
 # ===========================================================================
+def _build_args(ctx: Ctx, node: dict) -> list:
+    """把节点的 `run` 模板展开成 argv：占位符 + `--workspace` + `--ep`。
+
+    ★ 抽成函数是为了让 `--dry-run` 与真跑**共用同一份拼装**。各写一份的下场是
+      「干跑打印的命令和真跑的命令不一样」，于是「干跑看着对、真跑报错」——
+      而那时候人已经相信干跑结果了。
+    """
+    cmd = str(node.get("run") or "")
+    try:
+        assets = str(L.assets_dir(ctx.ws))
+    except Exception:                                            # noqa: BLE001
+        assets = str(ctx.ws / "04-资产")
+    raw = (cmd.replace("{ws}", str(ctx.ws)).replace("{ep}", ctx.ep or "ep01")
+              .replace("{assets}", assets).replace("{data}", str(ctx.data)))
+    args = raw.split()
+    # 引擎类节点（出片）的 workspace 是 `<项目根>/video-pipeline`：
+    # 引擎的 `--workspace` 指的是引擎根，不是项目根，两者差一层。
+    node_ws = ctx.ws
+    if node.get("ws_kind") == "engine":
+        cand = ctx.ws / "video-pipeline"
+        node_ws = cand if cand.is_dir() else ctx.ws
+    args += ["--workspace", str(node_ws)]
+    if node.get("ep") and ctx.ep and "--ep" not in args:
+        # 集号的形态各家不同：`cli.py` 要整数（--ep 1），出片/转换要 `ep01`。
+        # 这是「参数约定不统一」的又一例，用声明而不是猜。
+        ep_arg = ctx.ep
+        if node.get("ep_style") == "int":
+            ep_arg = str(int(re.sub(r"[^0-9]", "", ctx.ep) or "1"))
+        args += ["--ep", ep_arg]
+    return args
+
+
+def _print_plan(ctx: Ctx, node: dict, dry_run: bool = True) -> None:
+    """打印将要执行的命令（`--dry-run` 用，包括上游被阻塞时）。"""
+    args = _build_args(ctx, node)
+    if args and args[0] in ("python", "python3"):
+        args[0] = sys.executable
+    if dry_run:
+        print("[DRY-RUN] %s" % " ".join(args))
+    else:
+        print("执行 %s" % " ".join(args))
+
+
 def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -> int:
     node = NODE_BY_ID.get(node_id)
     if not node:
@@ -773,6 +837,14 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
 
     st = node_state(ctx, node)
     if st["state"] == "blocked":
+        # ★ dry-run 是**检查接线**用的，不是执行。上游没通过时更要能看见命令 ——
+        #   否则「drama do edit.audio --dry-run」只会回一句 BLOCKED，
+        #   而人想看的是「这条命令到底拼成什么样」。只打印，绝不执行。
+        if dry_run:
+            print("[BLOCKED] %s" % st["detail"])
+            _print_plan(ctx, node, dry_run=True)
+            print("（dry-run 只打印命令，不执行；上游通过后才真跑）")
+            return EXIT_OK
         print("[BLOCKED] %s" % st["detail"])
         return EXIT_NOINPUT
 
@@ -825,29 +897,10 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
 
     # 占位符：{ws} / {ep} / {assets} / {data}。节点的执行命令要能引用项目内路径，
     # 否则像 `plan` 这种必须带 --roster/--out 的脚本根本跑不起来（实测踩过）。
-    try:
-        _assets = str(L.assets_dir(ctx.ws))
-    except Exception:                                            # noqa: BLE001
-        _assets = str(ctx.ws / "04-资产")
-    raw = (cmd.replace("{ws}", str(ctx.ws)).replace("{ep}", ctx.ep or "ep01")
-              .replace("{assets}", _assets).replace("{data}", str(ctx.data)))
-    args = raw.split()
+    args = _build_args(ctx, node)
     if args[0] in ("python", "python3"):
         args[0] = sys.executable
-    # 引擎类节点（出片）的 workspace 是 `<项目根>/video-pipeline`：
-    # 引擎的 `--workspace` 指的是引擎根，不是项目根，两者差一层。
-    node_ws = ctx.ws
-    if node.get("ws_kind") == "engine":
-        cand = ctx.ws / "video-pipeline"
-        node_ws = cand if cand.is_dir() else ctx.ws
-    args += ["--workspace", str(node_ws)]
-    if node.get("ep") and ctx.ep and "--ep" not in args:
-        # 集号的形态各家不同：`cli.py` 要整数（--ep 1），
-        # 出片/转换要 `ep01`。这是"参数约定不统一"的又一例，用声明而不是猜。
-        ep_arg = ctx.ep
-        if node.get("ep_style") == "int":
-            ep_arg = str(int(re.sub(r"[^0-9]", "", ctx.ep) or "1"))
-        args += ["--ep", ep_arg]
+
     if node_id == "video.batch":
         if not yes:
             print("[HUMAN] 出片计费，必须显式 --yes")
