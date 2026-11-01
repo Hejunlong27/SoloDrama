@@ -1,0 +1,9 @@
+{
+  "characters": {
+    "char_ava": "characters/char_ava_00.png",
+    "char_ben": "characters/char_ben_00.png"
+  },
+  "scenes": {
+    "scene_room": "scenes/scene_room_00.png"
+  }
+}

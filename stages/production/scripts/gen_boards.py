@@ -110,16 +110,70 @@ def _read_json(p: pathlib.Path, default):
         return default
 
 
-def _codes(refs) -> list:
-    """从 refs 里挑出角色代号：`char_elle` → `ELLE`。场景/未登记的不算。"""
+def _specs_from_md(ws: pathlib.Path, ep: str) -> dict:
+    """从分镜 md 抽 `{shot_id: {prompt, ratio, refs}}`。
+
+    只认 5 字段里的 `board / ratio / refs` —— 与 `convert_storyboard` 的解析口径一致，
+    但**不去读它的产物**（避免环节之间反向依赖）。
+    """
+    f = L.stage_dir(ws, "storyboard") / ("%s_storyboard.md" % ep)
+    if not f.is_file():
+        return {}
+    text = f.read_text(encoding="utf-8", errors="replace")
+    out = {}
+    for block in re.split(r"(?m)^##\s+", text)[1:]:
+        lines = block.split("\n")
+        sid = lines[0].strip().split()[0] if lines else ""
+        if not sid:
+            continue
+        body = "\n".join(lines[1:])
+        m = re.search(r"(?m)^-\s*board:\s*\|\s*\n(.*?)(?=\n-\s|\n---|\Z)", body, re.S)
+        if not m:
+            continue
+        buf = []
+        for ln in m.group(1).split("\n"):
+            if ln.startswith(("    ", "\t")):
+                buf.append(ln[4:] if ln.startswith("    ") else ln.lstrip("\t"))
+            elif not ln.strip() and buf:
+                buf.append("")
+            elif ln.strip():
+                break
+        prompt = "\n".join(buf).strip()
+        if not prompt:
+            continue
+        r = re.search(r"(?m)^-\s*ratio:\s*(\S+)", body)
+        ref = re.search(r"(?m)^-\s*refs:\s*(.+)$", body)
+        out[sid] = {"prompt": prompt,
+                    "ratio": (r.group(1) if r else "9:16"),
+                    "refs": [x.strip() for x in re.split(r"[,，、\s]+", ref.group(1)) if x.strip()]
+                    if ref else []}
+    return out
+
+
+def _codes(refs, known=()) -> list:
+    """从 refs 里挑出角色代号。三种写法都认：
+
+        char_elle  → ELLE      （下划线 key，最常见）
+        Character_Elle → ELLE
+        ELLE       → ELLE      （直接写代号 —— 名册里就是这么写的，别只认带前缀的）
+
+    场景 key（`scene_room`）不在 `known` 里，所以不会被误当成角色。
+    不传 `known` 时退化为「只认前缀」，保持旧行为。
+    """
+    known_set = {str(k).upper() for k in (known or [])}
     out = []
     for r in refs or []:
         s = str(r).strip()
         low = s.lower()
-        for pre in ("char_", "character_", "ch_"):
+        hit = None
+        for pre in ("character_", "char_", "ch_"):
             if low.startswith(pre):
-                out.append(s[len(pre):].upper())
+                hit = s[len(pre):].upper()
                 break
+        if hit is None and s.upper() in known_set:
+            hit = s.upper()
+        if hit:
+            out.append(hit)
     return out
 
 
@@ -131,7 +185,7 @@ def build_prompt(shot_id: str, spec: dict, bible: dict, style_line: str,
     模型会把人裁掉一半或让第二个人变成背影，成片直接废。
     """
     refs = spec.get("refs") or []
-    codes = _codes(refs)
+    codes = _codes(refs, [c.get("code") for c in (bible.get("characters") or [])])
     n = len(codes) or 1
     people = NUM_EN.get(n, "exactly %d people" % n)
 
@@ -212,16 +266,21 @@ def main() -> int:
 
     ws = pathlib.Path(a.workspace).expanduser().resolve() if a.workspace else W.WS
     data_dir = W.data_dir(ws) / a.ep
-    boards_json = data_dir / "boards.json"
-    if not boards_json.is_file():
-        print("[FAIL] 找不到 %s" % boards_json)
-        print("       先跑：python stages/production/scripts/convert_storyboard.py "
-              "--workspace \"%s\" --ep %s --apply" % (ws, a.ep))
-        return 2
 
-    specs = _read_json(boards_json, {}) or {}
+    # ★ 分镜图的提示词真源是**分镜 md**，不是 `boards.json`。
+    #   为什么改：`boards.json` 是 `convert_storyboard` 的产物，而那一步在
+    #   七环节里排在「提示词」环节 —— 如果分镜图只认 boards.json，
+    #   「分镜」环节就得依赖排在它后面的「提示词」环节，拓扑直接成环。
+    #   md 里的 `- board:` 就是分镜环节自己的产物，读它才符合环节边界。
+    specs = _specs_from_md(ws, a.ep)
+    src = "05-分镜/%s_storyboard.md" % a.ep
     if not specs:
-        print("[FAIL] %s 为空" % boards_json)
+        boards_json = data_dir / "boards.json"
+        specs = _read_json(boards_json, {}) or {}
+        src = str(boards_json)
+    if not specs:
+        print("[FAIL] 既没有分镜 md 的 `- board:` 字段，也没有 %s/boards.json" % data_dir)
+        print("       分镜 md 里给每一镜补上：\n         - board: |\n             <这一镜的单帧构图描述>")
         return 2
     h3 = _read_json(data_dir / "h3_prompts.json", {}) or {}
     bible = _read_json(L.assets_dir(ws) / "design" / "character-bible.json", {}) or {}
@@ -237,7 +296,7 @@ def main() -> int:
     print("分镜图生成 · %s" % a.ep)
     print("=" * 74)
     print("  工作区  : %s" % ws)
-    print("  契约    : %s（%d 镜）" % (boards_json, len(specs)))
+    print("  契约    : %s（%d 镜）" % (src, len(specs)))
     print("  落点    : %s" % out_dir)
     print("  风格    : %s" % (style_line[:70] or "（未取到 look，用默认摄影风格）"))
     print("  通道    : %s" % ("本地图生图（ref1=主角色）" if a.with_refs else "本地文生图"))

@@ -135,7 +135,8 @@ def parse_md(text: str) -> list:
             body = body[:fm.start()] + body[fm.end():]
         # 2) 字段行
         for m in KV.finditer(body):
-            k, v = _norm_key(m.group(1)), m.group(2).strip()
+            _raw_key = m.group(1).strip()
+            k, v = _norm_key(_raw_key), m.group(2).strip()
             if not v:
                 continue
             if k in ("prompt", "board") and v in ("|", "|-", ">", ">-", ""):
@@ -164,6 +165,14 @@ def parse_md(text: str) -> list:
                 continue
             if k == "prompt" and not prompt:
                 prompt = v
+            elif k == "_dead":
+                # 记下**原字段名**：只写一个 `_dead` 的话，报错只能说「有已下线字段」，
+                # 说不出是 banana_prompt 还是 time —— 用户不知道该删哪一行。
+                fields.setdefault("_dead", [])
+                if isinstance(fields["_dead"], list):
+                    fields["_dead"].append(_raw_key)
+                else:
+                    fields["_dead"] = [str(fields["_dead"]), _raw_key]
             else:
                 fields.setdefault(k, v)
         out.append({"shot_id": sid, "fields": fields, "prompt": prompt})
@@ -311,8 +320,8 @@ def build(shots: list, ws: pathlib.Path, ep: str = "",
         seen.add(sid)
 
         # 死字段：认得出、不生效，但要让人知道你写的没用了
-        for dead in [k for k in f if k == "_dead" or k in DEAD_FIELDS]:
-            stats["dead_fields"].append(sid)
+        for _d in (f.get("_dead") or []):
+            stats["dead_fields"].append("%s:%s" % (sid, _d))
 
         if not s["prompt"].strip():
             problems.append("%s 缺 prompt（H3 提示词）" % sid)

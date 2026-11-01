@@ -1,6 +1,46 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.34 · 把验收从「做一部剧」改成「引擎自证」）**
+  用户纠正了一次边界：我的任务是整改引擎，不是制作短剧。这条纠正暴露的是**引擎的设计缺陷**——
+  V0.7.33 那批新代码（`nodes.py` / `gen_boards.py` / `convert_storyboard.py` 的新逻辑）**零测试**，
+  所以验收只能靠「真跑一遍 ep01」：写 8 条分镜提示词、出 8 张图。那等于用「我做出一部短剧」
+  证明「引擎没坏」——剧做出来了可能是我手工补了内容，引擎照样有 bug；做不出来又分不清是谁的问题。
+
+  **① 新增最小项目夹具** `stages/production/scripts/tests/fixtures/mini_drama/`
+  1 集 2 镜，全字段齐（layout / 调研 / 蓝图 / 剧本 / 名册 / refs / 分镜 5 字段），
+  不含任何真实剧本内容。9 个文本文件，合计 ~5 KB。
+
+  **② 新增四份测试（58 例，全离线、零计费）**
+  - `test_nodes.py`（25 例）：23 节点表自洽 / 状态六值推导 / 判据正反例 / Loop 四层 / variant_hash 防抖 / 执行与 marker
+  - `test_convert_storyboard.py`（17 例）：5 字段解析 / `board: |` 块标量 / 不吞 `prompt:` / Picture 重排闭合 / 五文件契约 / 死字段
+  - `test_gen_boards.py`（16 例）：**人数从 refs 实算（1/2/3 人分别验）** / 模板无写死句式 / 构图锚定位 / 读 md 不依赖 boards.json
+  - `test_escape_corruption.py`（3 例）：全仓库扫描「正则转义被破坏」
+
+  **③ 测试逼出来的 6 个真缺陷**（全部是「只有跑起来才发现」的）
+  1. **`gen_boards.py` 的 `_specs_from_md` 整段正则是坏的**（heredoc 把 `\s` 写成 `//s`），
+     所以 V0.7.33 那次「改读分镜 md」其实从未生效，一直靠 `boards.json` 回退在工作。
+  2. `nodes.py` 的 argparse 报错解析同样是 `//s` —— 自适应剥参数从未生效。
+  3. **`（手写` 与 `（内置判据` 被同一分支吞掉**：`asset.roster` 这种「该你写」的节点，
+     产物在就被当成「检查通过」返回 0。
+  4. **`stale` 被 `passed` 抢先**：旧顺序是「判据通过就 passed」，于是改完资产、
+     分镜 md 一个字没动也照样 passed —— 拿上一版分镜去出图，肉眼查不出来。
+  5. **拓扑成环**：`board.frame` 依赖排在它后面的 `prompt.assemble`。修法是让分镜图生成器
+     **直接读分镜 md**（分镜环节自己的产物），不经提示词环节的中间文件。
+  6. **`refs.json` 的相对路径有第三种基准**（相对资产目录）。此前只认「相对工作区/相对 data」，
+     US01 与夹具各踩一次，基准还不一样。
+  另修：`asset.prompt` 的执行命令缺 `--roster/--out`；`AVA` 这种「直接写代号」的 refs 认不出；
+  节点执行命令支持 `{ws}/{ep}/{assets}/{data}` 占位符。
+
+  **④ 转义损坏从「靠记忆」改成「靠判据」**
+  同一条坑踩了四次（`subtitle.py` / `prompt_gate.py` / `nodes.py` / `gen_boards.py`），
+  共同点是**都不报错、静默不匹配**，症状看起来像数据问题。现在 `tools/tests/test_escape_corruption.py`
+  扫全仓库，把 `//s //d //w //n //Z` 这类正则上下文里的可疑写法直接判失败（含自测，防止扫描器永远返回空）。
+  纪律仍然有效：**正则不经过 heredoc 写盘，用直接编辑**。
+
+  **回归**：新增 58 例 + 存量 232 例全绿（style_gate 23 / model_gate 29 / release_check 15 /
+  release_export 14 / migrate_assets 16 / creation 57 / workflow 57 / slot_hygiene 32 /
+  character_design 28 / comfy_ports / workflow_map / env_check 22）。
 - **2026-11-01 更新（V0.7.33 · 四项 D1 破坏性改造做完：资产 3 项 / 分镜 5 字段 / data 五文件 / 分镜图出片 / 七环节 23 节点）**
   这一版把 V0.7.32 有意留下的四项 D1 一次做完。用户确认「现在没有其他短剧任务在做」，产物作废可接受。
 

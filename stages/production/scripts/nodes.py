@@ -158,7 +158,7 @@ NODES: list = [
      "trigger": "drama do asset.prompt",
      "reads": ["asset.roster"], "output": "04-资产/design/character-bible.json",
      "check": "cmd:character_design.py check --bible {bible}", "next": "asset.render",
-     "reflow": ["asset.roster"], "run": "python stages/assets/scripts/character_design.py plan"},
+     "reflow": ["asset.roster"], "run": "python stages/assets/scripts/character_design.py plan --roster {assets}/design/roster.json --out {assets}/design"},
     {"id": "asset.render", "stage": "asset", "ep": False,
      "trigger": "drama do asset.render",
      "reads": ["asset.prompt"], "output": "04-资产/refs.json",
@@ -173,12 +173,12 @@ NODES: list = [
      "run": "（手写：5 字段 duration/ratio/refs/board/prompt）"},
     {"id": "board.frame", "stage": "board", "ep": True,
      "trigger": "drama do board.frame --ep ep01",
-     "reads": ["prompt.assemble"], "output": "04-资产/boards/<ep>/",
+     "reads": ["board.script"], "output": "04-资产/boards/<ep>/",
      "check": "boards", "next": "board.gate", "reflow": ["board.script"],
      "run": "python stages/production/scripts/gen_boards.py --apply"},
     {"id": "board.gate", "stage": "board", "ep": True,
      "trigger": "drama do board.gate --ep ep01",
-     "reads": ["board.frame"], "output": "_done/board.gate.<ep>.json",
+     "reads": ["board.script", "board.frame"], "output": "_done/board.gate.<ep>.json",
      "check": "cmd:prompt_gate.py", "next": "prompt.contract",
      "reflow": ["board.script", "board.frame"], "run": "python stages/production/scripts/prompt_gate.py"},
 
@@ -186,11 +186,11 @@ NODES: list = [
     {"id": "prompt.assemble", "stage": "prompt", "ep": True,
      "trigger": "drama do prompt.assemble --ep ep01",
      "reads": ["board.script"], "output": "06-提示词/<ep>/h3_prompts.json",
-     "check": "five", "next": "board.frame", "reflow": ["board.script"],
+     "check": "five", "next": "prompt.contract", "reflow": ["board.script"],
      "run": "python stages/production/scripts/convert_storyboard.py --apply"},
     {"id": "prompt.contract", "stage": "prompt", "ep": True,
      "trigger": "drama do prompt.contract --ep ep01",
-     "reads": ["board.gate"], "output": "_done/prompt.contract.<ep>.json",
+     "reads": ["prompt.assemble", "board.gate"], "output": "_done/prompt.contract.<ep>.json",
      "check": "cmd:ingest_check.py", "next": "video.resolve",
      "reflow": ["prompt.assemble", "board.frame"], "run": "python stages/production/scripts/ingest_check.py"},
 
@@ -464,9 +464,15 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
                 return True
             if pathlib.Path(s).is_absolute():
                 return pathlib.Path(s).is_file()
-            # refs.json 里的相对路径，历史上有两种基准：相对工作区、相对 data 目录。
-            # 只认一种就会出现「19 个 key 缺图」这种假阴性（实测 US01 就是这种）。
-            return (ctx.ws / s).is_file() or (ctx.data / s).is_file()
+            # refs.json 里的相对路径有**三种**基准，历史上三种都出现过：
+            #   ① 相对工作区  ② 相对 data 目录  ③ 相对资产目录（refs.json 自己所在处）
+            # 只认一种就会报「N 个 key 缺图」的假阴性（US01 与夹具各踩一次，基准还不一样）。
+            bases = [ctx.ws, ctx.data]
+            try:
+                bases.append(L.assets_dir(ctx.ws))
+            except Exception:                                    # noqa: BLE001
+                pass
+            return any((b / s).is_file() for b in bases)
         miss = [k for k, v in keys.items() if not _ok(v)]
         return (not miss), ("%d 张齐" % len(keys)) if not miss else \
             "%d 个 key 缺图：%s" % (len(miss), "、".join(miss[:6]))
@@ -621,7 +627,11 @@ def node_state(ctx: Ctx, node: dict) -> dict:
     # 否则「剧本明明在，却说缺失」——这正是 E1/E2 类假阴性在调度器里的复现。
     if node.get("check") == "script":
         out = ctx.ep_script() or out
-    exists = out.exists() or ctx.marker(oid).is_file()
+    # 纯检查类节点（run 以「（内置…」开头，无副作用）不该要求 marker：
+    # 它的「产物」就是判据的结论本身。要求 marker 等于强迫每部剧都手工 do 一遍
+    # 纯只读检查，否则 next 永远卡在这里 —— 这是流程税，不是把关。
+    _pure_check = str(node.get("run") or "").startswith("（") and "手写" not in str(node.get("run") or "")
+    exists = out.exists() or ctx.marker(oid).is_file() or _pure_check
     if not exists:
         # 可选节点缺失 != 流程卡住：调研类节点很多项目直接跳过（手上有素材就开写）。
         # 缺了只标注，不阻塞下游 —— 否则一部没有调研的项目永远走不到剧本。
@@ -637,6 +647,27 @@ def node_state(ctx: Ctx, node: dict) -> dict:
         pass
 
     ok, detail = check_node(ctx, node)
+
+    # ★ stale 要**先于** passed 判：产物格式对、但上游改过了，仍算过期。
+    #   旧顺序是「判据通过就 passed」，于是改了分镜 md 之后，旧的 shots.json
+    #   因为「五文件都在」被算作 passed —— 拿上一版的提示词去出片，肉眼查不出来。
+    newest_up = 0.0
+    for up in node.get("reads") or []:
+        u = NODE_BY_ID.get(up)
+        if not u:
+            continue
+        try:
+            up_p = ctx.ep_path(u)
+            if u.get("check") == "script":
+                up_p = ctx.ep_script() or up_p
+            if up_p.exists():
+                newest_up = max(newest_up, up_p.stat().st_mtime)
+        except OSError:
+            pass
+    if ok and newest_up and mtime and newest_up > mtime + 1:
+        return {"id": oid, "state": "stale",
+                "detail": "产物比上游旧 %d 分钟（%s）" % ((newest_up - mtime) / 60, detail),
+                "mtime": mtime}
     if ok:
         return {"id": oid, "state": "passed", "detail": detail, "mtime": mtime}
     # 可选节点：产物在但判据不过，也只标注、不阻塞。
@@ -645,22 +676,6 @@ def node_state(ctx: Ctx, node: dict) -> dict:
         return {"id": oid, "state": "skipped",
                 "detail": "可选节点未达标（不阻塞）：%s" % detail, "mtime": mtime}
 
-    # 产物在但比上游旧 → stale（先重跑，别急着判内容错）
-    newest_up = 0.0
-    for up in node.get("reads") or []:
-        u = NODE_BY_ID.get(up)
-        if not u:
-            continue
-        try:
-            up_m = ctx.ep_path(u)
-            if up_m.exists():
-                newest_up = max(newest_up, up_m.stat().st_mtime)
-        except OSError:
-            pass
-    if newest_up and mtime and newest_up > mtime + 1:
-        return {"id": oid, "state": "stale",
-                "detail": "产物比上游旧 %d 分钟：%s" % ((newest_up - mtime) / 60, detail),
-                "mtime": mtime}
     return {"id": oid, "state": "failed", "detail": detail, "mtime": mtime}
 
 
@@ -750,7 +765,25 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
     print("执行 %s" % cmd)
     print("=" * 74)
 
-    # run 以中文括号开头 = 「没有外部命令，判据本身就是执行」（如 FFS 结构检查）。
+    # 「手写」类节点：产物得由人或会话产出，调度器**不能替它做决定**。
+    # 一旦产物已经在，就算完成（写 marker + 报 TODO）；不在就报 TODO 让人去补。
+    # ★ 这个分支必须排在「内置判据」之前：两者都以中文括号开头，
+    #   混在一起会把「该你写的」当成「检查通过」直接放行。
+    if "手写" in cmd:
+        ok, detail = check_node(ctx, node)
+        if ok:
+            _write_json(ctx.marker(node_id), {
+                "node": node_id, "ep": ctx.ep, "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "detail": "产物已存在（人工产出）", "returncode": 0})
+            print("产物已在：%s" % detail)
+            print("[OK] 该节点由人工产出，产物齐即可 —— 已记 passed。")
+            return EXIT_OK
+        print("[TODO] 这一步需要人或会话完成，调度器不代做。")
+        print("       现在：%s" % detail)
+        print("       产物：%s" % ctx.ep_path(node))
+        return EXIT_TODO
+
+    # run 以中文括号开头且不是手写 = 「判据本身就是执行」（如 FFS 结构检查）。
     # 这类节点只跑判据、不 spawn 子进程 —— 否则会把说明文字当命令执行。
     if cmd.startswith("（"):
         ok, detail = check_node(ctx, node)
@@ -771,7 +804,15 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
               % (node_id, (" --ep " + ctx.ep) if ctx.ep else ""))
         return EXIT_TODO
 
-    args = cmd.split()
+    # 占位符：{ws} / {ep} / {assets} / {data}。节点的执行命令要能引用项目内路径，
+    # 否则像 `plan` 这种必须带 --roster/--out 的脚本根本跑不起来（实测踩过）。
+    try:
+        _assets = str(L.assets_dir(ctx.ws))
+    except Exception:                                            # noqa: BLE001
+        _assets = str(ctx.ws / "04-资产")
+    raw = (cmd.replace("{ws}", str(ctx.ws)).replace("{ep}", ctx.ep or "ep01")
+              .replace("{assets}", _assets).replace("{data}", str(ctx.data)))
+    args = raw.split()
     if args[0] in ("python", "python3"):
         args[0] = sys.executable
     # 引擎类节点（出片）的 workspace 是 `<项目根>/video-pipeline`：
@@ -803,7 +844,7 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
         r = subprocess.run(args, cwd=str(ROOT), text=True, encoding="utf-8", errors="replace",
                            capture_output=True)
         err = (r.stderr or "") + (r.stdout or "")
-        m = re.search(r"unrecognized arguments://s*--([a-z0-9-]+)", err)
+        m = re.search(r"unrecognized arguments:\s*--([a-z0-9-]+)", err)
         if r.returncode in (1, 2) and m:
             bad = "--" + m.group(1)
             if bad in args:

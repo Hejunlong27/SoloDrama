@@ -1,0 +1,19 @@
+{
+  "layout_version": 1,
+  "engine_root": "video-pipeline",
+  "stages": {
+    "research": "01-调研",
+    "topic": "02-选题",
+    "script": "03-剧本",
+    "assets": "04-资产",
+    "storyboard": "05-分镜",
+    "prompts": "06-提示词",
+    "film": "07-成片",
+    "compliance": "08-合规",
+    "release": "09-发行"
+  },
+  "data_rel": "../06-提示词",
+  "out_rel": "../07-成片",
+  "assets_rel": "../04-资产",
+  "_comment": "测试夹具：最小可跑项目（1 集 2 镜）。不含任何真实剧本内容，只为让 23 节点状态机可自证。"
+}

@@ -1,0 +1,27 @@
+{
+  "world": "测试世界",
+  "region": "western",
+  "seed": "fixture-seed",
+  "style_lock": "live_action",
+  "style_anchor": "plain photographic look",
+  "characters": [
+    {
+      "name": "Ava",
+      "code": "AVA",
+      "gender": "f",
+      "age": 30,
+      "tier": "lead",
+      "identity": "测试角色甲",
+      "faction": "主线"
+    },
+    {
+      "name": "Ben",
+      "code": "BEN",
+      "gender": "m",
+      "age": 34,
+      "tier": "support",
+      "identity": "测试角色乙",
+      "faction": "主线"
+    }
+  ]
+}
