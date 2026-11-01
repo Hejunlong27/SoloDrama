@@ -1,6 +1,40 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.35 · `drama init` 建项目骨架 + 两条新判据）**
+  第 13 项。在此之前，开一部新剧要手工建 9 个阶段目录、手写 `layout.json`、
+  抄 roster、抄分镜骨架 —— 漏一个就出现「引擎去 `video-pipeline/data/` 找、布局写在 `06-提示词/`」这类错位。
+
+  **① 新增 `init_project.py` + `drama init`**
+  - **结构不重写**：目录、README、`layout.json`、`config.local.json` 全部由 `_layout.scaffold()` 产出（布局唯一真源）。
+    本脚本只做两件事：调 scaffold，写内容模板。
+  - 写 6 个模板：`drama.json`（四维）/ `04-资产/design/roster.json`（2 个占位角色）/ `refs.json`（空表）/
+    `blueprint.md` / `ep_01.md` / `ep01_storyboard.md`。
+  - **模板是空的，不是范例**：三个内容模板里刻意一个 `[SC-nn]`、一个镜头块都没有。
+    塞一个能解析的示例镜，`drama next` 会以为这集写完了，人得靠肉眼分辨「示例还是真稿」。
+    **空模板的失败比示例模板的通过更有用。**
+  - 幂等：不加 `--force` 不覆盖已有文件；`--dry-run` 不落盘。
+  - `drama init` 走**早期分派**：在 `_preset_workspace_from_argv()` + `import _ws` 之前就切给 `init_project`。
+    试图在主流程里「降级放行」会一路漏（WS/VP/DATA/OUT/LOG_DIR 逐个 None 检查），
+    而 init 的职责正是「让工作区存在」——建项目的脚本不能依赖「项目已存在」的模块。
+
+  **② 新增 `STATUS: DRAFT` 判据**
+  `init` 建出的蓝图 0.8 KB，而判据是 `file>=800` 字节 —— **模板差点被判成完成**（差 30 字节）。
+  现在三个内容模板首行都带 `<!-- STATUS: DRAFT — 写完把这一行删掉 -->`，
+  `nodes.py` 的 `file>=` / `ffs` / `board` 判据统一识别该标记。
+  比调大字数门槛可靠：标记只有「写完删掉」这一个语义。老项目没有这行，直接过，不误伤。
+
+  **③ `tracks.json` 加显式 `default`**
+  形态默认值原本取 `order[0]`。`order` 是「界面上怎么排」，`default` 是「新项目默认用哪个」——
+  混用会让「调了显示顺序 → 新建项目默认形态静默变化」。现在 `default=live_action`。
+
+  **④ 新增 `tools/tests/test_repo_paths.py`（3 例）—— 治「parents[N] 数错一层」**
+  这个错误本轮出现**五次**（gen_boards / nodes / main.py / init_project / test_init_project），
+  症状都不是「路径写错」，而是「文件不存在 / 模块找不到 / 数值为空」，排查会先怀疑数据。
+  现在用 AST 静态解析所有 `ROOT = <本文件基准>.parents[N]`，算出实际指向并与仓库根比对；
+  零 import、零副作用；含自测样本防扫描器空转。
+
+  **测试**：新增 17 例（init 14 + repo_paths 3），累计新增 75 例；存量 232 例全绿。
 - **2026-11-01 更新（V0.7.34 · 把验收从「做一部剧」改成「引擎自证」）**
   用户纠正了一次边界：我的任务是整改引擎，不是制作短剧。这条纠正暴露的是**引擎的设计缺陷**——
   V0.7.33 那批新代码（`nodes.py` / `gen_boards.py` / `convert_storyboard.py` 的新逻辑）**零测试**，

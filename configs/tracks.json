@@ -1,7 +1,13 @@
 {
   "_comment": "形态轨道（track）—— 只放「形态规格」，不放任何视觉风格、不放叙事口径。视觉见 looks.json，叙事见 narratives.json。改这里即改所有下游菜单/校验/默认规格。",
   "version": 2,
-  "order": ["3d_manhua", "2d_animation", "live_action"],
+  "order": [
+    "3d_manhua",
+    "2d_animation",
+    "live_action"
+  ],
+  "default": "live_action",
+  "_default_note": "init 新建项目时的默认形态；改这里 = 改默认，与 order（显示顺序）无关",
   "tracks": {
     "3d_manhua": {
       "label": "3D 漫剧",
@@ -22,9 +28,24 @@
         }
       },
       "default_render_style": "guoman-3d-render",
-      "shot_duration": { "min": 6, "max": 10, "action_min": 4, "action_max": 6 },
-      "anchor_reset_cadence": { "protagonist": 4, "supporting": 6, "scene": 5 },
-      "assets": { "character_main": 1, "character_3view": 1, "scene_main": 1, "scene_aux": 1, "prop_card_max": 1 },
+      "shot_duration": {
+        "min": 6,
+        "max": 10,
+        "action_min": 4,
+        "action_max": 6
+      },
+      "anchor_reset_cadence": {
+        "protagonist": 4,
+        "supporting": 6,
+        "scene": 5
+      },
+      "assets": {
+        "character_main": 1,
+        "character_3view": 1,
+        "scene_main": 1,
+        "scene_aux": 1,
+        "prop_card_max": 1
+      },
       "first_frame_required": true,
       "angle_match_required": true,
       "storyboard_topology": "per_shot",
@@ -49,9 +70,24 @@
         }
       },
       "default_render_style": "guoman-webtoon",
-      "shot_duration": { "min": 4, "max": 10, "action_min": 4, "action_max": 10 },
-      "anchor_reset_cadence": { "protagonist": 3, "supporting": 5, "scene": 4 },
-      "assets": { "character_main": 1, "character_3view": 0, "scene_main": 1, "scene_aux": 0, "prop_card_max": 1 },
+      "shot_duration": {
+        "min": 4,
+        "max": 10,
+        "action_min": 4,
+        "action_max": 10
+      },
+      "anchor_reset_cadence": {
+        "protagonist": 3,
+        "supporting": 5,
+        "scene": 4
+      },
+      "assets": {
+        "character_main": 1,
+        "character_3view": 0,
+        "scene_main": 1,
+        "scene_aux": 0,
+        "prop_card_max": 1
+      },
       "first_frame_required": false,
       "angle_match_required": false,
       "storyboard_topology": "per_shot",
@@ -63,9 +99,24 @@
       "visual_style_lock": "live-action-photographic",
       "render_styles": {},
       "default_render_style": null,
-      "shot_duration": { "min": 5, "max": 15, "action_min": 5, "action_max": 15 },
-      "anchor_reset_cadence": { "protagonist": 0, "supporting": 0, "scene": 0 },
-      "assets": { "character_main": 1, "character_3view": 0, "scene_main": 1, "scene_aux": 0, "prop_card_max": 0 },
+      "shot_duration": {
+        "min": 5,
+        "max": 15,
+        "action_min": 5,
+        "action_max": 15
+      },
+      "anchor_reset_cadence": {
+        "protagonist": 0,
+        "supporting": 0,
+        "scene": 0
+      },
+      "assets": {
+        "character_main": 1,
+        "character_3view": 0,
+        "scene_main": 1,
+        "scene_aux": 0,
+        "prop_card_max": 0
+      },
       "first_frame_required": true,
       "angle_match_required": false,
       "storyboard_topology": "one_frame_per_clip",

@@ -350,6 +350,19 @@ def _shots_of(ctx: Ctx) -> int:
     return len(d or [])
 
 
+def _is_draft(p: pathlib.Path) -> bool:
+    """文件里有没有 `STATUS: DRAFT` 标记 —— 有就是「骨架还没填」。
+
+    为什么要有：`init_project.py` 建出的骨架字数与真稿接近（蓝图 0.8KB vs 门槛 800 字节），
+    纯按文件大小判会把**模板**判成**完成**，`next` 于是直接跳到下一步，
+    人以为写完了。用显式标记比调大字数门槛可靠：标记只有「写完删掉」这一个语义。
+    """
+    try:
+        return "STATUS: DRAFT" in p.read_text(encoding="utf-8", errors="replace")[:2000]
+    except OSError:
+        return False
+
+
 def check_node(ctx: Ctx, node: dict) -> tuple:
     """→ (passed: bool, detail: str)。detail 不含「大概」「应该」——只有数字与路径。"""
     spec = str(node.get("check") or "")
@@ -376,6 +389,8 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         n = int(spec[6:])
         if not out.is_file():
             return False, "产物不存在：%s" % out
+        if _is_draft(out):
+            return False, "仍是骨架（含 STATUS: DRAFT 标记），写完后删掉该行"
         size = out.stat().st_size
         return (size >= n), "%.1f KB" % (size / 1024.0)
 
@@ -398,6 +413,8 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         f = ctx.ep_script()
         if not f:
             return False, "剧本不存在"
+        if _is_draft(f):
+            return False, "仍是骨架（含 STATUS: DRAFT 标记），写完后删掉该行"
         t = f.read_text(encoding="utf-8", errors="replace")
         head = t[:1200]
         # 实跑剧本的 HEADER 是 `# TITLE: ...`（Markdown 标题前缀），
@@ -427,6 +444,8 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         f = ctx.ws / "05-分镜" / ("%s_storyboard.md" % ctx.ep)
         if not f.is_file():
             return False, "分镜 md 不存在：%s" % f
+        if _is_draft(f):
+            return False, "仍是骨架（含 STATUS: DRAFT 标记），写完后删掉该行"
         t = f.read_text(encoding="utf-8", errors="replace")
         blocks = re.split(r"(?m)^##\s+", t)[1:]
         if not blocks:

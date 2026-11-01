@@ -62,6 +62,23 @@ import time
 
 
 # ---------------------------------------------------------------------------
+# ★ 早期分派：`init` 必须在任何依赖工作区的 import 之前切走
+# ---------------------------------------------------------------------------
+# `init` 的职责是「把工作区建出来」，此刻工作区当然不存在。而本模块下面马上就
+# `_preset_workspace_from_argv()` + `import _ws`，两者都要求工作区已存在。
+# 试图在本进程里「降级放行」会一路漏（WS/VP/DATA/OUT/LOG_DIR… 逐个 None 检查），
+# 所以干脆在这里就交给 `init_project`，主流程一行都不走。
+if 'init' in sys.argv[1:]:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    try:
+        import init_project as _IP                              # noqa: E402
+    except ImportError as _e:                                   # 缺文件是真错，别假装
+        print('[FAIL] 找不到 init_project.py：%s' % _e)
+        raise SystemExit(2)
+    raise SystemExit(_IP.main([a for a in sys.argv[1:] if a != 'init']))
+
+
+# ---------------------------------------------------------------------------
 # ★ 全局 --workspace（反馈 P1-3）：必须在 `import _ws` **之前**生效
 # ---------------------------------------------------------------------------
 # 为什么不能只加个 argparse 参数：`_ws.WS` 是**导入期常量**（`WS = resolve()`），
@@ -80,6 +97,11 @@ def _preset_workspace_from_argv(argv) -> bool:
         return False
     p = pathlib.Path(val).expanduser()
     if not p.is_dir():
+        # ★ 例外：`init` 的职责就是「让这个目录存在」，此处不能拦。
+        #   否则「新建项目」永远要先手工 mkdir，等于把 init 的意义抵消掉。
+        if 'init' in argv:
+            os.environ['SOLODRAMA_WORKSPACE'] = str(p.resolve())
+            return True
         print('[FAIL] --workspace 指向的目录不存在：%s' % p)
         raise SystemExit(2)
     os.environ['SOLODRAMA_WORKSPACE'] = str(p.resolve())
@@ -96,15 +118,19 @@ except SystemExit as _e:
     # ★ 2026-10-20：`--help` 不该要求工作区。`_ws` 在导入期就要解析工作区，
     #   没有合法工作区时会 SystemExit —— 那会让「想先看看有哪些命令」的人直接吃一个红。
     #   其它情况仍然原样抛出（缺工作区是真错，不该假装能跑）。
+    # ★ 2026-11-01：`init` 同理 —— 它的职责是「把工作区建出来」，此刻当然还没有。
+    #   这里降级成 `_WS = None`，`cmd_init_project` 走子进程，不碰这个进程里的工作区。
     if any(a in ('-h', '--help') for a in sys.argv[1:]):
         print('短剧生产线的零思考入口（默认不花钱）\n')
-        print('用法: drama.py <命令> [...]  （下面这些命令都需要先指定工作区）')
+        print('用法: drama.py <命令> [...]  （init 之外都需要先指定工作区）')
         print('  全局参数: --workspace <DIR>   也可设环境变量 SOLODRAMA_WORKSPACE\n')
-        print('命令: setup {show|ask|set|require} / workflow {list|status|check} /')
+        print('命令: init / next / do / nodes / graph / skip /')
+        print('      setup {show|ask|set|require} / workflow {list|status|check} /')
         print('      pipeline {plan|run|mark|status} / status / preflight / assets / refs /')
         print('      models / style / halfcheck / video {plan|run|resume-download|status} /')
         print('      report / balance / cost / guide')
-        print('\n例：drama.py --workspace "D:/剧/某剧" status')
+        print('\n例：drama.py init --workspace "D:/剧/新剧" --title "剧名"')
+        print('    drama.py --workspace "D:/剧/某剧" status')
         raise SystemExit(0)
     raise
 
@@ -429,6 +455,34 @@ def estimate_video(limit=None, only=None, tier='consumer', calibrate=False) -> d
     est['_caveat'] = ('预估仅作闸门参考；真实消耗以平台 usage 为准'
                       '（不用余额差值倒推）。`--calibrate` 可用历史台账自校准。')
     return est
+
+
+def cmd_init_project(args) -> int:
+    """转发到 `init_project.py`（子进程）。
+
+    ★ 为什么不用 import：本模块在文件顶部 `_preset_workspace_from_argv()` +
+      `import _ws` 就要求工作区**已存在**。而 init 的职责正是「让它存在」——
+      在本进程里调用必然先死在 import 上。子进程是这里唯一干净的隔离方式。
+    """
+    import subprocess
+    here = pathlib.Path(__file__).resolve().parent
+    cmd = [sys.executable, str(here / "init_project.py")]
+    ws = getattr(args, "workspace", None)
+    if not ws:
+        print("[FAIL] init 必须显式给 --workspace（新建项目的路径，可以还不存在）")
+        return 2
+    cmd += ["--workspace", str(ws)]
+    for k in ("title", "platform", "episodes", "ep_seconds", "track", "look",
+              "narrative", "aspect", "world", "region",
+              "image_engine", "video_engine"):
+        v = getattr(args, k, None)
+        if v not in (None, ""):
+            cmd += ["--" + k.replace("_", "-"), str(v)]
+    if getattr(args, "force", False):
+        cmd.append("--force")
+    if getattr(args, "dry_run", False):
+        cmd.append("--dry-run")
+    return subprocess.run(cmd, cwd=str(here.parents[2])).returncode
 
 
 def _nodes_mod():
@@ -1146,6 +1200,30 @@ def main() -> int:
     sub = ap.add_subparsers(dest='cmd')
 
     # ---------------- 七环节 23 节点（调度器的唯一入口） ----------------
+    # ---------------- 新建项目（必须最先可用：此时项目还不存在） ----------------
+    p = sub.add_parser('init', help='建七环节空项目（结构 + 模板，不写内容）',
+                       epilog='可加 --title/--platform/--episodes/--track/--look 等；'
+                              '重跑安全，加 --force 才覆盖已有模板。')
+    p.add_argument('--title', default='未命名短剧')
+    p.add_argument('--platform', default='')
+    p.add_argument('--episodes', default=30, type=int)
+    p.add_argument('--ep-seconds', dest='ep_seconds', default=60, type=int)
+    p.add_argument('--track', default='')
+    p.add_argument('--look', default='')
+    p.add_argument('--narrative', default='dialogue', choices=['dialogue', 'narration'])
+    p.add_argument('--aspect', default='9:16')
+    p.add_argument('--world', default='')
+    p.add_argument('--region', default='east_asian',
+                   choices=['east_asian', 'western', 'south_asian', 'latin'])
+    p.add_argument('--image-engine', dest='image_engine', default='local_comfyui',
+                   choices=['local_comfyui', 'runninghub'])
+    p.add_argument('--video-engine', dest='video_engine', default='runninghub',
+                   choices=['runninghub', 'local_h3'])
+    p.add_argument('--force', action='store_true')
+    p.add_argument('--dry-run', action='store_true')
+    _add_ws_arg(p)
+    p.set_defaults(fn=cmd_init_project)
+
     p = sub.add_parser('next', help='打印下一步该做什么（只读磁盘，不执行）')
     p.add_argument('--ep', default='')
     p.add_argument('--json', action='store_true')
