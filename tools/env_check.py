@@ -64,13 +64,16 @@ BINS = [
 
 ENV_KEYS = [
     ("RUNNINGHUB_API_KEY", "云端出片通道（缺了只能走本地 ComfyUI）"),
-    ("RUNNINGHUB_BASE_URL", "已降级：站点真源改为 configs/channels.json，本变量只在没有该文件时兜底"),
 ]
 
 # 这些变量的坑不在「有没有设置」，而在「设了但当前进程读不到」——
 # 进程环境是**启动快照**：改完用户级变量不重开终端，永远读到旧值。
 # 症状千奇百怪（装了说没装、改了站点说 Key 错、工作区说找不到），唯独不像变量过期。
-SNAPSHOT_KEYS = ("RUNNINGHUB_BASE_URL", "RUNNINGHUB_API_KEY", "SOLODRAMA_WORKSPACE")
+#
+# 站点（RUNNINGHUB_BASE_URL）已从本表移除：2026-11-01 起它是**死变量**，
+# 真源是 configs/channels.json，不再读它 —— 对一个不生效的变量做「有没有设」的检查，
+# 只会让「设了但没生效」继续冒充「配置正常」。
+SNAPSHOT_KEYS = ("RUNNINGHUB_API_KEY", "SOLODRAMA_WORKSPACE")
 
 IS_WIN = os.name == "nt"
 EXE = "python.exe" if IS_WIN else "python3"
@@ -152,8 +155,8 @@ def _bin_candidates(name: str) -> list:
     cands = [
         # winget 安装的可执行文件实际落在这里，但只有**新开**的终端才在 PATH 里
         Path(la) / "Microsoft" / "WinGet" / "Links" / exe,
-        Path(os.environ.get("ProgramFiles", r"C://Program Files")),
-        Path(os.environ.get("ProgramFiles(x86)", r"C://Program Files (x86)")),
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
     ]
     out = [str(p) for p in cands if str(p).lower().endswith(".exe") and Path(p).is_file()]
     # 用户目录下的常见解压式安装（whisper-cli / ffmpeg 静态包等）
@@ -164,7 +167,10 @@ def _bin_candidates(name: str) -> list:
                 str(ROOT / "vendor" / "**" / exe)):
         out += glob.glob(pat, recursive=True)[:5]
     # Program Files 下两层内（ffmpeg 常是 <PF>\ffmpeg\bin\ffmpeg.exe）
-    for base in (r"C://Program Files", r"C://Program Files (x86)", "D:////Program Files"):
+    # ⚠ 这里曾经写成 `r"C://Program Files"` —— 反斜杠被写盘过程吃成斜杠，
+    #   而这几个路径**永远不会命中**，于是「装在 Program Files 里的工具」被判成没装。
+    #   正是「明明装了却说没装」的又一条来源，且不报错、不告警。
+    for base in (r"C:\Program Files", r"C:\Program Files (x86)", r"D:\Program Files"):
         out += glob.glob(os.path.join(base, "*", "**", exe), recursive=True)[:5]
     # 去重保序
     seen, uniq = set(), []
@@ -174,6 +180,21 @@ def _bin_candidates(name: str) -> list:
             seen.add(k)
             uniq.append(p)
     return uniq
+
+
+def _resolved_site() -> tuple:
+    """→ (站点, 来源, 被忽略的旧环境变量值)。实现在 `stages/production/scripts/_site.py`。
+
+    体检不自己算站点：算第二份就一定会有两份不一致，而「三方各说各话」正是这次要收掉的东西。
+    """
+    try:
+        scripts = ROOT / "stages" / "production" / "scripts"
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from _site import runtime_site
+        return runtime_site()
+    except Exception as exc:                                   # noqa: BLE001
+        return ("", "站点真源读取失败（%s）" % type(exc).__name__, "")
 
 
 def _persisted_env(name: str) -> tuple:
@@ -284,7 +305,7 @@ def collect() -> dict:
 
     # 3) 外部程序 —— 三态：present / found_elsewhere / missing
     #    为什么不能只 shutil.which：
-    #      E1 装了但不在 PATH（whisper-cli 常在 C://Users//<u>//whisper-cli//...）；
+    #      E1 装了但不在 PATH（whisper-cli 常在 C:\Users\<u>\whisper-cli\...）；
     #      E2 PATH 是进程启动快照，装完不重开终端就永远找不到（winget 的 Links 目录最典型）；
     #      E3 依赖装在另一个解释器里（_probe_alt 找到了，却只写成 hint）。
     #    以前这三种都归成「未安装」，于是「明明装了却说没装」。
@@ -314,6 +335,17 @@ def collect() -> dict:
                       else "未设置（" + why + "）",
             "hint": "" if val else "setx %s \"<值>\"  然后重开终端" % key,
         })
+
+    # 站点：真源是 configs/channels.json，不看环境变量（旧变量已废弃）
+    site_url, site_src, site_dead = _resolved_site()
+    items.append({
+        "group": "配置", "name": "RunningHub 站点",
+        "ok": bool(site_url), "required": False,
+        "detail": ("%s（来源：%s）" % (site_url, site_src)) if site_url
+                  else "取不到（%s）" % site_src,
+        "hint": ("环境变量里还留着 %s —— 已不生效，建议删掉，免得下次 `echo` 到旧值又排查一轮"
+                 % site_dead) if site_dead else "",
+    })
     items.append({
         "group": "配置", "name": "ComfyUI 本地端口",
         "ok": _port_open("127.0.0.1", 8188), "required": False,

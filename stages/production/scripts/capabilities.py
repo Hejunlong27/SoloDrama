@@ -81,20 +81,16 @@ def _check_comfy(cap: dict, online: bool) -> list:
 def _rh_runtime_site() -> tuple:
     """→ (运行时站点, 来源, 被忽略的旧环境变量值)。
 
-    必须问**引擎自己**，不能自己再算一遍：站点解析规则（channels.json → 旧环境变量 →
-    默认）只该有一份实现，否则「卡说要 .cn、体检说运行时是 .cn、真跑却是 .ai」这种
-    三方不一致会永远修不完。
+    必须问**引擎自己**，不能自己再算一遍：站点解析规则只该有一份实现，否则
+    「卡说要 .cn、体检说运行时是 .cn、真跑却是 .ai」这种三方不一致会永远修不完。
+    实现统一放在 `_site.py`（能力卡 / 体检 / 向导共用）。
     """
     try:
-        eng = ROOT / "stages" / "video" / "workflow" / "scripts" / "engine"
-        if str(eng) not in sys.path:
-            sys.path.insert(0, str(eng))
-        import config as _C                                    # noqa: E402
-        return (str(_C.RH_BASE_URL), str(getattr(_C, "RH_SITE_SOURCE", "engine")),
-                str(getattr(_C, "RH_SITE_IGNORED", "") or ""))
+        from _site import runtime_site
+        return runtime_site()
     except Exception as exc:                                   # noqa: BLE001
-        return (os.environ.get("RUNNINGHUB_BASE_URL") or "", "回退环境变量（引擎配置导入失败：%s）"
-                % type(exc).__name__, "")
+        # 不拿环境变量兜底：站点真源已经不在环境变量里，兜回它等于重新引入假一致。
+        return ("", "_site 导入失败（%s）" % type(exc).__name__, "")
 
 
 def _node_ready(v) -> bool:

@@ -420,10 +420,8 @@ class TestWorkflowApiAndAccount(Base):
     def setUp(self):
         super().setUp()
         self._saved = {k: os.environ.get(k) for k in
-                       ("RUNNINGHUB_API_KEY", "RH_API_KEY",
-                        "RUNNINGHUB_BASE_URL", "RH_BASE_URL")}
+                       ("RUNNINGHUB_API_KEY", "RH_API_KEY")}
         os.environ["RUNNINGHUB_API_KEY"] = self.FAKE_KEY
-        os.environ["RUNNINGHUB_BASE_URL"] = "https://www.runninghub.ai"
 
     def tearDown(self):
         for k, v in self._saved.items():

@@ -109,21 +109,14 @@ def sanitize(name: str) -> str:
 
 
 def base_url() -> str:
-    """站点：env > <工作区>/config.local.json > 引擎默认。
+    """站点：项目覆盖层 > 仓库真源（`configs/channels.json`）。
 
-    AI 站账号必须用 .ai；本应用的输入是纯文本、无上传，但站点仍保持与 config.local.json 一致，
-    免得以后加「图生图」时踩同一个坑。
+    ★ 2026-11-01：删掉「先读 RUNNINGHUB_BASE_URL」这条分支。它是死变量，
+      但原本排在最前 —— 于是「用户改了用户级变量没重开终端」会让这里静默用旧站，
+      而报错长得像 Key 不对。实现统一在 `_site.project_site()`。
     """
-    env = os.getenv('RUNNINGHUB_BASE_URL')
-    if env:
-        return env.rstrip('/')
-    try:
-        local = json.loads((VP / 'config.local.json').read_text(encoding='utf-8'))
-        if local.get('runninghub_base_url'):
-            return str(local['runninghub_base_url']).rstrip('/')
-    except (OSError, json.JSONDecodeError):
-        pass
-    return C.RH_BASE_URL.rstrip('/')
+    from _site import project_site
+    return project_site(VP)
 
 
 def _size(p: pathlib.Path) -> tuple:

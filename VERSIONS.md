@@ -1,6 +1,46 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.37 · 删冗余：站点只剩一条路，三份重复实现收敛成一份）**
+  V0.7.36 把站点搬进配置后，`RUNNINGHUB_BASE_URL` 就成了**死变量** —— 但代码里还有 8 处读它、
+  三处各写一份「先 env、再项目配置、最后引擎默认」。留着不是「兼容」，是给同一件事留三条路。
+  按用户口径「冗余的都删掉，直接删」，一次清干净。
+
+  **① 环境变量**：用户级 `RUNNINGHUB_BASE_URL` 已删除（注册表键一并清掉）。
+  保留的是**凭据**而不是配置：`RUNNINGHUB_API_KEY` / `_2` / `ENT_` / `ENT_2` / `ENT_3`。
+  其中 `ENT_3` 当前无代码引用，但删掉不可恢复（要重新从平台复制），故只标记不删。
+
+  **② 解析规则收成一条**：`resolve_rh_site()` 不再是「有配置就用、没配置回退 env」的双轨，
+  而是**显式参数 > SOLODRAMA_RH_SITE > configs/channels.json > 常量默认**。
+  旧变量仍然读一次，但**只用于体检提示「它还在，但已经没用了」**（`RH_SITE_IGNORED`），
+  让下次 `echo` 到旧值的人能立刻看到原因，而不是再排查一轮。
+
+  **③ 三份重复实现收敛为 `stages/production/scripts/_site.py`**
+  `runtime_site()`（仓库真源）/ `project_site(vp)`（项目覆盖层优先）。
+  改动点：
+  - `capabilities._rh_runtime_site()` → 委托 `_site`
+  - `tools/env_check._resolved_site()` → 委托 `_site`
+  - `project_setup`：删掉 `SITE_ENV_NAMES`，三处读站点改走 `_runtime_site()`
+  - `gen_char_assets` / `gen_scene_assets` / `gen_assets_rh_workflow` 的 `base_url()`
+    三份逐字重复（且都先读死变量）→ 统一 `return _site.project_site(VP)`
+  - `rh_doctor.BASE_URL` → `_site.runtime_site()`
+  - `drama.hydrate_env` 的 `want`、`gen_assets_rh_workflow._ENV_WANT` 里删掉该变量
+    （这两处会把死值**重新灌进子进程**，是「哪来的 .ai」的再生源）
+  - `project_setup` 的两处提示文案：不再教用户 `setx RUNNINGHUB_BASE_URL`，改成 `configure.py set-site`
+
+  **④ 体检里不再检查一个不生效的变量**：`ENV_KEYS` 去掉 `RUNNINGHUB_BASE_URL`；
+  配置组改成显示「RunningHub 站点 + 来源」，残留旧变量时给出「建议删掉」的 hint。
+
+  **⑤ 实测抓到一条同类隐患**：`tools/env_check.py::_bin_candidates` 里写的是
+  `r"C://Program Files"` —— 反斜杠在写盘时被吃成斜杠，这些路径**永远不可能命中**。
+  后果正是「装在 Program Files 里的工具被判成没装」。已改回真反斜杠，并在注释里标了病因。
+
+  **验证**：`capabilities check` 全过；全仓库 `os.getenv("RUNNINGHUB_BASE_URL")` 直读 **0 处**；
+  `test_channels.py` 10 例（含「没有配置也不许回退旧变量」）；其余套件全绿
+  （nodes 25 / convert 17 / gen_boards 16 / init 14 / style 23 / model 29 / release 15+14 /
+  migrate 16 / workflow 57 / slot_hygiene 32 / character_design 28 / env_check 22 /
+  comfy_ports / workflow_map / escape 3 / repo_paths 3）。
+  **manifest.sha256 36 条不符**：预期内（本轮改了文件），收编/推送时统一重建，不在中途刷。
 - **2026-11-01 更新（V0.7.36 · 环境整改：站点真源、快照可见、死路径清理）**
   起因是用户点名「本地环境识别的功能经常误判，明明已装好的工具却说没装」。查下来是两个真问题，
   而且是同一类根因：**进程环境是启动快照，而系统里没有一处地方说清楚「以谁为准」**。

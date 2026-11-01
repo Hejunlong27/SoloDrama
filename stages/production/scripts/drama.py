@@ -192,7 +192,9 @@ def hydrate_env() -> None:
     # ★ 进程环境里缺的，从「用户级环境变量」补（agent 的 shell 常拿不到）：
     #   前三个是云端通道用的 Key；SOLODRAMA_ASSET_MD 是「资产提示词 md」真源，**本地通道也要用**。
     #   ★ 2026-10-13 改名过渡：新旧两个名字都参与补全，子脚本按「新名优先、旧名回退」读取。
-    want = ('RUNNINGHUB_API_KEY', 'RUNNINGHUB_ENT_API_KEY', 'RUNNINGHUB_BASE_URL',
+    # ★ 2026-11-01：`RUNNINGHUB_BASE_URL` 已从这张表移除 —— 站点真源是
+    #   `configs/channels.json`，再把死变量补进子进程环境只会让「哪来的 .ai」重新出现。
+    want = ('RUNNINGHUB_API_KEY', 'RUNNINGHUB_ENT_API_KEY',
             'SOLODRAMA_ASSET_MD', 'DRAMA_ASSET_MD')
     os.environ.setdefault('PYTHONUTF8', '1')
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')

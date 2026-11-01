@@ -28,7 +28,7 @@
 【配置分层】（优先级从低到高，高者覆盖低者）
   ① 本文件                       —— 结构与默认值，Agent/脚本永不修改
   ② <工作区>/config.local.json   —— 用户私有覆盖层（Key / workflow ID / 节点映射都写这里）
-  ③ 环境变量                     —— 只放机密：RUNNINGHUB_API_KEY / RUNNINGHUB_BASE_URL
+  ③ 环境变量                     —— 只放机密：RUNNINGHUB_API_KEY（站点在 configs/channels.json）
 
 【不用猜的部分 —— 已由本机验证过的代码确认】
   - 提交工作流: POST /task/openapi/create          body {apiKey, workflowId, nodeInfoList} -> data.taskId
@@ -75,6 +75,8 @@ _SITE_ALIASES = {
     "runninghub.ai": "https://www.runninghub.ai",
 }
 _DEFAULT_SITE = "https://www.runninghub.cn"
+# 旧站点变量名：**不再读出使用**，只用于体检提示「你设的这个已经没用了」。
+_LEGACY_SITE_ENVS = ("RUNNINGHUB_BASE_URL", "RH_BASE_URL")
 
 
 def _find_repo_root() -> Path | None:
@@ -129,7 +131,7 @@ def resolve_rh_site(explicit: str | None = None) -> tuple:
             cfg_url = normalize_site(cfg_raw)
 
     legacy_name, legacy_val = "", ""
-    for name in (ch.get("legacy_env") or ["RUNNINGHUB_BASE_URL", "RH_BASE_URL"]):
+    for name in (ch.get("legacy_env") or _LEGACY_SITE_ENVS):
         v = os.getenv(str(name))
         if v:
             legacy_name, legacy_val = str(name), normalize_site(v)
@@ -140,15 +142,19 @@ def resolve_rh_site(explicit: str | None = None) -> tuple:
     env_site = os.getenv("SOLODRAMA_RH_SITE")
     if env_site:
         return normalize_site(env_site), "环境变量 SOLODRAMA_RH_SITE", ""
-    if cfg_url:
-        ignored = legacy_val if (legacy_val and legacy_val != cfg_url) else ""
-        src = "configs/channels.json"
-        if ignored:
-            src += "（已忽略过期的 %s=%s）" % (legacy_name, ignored)
-        return cfg_url, src, ignored
-    if legacy_val:
-        return legacy_val, "环境变量 %s（回退：没有 channels.json）" % legacy_name, ""
-    return _DEFAULT_SITE, "常量默认", ""
+
+    # ★ 2026-11-01：旧环境变量**不再参与解析**。站点只有三个来源 ——
+    #   显式参数、SOLODRAMA_RH_SITE、configs/channels.json，最后落到常量默认。
+    #   留着「有配置就忽略、没配置才回退」的双轨，等于给同一件事留两条路：
+    #   删掉配置的人会突然发现行为变了，而他自己不知道哪一步动的。
+    #   仍然读一次旧变量，只为了在体检里报「它还在，但已经没用了」——
+    #   否则有人 `echo` 到旧值，又会花一轮排查。
+    final = cfg_url or _DEFAULT_SITE
+    src = "configs/channels.json" if cfg_url else "常量默认"
+    ignored = legacy_val if (legacy_val and legacy_val != final) else ""
+    if ignored:
+        src += "（已忽略无用的 %s=%s）" % (legacy_name, ignored)
+    return final, src, ignored
 
 
 RH_BASE_URL, RH_SITE_SOURCE, RH_SITE_IGNORED = resolve_rh_site()

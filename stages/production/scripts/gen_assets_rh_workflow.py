@@ -48,8 +48,10 @@ import time
 os.environ.setdefault('PYTHONUTF8', '1')
 os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
+# 站点不在这张表里：它已不是环境变量（真源 configs/channels.json），
+# 补进去只会把死值重新灌进子进程。
 _ENV_WANT = ('RUNNINGHUB_API_KEY', 'RUNNINGHUB_API_KEY_2', 'RUNNINGHUB_ENT_API_KEY',
-             'RUNNINGHUB_BASE_URL', 'SOLODRAMA_WORKSPACE', 'DRAMA_WORKSPACE')
+             'SOLODRAMA_WORKSPACE', 'DRAMA_WORKSPACE')
 
 
 def _hydrate_env() -> None:
@@ -271,195 +273,14 @@ def build_nodes(prov: dict, prompt: str, ratio: str, mode: str = 't2i',
 
 
 def base_url() -> str:
-    env = os.getenv('RUNNINGHUB_BASE_URL')
-    if env:
-        return env.rstrip('/')
-    try:
-        local = json.loads((VP / 'config.local.json').read_text(encoding='utf-8'))
-        if local.get('runninghub_base_url'):
-            return str(local['runninghub_base_url']).rstrip('/')
-    except (OSError, json.JSONDecodeError):
-        pass
-    return C.RH_BASE_URL.rstrip('/')
+    """站点：项目覆盖层 > 仓库真源（`configs/channels.json`）。
 
-
-async def generate(sel: list, ratio: str, submit: bool, timeout_min: float,
-                   resume_task: str | None, force: bool, mode: str = 't2i',
-                   refs: list | None = None) -> int:
-    refs = [r for r in (refs or []) if str(r or '').strip()]
-    pname, prov = provider_or_die(mode)
-    kind0 = (prov.get('kind') or 'workflow').lower()
-    wid = workflow_id_for(prov, mode)
-    ledger = RunLedger(VP, cny_per_rh_coin=C.RH_CNY_PER_COIN)
-
-    print('站点        : %s' % base_url())
-    print('生图通道    : image_providers["%s"]  kind=%s' % (pname, kind0))
-    print('模式        : %s（%s）' % (mode, '图生图 · 带参考图' if mode == 'i2i' else '文生图 · 纯提示词'))
-    print('工作流 ID   : %s' % wid)
-    print('画幅        : %s' % ratio)
-    if refs:
-        print('参考图      : %s' % '、'.join(pathlib.Path(r).name for r in refs))
-    print()
-
-    rc = 0
-    ok = fail = skip = 0
-    async with RunningHubClient(C.RUNNINGHUB_API_KEY, base_url(), C.HTTP_TIMEOUT) as client:
-        # ★ 图生图必须先上传参考图：nodeInfoList 里要的是**平台文件名**，不是本地路径。
-        #   一次任务只传一次（同一批资产共用同一张参考图），避免重复上传。
-        ref_name = ''
-        if mode == 'i2i':
-            if not refs:
-                print('[FAIL] --mode i2i 必须给 --ref <参考图路径>')
-                return 2
-            up = await client.upload_file(refs[0])
-            ref_name = str(up.get('fileName') or '')
-            if not ref_name:
-                print('[FAIL] 上传参考图后没拿到 fileName，无法喂给节点')
-                return 2
-            print('参考图已上传: %s -> %s' % (pathlib.Path(refs[0]).name, ref_name))
-            print()
-        for it in sel:
-            kind, key, no, name = it['kind'], it['key'], it['section'], it['name']
-            var = it['variants'][0] if it['variants'] else None
-            if not var:
-                print('[SKIP] %s %s：md 里没有提示词代码块' % (key, name))
-                continue
-            prompt = var['prompt']
-            out_dir = OUT_DIRS[kind]
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out = out_dir / ('%s_%s.png' % (key, sanitize(name)))
-
-            man = load_manifest(kind)
-            done = None
-            for old in man.get('items', []):
-                if old.get('key') == key:
-                    fs = [f.get('file') if isinstance(f, dict) else f for f in (old.get('files') or [])]
-                    if any(f and pathlib.Path(f).is_file() for f in fs):
-                        done = fs[0]
-                    break
-
-            print('=' * 84)
-            print('%s  %s   （第 %d 节 · %s）' % (key, name, no, it['title']))
-            print('  提示词长度: %d 字' % len(prompt))
-            print('  提示词摘要: %s…' % prompt[:70].replace('\n', ' '))
-            print('  目标文件  : %s' % out)
-            if done and not force and not resume_task:
-                print('[SKIP] 已生成过（%s）。要重跑请加 --force。' % pathlib.Path(done).name)
-                skip += 1
-                continue
-
-            node_list = build_nodes(prov, prompt, ratio, mode, ref_name)
-            snap = WS / 'docs' / ('asset-wf-nodeinfo-%s.json' % key)
-            snap.parent.mkdir(parents=True, exist_ok=True)
-            snap.write_text(json.dumps({
-                'provider': pname, 'kind': kind0, 'mode': mode, 'id': wid, 'key': key,
-                'section': no, 'name': name, 'ref': ref_name or None,
-                'nodeInfoList': node_list,
-            }, ensure_ascii=False, indent=2), encoding='utf-8')
-
-            if not submit and not resume_task:
-                print('  ★ DRY-RUN：未提交，未计费。加 --submit 才真的生成。')
-                continue
-
-            t0 = time.time()
-            task_id = resume_task
-            if not task_id:
-                try:
-                    task_id = await client.create_task(kind0, wid, node_list,
-                                                       prov.get('instance_type'))
-                except RunningHubError as e:
-                    print('  [FAIL] 提交失败: %s' % e.short)
-                    ledger.record(batch_id=BATCH_ID, shot_id=key, stage='image', status='FAILED',
-                                  route='workflow', kind=kind0, target_id=prov.get('id'),
-                                  error=str(e.short))
-                    fail += 1
-                    rc = rc or 1
-                    continue
-                print('  taskId = %s' % task_id)
-                ledger.record(batch_id=BATCH_ID, shot_id=key, stage='image', status='RUNNING',
-                              route='workflow', kind=kind0, target_id=prov.get('id'),
-                              task_id=task_id, extra={'name': name, 'prompt_sha256':
-                                                      hashlib.sha256(prompt.encode()).hexdigest()[:16]})
-
-            try:
-                res = await client.poll_until_done(task_id, timeout_min=timeout_min,
-                                                   interval=C.POLL_INTERVAL)
-            except RunningHubError as e:
-                print('  [超时/异常] %s' % e.short)
-                print('  只轮询不重扣：--resume-task %s' % task_id)
-                fail += 1
-                rc = rc or 2
-                continue
-
-            status = res.get('status')
-            usage = res.get('usage') or {}
-            urls = [r.get('url') for r in (res.get('results') or []) if r.get('url')]
-            if status not in TERMINAL_OK or not urls:
-                print('  [FAILED] status=%s %s' % (status, json.dumps(res.get('raw') or {},
-                                                                     ensure_ascii=False)[:400]))
-                ledger.record(batch_id=BATCH_ID, shot_id=key, stage='image', status='FAILED',
-                              route='workflow', kind=kind0, target_id=prov.get('id'),
-                              task_id=task_id, usage=usage,
-                              wall_elapsed_s=round(time.time() - t0, 1),
-                              error=json.dumps(res.get('raw') or {}, ensure_ascii=False)[:200])
-                fail += 1
-                rc = rc or 1
-                continue
-
-            saved = []
-            for i, url in enumerate(urls):
-                sfx = pathlib.Path(url.split('?')[0]).suffix.lower()
-                if sfx not in ('.png', '.jpg', '.jpeg', '.webp'):
-                    sfx = '.png'
-                tmp = out.with_name('%s__r%d%s' % (out.stem, i + 1, sfx))
-                try:
-                    await client.download(url, str(tmp))
-                    saved.append(tmp)
-                except RunningHubError as e:
-                    print('  [WARN] 下载失败: %s' % e.short)
-            if not saved:
-                print('  [FAILED] 任务成功但一张图都没落盘')
-                fail += 1
-                rc = rc or 1
-                continue
-
-            saved.sort(key=lambda p: _size(p)[0] * _size(p)[1], reverse=True)
-            finals = []
-            for k, p in enumerate(saved):
-                dest = out if k == 0 else out.with_name('%s_r%d%s' % (out.stem, k + 1, p.suffix))
-                if p != dest:
-                    if dest.exists():
-                        dest.unlink()
-                    p.replace(dest)
-                w, h = _size(dest)
-                finals.append({'file': str(dest), 'role': 'asset' if k == 0 else 'extra',
-                               'width': w, 'height': h,
-                               'mb': round(dest.stat().st_size / 1024 / 1024, 2)})
-                print('      已保存: %s  (%sx%s)' % (dest, w, h))
-
-            wall = round(time.time() - t0, 1)
-            print('  [SUCCESS] 墙钟 %.1fs | usage=%s' % (wall, json.dumps(usage, ensure_ascii=False)))
-            man = load_manifest(kind)
-            upsert(man, {'kind': kind, 'key': key, 'section': no, 'name': name,
-                         'title': it['title'], 'ratio': ratio, 'files': finals,
-                         'task_id': task_id, 'usage': usage,
-                         'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()[:16],
-                         'created_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
-                         '_note': 'files[0].role=asset 为资产图；其余为同次调用的附带产物'})
-            save_manifest(kind, man)
-            ledger.record(batch_id=BATCH_ID, shot_id=key, stage='image', status='SUCCESS',
-                          route='workflow', kind=kind0, target_id=prov.get('id'),
-                          task_id=task_id, usage=usage, wall_elapsed_s=wall,
-                          out_bytes=sum(pathlib.Path(f['file']).stat().st_size for f in finals) or None,
-                          artifact=';'.join(f['file'] for f in finals) or None,
-                          output_url=urls[0], extra={'name': name, 'ratio': ratio})
-            ok += 1
-
-    print()
-    print('本轮完成：成功 %d / 失败 %d / 跳过 %d（共选中 %d 个资产）' % (ok, fail, skip, len(sel)))
-    if ok and submit:
-        print('下一步：python stages/production/scripts/wire_new_assets.py --apply   # 瘦身 + 接进 characters.json')
-    return rc
+    ★ 2026-11-01：删掉「先读 RUNNINGHUB_BASE_URL」这条分支。它是死变量，
+      但原本排在最前 —— 于是「用户改了用户级变量没重开终端」会让这里静默用旧站，
+      而报错长得像 Key 不对。实现统一在 `_site.project_site()`。
+    """
+    from _site import project_site
+    return project_site(VP)
 
 
 def main() -> int:

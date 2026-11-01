@@ -59,7 +59,16 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-BASE_URL = os.getenv("RUNNINGHUB_BASE_URL", "https://www.runninghub.cn")
+def _site_url() -> str:
+    """站点真源（见 `_site.py`）。不再读环境变量 —— 它已是死变量。"""
+    try:
+        from _site import runtime_site
+        return runtime_site()[0] or "https://www.runninghub.cn"
+    except Exception:                                          # noqa: BLE001
+        return "https://www.runninghub.cn"
+
+
+BASE_URL = _site_url()
 TIMEOUT = 30.0
 
 # --- 官方能力矩阵（单一真源；改这里就等于改路由规则）---------------------

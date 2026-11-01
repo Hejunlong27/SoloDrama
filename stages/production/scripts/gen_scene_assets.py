@@ -88,18 +88,14 @@ TERMINAL_BAD = {'FAILED', 'CANCEL', 'CANCELLED'}
 
 
 def base_url() -> str:
-    """站点：env > <工作区>/config.local.json > 引擎默认。模型 API 的 host（.cn/.ai）官方未明说，
-    config.assets.json 里记着「host 未确认」。本账号在 .ai，且 .ai 是唯一上传可用的站，故默认取 .ai。"""
-    env = os.getenv('RUNNINGHUB_BASE_URL')
-    if env:
-        return env.rstrip('/')
-    try:
-        local = json.loads((VP / 'config.local.json').read_text(encoding='utf-8'))
-        if local.get('runninghub_base_url'):
-            return str(local['runninghub_base_url']).rstrip('/')
-    except (OSError, json.JSONDecodeError):
-        pass
-    return C.RH_BASE_URL.rstrip('/')
+    """站点：项目覆盖层 > 仓库真源（`configs/channels.json`）。
+
+    ★ 2026-11-01：删掉「先读 RUNNINGHUB_BASE_URL」这条分支。它是死变量，
+      但原本排在最前 —— 于是「用户改了用户级变量没重开终端」会让这里静默用旧站，
+      而报错长得像 Key 不对。实现统一在 `_site.project_site()`。
+    """
+    from _site import project_site
+    return project_site(VP)
 
 
 def _num(v):

@@ -82,13 +82,22 @@ class TestResolve(Base):
         self.assertEqual(C.normalize_site(""), "")
         self.assertEqual(C.normalize_site("自建站"), "自建站", "认不出的别名原样返回，交给上层报错")
 
-    def test_fallback_when_no_config(self):
-        """没有 channels.json 时不能崩，仍按旧环境变量走（兼容旧部署）。"""
+    def test_no_env_fallback_any_more(self):
+        """旧环境变量**不再参与解析**：没有配置时也不能被它带偏。"""
         C._find_repo_root = lambda: None
         os.environ["RUNNINGHUB_BASE_URL"] = AI
-        url, src, _ = C.resolve_rh_site()
-        self.assertEqual(url, AI)
-        self.assertIn("回退", src)
+        url, src, ignored = C.resolve_rh_site()
+        self.assertEqual(url, CN, "旧环境变量已废弃，不能回退到它")
+        self.assertIn("默认", src)
+        self.assertEqual(ignored, AI, "被忽略的值仍要留痕，好让体检提示去删掉它")
+
+    def test_stale_env_without_config(self):
+        """没有配置 + 旧变量与默认一致 → 不报「被忽略」，避免无意义告警。"""
+        C._find_repo_root = lambda: None
+        os.environ["RUNNINGHUB_BASE_URL"] = CN
+        url, _src, ignored = C.resolve_rh_site()
+        self.assertEqual(url, CN)
+        self.assertEqual(ignored, "", "同值不算冲突，不该提示")
 
     def test_default_when_nothing(self):
         C._find_repo_root = lambda: None

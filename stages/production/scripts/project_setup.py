@@ -105,10 +105,23 @@ WORKFLOW_KINDS = {
 RH_KINDS = ("runninghub", "runninghub_workflow", "runninghub_ai_app")
 COMFY_KINDS = ("local_comfyui", "cloud_comfyui")
 
-# Key / 站点的读取来源（顺序即优先级）。**只登记来源与指纹，Key 本体永不落盘。**
+# Key 的读取来源（顺序即优先级）。**只登记来源与指纹，Key 本体永不落盘。**
 KEY_ENV_NAMES = ("RUNNINGHUB_API_KEY", "RH_API_KEY")
-SITE_ENV_NAMES = ("RUNNINGHUB_BASE_URL", "RH_BASE_URL")
 KNOWN_SITES = ("https://www.runninghub.ai", "https://www.runninghub.cn")
+
+
+def _runtime_site() -> str:
+    """站点：真源 `configs/channels.json`（实现见 `_site.py`），**不再读环境变量**。
+
+    2026-11-01 起 `RUNNINGHUB_BASE_URL` 是死变量 —— 它曾经让「用户改了没生效」
+    看起来像「Key 不对」。这里保留兜底只是为了 `_site` 导入失败时不至于中断初始化。
+    """
+    try:
+        from _site import runtime_site
+        url = runtime_site()[0]
+    except Exception:                                          # noqa: BLE001
+        url = ""
+    return (url or "https://www.runninghub.cn").rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +179,8 @@ def _key_fingerprint(key: str) -> str:
 def live_key() -> dict:
     """当前环境里的 RunningHub Key 与站点（只读）。→ {key, source, fingerprint, site}"""
     key, src = _read_env_value(KEY_ENV_NAMES)
-    site, _ = _read_env_value(SITE_ENV_NAMES)
     return {"key": key, "source": src, "fingerprint": _key_fingerprint(key),
-            "site": site.strip().rstrip("/")}
+            "site": _runtime_site()}
 
 
 def _channels(image: dict, video: dict) -> list:
@@ -407,9 +419,7 @@ def collect(ws: pathlib.Path) -> dict:
                                "comfy_workflow": det.get("comfy_workflow")})
                 break
     if not wa_eff.get("site"):
-        _site, _ = _read_env_value(SITE_ENV_NAMES)
-        if _site:
-            wa_eff["site"] = _site.strip().rstrip("/")
+        wa_eff["site"] = _runtime_site()
 
     ep = d.get("episodes") or {}
     eps_ok = bool(ep.get("count") and ep.get("seconds") and
@@ -626,7 +636,7 @@ def render_ask(ws: pathlib.Path) -> str:
     L.append("   请给我一个**账号别名**（例：主账号 A / 小号 B），我用当前环境里的 Key 算指纹登记：")
     if live["fingerprint"]:
         L.append("   当前检测到：%s（来源 %s，站点 %s）—— 是不是这一把？"
-                 % (live["fingerprint"], live["source"], live["site"] or "未设 RUNNINGHUB_BASE_URL"))
+                 % (live["fingerprint"], live["source"], live["site"] or "站点未取到（检查 configs/channels.json）"))
     else:
         L.append("   ★ 当前**没检测到** RUNNINGHUB_API_KEY（进程环境与 HKCU\\Environment 都没有）")
     L.append("   ⚠ 换 Key 后确认单会失效：真跑前会比对指纹，不一致直接停（防止花错账号的钱）。")
@@ -822,9 +832,7 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
         wa["confirmed"] = True
         wa["confirmed_at"] = _now()
         if not wa.get("site"):
-            _s, _ = _read_env_value(SITE_ENV_NAMES)
-            if _s:
-                wa["site"] = _s.strip().rstrip("/")
+            wa["site"] = _runtime_site()
 
     # ⑦ 账号 API Key（只登记「用哪个账号」+ 指纹，Key 本体永不落盘）
     # ★ 2026-10-22：`--account none` 是**合法终态**（声明本项目不需要 Key），
@@ -853,11 +861,11 @@ def apply_set(ws: pathlib.Path, a) -> tuple:
                         "或用 --account-source <变量名> 指定" % " / ".join(names))
             return EXIT_WAIT_CONFIRM, msgs
         fp = _key_fingerprint(key)
-        site, _ = _read_env_value(SITE_ENV_NAMES)
+        site = _runtime_site()
         _note(d, "account.alias", ac.get("alias"), alias)
         _note(d, "account.key_fingerprint", ac.get("key_fingerprint"), fp)
         ac.update({"alias": alias, "key_source": src, "key_fingerprint": fp,
-                   "site": (site.strip().rstrip("/") or wa.get("site")),
+                   "site": (site or wa.get("site")),
                    "no_key_reason": None,
                    "confirmed": True, "confirmed_at": _now()})
         msgs.append("[OK] 账号 = %s（指纹 %s，来源 %s）" % (alias, fp, src))
@@ -946,7 +954,7 @@ def cmd_accounts(a) -> int:
         L.append("  进程环境变量与 HKCU\\Environment 都没有 %s" % " / ".join(KEY_ENV_NAMES))
         L.append("  配法（PowerShell，用户级持久变量，新开终端生效）：")
         L.append("    setx RUNNINGHUB_API_KEY \"<你的 Key>\"")
-        L.append("    setx RUNNINGHUB_BASE_URL \"https://www.runninghub.ai\"")
+        L.append("  站点不用设环境变量：python stages/video/workflow/scripts/configure.py set-site cn|ai")
     else:
         L.append("%-16s %-26s %-22s %-14s %s" % ("账号", "Key 来源（环境变量）", "站点", "指纹", "可用"))
         L.append("-" * 72)
