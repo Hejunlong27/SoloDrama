@@ -257,6 +257,16 @@ def _():
     ok2, d2 = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
     A_(not ok2, "DUR=20 应判不过")
     A_("越界" in d2, "理由要说明越界：%s" % d2)
+
+    # ★ 2026-11-01（P2-5 结论）：禁用字段只认**行首**。
+    #   带缩进的是续行（属于上一条 ACTION 的延续），报错会造成「合法剧本被判死」。
+    base = t.replace("DUR: 20", "DUR: 6")
+    f.write_text(base + "\n    MOOD: 紧张\n", encoding="utf-8", newline="")
+    ok3, d3 = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
+    A_(ok3, "缩进的 MOOD 是续行，不该判不过：%s" % d3)
+    f.write_text(base + "\nMOOD: 紧张\n", encoding="utf-8", newline="")
+    ok4, d4 = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
+    A_((not ok4) and "禁用字段" in d4, "行首 MOOD 必须判不过：%s" % d4)
     return detail[:40]
 
 

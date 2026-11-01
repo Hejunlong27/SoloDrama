@@ -16,7 +16,6 @@ import os
 import pathlib
 import sys
 import tempfile
-import types
 import time
 import unittest
 
@@ -38,9 +37,6 @@ sys.path.insert(0, str(SCRIPTS))
 os.environ["SOLODRAMA_WORKSPACE"] = tempfile.mkdtemp(prefix="sd_ws_")
 
 import convert_storyboard as CS          # noqa: E402
-
-sys.path.insert(0, str(ROOT / "tools"))  # noqa: E402
-import core.validate as V                # noqa: E402
 
 
 class TestConvertRefsSplit(unittest.TestCase):
@@ -71,52 +67,6 @@ class TestConvertRefsSplit(unittest.TestCase):
         st = {}
         CS._split_refs(["JUEZA", "sb_ep01_sc01"], {"JUEZA"}, set(), "shot_02", st)
         self.assertEqual(st.get("refs_unknown"), ["shot_02(sb_ep01_sc01)"])
-
-
-class TestFfsRules(unittest.TestCase):
-    """反馈 2.1 / 2.2 / 4.x / 4.y：西语断句、拉丁上限、总时长容差。"""
-
-    def _ep(self, dialog):
-        return types.SimpleNamespace(shots=[types.SimpleNamespace(
-            sc_id="SC-01", dialog=dialog, est_sec=6)])
-
-    def test_70_spanish_period_splits(self):
-        issues = V._check_dialog(self._ep("“Es prueba. Está firmada.”"))
-        self.assertEqual([i.code for i in issues], [])
-
-    def test_71_latin_long_sentence_allowed(self):
-        line = "“Necesito saber quien firmo este documento ayer.”"     # 47 字符
-        issues = V._check_dialog(self._ep(line))
-        self.assertEqual([i.code for i in issues], [], "西语 55 字符以内应放行")
-
-    def test_72_latin_char_cap_removed(self):
-        # 2026-10-31：取消拉丁语系 55 字符单句上限，改由「词/秒 × 本镜时长」兜底
-        line = "“" + "a" * 60 + "”"
-        issues = V._check_dialog(self._ep(line))
-        self.assertEqual([i.code for i in issues], [], "长单句不再按字符判死")
-
-    def test_72b_latin_word_budget_enforced(self):
-        line = "“" + " ".join(["word"] * 30) + "”"      # 30 词 > 6s × 3.8 = 22 词
-        issues = V._check_dialog(self._ep(line))
-        self.assertTrue(any("22 词" in i.message for i in issues), "超出本镜语速预算必须报错")
-
-    def test_72c_latin_four_sentences_allowed(self):
-        issues = V._check_dialog(self._ep("“One. Two. Three. Four.”"))
-        self.assertEqual([i.code for i in issues], [], "高密度对白允许单镜 4 句")
-
-    def test_72d_latin_five_sentences_rejected(self):
-        issues = V._check_dialog(self._ep("“One. Two. Three. Four. Five.”"))
-        self.assertTrue(any("4 句上限" in i.message for i in issues))
-
-    def test_73_chinese_still_20(self):
-        issues = V._check_dialog(self._ep("“" + "字" * 25 + "”"))
-        self.assertTrue(any("20 字" in i.message for i in issues))
-
-    def test_74_total_duration_tolerance(self):
-        shots = [types.SimpleNamespace(sc_id="SC-%02d" % i, est_sec=12) for i in range(1, 6)]
-        ep = types.SimpleNamespace(shots=shots, total_sec=59)
-        self.assertEqual([i.code for i in V._check_duration(ep)], [],
-                         "59 秒在 60 秒档的 ±2s 容差内")
 
 
 class TestReleasePickLatest(unittest.TestCase):

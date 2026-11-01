@@ -53,9 +53,10 @@ def project_site(vp) -> str:
     """项目级站点：`<引擎工作区>/config.local.json` 的 `runninghub_base_url` 优先，
     否则用仓库真源（`configs/channels.json`）。
 
-    这个函数的存在是为了**删掉三份重复实现**：`gen_char_assets` / `gen_scene_assets` /
-    `gen_assets_rh_workflow` 各自写过一次「先读环境变量、再读项目配置、最后用引擎默认」，
-    三份都对「优先级」有不同理解 —— 那正是「同一件事三条路」的典型。
+    这个函数的存在是为了**删掉重复实现**：`gen_assets_rh_workflow` 等脚本各自写过一次
+    「先读环境变量、再读项目配置、最后用引擎默认」，且对优先级的理解各不相同 ——
+    那正是「同一件事三条路」的典型。（`gen_char_assets` / `gen_scene_assets` 已于
+    2026-11-01 删除，它们各自也复制过一份。）
     `RUNNINGHUB_BASE_URL` 已废弃，不再读。
     """
     if vp:

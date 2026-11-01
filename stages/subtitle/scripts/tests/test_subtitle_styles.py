@@ -8,7 +8,7 @@
   C. 平台安全区：文本框 ≤70% 宽、文字块下沿距底 ≥200px
   D. 换画布等比缩放：2160×3840 上字号正好是 1080×1920 的 2 倍（视觉比例恒定）
   E. 规范写错（字号×行宽超安全区）必须**报错**，不许静默缩字
-  F. 没有样式表时回退旧的百分比算法（老项目不受影响）
+  F. 没有样式表时**明确报错**（不回退百分比 —— 两套口径比失败更危险）
 
 跑法：python stages/subtitle/scripts/tests/test_subtitle_styles.py
 """
@@ -112,11 +112,16 @@ class TestLoudFailure(unittest.TestCase):
 
 
 class TestFallback(unittest.TestCase):
-    def test_no_sheet_falls_back_to_percent(self):
-        """F：没有样式表时回退旧口径（老项目不受影响）。"""
+    def test_no_sheet_is_an_error(self):
+        """F：没有样式表时**明确报错**，不回退旧口径（V0.7.43 起删掉了回退）。
+
+        回退的代价是「同一份规范在不同剧里长得不一样」，且 qa 会按两套口径分别判过 ——
+        比直接失败危险得多。
+        """
         cfg = _cfg("zh", with_sheet=False)
-        m = S.style_metrics(cfg, "zh", (1080, 1920))
-        self.assertNotIn("locked", m["font_size_by"])
+        with self.assertRaises(SystemExit) as ctx:
+            S.style_metrics(cfg, "zh", (1080, 1920))
+        self.assertIn("font_px", str(ctx.exception))
 
     def test_sheet_found_from_repo(self):
         """样式表能被自动找到 —— 找不到会静默回退，等于规范不生效。"""

@@ -29,33 +29,29 @@ from . import adapters, commands as CMD, paths, runner, studio
 # 环节 → 命令（只登记**确实存在且语义等价**的；没登记的按人工处理）
 # ---------------------------------------------------------------------------
 # mode: job=入队(长任务) / sync=直接执行；est: 每步预估 RH 币（None = 估不出来，必须停下来问）
+# 七环节 → 该环节「能自动跑的那一条命令」。
+# ★ 2026-11-01：原来按 S1–S11 映射，而 S1–S11 的判据脚本（workflow.py）已删；
+#   现在环节 id 与 `nodes.STAGES` 一致，同一环节下的节点由 `drama do <node>` 推进，
+#   这里只登记「一条能代表该环节的批处理命令」，没有就标 manual。
 STAGE_MAP = {
-    "S1": {"cmd": "market.template", "mode": "sync", "mode_text": "生成调研模板",
-           "note": "模板生成后需要人补市场数据（榜单/竞品），补齐才过 probes"},
-    "S2": {"cmd": "script.plan", "mode": "sync", "mode_text": "剧本编排",
-           "note": "按 blueprint 生成分集骨架；正文由 AI/人工在创作中心写"},
-    "S4": {"cmd": "assets.local", "mode": "sync", "mode_text": "本地出图（￥0）",
-           "note": "本机 ComfyUI 出图，不花钱但占 GPU；需要「资产提示词 md」"},
-    "S5": {"cmd": "convert.apply", "mode": "sync", "mode_text": "转分镜提示词",
-           "note": "把剧本转成 H3 六段式提示词"},
-    "S6": {"cmd": "video.plan", "mode": "sync", "mode_text": "出片计划与成本预估",
-           "note": "只算钱不提交；真正出片是下一步 video.run（计费）"},
-    "S8": {"cmd": "media.assemble", "mode": "sync", "mode_text": "拼接",
-           "note": "把镜头段拼成整集母版，会校验帧数"},
-    "S9": {"cmd": "media.master", "mode": "sync", "mode_text": "放大母版",
-           "note": "按 model-plan 放大到发布分辨率"},
-    "S10": {"cmd": "media.render", "mode": "sync", "mode_text": "烧字幕/音频",
-            "note": "字幕时间来自真对齐，不来自剧本估算"},
+    "research": {"cmd": "market.template", "mode_text": "生成调研模板",
+                 "note": "模板生成后需要人补市场数据（榜单/竞品），补齐才过节点判据"},
+    "script": {"cmd": "script.plan", "mode_text": "剧本编排",
+               "note": "按 blueprint 生成分集骨架；正文由 AI/人工在创作中心写"},
+    "asset": {"cmd": "assets.local", "mode_text": "本地出图（￥0）",
+              "note": "本机 ComfyUI 出图，不花钱但占 GPU；需要「资产提示词 md」"},
+    "board": {"cmd": "convert.apply", "mode_text": "分镜转 data 五文件",
+              "note": "把分镜 md 转成引擎输入（含 <Picture n> 机械重排）"},
+    "video": {"cmd": "video.plan", "mode_text": "出片计划与成本预估",
+              "note": "只算钱不提交；真正出片是 video.run（计费）"},
+    "edit": {"cmd": "media.master", "mode_text": "母版拼接（封面+片段+BGM）",
+             "note": "之后依次 高清放大 → 字幕烧录，见「剪辑」页"},
 }
 
 # 明确「要人」的环节：给出该去的页面，而不是让人对着灰按钮猜
 MANUAL_HINT = {
-    "S3": ("资产设计", "assets", "画风/角色差异化需要人判断，去「资产中心」确认设定卡"),
-    "S7": ("发行资料准备", "release", "封面/文案/版权资料要人过一遍，去「发行中心」"),
-    "S11": ("定稿输出", "release", "发布版命名与导出要人确认，去「发行中心」"),
+    "prompt": ("提示词", "storyboard", "六段式提示词由会话/技能装配，装完用 ingest.check 校验（本页只读）"),
 }
-
-PAID_STAGES = {"S6b"}          # 预留：真出片（video.run）单独作为一步
 
 
 def _values_for(sid: str, ws: str) -> dict:
@@ -64,14 +60,16 @@ def _values_for(sid: str, ws: str) -> dict:
     为什么不给空值硬跑：`assets.local` 没有 `SOLODRAMA_ASSET_MD` 会直接 rc=1，
     看起来像「ComfyUI 没开」，会把流水线停在一个假故障上。
     """
-    if sid == "S4":
+    if sid == "asset":
         try:
             cands = (studio.asset_mds(ws) or {}).get("candidates") or []
         except Exception:  # noqa: BLE001
             cands = []
         if not cands:
             raise ValueError("没找到「资产提示词 md」，先在资产中心确认/生成一份")
-        return {"asset_md": cands[0]["path"]}
+        # 两个资产命令的参数名不同：`assets.local` 走环境变量 `asset_md`，
+        # `assets.rh_wf` 走 CLI `--md`。两个键都给，调用方各取所需（多余的会被忽略）。
+        return {"md": cands[0]["path"], "asset_md": cands[0]["path"]}
     return {}
 
 

@@ -4,8 +4,8 @@
 
 为什么有这个脚本
 ----------------
-云端通道（`gen_char_assets.py` / `gen_scene_assets.py`）各自解析同一份资产提示词 md，
-但它们的产物是「直接提交给 RunningHub 的请求体」。本地 ComfyUI 通道吃的是另一种输入
+云端通道（`gen_assets_rh_workflow.py`）与本脚本解析同一份资产提示词 md，
+但引擎吃的是「直接提交给 RunningHub 的请求体」。本地 ComfyUI 通道吃的是另一种输入
 （`comfy_client.py --spec` 的 manifest），因此需要一个**确定性转换器**把创作层产物
 转成引擎输入 —— 这正是本脚本的职责，属设计文档里的「转换器补断点」一类。
 
@@ -14,7 +14,7 @@
 * **纯标准库**（re / json / argparse / pathlib），**零第三方依赖、零网络、零计费**，
   也不需要 `RUNNINGHUB_*` 任何 Key —— 本地通道的用户不该被云端依赖拖累。
 * **只搬运、不发明**：解析出的提示词逐字保留，不删改、不重排、不补写。
-* **解析口径与既有脚本一致**：章节结构沿用 `gen_char_assets.py` / `gen_scene_assets.py`
+* **解析口径与引擎一致**：章节结构沿用 `gen_assets_rh_workflow.py` 的解析
   （`# 一、角色资产库` / `# 二、场景资产` / `# 三、道具资产`；`## N. 名字` 节内 ``` 块 = 提示词）。
   实现独立成文件而**不 import 既有引擎**，是为了避免把 httpx / RunningHub 客户端拖进本地通道
   （既有引擎在 import 期就会 fail-fast 校验 Key 与工作区）。

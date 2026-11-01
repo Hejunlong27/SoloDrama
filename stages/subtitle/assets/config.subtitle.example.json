@@ -48,22 +48,11 @@
     }
   },
   "default_language": "zh",
-  "_languages_note": "这里的 font / font_px / max_line_chars / max_lines / margin_lr_px / outline / shadow 会被 configs/subtitle-styles.json 覆盖（那是唯一真源）。本段只负责：断句方式（wrap）、断点字符、语速口径（cps_*）、时长上下限。",
+  "_languages_note": "这里只放**断句与时序**（wrap / 断点字符 / cps 语速 / 时长上下限）。视觉参数（字体、字号、每行字数、行数、左右边距、描边、阴影）全部在 configs/subtitle-styles.json —— 那是唯一真源，本文件不再抄一遍。",
   "languages": {
     "zh": {
       "_desc": "中文：按字符断行，避头尾；微软雅黑已实测覆盖中文（黑体 simhei 缺西语字符，勿用于西语）",
-      "font": "Microsoft YaHei",
-      "font_size_pct": 6.7,
-      "char_width_em": 1.0,
-      "bold": true,
-      "outline": 3,
-      "shadow": 1,
-      "margin_v_pct": 8.7,
-      "margin_lr_pct": 4.2,
-      "max_line_chars": 16,
       "line_tolerance_chars": 3,
-      "max_lines": 2,
-      "max_cue_chars": 32,
       "cps_ok": [
         2.0,
         8.5
@@ -75,22 +64,12 @@
       "break_punct": "，。！？；：…—、",
       "forbid_line_start": "，。！？；：、）》」』…—",
       "forbid_line_end": "（《「『",
-      "strip_chars": " "
+      "strip_chars": " ",
+      "_visual_note": "字体/字号/边距/行宽/描边一律在 configs/subtitle-styles.json（唯一真源），本段只管断句与时序。"
     },
     "es": {
       "_desc": "西班牙语：按【单词边界】断行，绝不切断单词；行宽按字符（Netflix 口径 42 字符/行）",
-      "font": "Microsoft YaHei",
-      "font_size_pct": 6.5,
-      "char_width_em": 0.52,
-      "bold": true,
-      "outline": 3,
-      "shadow": 1,
-      "margin_v_pct": 8.7,
-      "margin_lr_pct": 4.2,
-      "max_line_chars": 42,
       "line_tolerance_chars": 6,
-      "max_lines": 2,
-      "max_cue_chars": 84,
       "cps_ok": [
         3.0,
         22.0
@@ -103,21 +82,14 @@
       "forbid_line_start": ".,!?;:)]}»…—",
       "forbid_line_end": "([{«",
       "strip_chars": " ",
-      "_cps_note": "下限 3.0（原 6.0）—— 字幕停留时间含前后停顿，23 字台词铺在 6.2s 上就是 3.7 字/秒；低于下限只做参考计数，不报警（V0.7.6）"
+      "_cps_note": "下限 3.0（原 6.0）—— 字幕停留时间含前后停顿，23 字台词铺在 6.2s 上就是 3.7 字/秒；低于下限只做参考计数，不报警（V0.7.6）",
+      "_visual_note": "字体/字号/边距/行宽/描边一律在 configs/subtitle-styles.json（唯一真源），本段只管断句与时序。"
     },
     "en": {
       "_desc": "英语：按【单词边界】断行，绝不切断单词；一行 26 字符是 1080 竖屏下 52px 字号的上限（26 × 0.52em × 52px = 703px ≤ 756px 安全区）",
-      "font": "Arial",
       "font_px": 52,
-      "char_width_em": 0.52,
-      "bold": true,
-      "outline": 3,
-      "shadow": 1,
       "margin_lr_px": 162,
-      "max_line_chars": 26,
       "line_tolerance_chars": 4,
-      "max_lines": 2,
-      "max_cue_chars": 52,
       "cps_ok": [
         3.0,
         20.0
@@ -129,7 +101,8 @@
       "break_punct": ".,!?;:…—",
       "forbid_line_start": ".,!?;:)]}»…—",
       "forbid_line_end": "([{«",
-      "strip_chars": " "
+      "strip_chars": " ",
+      "_visual_note": "字体/字号/边距/行宽/描边一律在 configs/subtitle-styles.json（唯一真源），本段只管断句与时序。"
     }
   },
   "audio": {

@@ -40,9 +40,9 @@ def _stage(sid, name, probes_ok=True, state="todo"):
 
 
 def main():
-    fake = {"ok": True, "current": "S1", "complete": False,
-            "stages": [_stage("S1", "调研"), _stage("S2", "剧本", probes_ok=False),
-                       _stage("S3", "资产设计"), _stage("S4", "资产生成")]}
+    fake = {"ok": True, "current": "research", "complete": False,
+            "stages": [_stage("research", "调研"), _stage("script", "剧本", probes_ok=False),
+                       _stage("prompt", "资产设计"), _stage("asset", "资产生成")]}
     real_wf, real_norm = pipeline.adapters.workflow_status, pipeline.adapters.norm_workflow
     real_map = pipeline.STAGE_MAP
     try:
@@ -52,39 +52,39 @@ def main():
         pipeline.adapters.norm_workflow = lambda raw: raw
         # 用一个**故意加了计费步**的映射来测预算裁决（生产映射里目前全是免费/gpu）
         m = dict(pipeline.STAGE_MAP)
-        m["S1"] = {"cmd": "market.template", "mode": "sync", "mode_text": "生成模板", "note": ""}
-        m["S4"] = {"cmd": "assets.rh", "mode": "sync", "mode_text": "云端出图", "note": "", "est": 54}
+        m["research"] = {"cmd": "market.template", "mode": "sync", "mode_text": "生成模板", "note": ""}
+        m["asset"] = {"cmd": "assets.rh_wf", "mode": "sync", "mode_text": "云端出图", "note": "", "est": 54}
         pipeline.STAGE_MAP = m
         # S4 需要资产 md，测计划时让它可解析
-        pipeline._values_for = lambda sid, ws: {} if sid != "S4" else {"asset_md": "x.md"}
+        pipeline._values_for = lambda sid, ws: {} if sid != "asset" else {"md": "x.md", "asset_md": "x.md"}
 
         print("[1] 前置未齐 → blocked，且不许把它当可自动")
         d = pipeline.plan("/tmp/ws", budget=100)
-        s2 = [x for x in d["stages"] if x["id"] == "S2"][0]
-        check(s2["action"] == "blocked", "S2 应为 blocked，实际 %s（%s）" % (s2["action"], s2["detail"]))
+        s2 = [x for x in d["stages"] if x["id"] == "script"][0]
+        check(s2["action"] == "blocked", "script 应为 blocked，实际 %s（%s）" % (s2["action"], s2["detail"]))
         check("前置齐" not in s2["detail"] and "前置未齐" in s2["detail"], "说明要写清「前置未齐」")
 
         print("[2] 需人工的环节必须标 manual，并指向页面")
-        s3 = [x for x in d["stages"] if x["id"] == "S3"][0]
-        check(s3["action"] == "manual", "S3 应为 manual，实际 %s" % s3["action"])
+        s3 = [x for x in d["stages"] if x["id"] == "prompt"][0]
+        check(s3["action"] == "manual", "prompt 应为 manual，实际 %s" % s3["action"])
         check(bool(s3.get("page")), "manual 环节要给 page（该去哪个页面）")
 
         print("[3] 预算内放行 / 超预算要问 / 估不出来也要问")
         d2 = pipeline.plan("/tmp/ws", budget=100)
-        s4 = [x for x in d2["stages"] if x["id"] == "S4"][0]
+        s4 = [x for x in d2["stages"] if x["id"] == "asset"][0]
         check(s4["action"] == "auto", "54 ≤ 100 应自动放行，实际 %s（%s）" % (s4["action"], s4["detail"]))
         check(d2["est_total"] == 54, "预计花费应累计为 54，实际 %s" % d2["est_total"])
 
         d3 = pipeline.plan("/tmp/ws", budget=10)
-        s4b = [x for x in d3["stages"] if x["id"] == "S4"][0]
+        s4b = [x for x in d3["stages"] if x["id"] == "asset"][0]
         check(s4b["action"] == "ask", "54 > 10 应转为需确认，实际 %s" % s4b["action"])
         check("预算" in s4b["detail"], "要说明是预算不够：%s" % s4b["detail"])
 
         m2 = dict(pipeline.STAGE_MAP)
-        m2["S4"] = {"cmd": "assets.rh", "mode": "sync", "mode_text": "云端出图", "note": "", "est": None}
+        m2["asset"] = {"cmd": "assets.rh_wf", "mode": "sync", "mode_text": "云端出图", "note": "", "est": None}
         pipeline.STAGE_MAP = m2
         d4 = pipeline.plan("/tmp/ws", budget=1000)
-        s4c = [x for x in d4["stages"] if x["id"] == "S4"][0]
+        s4c = [x for x in d4["stages"] if x["id"] == "asset"][0]
         check(s4c["action"] == "ask", "估不出金额时必须停下来问，实际 %s" % s4c["action"])
 
         print("[4] dry-run 只回报「会跑什么」，且遇 blocked 停")
@@ -92,19 +92,19 @@ def main():
         r = pipeline.run("/tmp/ws", budget=100, dry_run=True)
         ids = [x["id"] for x in r["ran"]]
         check(r["dry_run"] is True, "应是 dry_run")
-        check(ids and ids[0] == "S1", "第一步应是 S1，实际 %s" % ids)
+        check(ids and ids[0] == "research", "第一步应是 research，实际 %s" % ids)
         check(all(x.get("rc") is None for x in r["ran"]), "dry_run 不得真的执行（rc 应为 None）")
-        check("S2" not in ids, "S2 被前置挡住，不该出现在已跑列表")
-        check(any(x["id"] == "S2" for x in r["skipped"]), "S2 应出现在 skipped 里并说明原因")
+        check("script" not in ids, "script 被前置挡住，不该出现在已跑列表")
+        check(any(x["id"] == "script" for x in r["skipped"]), "script 应出现在 skipped 里并说明原因")
 
         print("[5] only= 只跑指定环节：点 S4 不能把前面几步一起跑")
         pipeline.STAGE_MAP = m
-        r2 = pipeline.run("/tmp/ws", budget=100, only="S4", max_steps=1, dry_run=True)
+        r2 = pipeline.run("/tmp/ws", budget=100, only="asset", max_steps=1, dry_run=True)
         ids2 = [x["id"] for x in r2["ran"]]
-        check(ids2 == ["S4"], "应只跑 S4，实际 %s" % ids2)
+        check(ids2 == ["asset"], "应只跑 asset，实际 %s" % ids2)
         check(r2["skipped"] == [], "only 模式下不该把其它环节记成 skipped（会刷噪音），实际 %s" % r2["skipped"])
-        r3 = pipeline.run("/tmp/ws", budget=100, only="S3", max_steps=1, dry_run=True)
-        check(r3["ran"] == [], "S3 是需人工，only 到它应什么都不跑，实际 %s" % [x["id"] for x in r3["ran"]])
+        r3 = pipeline.run("/tmp/ws", budget=100, only="prompt", max_steps=1, dry_run=True)
+        check(r3["ran"] == [], "prompt 是需人工，only 到它应什么都不跑，实际 %s" % [x["id"] for x in r3["ran"]])
     finally:
         pipeline.adapters.workflow_status = real_wf
         pipeline.adapters.norm_workflow = real_norm

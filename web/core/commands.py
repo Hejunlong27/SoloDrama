@@ -39,7 +39,6 @@ SCRIPTS = {
     "subtitle": paths.SUBTITLE_SCRIPTS / "subtitle.py",
     "upscale": paths.SUBTITLE_SCRIPTS / "upscale.py",
     "layout": paths.STAGES_DIR / "_layout.py",
-    "tools": paths.TOOLS_DIR / "cli.py",
     "comfy_check": paths.COMIFY_SCRIPTS / "comfy_client.py",
     # ★ 2026-10-29：视频本地出片（H3，￥0）与 RH 工作流出图（t2i / i2i 双工作流）
     "comfy_video": paths.STAGES_DIR / "video" / "comfyui" / "comfy_local_video.py",
@@ -526,35 +525,6 @@ _add(_c("assets.rh_wf", "6 资产", "云端工作流出图（文生图/图生图
              "t2i 用 image_providers[active].id，i2i 用 id_i2i 且必须给 --ref（先上传再喂给加载图像节点）。"
              "默认干跑。",
         agent="先干跑列出清单与将用的工作流 ID；i2i 要确认参考图路径存在，等我明确确认后再 --submit。"))
-_add(_c("assets.rh", "6 资产", "云端出图（★计费）", "drama",
-        argv=["assets", "--engine", "rh"], billing=PAID, danger=DANGER,
-        flags={"--kind": "kind", "--only": "only"}, bools={"--submit": "submit", "--force": "force"},
-        params=[Param("kind", "类型", "enum", default="all", choices=["all", "char", "scene", "prop"]),
-                Param("only", "只做这些", "str"),
-                Param("submit", "确认提交（★计费）", "bool", default=False),
-                Param("force", "已生成的也重跑（重复计费）", "bool", default=False),
-                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
-        resources=["RH"],
-        env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="人物约 27 RH币/张、场景约 $0.01/张；必须先过 G1 计费确认。",
-        agent="先干跑列出清单、单价与合计金额，等我明确确认后再加 --submit；未确认前不要提交任何计费请求。"))
-_add(_c("assets.gen_char", "6 资产", "云端角色资产出图", "drama",
-        argv=["assets", "--engine", "rh", "--kind", "char"], billing=PAID, danger=DANGER,
-        flags={"--only": "only"}, bools={"--submit": "submit"},
-        params=[Param("only", "只做这些", "str"), Param("submit", "确认提交", "bool", default=False),
-                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
-        resources=["RH"], env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="与云端出图同通道，仅限定人物。",
-        agent="先给清单与金额，等我确认。"))
-_add(_c("assets.gen_scene", "6 资产", "云端场景资产出图", "drama",
-        argv=["assets", "--engine", "rh", "--kind", "scene"], billing=PAID, danger=DANGER,
-        flags={"--only": "only"}, bools={"--submit": "submit"},
-        params=[Param("only", "只做这些", "str"), Param("submit", "确认提交", "bool", default=False),
-                Param("asset_md", "资产提示词 md（SOLODRAMA_ASSET_MD）", "str")],
-        resources=["RH"], env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="与云端出图同通道，仅限定场景。",
-        agent="先给清单与金额，等我确认。"))
-
 # ===== 环节 7 参考图 =======================================================
 _add(_c("refs.report", "7 参考图", "参考图瘦身体检", "drama",
         argv=["refs"], mode="sync", danger=READ,
@@ -678,36 +648,48 @@ _add(_c("video.resume", "10 出片", "续跑批次（★计费）", "drama",
         resources=["RH"], help="复用 taskId，不重复提交已成功的段。",
         agent="续跑前先查该批次的在途任务，避免重复提交；告我这次会补哪些段、预估金额。"))
 
-# ===== 环节 11 拼接 / 放大 / 字幕 ==========================================
-_add(_c("media.assemble", "11 拼接字幕", "拼接 + 2K 放大（跑完即停）", "subtitle",
-        argv=["--stage", "upscale"], billing=GPU, danger=WRITE,
-        flags={"--ep": "ep"}, params=[P_EP(required=True)],
-        resources=["GPU"],
-        help="Topaz GPU 独占，一次一集；中断需整集重跑。",
-        agent="提醒我：本环节独占 GPU（8–10 分钟/集），中断需整集重跑；跑完会停在 G6 字幕停点。"))
-_add(_c("media.master", "11 拼接字幕", "只拼母版（不放大）", "subtitle",
+# ===== 环节 7 剪辑：母版拼接 → 高清放大 → 字幕 ==========================
+# ★ 2026-11-01：分组名从「11 拼接字幕」改为「7 剪辑」，并删掉 `media.assemble`
+#   —— 它的 help 写「拼接 + 2K 放大」，argv 却是 `subtitle.py --stage upscale`（受开关
+#   控制的空转分支），与 `upscale.py` 是同一件事的两个入口。
+_add(_c("media.master", "11 剪辑", "① 母版拼接（封面 + 片段 + BGM）", "subtitle",
         argv=["--stage", "master"], billing=GPU, danger=WRITE,
-        flags={"--ep": "ep"}, params=[P_EP(required=True)], resources=["GPU"],
-        help="快速确认镜头节奏是否与分镜一致。",
-        agent="拼完告我母版时长与段数，供我核对节奏。"))
-_add(_c("media.render", "11 拼接字幕", "烧录字幕（G6 停点后）", "subtitle",
+        flags={"--ep": "ep"}, bools={"--no-cover": "no_cover", "--no-bgm": "no_bgm"},
+        params=[P_EP(required=True),
+                Param("no_cover", "不加首帧封面", "bool", default=False),
+                Param("no_bgm", "不混 BGM", "bool", default=False)],
+        resources=["GPU"],
+        help="首帧封面取 09-发行/封面/cover_9x16*.png（0.8s 片头）；BGM 有 plan 才混。",
+        agent="拼完告我母版时长、段数、是否带封面与 BGM，供我核对节奏。"))
+_add(_c("media.upscale", "11 剪辑", "② 高清放大（RH / Topaz / 跳过）", "upscale",
+        billing=GPU, danger=WRITE,
+        flags={"--ep": "ep", "--backend": "backend"},
+        bools={"--force": "force", "--json": "as_json"},
+        params=[P_EP(required=True),
+                Param("backend", "放大后端", "str", default="",
+                      placeholder="留空=按 config.upscale.json；topaz / rh / off"),
+                Param("force", "忽略缓存重跑", "bool", default=False)],
+        resources=["GPU"],
+        help="topaz=本地（￥0）｜rh=云端（约 35 币/集）｜off=跳过。产物 _master_1080x1920.mp4。",
+        agent="RH 后端会花钱，提交前必须我确认；Topaz 只占本机 GPU（一次一集，中断要整集重跑）。"))
+_add(_c("media.render", "11 剪辑", "③ 字幕生成与烧录", "subtitle",
         argv=["--stage", "render"], gate="G6", danger=WRITE,
         flags={"--ep": "ep", "--lang": "lang"}, bools={"--burn": "burn"},
         params=[P_EP(required=True), Param("lang", "语言", "str", default="zh"),
                 Param("burn", "直接烧录", "bool", default=True)],
         resources=["GPU"],
-        help="★ 必须问过用户才做；不答就只交付无字幕 2K 母版。",
+        help="三语规范锁死（configs/subtitle-styles.json）：zh 58px/12 字、en 52px/26、es 50px/26。",
         agent="执行前先问我「要不要烧字幕」；我说不要就只交付无字幕母版，不要自己决定。"))
-_add(_c("media.preview", "11 拼接字幕", "字幕快速预览", "subtitle",
+_add(_c("media.preview", "11 剪辑", "字幕快速预览", "subtitle",
         argv=["--stage", "render", "--preview", "{n}"], danger=WRITE,
         flags={"--ep": "ep"}, params=[P_EP(required=True), Param("n", "预览段数", "int", default=3)],
         resources=["GPU"], help="只用前 N 段快速验证字幕样式与断行。",
-        agent="预览完后告我样式是否合格（安全区距底 ≥200px、文本宽 ≤70%）。"))
-_add(_c("media.upscale_verify", "11 拼接字幕", "放大产物自检", "upscale",
+        agent="预览完后告我样式是否合格（落点 6:4、距底 ≥200px、文本宽 ≤70%）。"))
+_add(_c("media.upscale_verify", "11 剪辑", "放大产物自检", "upscale",
         argv=["--verify-only", "--json"], mode="sync", danger=READ,
         flags={"--ep": "ep"}, params=[P_EP(required=True)],
-        help="读 <ep>_upscale.json 的 7 项自检。",
-        agent="列出未过的自检项；若退化为插值（sharpness_gain_hf 不足）要明确告警。"))
+        help="读 <ep>_upscale.json 的自检项。",
+        agent="列出未过的自检项；若退化为插值（锐度增益不足）要明确告警。"))
 
 # ===== 环节 12 验收与结账 ==================================================
 _add(_c("report.batch", "12 验收结账", "出片战报", "drama",

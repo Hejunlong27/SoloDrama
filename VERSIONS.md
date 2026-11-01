@@ -1,6 +1,47 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.44 · 重复项清理：删 20 个文件 / 净减 4703 行 + Studio 接回节点真源）**
+  按 `docs/reform/2026-11-01_重复项复核.md` 的 D1–D13 执行（Owner：按建议走）。
+  清单里每条都写了决定与落地结果，这里只记影响面最大的四件。
+
+  **① 删（20 个文件，净减 4703 行）**
+  | 项 | 删了什么 | 为什么 |
+  |---|---|---|
+  | D1 | `gen_char_assets.py`(448) / `gen_scene_assets.py`(487) / `probe_char_app.py`(106) | RH **AI 应用**通道：引擎 `IMAGE_PROVIDERS` 里没有对应 provider，且与工作流通道做同一件事；`drama assets` 只剩 `local` / `wf` |
+  | D3 | `tools/cli.py`(385) + `tools/core/`(6 文件 ≈1102) | 旧工作台（SQLite + project.json）与 `nodes.py` 是两套编排；Studio 73 条命令里 `SCRIPTS["tools"]` 是唯一死映射 |
+  | D4 | `cover_forge.py`(802) + 其测试 | 封面已定 AI 直出（`cover_prompt.py`），PIL 叠字兜底从未进主链路 |
+  | D12 | `upscale_compare_frames`(169) / `upscale_cost_compare`(186) / `_qa_subtitle_frame`(172) / `fetch_bgm`(286) / `rh_workflow_id`(140) / `wire_episode_refs`(89) | 全仓零调用；`test_safe_area.py` 移入 `tests/` 并按新口径重写 |
+
+  **② Studio 接回 23 节点真源（D5，本轮最重要）**
+  上一版 `adapters.workflow_status()` 调的是 **V0.7.42 已删的 `workflow.py`**，实测
+  `ok=False / reason=script_missing / stages=0` —— 于是「流程总览 / 助手上下文 / 流水线推进」
+  三块全部**静默失效**（UI 只显示「未接入」，不报错，所以一直没人发现）。
+  现在：`drama nodes --json` → `nodes.py::evaluate`（快照新增 `stage` 字段与 `stages` 定义）
+  → `norm_workflow` 把 23 节点按环节聚合成 7 个 stage（done / current / todo，probes 放节点明细）。
+  连带：`pipeline.STAGE_MAP` / `MANUAL_HINT` 从 S1–S11 改为七环节；`creation.js` 的
+  `STAGE_IDS` 同步（否则创作页会白屏）；`setup_show` 改读 `drama.json`（原调已删的 `drama setup`）；
+  删无调用的 `workflow_check`；`media.*` 命令按新剪辑顺序重排（删 `media.assemble`，
+  新增 `media.upscale`，`media.master` 补封面/BGM 开关）。
+
+  **③ 字幕只留锁定口径（D8）**
+  `config.subtitle.example.json` 去掉 11 个视觉字段（字体/字号/边距/行宽/描边），只留断句与时序；
+  `style_metrics()` 删掉百分比分支，`configs/subtitle-styles.json` 是唯一真源；
+  **找不到规范直接报错**，不再静默回退 —— 回退的代价是「同一份规范在不同剧里长得不一样」，
+  而 `qa_safe_area` 会按两套口径分别判过，比失败更危险。
+
+  **④ 顺带修掉的三个真缺陷**（都是清理过程中暴露的）
+  | 缺陷 | 症状 |
+  |---|---|
+  | `dialogue_gate` 把「拉丁 55 字符」写回去 | 2026-10-31 已取消该上限（改按词速预算），V0.7.42 新增的台词门禁又判死 —— 西语正常长句会被误杀。现改为「CJK 20 字 / 拉丁 本镜时长×3.8 词/秒」，测试加了一条「60+ 字符但读得完必须放行」 |
+  | `nodes.py` 的禁用字段正则用了 `^#?\\s*` | 带缩进的 `    MOOD:` 是续行（属上一条 ACTION），却被判「含禁用字段」——合法剧本被判死。改为严格行首，并在 C01 加正反例 |
+  | `find_cover` 与 `release_check.scan_covers` 命名规则不同 | 前者只认 `cover_9x16`，后者认 `cover[_-]9x16`；封面叫 `cover-9x16.png` 时片头静默不加。现共用同一条正则 |
+
+  **⑤ 测试与文档**
+  新增 `test_layout_parity.py`（四份布局实现对同一工作区必须给出同一 data/out/assets）、
+  `_util.py`（`harden_stdio` / `read_json` / `write_json`，同层 4 处 `_harden_stdio` 收口，-60 行）；
+  生产层 21 个测试文件全绿；四份旧文档（`creation/pipeline.md` 等）加「`tools/cli.py` 已废弃 +
+  新旧入口对照」声明；`生产流程总纲.md` 第 22 行改「7 环节 23 节点」；`drama cost --help` 去掉 Excel。
 - **2026-11-01 更新（V0.7.43 · 剪辑三步定型 + 三语字幕锁死）**
   剪辑环节此前是五节点（master → upscale → audio → subtitle → release），顺序与用户口径不符：
   BGM 排在放大之后，且 `_master.mp4` 与 `_mix.mp4` 谁是真母版说不清。本次按用户明确定义重排，

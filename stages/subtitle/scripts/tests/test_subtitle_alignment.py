@@ -310,9 +310,17 @@ class TestWrap(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- J. 6:4 视觉中心
-def _cfg(anchor="ratio", top=0.6, min_bottom=400, canvas=(1080, 1920)):
-    """最小可用配置（只带 place/style 需要的字段）。"""
-    return {
+REPO = SCRIPTS.parents[2]        # stages/subtitle/scripts → 仓库根
+STYLE_SHEET = json.loads((REPO / "configs" / "subtitle-styles.json")
+                         .read_text(encoding="utf-8"))
+
+
+def _cfg(anchor="ratio", top=0.6, min_bottom=200, canvas=(1080, 1920)):
+    """最小可用配置：断句/时序 + `configs/subtitle-styles.json` 的视觉锁定层。
+
+    ★ 2026-11-01：不再构造「百分比字号」配置 —— 回退算法已删，视觉参数只有一个真源。
+    """
+    cfg = {
         "canvas": {"width": canvas[0], "height": canvas[1]},
         "safe_area": {"min_bottom_px": min_bottom, "max_text_width_pct": 70},
         "placement": {"anchor": anchor, "anchor_top": top},
@@ -321,13 +329,16 @@ def _cfg(anchor="ratio", top=0.6, min_bottom=400, canvas=(1080, 1920)):
                    "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
                    "back_colour": "&H80000000", "encoding": 1},
         "languages": {"es": {
-            "font": "Microsoft YaHei", "font_size_pct": 6.5, "char_width_em": 0.52,
-            "bold": True, "outline": 3, "shadow": 1, "margin_v_pct": 8.7,
-            "margin_lr_pct": 4.2, "max_line_chars": 24, "line_tolerance_chars": 4,
-            "max_lines": 2, "max_cue_chars": 48, "wrap": "word",
+            "wrap": "word", "line_tolerance_chars": 4, "min_duration_s": 0.8,
+            "max_duration_s": 6.0, "cps_ok": [3.0, 22.0], "cps_hard_max": 26.0,
             "break_punct": ".,!?;:…—", "forbid_line_start": ".,!?;:)]}»…—",
         }},
     }
+    cfg = S.apply_style_sheet(cfg, STYLE_SHEET)
+    # 用例要能单独调落点/安全区，覆盖在 apply 之后（apply 会写死规范里的值）
+    cfg["placement"] = {"anchor": anchor, "anchor_top": top}
+    cfg["safe_area"] = {"min_bottom_px": min_bottom, "max_text_width_pct": 70}
+    return cfg
 
 
 class TestVisualCenter(unittest.TestCase):
@@ -366,25 +377,27 @@ class TestVisualCenter(unittest.TestCase):
             self.assertEqual(len(ys), 2)
             self.assertEqual(ys[0], ys[1])
 
-    def test_pixel_mode_still_works(self):
+    def test_pixel_mode_no_longer_supported(self):
+        """`anchor="pixel"`（距底固定像素的旧口径）已取消 —— 仍按 6:4 出 \pos。
+
+        ★ 2026-11-01：两套落点算法的价值为零，反而会让「改了配置没生效」查不出来。
+        """
         cfg = _cfg(anchor="pixel")
         m = S.style_metrics(cfg, "es", (1080, 1920))
-        self.assertEqual(m["anchor"], "pixel")
-        self.assertIsNone(m["pos"])
-        self.assertGreaterEqual(m["margin_v"], 400)
+        self.assertEqual(m["anchor"], "ratio")
+        self.assertEqual(m["pos"], (540, 1152))
         with tempfile.TemporaryDirectory() as td:
             p = pathlib.Path(td) / "p.ass"
             S.write_ass([{"start": 0, "end": 1, "text": "Hola.", "lines": ["Hola."]}],
                         cfg, str(p), canvas=(1080, 1920))
-            self.assertNotIn("\\pos(", p.read_text(encoding="utf-8"))
-            self.assertTrue(S.qa_safe_area(str(p), cfg)["pass"])
+            self.assertIn("\\pos(", p.read_text(encoding="utf-8"))
 
-    def test_anchor_clamped_by_safe_area(self):
-        """anchor_top 调得很低（字幕贴底）时必须被安全区上顶，而不是进 UI 区。"""
+    def test_anchor_too_low_raises_instead_of_clamping(self):
+        """anchor_top 贴底时**报错**，不静默上顶（上顶会让 qa 按上顶值判过）。"""
         cfg = _cfg(top=0.95)
-        m = S.style_metrics(cfg, "es", (1080, 1920))
-        self.assertTrue(m["clamped"])
-        self.assertGreaterEqual(m["bottom_px"], 400)
+        with self.assertRaises(SystemExit) as ctx:
+            S.style_metrics(cfg, "es", (1080, 1920))
+        self.assertIn("下沿距底", str(ctx.exception))
 
     def test_qa_rejects_wrong_anchor(self):
         cfg = _cfg()

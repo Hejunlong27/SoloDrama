@@ -98,8 +98,11 @@ def main() -> int:
         # 8. 选项 id 与清单一致（★ 2026-10-16 gate v2：加入「云端 ComfyUI」；视频再加「RH AI 应用」）
         for kind in ("image", "video"):
             ids = [o["id"] for o in mg.MODEL_OPTIONS[kind]]
+            # ★ 2026-11-01：图片侧的 `runninghub`（AI 应用）已删，图片云端只有
+            #   `runninghub_workflow`；视频侧仍是 `runninghub`（工作流出片）。两者都算「有 RH」。
             check("%s 选项含本地/云端 ComfyUI 与 RH" % kind,
-                  ids[:2] == ["local_comfyui", "cloud_comfyui"] and "runninghub" in ids,
+                  ids[:2] == ["local_comfyui", "cloud_comfyui"]
+                  and any(x.startswith("runninghub") for x in ids),
                   str(ids))
             check("%s 每项都有 requires 字段" % kind,
                   all("requires" in o for o in mg.MODEL_OPTIONS[kind]))
@@ -121,8 +124,10 @@ def main() -> int:
 
         # 8c. ★ 本地 ComfyUI 不强制要工作流文件（有仓库默认工作流），但选了云端就必须给
         check("本地ComfyUI 生图无强制依据", mg.missing_evidence("image", "local_comfyui", {}) == [])
-        check("RH AI应用 生图必须给应用地址",
-              mg.missing_evidence("image", "runninghub", {}) == ["app_url"])
+        # ★ 2026-11-01：图片侧的「RH AI 应用」通道已删（引擎无 provider，与工作流通道重复），
+        #   这条断言随之取消；图片云端只剩 runninghub_workflow（要工作流文件）。
+        check("RH 工作流 生图必须给工作流文件",
+              mg.missing_evidence("image", "runninghub_workflow", {}) == ["comfy_workflow"])
 
         # 9. 渲染非空且含全部标签
         for kind in ("image", "video"):

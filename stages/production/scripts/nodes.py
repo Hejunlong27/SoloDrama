@@ -449,8 +449,11 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
                 if not re.search(r"(?m)^#?\s*%s\s*[:：]" % re.escape(k), head)]
         shots = re.findall(r"(?m)^#?\s*\[SC-(\d+)\]", t)
         durs = [int(x) for x in re.findall(r"(?m)^#?\s*DUR\s*[:：]\s*(\d+)", t)]
+        # ★ 2026-11-01（P2-5 的结论搬进来）：只认**行首**的禁用字段。
+        #   带缩进的是续行内容（`    MOOD: 紧张` 属于上一条 ACTION 的延续），
+        #   原先 `^#?\s*` 会把续行也算作字段，导致「合法剧本被判含禁用字段」。
         banned = [k for k in ("MOOD", "CAMERA", "EMOTION", "MUSIC", "LIGHT")
-                  if re.search(r"(?m)^#?\s*%s\s*[:：]" % k, t)]
+                  if re.search(r"(?m)^#?%s\s*[:：]" % k, t)]
         # HEADER 不全只告警：老项目用别的 HEADER 写法，不该因此挡住整条链。
         note = ("HEADER 缺 %s（不阻塞）" % "、".join(miss)) if miss else ""
         if not shots:
@@ -746,8 +749,17 @@ def node_state(ctx: Ctx, node: dict) -> dict:
 
 
 def evaluate(ctx: Ctx) -> dict:
-    rows = [node_state(ctx, n) for n in NODES]
+    """全量状态快照。★ 2026-11-01：每条节点带 `stage`，并附 `stages` 定义 ——
+    Studio 的流程视图（adapters.norm_workflow）据此把 23 节点聚合成 7 环节，
+    不再依赖已删除的 `workflow.py`（S1–S11 那套）。"""
+    rows = []
+    for n in NODES:
+        r = node_state(ctx, n)
+        r["stage"] = n["stage"]
+        rows.append(r)
     return {"ws": str(ctx.ws), "ep": ctx.ep, "nodes": rows,
+            "stages": [{"id": s["id"], "name": s["name"], "why": s.get("why", "")}
+                       for s in STAGES],
             "counts": {s: sum(1 for r in rows if r["state"] == s)
                        for s in ("passed", "failed", "absent", "stale", "skipped", "blocked")}}
 

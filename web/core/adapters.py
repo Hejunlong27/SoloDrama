@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -24,7 +25,6 @@ from . import jsonout, paths, runner
 
 # 只读子命令的脚本位置（与 commands.SCRIPTS 同一批文件，这里只挑读类）
 SCRIPTS = {
-    "workflow": paths.PROD_SCRIPTS / "workflow.py",
     "drama": paths.PROD_SCRIPTS / "drama.py",
     "env": paths.TOOLS_DIR / "env_check.py",
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
@@ -83,13 +83,59 @@ def run_json(script_key: str, args: list, ws, *, timeout: int = 90, ttl: int = 0
 # 具体适配器（每个都对应一个真实存在的子命令）
 # ---------------------------------------------------------------------------
 def workflow_status(ws) -> dict:
-    """S1–S11 流程状态（唯一真源：workflow.py，带 probes 判据）。"""
-    return run_json("workflow", ["status", "--workspace", ws, "--json"], ws, ttl=12)
+    """七环节 23 节点状态（唯一真源：`drama nodes --json` → `nodes.py::evaluate`）。
+
+    ★ 2026-11-01：原实现调 `workflow.py status`（S1–S11），而那脚本已在 V0.7.42 删除 ——
+      本函数于是长期返回 `script_missing`，连带「流程总览 / 助手上下文 / 流水线推进」
+      三块一起静默失效（UI 只显示「未接入」，不报错）。现在接回节点真源。
+    """
+    return run_json("drama", ["nodes", "--json"], ws, ttl=8)
+
+
+SETUP_LABELS = (
+    ("track", "形态 track"),
+    ("look", "视觉 look"),
+    ("narrative", "叙事模式"),
+    ("episodes", "集数"),
+    ("image_engine", "图片通道"),
+    ("video_engine", "视频通道"),
+)
 
 
 def setup_show(ws) -> dict:
-    """开工前置九项（G-0）。"""
-    return run_json("setup", ["show", "--workspace", ws, "--json"], ws, ttl=20)
+    """开工前置 6 项：读单一档案 `drama.json`。
+
+    ★ 2026-11-01：原来调 `drama setup show`（`project_setup.py`），该脚本已随 V0.7.42
+      删除，函数一直返回 script_missing。现在改为直接读档案，不新增第二个真源。
+    """
+    p = Path(ws) / "drama.json"
+    d = {}
+    if p.is_file():
+        try:
+            d = json.loads(p.read_text(encoding="utf-8-sig")) or {}
+        except (OSError, ValueError):
+            d = {}
+    fmt = d.get("format") or {}
+    eps = d.get("episodes") or {}
+    ch = d.get("channel") or {}
+    raw = {"track": fmt.get("track"), "look": fmt.get("look"),
+           "narrative": fmt.get("narrative"), "episodes": eps.get("count"),
+           "image_engine": (ch.get("image") or {}).get("engine"),
+           "video_engine": (ch.get("video") or {}).get("engine")}
+    items, missing = {}, []
+    for key, label in SETUP_LABELS:
+        v = raw.get(key)
+        ok = bool(v)
+        items[key] = {"ok": ok, "label": ("%s：%s" % (label, v)) if ok else label,
+                      "value": v or "", "missing": [] if ok else [label]}
+        if not ok:
+            missing.append(label)
+    # ★ 顶层 ok 表示「数据取到了」，齐备性在 data.ok —— 两者混用会让「缺 6 项」
+    #   被 norm_setup 判成「接口失败」，UI 显示「未接入」而不是「缺这几项」。
+    return {"ok": True, "rc": 0, "exit": None, "reason": "",
+            "data": {"items": items, "missing": missing, "ok": not missing,
+                     "derived": {"source": str(p)}},
+            "text_tail": "", "elapsed": 0.0}
 
 
 def style_status(ws) -> dict:
@@ -121,42 +167,58 @@ def continuity(ws) -> dict:
     return run_json("continuity", ["--json"], ws, ttl=10)
 
 
-def workflow_check(ws, stage: str) -> dict:
-    """G10 顺序门禁。rc=4 表示前置未完成（不是错误）。"""
-    return run_json("workflow", ["check", "--stage", stage, "--workspace", ws], ws)
-
-
 # ---------------------------------------------------------------------------
 # 归一化：把引擎结构整理成 UI 可直接渲染的形状（只搬字段，不重新判定）
 # ---------------------------------------------------------------------------
 STATE_OF = {True: "done", False: "todo"}
 
 
+NODE_DONE = ("passed", "skipped")
+
+
 def norm_workflow(res: dict) -> dict:
-    """workflow status → {ok, current, complete, ctx, stages[], reason}"""
+    """23 节点 → 7 环节视图：`{ok, current, complete, stages[], nodes[]}`。
+
+    每个环节的 state 由**该环节下所有节点**决定：
+      · done    —— 全部 passed/skipped
+      · current —— 第一个仍有未完成节点的环节
+      · todo    —— 其后的环节
+    `probes` 放节点明细，前端据此显示「这个环节还差哪几个节点」，而不是一句笼统的「未完成」。
+
+    ★ 2026-11-01：上一版读的是 `workflow.py` 的 S1–S11（脚本已删），且与 `nodes.py` 的
+      23 节点是两套模型 —— 同一个「下一步该做什么」在 CLI 与 UI 上给两个答案。现在只有一个。
+    """
     if not res.get("ok") or not isinstance(res.get("data"), dict):
-        return {"ok": False, "reason": res.get("reason") or "no_json",
-                "stages": [], "current": None, "complete": False, "ctx": {},
+        return {"ok": False, "reason": res.get("reason") or "no_json", "stages": [],
+                "current": None, "complete": False, "ctx": {}, "nodes": [],
                 "text_tail": res.get("text_tail", "")}
     d = res["data"]
-    stages = []
-    for s in d.get("stages") or []:
+    nodes = d.get("nodes") or []
+    by_stage = {}
+    for n in nodes:
+        by_stage.setdefault(n.get("stage") or "?", []).append(n)
+
+    current, stages = None, []
+    for sdef in (d.get("stages") or []):
+        sid = sdef.get("id")
+        items = by_stage.get(sid) or []
+        done_n = [n for n in items if n.get("state") in NODE_DONE]
+        done = bool(items) and len(done_n) == len(items)
+        if not done and current is None:
+            current = sid
         stages.append({
-            "id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"),
-            "optional": bool(s.get("optional")), "dir": s.get("dir"),
-            "done": bool(s.get("done")),
-            "by_artifact": bool(s.get("by_artifact")),
-            "by_manual": bool(s.get("by_manual")),
-            "skipped": bool(s.get("skipped")),
-            "state": "done" if s.get("done") else ("current" if s.get("id") == d.get("current") else "todo"),
-            "probes": [{"label": p.get("label"), "ok": bool(p.get("ok")),
-                        "found": p.get("found"), "need": p.get("need")}
-                       for p in (s.get("probes") or [])],
-            "what": s.get("what", ""), "note": s.get("note", ""),
+            "id": sid, "name": sdef.get("name") or sid, "kind": "", "optional": False,
+            "dir": "", "done": done, "by_artifact": False, "by_manual": False,
+            "state": "done" if done else ("current" if sid == current else "todo"),
+            "probes": [{"label": n.get("id"), "ok": n.get("state") in NODE_DONE,
+                        "found": n.get("state"), "need": "passed"} for n in items],
+            "what": sdef.get("why") or "",
+            "note": ("%d/%d 节点完成" % (len(done_n), len(items))) if items else "无节点",
         })
-    return {"ok": True, "current": d.get("current"), "complete": bool(d.get("complete")),
-            "ctx": d.get("ctx") or {}, "stages": stages, "pending_optional": d.get("pending_optional") or [],
-            "reason": ""}
+    return {"ok": True, "current": current,
+            "complete": bool(stages) and all(x["done"] for x in stages),
+            "ctx": {"counts": d.get("counts") or {}},
+            "stages": stages, "nodes": nodes, "pending_optional": [], "reason": ""}
 
 
 def norm_setup(res: dict) -> dict:

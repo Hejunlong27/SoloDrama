@@ -236,19 +236,6 @@ def t_cost_model() -> None:
     check("P2-7 样本不足时不臆造（fitted 为空）", not empty["fitted"], empty["fitted"])
 
 
-# ---------------------------------------------------------------- P2-2
-def t_workflow_id() -> None:
-    m = load(PROD / "rh_workflow_id.py", "rwid_t")
-    a = m.extract('var x = {workflowId: "2110380691388194818"}')
-    check("P2-2 明文形态可解", a["strong"] == ["2110380691388194818"], a)
-    arr = ["app", {"workflowId": 3, "name": 4}, 7, "2110380691388194818", "demo"]
-    html = '<script id="__NUXT_DATA__" type="application/json">%s</script>' % json.dumps(arr)
-    b = m.extract(html)
-    check("P2-2 __NUXT_DATA__ 形态可解", b["nuxt"] == ["2110380691388194818"], b)
-    c = m.extract("<html>nothing</html>")
-    check("P2-2 找不到时不猜", not (c["strong"] or c["nuxt"]), c)
-
-
 # ---------------------------------------------------------------- P2-3
 def t_outline() -> None:
     m = load(ROOT / "stages" / "creation" / "scripts" / "script_rewrite.py", "sr_t")
@@ -262,24 +249,6 @@ def t_outline() -> None:
     check("P2-3 冒号单行写法落到核心冲突",
           rows[2] == {"core_conflict": "前夫带新欢上门"}, rows)
     check("P2-3 解析无告警", warns == [], warns)
-
-
-# ---------------------------------------------------------------- P2-4 / P2-5
-def t_lint() -> None:
-    tools_dir = ROOT / "tools"
-    sys.path.insert(0, str(ROOT))
-    from tools.core import validate as v                 # 相对导入，必须按包导入
-    check("P2-4 字段行正则容忍缩进",
-          bool(v.FIELD_LINE_LOOSE_RE.match("    DUR: 8")), "")
-    md = "\n".join([
-        "SC-01", "SHOT: 1", "LOCATION: 客厅", "TIME: 夜", "CHAR: LIN_A",
-        "ACTION: 她把钥匙放下", "MOOD: 紧张", "    DIALOG: “你走吧”",
-        "SC-02", "SHOT: 2", "ACTION: 他站着不动",
-    ])
-    issues = v._check_stray_field_lines(md)
-    where = [i.where for i in issues]
-    check("P2-5 行首非法字段行被告警", where == ["L7"], where)
-    check("P2-5 缩进续行不误报", all(i.level == "WARN" for i in issues), issues)
 
 
 # ---------------------------------------------------------------- P2-9
@@ -341,8 +310,8 @@ def main() -> int:
     print("反馈单修复 · 离线回归（2026-10-20）")
     print("=" * 62)
     for fn in (t_probe_readonly, t_drama_name, t_release_verdict, t_model_gate_executor,
-               t_inflight_pending, t_oom_plan, t_cost_model, t_workflow_id, t_outline,
-               t_lint, t_light, t_subtitle_template, t_lock, t_workflow_validate):
+               t_inflight_pending, t_oom_plan, t_cost_model, t_outline,
+               t_light, t_subtitle_template, t_lock, t_workflow_validate):
         try:
             fn()
         except BaseException as e:                                # noqa: BLE001

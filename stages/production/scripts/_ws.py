@@ -3,9 +3,9 @@
 
 为什么要它（2026-09-20 封装 Skill 时发现的老问题）：
     同一批脚本里，工作区定位方式**三种混用**，复制到别处就跑不动：
-      * `drama.py` / `gen_char_assets.py` / `gen_scene_assets.py`
+      * `drama.py` / `gen_assets_rh_workflow.py`
         —— 把 `<某个具体项目路径>` **硬编码**进去（本仓库已改为 repo 相对/环境变量）
-      * `cost_ledger.py` / `episode_preflight.py` / `wire_*.py` / `_qa_subtitle_frame.py`
+      * `cost_ledger.py` / `episode_preflight.py` / `wire_new_assets.py`
         —— 用 `__file__.parent.parent` 推断（只在「脚本住在 <项目>/scripts/ 下」时成立）
       * `subtitle.py` / `prepare_refs.py` —— 已经有 `--workspace`
     结果：脚本一旦离开这个项目目录就报「找不到 data/shots.json」之类的怪错。

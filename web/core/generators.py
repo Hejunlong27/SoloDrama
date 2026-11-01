@@ -5,8 +5,7 @@
 --------------
 到 2026-10-29 为止，生成能力散在四个地方，各有各的说法：
   * 本地出图      `stages/assets/comfyui/comfy_client.py`（Qwen-Image 2.1）
-  * 云端出图      `gen_char_assets.py`（AI 应用）/ `gen_scene_assets.py`（模型 API）
-  * 云端出图·工作流 `gen_assets_rh_workflow.py`（nodeInfoList，**文生图**）
+  * 云端出图·工作流 `gen_assets_rh_workflow.py`（nodeInfoList，文生图 / 图生图）
   * 出片          `stages/video/workflow`（RunningHub H3）
 用户在界面上根本看不出「我这部片子到底能用哪条通道、缺什么、要花多少钱」。
 更要紧的是**文生图与图生图是两个不同的工作流**（图生图多一个加载图像节点），

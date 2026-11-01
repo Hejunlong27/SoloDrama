@@ -4,11 +4,9 @@
 
 为什么需要这个脚本
 ------------------
-`drama.py assets --engine rh` 走的是另外两条通道：
-  * 人物 -> `gen_char_assets.py`  （RunningHub **AI 应用**，需要 RH_CHAR_APP_ID）
-  * 场景 -> `gen_scene_assets.py` （RunningHub **模型 API**，需要企业级 Key）
-两条都吃不到「自建 ComfyUI 工作流」。而本项目用户明确要求：**生图必须用附件里的
-「Qwen image2.1 角色设定卡」工作流**。工作流通道的提交契约是
+`drama.py assets --engine wf` 走的就是本脚本（`local` 走本地 ComfyUI）。
+它吃的是「自建 ComfyUI 工作流」，而不是平台上的 AI 应用 —— 本项目用户明确要求：
+**生图必须用附件里的「Qwen image2.1 角色设定卡」工作流**。工作流通道的提交契约是
 `POST /task/openapi/create` + `nodeInfoList`，节点映射取
 `<工作区>/video-pipeline/config.local.json` 的 `image_providers[<active>]`
 （本项目只映射 prompt + ratio 两个节点 —— 该工作流是纯文生图，无参考图输入）。

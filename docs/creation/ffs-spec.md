@@ -1,5 +1,22 @@
 # FFS 剧本规范（本项目裁剪版）
 
+> ⚠ **2026-11-01 变更 · 本文的 `tools/cli.py` 命令已不可执行**
+>
+> 旧工作台（`tools/cli.py` + `tools/core/`，SQLite + `project.json`）已删除：它与引擎的
+> `nodes.py`（七环节 23 节点）是**两套编排**，同一个「下一步」给两个答案；而且 Studio 的
+> 73 条命令里它是唯一的死映射。等价的引擎入口：
+>
+> | 旧命令 | 现在用 |
+> |---|---|
+> | `tools/cli.py init` | `drama init --workspace <项目>` |
+> | `tools/cli.py check --ep N` | `drama do script.gate --ep epNN`（内置 FFS 结构检查） |
+> | `tools/cli.py convert --ep N` | `drama do convert.apply --ep epNN`（分镜 md → data 五文件） |
+> | `tools/cli.py report` | `drama status` |
+> | `tools/cli.py gen` | `drama video plan` → `drama video run`（★计费） |
+> | `tools/cli.py import-bible / parse / reindex / set-anchor` | 无等价：角色圣经直接写在 `04-资产/`，索引由引擎按目录推导 |
+>
+> 下文保留原文以便对照历史决策，但**不要照着敲命令**。
+
 > 基于 `overseas-ai-comic-script-master/references/storyboard-format.md` 裁剪改写。
 > 差异：中文 / PLATFORM=TikTok / 时长口径 60–80 秒（目标 60 秒）/ 去掉美式 localization 要求 / 新增可选 `DUR` 字段。
 

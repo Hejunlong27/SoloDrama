@@ -7,10 +7,12 @@
 | 通道 | 脚本 | 引擎 | 成本 |
 |---|---|---|---|
 | **本地 ComfyUI**（本脚本） | `gen_assets_local.py` | `stages/assets/comfyui/comfy_client.py` | **￥0**（只花本机电与时间） |
-| RunningHub AI 应用 | `gen_char_assets.py` | 云端 webapp | 人物 17–27 RH币/张 |
-| RunningHub 模型 API | `gen_scene_assets.py` | 云端模型端点 | 场景 ≈￥0.07/张 |
+| 云端 ComfyUI | 同脚本 | `COMFYUI_URL` 指向云端 | 云主机费用 |
+| RunningHub 工作流 | `gen_assets_rh_workflow.py` | RH nodeInfoList | 按张计费 |
 
-三者**并存**，由 `drama.py assets --engine {local,rh}` 切换（默认 local）。
+两条**通道**，由 `drama.py assets --engine {local,wf}` 切换（默认 local）。
+★ 2026-11-01：原来的「RH AI 应用」两个脚本（`gen_char_assets` / `gen_scene_assets`）已删 ——
+引擎侧没有对应 provider，且与工作流通道做的是同一件事。
 
 本脚本做什么（薄桥，不做重活）
 ------------------------------

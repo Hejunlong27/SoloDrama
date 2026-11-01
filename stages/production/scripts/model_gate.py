@@ -95,16 +95,6 @@ MODEL_OPTIONS = {
             "optional": [],
         },
         {
-            "id": "runninghub",
-            "label": "RunningHub AI 应用（★计费）",
-            "cost": "人物约 17-27 RH币/张；场景约 $0.01/张",
-            "desc": "调用 RunningHub 上的 AI 应用出定妆板/场景空镜；需消费级 Key，云端计费。",
-            "engine_arg": "rh",
-            "executor": "gen_char_assets.py / gen_scene_assets.py",
-            "requires": ["app_url"],
-            "optional": ["app_id"],
-        },
-        {
             "id": "runninghub_workflow",
             "label": "RunningHub 工作流（★计费）",
             "cost": "按工作流节点计价（RH币，逐张）",
@@ -196,25 +186,11 @@ EXIT_WAIT_CONFIRM = 4   # 与 drama.py 退出码约定一致：4 = 等待用户�
 # 控制台编码（与 drama.py/_harden_stdio 同口径）
 # ---------------------------------------------------------------------------
 def _harden_stdio() -> None:
-    try:
-        enc = "utf-8"
-        if sys.stdout.isatty() and os.name == "nt":
-            import ctypes
-            cp = ctypes.windll.kernel32.GetConsoleOutputCP()
-            if cp:
-                enc = "cp%d" % cp
-        for s in (sys.stdout, sys.stderr):
-            try:
-                s.reconfigure(encoding=enc, errors="replace")  # type: ignore[union-attr]
-            except Exception:                                   # noqa: BLE001
-                pass
-    except Exception:                                           # noqa: BLE001
-        pass
+    """控制台编码加固（中文 Windows GBK ↔ 管道 UTF-8）——实现统一在 `_util.harden_stdio()`。"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _util import harden_stdio
+    harden_stdio()
 
-
-# ---------------------------------------------------------------------------
-# 工作区与确认单读写
-# ---------------------------------------------------------------------------
 def _resolve_ws(explicit: str | None = None) -> pathlib.Path:
     """按 `--workspace > SOLODRAMA_WORKSPACE > 脚本位置推断` 解析工作区（与 _ws.py 同口径，但不退出）。"""
     if explicit:

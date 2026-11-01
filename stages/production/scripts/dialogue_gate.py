@@ -16,7 +16,7 @@
 能判什么（E = 硬失败，W = 提示）
 --------------------------------
     E1 单镜台词句数 > 2                规则 §3.3「单镜台词 ≤ 2 句」
-    E2 单句超长：CJK > 20 字 / 拉丁 > 55 字符        规则 §3.3
+    E2 单句超长：CJK > 20 字 / 拉丁 > 本镜词速预算    规则 §3.3（拉丁口径 2026-10-31 改）
     E3 同镜既有旁白又有对白（VO + DIALOG 并存）      规则 R3
     E4 旁白条数超配额（默认 2 条/集）                规则 §二
     E5 旁白出现在中段（非首镜非尾镜）                规则 §二「仅允许开场/结尾」
@@ -40,9 +40,8 @@ import re
 import sys
 import unicodedata
 
-# 台词长度口径（与 FFS lint 的 CJK 20 / 拉丁 55 一致）
+# 台词长度口径：CJK 按字数（20）；拉丁**不按字符**，按本镜词速预算（见 _len_rule）
 CJK_MAX = 20
-LATIN_MAX = 55
 SHOT_LINES_MAX = 2
 DEFAULT_NARRATION_PER_EP = 2
 
@@ -113,14 +112,28 @@ def parse_script(text: str) -> dict:
     return {"header": {"codes": codes}, "shots": shots}
 
 
-def _len_rule(sentence: str) -> tuple:
-    """→ (是否合规, 实际长度, 上限, 口径)。CJK 按字数，纯拉丁按字符。"""
+# 拉丁语速上限（词/秒）。与 2026-10-31 的结论一致：**取消「拉丁 55 字符」硬上限**，
+# 改由「本镜时长 × 语速」兜底 —— 西语一句话 60 字符很常见，按字符判死会误杀正常台词；
+# 而真正读不完的是「词太多、时间太短」，那是语速问题，不是字符数问题。
+WORDS_PER_SEC = 3.8
+
+
+def _len_rule(sentence: str, duration: float = 0.0) -> tuple:
+    """→ (是否合规, 实际长度, 上限, 口径)。
+
+    · 含 CJK：按**字数**判 20 字（中文信息密度高，字符口径就是对的）
+    · 纯拉丁：按**词数**判「本镜时长 × %.1f 词/秒」；没有时长就不判（交给 E6 密度与
+      `script_continuity` 的 E006 时长校验），不退回字符上限。
+    """ % WORDS_PER_SEC
     s = _strip_quotes(sentence)
     if _CJK_RE.search(s):
         n = len(_CJK_RE.findall(s))
         return (n <= CJK_MAX, n, CJK_MAX, "CJK 字数")
-    n = len(s)
-    return (n <= LATIN_MAX, n, LATIN_MAX, "拉丁字符")
+    n = len(s.split())
+    if not duration or duration <= 0:
+        return (True, n, 0, "词（无时长，跳过）")
+    cap = max(1, int(round(float(duration) * WORDS_PER_SEC)))
+    return (n <= cap, n, cap, "词（本镜 %.1fs × %.1f 词/秒）" % (duration, WORDS_PER_SEC))
 
 
 def check(script: dict, narration_max: int = DEFAULT_NARRATION_PER_EP,
@@ -142,9 +155,9 @@ def check(script: dict, narration_max: int = DEFAULT_NARRATION_PER_EP,
                            "msg": "单镜 %d 句台词（上限 %d）：%s"
                                   % (len(sents), SHOT_LINES_MAX, " / ".join(sents)[:60])})
 
-        # E2 单句超长
+        # E2 单句超长（CJK 按字数 / 拉丁按本镜词预算）
         for sent in sents:
-            ok, n, cap, unit = _len_rule(sent)
+            ok, n, cap, unit = _len_rule(sent, s.get("duration") or 0)
             if not ok:
                 issues.append({"code": "E2", "level": "ERROR", "shot": sid,
                                "msg": "单句 %d %s（上限 %d）：%s" % (n, unit, cap, sent[:40])})

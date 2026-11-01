@@ -14,7 +14,8 @@ const ACTIONS = [
   { spec: 'script.continuity', title: '五锚连续性门禁', hint: '剧本↔分镜↔提示词的台词指纹', params: {} }
 ];
 
-const STAGE_IDS = ['S1', 'S2', 'S3', 'S4', 'S5'];
+// 创作链路的前 5 个环节（与 nodes.STAGES 的 id 一致；★ 2026-11-01 从 S1–S5 改为环节名）
+const STAGE_IDS = ['research', 'script', 'asset', 'board', 'prompt'];
 
 export async function render(ctx) {
   const [wf, gates, drafts, purposes] = await Promise.all([

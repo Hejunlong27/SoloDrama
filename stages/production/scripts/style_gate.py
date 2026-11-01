@@ -147,21 +147,10 @@ def style_lib() -> dict:
 
 # ---------------------------------------------------------------------------
 def _harden_stdio() -> None:
-    try:
-        enc = "utf-8"
-        if sys.stdout.isatty() and os.name == "nt":
-            import ctypes
-            cp = ctypes.windll.kernel32.GetConsoleOutputCP()
-            if cp:
-                enc = "cp%d" % cp
-        for s in (sys.stdout, sys.stderr):
-            try:
-                s.reconfigure(encoding=enc, errors="replace")   # type: ignore[union-attr]
-            except Exception:                                     # noqa: BLE001
-                pass
-    except Exception:                                             # noqa: BLE001
-        pass
-
+    """控制台编码加固（中文 Windows GBK ↔ 管道 UTF-8）——实现统一在 `_util.harden_stdio()`。"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _util import harden_stdio
+    harden_stdio()
 
 def _resolve_ws(explicit=None) -> pathlib.Path:
     if explicit:

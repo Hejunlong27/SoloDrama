@@ -37,7 +37,6 @@
 import argparse
 import difflib
 import glob
-import glob
 import json
 import math
 import os
@@ -189,7 +188,17 @@ def load_config(ws):
     if not os.path.exists(p):
         raise SystemExit("找不到配置：%s" % p)
     cfg = load_json(p)
-    return apply_style_sheet(cfg, load_style_sheet(ws, cfg))
+    cfg = apply_style_sheet(cfg, load_style_sheet(ws, cfg))
+    if not cfg.get("_style_sheet"):
+        # ★ 2026-11-01：不再回退旧的百分比算法。回退的代价是「同一份规范在不同剧里
+        #   长得不一样」且 qa 查不出来 —— 那正是三语锁死要解决的问题。没有规范就明确报错。
+        raise SystemExit(
+            "找不到三语字幕规范（configs/subtitle-styles.json）。\n"
+            "  找过：%s\n"
+            "        <项目>/video-pipeline/config.subtitle-styles.json\n"
+            "        <仓库>/configs/subtitle-styles.json"
+            % os.path.join(engine_root_of(ws), STYLE_SHEET_NAME))
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -1712,73 +1721,22 @@ def lc_get(cfg, lang, key, default):
 
 
 def lc_font_px(cfg, lang):
-    return (cfg["languages"].get(lang) or {}).get("font_px") or 52
+    v = (cfg["languages"].get(lang) or {}).get("font_px")
+    if not v:
+        raise SystemExit(
+            "字幕规范里没有 %s 的 font_px（configs/subtitle-styles.json 的 styles.%s）"
+            % (lang, lang))
+    return v
 
 
 def style_metrics(cfg, lang, canvas):
-    """按**画布**算出字号、边距与纵向落点，并叠加平台安全区（硬下限）。
+    """按三语锁定口径算字号 / 边距 / 落点。
 
-    ★ 竖屏陷阱（实测）：旧配置按**高度**百分比定字号，对横屏 1440×832 是对的
-      （6.7% × 832 = 56px），但对竖屏 1088×1920 会算出 129px —— 16 字/行 = 2064px，
-      远超 70% 安全区允许的 760px。所以字号必须再受「文本框宽 ÷ 每行最多字符」反向约束。
-
-    ★ 2026-10-22（V0.7.6，移植自 vidpure）：纵向位置改用**视觉中心**口径 ——
-      文字块中心落在 `anchor_top × H`，默认 0.6 即「距顶:距底 = 6:4」。
-      为什么要换：固定像素（原 margin_v_pct / min_bottom_px）在换分辨率时会漂移 ——
-      同一个 400px 在 1080p 竖屏占 37% 高、在 2K 竖屏只占 21%，同一部剧出 1080P 与 2K
-      两版时字幕位置肉眼可见地不一样。6:4 是**比例**，任何画布下视觉重心一致。
-      实现用 `\\an5\\pos` 逐条定位（见 `write_ass`），因此**一行与两行字幕的中心同线**，
-      不会因为折行数变化而上下浮动。
-
-    `placement.anchor="pixel"` 可退回旧行为（距底固定像素），老项目不受影响。
+    ★ 2026-11-01：删掉旧的「按 canvas 高度百分比 + 行宽反向压字」分支。
+      保留两套算法的后果是「有人按百分比调字号，看起来生效了，其实被规范覆盖」——
+      典型的两处真源。现在只有一个口径：`configs/subtitle-styles.json`。
     """
-    lc = cfg["languages"][lang]
-    W, H = canvas
-    lim = safe_area_limits(cfg)
-    pl = placement_of(cfg)
-    need_lr = int(math.ceil(W * (100.0 - lim["max_text_width_pct"]) / 200.0))
-    # ★ 2026-11-01：三语锁定层优先 —— 有 `font_px` 就走绝对像素，不再按百分比推算。
-    if lc.get("font_px"):
-        return pixel_locked_metrics(cfg, lang, canvas)
-    margin_lr = max(int(round(W * lc["margin_lr_pct"] / 100.0)), need_lr)
-    usable_w = W - 2 * margin_lr
-    font_h = int(round(H * lc["font_size_pct"] / 100.0))
-    cw = float(lc.get("char_width_em", 1.0))
-    font_fit = int(math.floor(usable_w / max(1.0, lc["max_line_chars"] * cw)))
-    font_size = max(1, min(font_h, font_fit))
-    block_h = max(1, int(round(font_size * LINE_HEIGHT_EM))) * int(lc.get("max_lines", 2))
-
-    if pl["anchor"] == "ratio":
-        top = min(max(pl["anchor_top"], 0.05), 0.95)
-        center_y = int(round(H * top))
-        # 安全区硬下限按【文字块下沿】判：下沿距底 ≥ min_bottom_px。
-        # 6:4 在 1080×1920 上是 768px 距底（远超 400px 下限），不会触发；
-        # 触发只发生在 anchor_top 被调到 0.85+ 或画布极矮时 —— 宁可往上顶，不许进 UI 区。
-        cap_y = H - int(math.ceil(lim["min_bottom_px"])) - block_h // 2
-        clamped = center_y > cap_y
-        if clamped:
-            center_y = max(block_h // 2, cap_y)
-        margin_v = 0
-        pos = (W // 2, center_y)
-        bottom_px = H - center_y - block_h // 2
-    else:
-        want = max(int(round(H * lc["margin_v_pct"] / 100.0)),
-                   int(math.ceil(lim["min_bottom_px"])))
-        # 兜底：文字块必须留在画面内（距底 ≤ 画面高 − 两行字幕高）
-        margin_v = max(8, min(want, H - block_h - 8))
-        center_y = H - margin_v - block_h // 2
-        clamped = want > H - block_h - 8
-        pos = None
-        bottom_px = H - center_y - block_h // 2
-
-    return {"margin_v": margin_v, "margin_lr": margin_lr, "usable_w": usable_w,
-            "text_w_pct": 100.0 * usable_w / W, "font_size": font_size,
-            "font_size_by": "height" if font_size == font_h else "width-fit(fit 到安全区)",
-            "limits": lim, "char_width_em": cw,
-            "anchor": pl["anchor"], "anchor_top": round(min(max(pl["anchor_top"], 0.05), 0.95), 4),
-            "anchor_label": ratio_label(pl["anchor_top"]) if pl["anchor"] == "ratio" else "-",
-            "center_y": center_y, "pos": pos, "block_h": block_h,
-            "bottom_px": bottom_px, "clamped": clamped}
+    return pixel_locked_metrics(cfg, lang, canvas)
 
 
 def qa_safe_area(ass_path, cfg):
@@ -2019,6 +1977,28 @@ def _seg_video_info(ffprobe, path):
             "sar": st.get("sample_aspect_ratio") or "1:1"}
 
 
+# 封面命名规则 —— ★ 与 `release_check.scan_covers()` 的 `^cover[_-](\d+x\d+)` 同一条。
+# 两处都认 `cover_9x16.png` 与 `cover-9x16_01.jpg`（AI 直出会一档出多张，选定后改名）。
+COVER_STEM_RE = re.compile(r"^cover[_-](\d+)x(\d+)(?:[_-].*)?$", re.I)
+COVER_PREF = ("9", "16")          # 片头只用竖版那档
+
+
+def _cover_candidates(d):
+    """目录下符合封面命名、且是 9:16 的图片（按文件名排序，可复现）。"""
+    out = []
+    if not os.path.isdir(d):
+        return out
+    for name in sorted(os.listdir(d)):
+        p = os.path.join(d, name)
+        stem, ext = os.path.splitext(name)
+        if ext.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+            continue
+        m = COVER_STEM_RE.match(stem)
+        if m and (m.group(1), m.group(2)) == COVER_PREF:
+            out.append(p)
+    return out
+
+
 def find_cover(ws, ep, cfg=None):
     """找该集的封面图。→ (path, 说明) ／ (None, 为什么没有)。
 
@@ -2029,10 +2009,7 @@ def find_cover(ws, ep, cfg=None):
     rel = release_dir_of(ws)
     cands = []
     for d in (os.path.join(rel, "封面"), rel):
-        if os.path.isdir(d):
-            for ext in ("png", "jpg", "jpeg", "webp"):
-                cands += sorted(glob.glob(os.path.join(d, "cover_9x16*.%s" % ext)))
-                cands += sorted(glob.glob(os.path.join(d, "cover_9x16*.%s" % ext.upper())))
+        cands += _cover_candidates(d)
     for stem in ("%s_cover" % ep, "cover_%s" % ep, "cover"):
         for ext in ("png", "jpg", "jpeg", "webp"):
             cands.append(os.path.join(subs, "%s.%s" % (stem, ext)))

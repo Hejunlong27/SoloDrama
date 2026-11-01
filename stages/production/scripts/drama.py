@@ -124,8 +124,7 @@ except SystemExit as _e:
         print('用法: drama.py <命令> [...]  （init 之外都需要先指定工作区）')
         print('  全局参数: --workspace <DIR>   也可设环境变量 SOLODRAMA_WORKSPACE\n')
         print('命令: init / next / do / nodes / graph / skip /')
-        print('      setup {show|ask|set|require} / workflow {list|status|check} /')
-        print('      status / preflight / assets / refs /')
+        print('      status / preflight / assets [--engine local|wf] / refs /')
         print('      models / style / video {plan|run|resume-download|status} /')
         print('      report / balance / cost / guide')
         print('\n例：drama.py init --workspace "D:/剧/新剧" --title "剧名"')
@@ -163,29 +162,10 @@ USD_CNY = 7.0
 # 环境：进程环境里没有的 Key，从「用户级环境变量」补（agent 的 shell 常拿不到）
 # ---------------------------------------------------------------------------
 def _harden_stdio() -> None:
-    """★ 中文 Windows 控制台是 GBK(cp936)，而管道/重定向通常按 UTF-8 读 —— 两种情况要求相反：
-
-    * **在控制台里跑（双击 .bat）**：必须用控制台自己的代码页，否则中文全乱码；
-    * **被管道/文件捕获（agent、日志）**：必须 UTF-8，否则读出来是乱码。
-
-    所以按 `isatty()` 分流，并且一律把 errors 放宽成 replace（防 GBK 装不下的字符直接抛异常）。
-    第二层保险：正文不使用 GBK 装不下的符号（用 [OK]/[NG]/-> 代替）。
-    """
-    try:
-        enc = 'utf-8'
-        if sys.stdout.isatty() and os.name == 'nt':
-            import ctypes
-            cp = ctypes.windll.kernel32.GetConsoleOutputCP()
-            if cp:
-                enc = 'cp%d' % cp
-        for s in (sys.stdout, sys.stderr):
-            try:
-                s.reconfigure(encoding=enc, errors='replace')   # type: ignore[union-attr]
-            except Exception:                                    # noqa: BLE001
-                pass
-    except Exception:                                            # noqa: BLE001
-        pass
-
+    """控制台编码加固（中文 Windows GBK ↔ 管道 UTF-8）——实现统一在 `_util.harden_stdio()`。"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _util import harden_stdio
+    harden_stdio()
 
 def hydrate_env() -> None:
     # ★ 进程环境里缺的，从「用户级环境变量」补（agent 的 shell 常拿不到）：
@@ -802,45 +782,45 @@ def cmd_assets_local(args) -> int:
 
 
 def cmd_assets(args) -> int:
-    if getattr(args, 'engine', 'local') == 'local':
-        return cmd_assets_local(args)
+    """资产出图 —— **只留本地 ComfyUI 一条通道**。
 
+    ★ 2026-11-01：删掉旧的 `--engine rh`（走 `gen_char_assets.py` / `gen_scene_assets.py` 两个
+      RunningHub **AI 应用**脚本）。理由：引擎配置里已没有 AI 应用通道（`IMAGE_PROVIDERS`
+      只有 `rh_t2i` 工作流），那两个脚本只是同一件事的两个人肉特例，且各自复制了一套
+      manifest/清洗/站点逻辑。现在只剩两条**真通道**：
+        · local —— 本地 ComfyUI（￥0）
+        · wf    —— RunningHub 工作流（★计费；旧的 `rh` 仍作为别名可用）
+    """
+    if getattr(args, 'engine', 'local') in ('wf', 'rh'):
+        return cmd_assets_wf(args)
+    return cmd_assets_local(args)
+
+
+def cmd_assets_wf(args) -> int:
+    """云端「工作流」出图（★计费）：转发 gen_assets_rh_workflow.py。"""
     if args.submit:                       # ★ 首次生图前：模型选择门禁（云端通道）
         rc = _model_gate('image', expected_engine='rh')
         if rc:
             return rc
-    kinds = [args.kind] if args.kind != 'all' else ['char', 'scene']
-    total_rc = 0
-    if 'char' in kinds:
-        cmd = [sys.executable, SCRIPTS / 'gen_char_assets.py']
-        if args.only:
-            cmd += ['--only', args.only]
-        if args.submit:
-            cmd += ['--submit']
-        if args.force:
-            cmd += ['--force']
-        print('【人物定妆图】%s（27 RH币/张）'
-              % ('★真实提交' if args.submit else '干跑，不花钱'))
-        rc, _, _ = run_cmd(cmd, 'assets_char', quiet_ok=False)
-        total_rc |= rc
-        if rc and args.submit:
-            print('人物这一路失败，按「先止损」原则不再继续场景。修好再用 --kind scene 单独跑。')
-            return rc
-    if 'scene' in kinds:
-        cmd = [sys.executable, SCRIPTS / 'gen_scene_assets.py']
-        if args.only:
-            cmd += ['--only', args.only]
-        if args.submit:
-            cmd += ['--submit']
-        if args.force:
-            cmd += ['--force']
-        print('\n【场景空镜】%s（$0.01/张 ≈ ￥0.07）'
-              % ('★真实提交' if args.submit else '干跑，不花钱'))
-        rc, _, _ = run_cmd(cmd, 'assets_scene', quiet_ok=False)
-        total_rc |= rc
-    print('\n产物清单：%s' % (DATA / 'char_assets_manifest.json'))
-    print('          %s' % (DATA / 'scene_assets_manifest.json'))
-    return total_rc
+    cmd = [sys.executable, SCRIPTS / 'gen_assets_rh_workflow.py']
+    if args.kind and args.kind != 'all':
+        cmd += ['--kind', args.kind]
+    if args.only:
+        cmd += ['--only', args.only]
+    if getattr(args, 'ratio', None):
+        cmd += ['--ratio', args.ratio]
+    if getattr(args, 'mode', None):
+        cmd += ['--mode', args.mode]
+    for r in (getattr(args, 'ref', None) or []):
+        cmd += ['--ref', r]
+    if args.force:
+        cmd += ['--force']
+    if args.submit:
+        cmd += ['--submit']
+    print('【资产出图 · RunningHub 工作流】%s（按张计费）'
+          % ('★真实提交' if args.submit else '干跑，不花钱'))
+    rc, _, _ = run_cmd(cmd, 'assets_rh_wf', quiet_ok=False)
+    return rc
 
 
 # ---------------------------------------------------------------------------
@@ -1105,7 +1085,7 @@ GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
 
 
 def cmd_cost(args) -> int:
-    """成本台账：转发给 cost_ledger.py（单次任务 + 全剧累计 + 三池表格 + Excel）。
+    """成本台账：转发给 cost_ledger.py（单次任务 + 全剧累计 + 三池表格）。
 
     ★ 口径：消耗只取平台按任务返回的 usage；**不用余额差值倒推消耗**（用户 2026-09-19 明确）。
     ★ 2026-11-01：Excel 导出已删（能力清单 L8），只产 markdown / JSON。
@@ -1254,10 +1234,16 @@ def main() -> int:
 
     p = sub.add_parser('assets', help='缺失资产出图（默认本地 ComfyUI ￥0，干跑）')
     _add_ws_arg(p)
-    p.add_argument('--engine', choices=('local', 'rh'), default='local',
-                   help='出图通道：local=本地 ComfyUI（￥0，默认）；rh=RunningHub 云端（★计费）')
+    p.add_argument('--engine', choices=('local', 'wf', 'rh'), default='local',
+                   help='出图通道：local=本地 ComfyUI（￥0，默认）｜wf=RunningHub 工作流（★计费）'
+                        '｜rh 是 wf 的旧别名')
+    p.add_argument('--ratio', default=None, help='仅 wf：画幅裸值，如 9:16')
+    p.add_argument('--mode', choices=('t2i', 'i2i'), default=None,
+                   help='仅 wf：t2i=文生图｜i2i=图生图（必须给 --ref）')
+    p.add_argument('--ref', action='append', default=[],
+                   help='仅 wf：参考图路径（i2i 必填，可多次）')
     p.add_argument('--submit', action='store_true',
-                   help='真的出图：local 占 GPU 不花钱；rh ★计费（人物 27 RH币/张，场景 $0.01/张）')
+                   help='真的出图：local 占 GPU 不花钱；wf ★计费（按张）')
     p.add_argument('--kind', choices=('all', 'char', 'scene', 'prop'), default='all',
                    help='只做某一类（prop 仅本地通道支持）')
     p.add_argument('--only', default=None, help='只做这些（名字或序号 / 资产 id，逗号分隔）')
@@ -1371,7 +1357,7 @@ def main() -> int:
     _add_ws_arg(p)
     p.set_defaults(fn=cmd_balance)
 
-    p = sub.add_parser('cost', help='成本台账：单次任务 + 全剧累计（Excel + markdown）')
+    p = sub.add_parser('cost', help='成本台账：单次任务 + 全剧累计（markdown / JSON）')
     _add_ws_arg(p)
     p.add_argument('--checkpoint', action='store_true',
                    help='★ 收工结账：打印台账 + 记基线（下次即可看单次增量与 token 归属）')
@@ -1380,7 +1366,7 @@ def main() -> int:
                    help='附带只读余额（仅判断够不够跑，不参与消耗统计）')
     p.add_argument('--md', default=None, help='markdown 输出路径（默认 docs\\成本台账.md）')
     p.add_argument('--no-write', action='store_true', help='只打印，不写任何文件')
-    p.add_argument('--drama', default=None, help='短剧名（决定 Excel 文件名与表标题）')
+    p.add_argument('--drama', default=None, help='短剧名（决定报表文件名与表标题）')
     p.set_defaults(fn=cmd_cost)
 
     p = sub.add_parser('guide', help='打印速查')

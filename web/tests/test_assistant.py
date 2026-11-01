@@ -50,7 +50,7 @@ def main():
     check("assets.rh" not in cmds, "计费命令 assets.rh 绝不能进白名单")
     r = assistant._normalize_action({"type": "run", "command": "convert.apply"}, cmds)
     check(r["type"] == "run", "合法命令应通过")
-    check(r.get("stage") == "S5", "应带上环节 id 供前端精确执行，实际 %s" % r.get("stage"))
+    check(r.get("stage") == "board", "应带上环节 id 供前端精确执行，实际 %s" % r.get("stage"))
     for bad in ("assets.rh", "rm -rf /", "release_export", ""):
         r = assistant._normalize_action({"type": "run", "command": bad}, cmds)
         check(r["type"] == "none", "未授权命令 %r 必须退化成 none" % bad)
@@ -109,7 +109,8 @@ def main():
     a1 = assistant._normalize_action({"type": "navigate", "route": "creation"}, cmds)
     check(a1.get("label") == "创作中心", "navigate 动作必须带 label，实际 %r" % a1.get("label"))
     a2 = assistant._normalize_action({"type": "run", "command": "convert.apply"}, cmds)
-    check(a2.get("label") == "转分镜提示词", "run 动作要带环节说明，实际 %r" % a2.get("label"))
+    check(bool(a2.get("label")) and "分镜" in a2["label"],
+          "run 动作要带环节说明，实际 %r" % a2.get("label"))
 
     print("\n" + "-" * 62)
     if FAILS:

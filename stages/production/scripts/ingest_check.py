@@ -41,7 +41,11 @@ import _ws as W  # noqa: E402
 PIC = re.compile(r"<Picture\s+(\d+)\s*>")
 SHOT_TS = re.compile(r"\[Shot\s+(\d+)\]\s*(?:At\s+(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?)?")
 D_TAG = re.compile(r"<d>\[[^\]]*\]\s*([^<]*)</d>", re.S)
-PICTURE_MAX = 6          # ★ 平台硬限：H3 图片槽 ≤6，改不了
+# ★ 平台硬限：H3 图片槽 ≤6，改不了
+# ★ 与 `prompt_gate.py` 的 C5 不重复（2026-11-01 复核）：这里查「编号从 1 连续、≤6、
+#   不留空号」（结构完整性），C5 查「最大编号 == 实际发送的图片数」（与实际输入闭合）。
+#   两者角度不同，删任意一个都会降低检查强度 —— 别当重复删掉。
+PICTURE_MAX = 6
 
 
 def load(p: pathlib.Path, default):

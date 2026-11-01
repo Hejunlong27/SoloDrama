@@ -55,27 +55,11 @@ TOKEN_KEYS = ('input', 'output', 'cacheRead', 'cacheWrite', 'reasoning', 'calls'
 
 
 def _harden_stdio() -> None:
-    """中文 Windows 控制台是 GBK(cp936)，本报表含 ¥ 等 GBK 装不下的字符。
-    与 scripts/drama.py 同一套做法：按 isatty() 分流 + errors=replace 兜底。"""
-    try:
-        enc = 'utf-8'
-        if sys.stdout.isatty() and os.name == 'nt':
-            import ctypes
-            cp = ctypes.windll.kernel32.GetConsoleOutputCP()
-            if cp:
-                enc = 'cp%d' % cp
-        for s in (sys.stdout, sys.stderr):
-            try:
-                s.reconfigure(encoding=enc, errors='replace')   # type: ignore[union-attr]
-            except Exception:                                    # noqa: BLE001
-                pass
-    except Exception:                                            # noqa: BLE001
-        pass
+    """控制台编码加固（中文 Windows GBK ↔ 管道 UTF-8）——实现统一在 `_util.harden_stdio()`。"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _util import harden_stdio
+    harden_stdio()
 
-
-# --------------------------------------------------------------------------
-# 折算率
-# --------------------------------------------------------------------------
 def load_rates() -> tuple[float, float, float]:
     """返回 (cny_per_rh, rh_per_usd, usd_per_cny)。率以台账 json 为准，缺则用默认值。"""
     cny_per_rh = CNY_PER_RH_DEFAULT

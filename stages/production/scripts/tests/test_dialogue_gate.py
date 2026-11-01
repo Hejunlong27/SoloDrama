@@ -89,14 +89,27 @@ def _():
     return "E2 命中（CJK）"
 
 
-@reg("D", "D04 E2 拉丁长句（> 55 字符）")
+@reg("D", "D04 E2 拉丁超本镜词速预算（读不完才算超）")
 def _():
-    long_latin = ("Nobody told the night shift, because the notice was posted after "
-                  "everyone had already gone home.")
+    # 6 秒 × 3.8 词/秒 ≈ 22 词预算；30 词必然读不完
+    long_latin = " ".join(["word"] * 30)
     s = G.parse_script(build([shot("01", dialog=long_latin), shot("02")]))
     iss = G.check(s, narration_max=2, lines_per_60s=1)
     A_("E2" in codes(iss), "应判 E2：%s" % iss)
-    return "E2 命中（拉丁）"
+    return "E2 命中（拉丁超词速）"
+
+
+@reg("D", "D05 拉丁长句但词数在预算内 → 不按字符判死")
+def _():
+    # 2026-10-31 的决定：取消「拉丁 55 字符」硬上限（西语长句很常见，按字符判会误杀）。
+    # 这一条钉住它：60+ 字符、17 词，6 秒读得完 → 必须放行。
+    line = ("Nobody told the night shift because the notice was posted "
+            "after everyone had already gone home")
+    A_(len(line) > 55, "用例要够长（>55 字符），实际 %d" % len(line))
+    s = G.parse_script(build([shot("01", dialog=line), shot("02")]))
+    iss = G.check(s, narration_max=2, lines_per_60s=1)
+    A_("E2" not in codes(iss), "长句但读得完不该判 E2：%s" % iss)
+    return "%d 字符 / 17 词放行" % len(line)
 
 
 @reg("D", "D05 E3 同镜既有旁白又有对白（规则 R3）")
