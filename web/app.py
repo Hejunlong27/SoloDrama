@@ -666,14 +666,12 @@ async def stream_all(after: int = Query(default=0)):
 # Studio 只读接口（结构化优先；拿不到 JSON 时返回明确原因，不伪造数据）
 # ---------------------------------------------------------------------------
 CAPABILITIES = {
-    "workflow": {"ok": True, "source": "workflow.py status --json（S1–S11 + probes）"},
     "episodes": {"ok": True, "source": "<out>/<批次>/summary.json 的 shots[]（跨批次按镜头去重）"},
     "shots": {"ok": True, "source": "同上，含每镜产物与错误"},
     "artifacts": {"ok": True, "source": "工作区相对路径白名单"},
     "media": {"ok": True, "source": "本地文件流（Range 支持，仅媒体 6 类）"},
     "cost": {"ok": True, "source": "ledger/runs/*.json 的 attempts[].usage"},
     "env": {"ok": True, "source": "tools/env_check.py --json"},
-    "setup": {"ok": True, "source": "project_setup.py show --json（G-0 九项）"},
     "storyboard_edit": {"ok": False, "reason": "分镜与提示词由创作阶段产出，控制台只读展示，不提供在线编辑"},
     "script_edit": {"ok": False, "reason": "剧本正文由 AI 助手按四段法产出并落 03-剧本/，控制台不提供编辑器"},
     "bgm": {"ok": False, "reason": "bgm.py 尚未纳入命令白名单（需先补白名单与门禁口径）"},

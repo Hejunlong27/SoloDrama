@@ -80,7 +80,7 @@ NARRATIVE_ORDER = tuple(_NARR_CFG.get("order") or ("dialogue", "narration"))
 DEFAULT_NARRATIVE = str(_NARR_CFG.get("default") or "dialogue")
 
 # STYLES 是 tracks.json 的**运行时视图**：形态字段原样带过来，
-# 再把「默认叙事模式（对白驱动）」的配额并进去 —— 这样 half_narrated_check
+# 再把「默认叙事模式（对白驱动）」的配额并进去 —— 这样旧调用方
 # 读 `spec["narration_max_chars"]` 的老代码不用改。
 STYLES = {}
 for _k, _t in (_TRACKS_CFG.get("tracks") or {}).items():

@@ -25,7 +25,6 @@ from . import jsonout, paths, runner
 # 只读子命令的脚本位置（与 commands.SCRIPTS 同一批文件，这里只挑读类）
 SCRIPTS = {
     "workflow": paths.PROD_SCRIPTS / "workflow.py",
-    "setup": paths.PROD_SCRIPTS / "project_setup.py",
     "drama": paths.PROD_SCRIPTS / "drama.py",
     "env": paths.TOOLS_DIR / "env_check.py",
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",

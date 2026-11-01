@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""离线测试：画风库门禁（style_gate，四维）+ 半解说三类校验（half_narrated_check）
+"""离线测试：画风库门禁（style_gate，四维）
 
 零网络、零计费、零第三方依赖。
     python stages/production/scripts/tests/test_style_gate.py
@@ -18,7 +18,6 @@ SCRIPTS = HERE.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import style_gate as SG            # noqa: E402
-import half_narrated_check as HC   # noqa: E402
 
 RESULTS = []
 
@@ -31,27 +30,6 @@ def _ws(tmp):
     ws = pathlib.Path(tmp)
     (ws / "05-分镜").mkdir(parents=True, exist_ok=True)
     return ws
-
-
-def _sb(over=None, assets_over=None):
-    sb = {
-        "ep": "ep01",
-        "shots": [{
-            "shot_id": "01", "duration": 8.0,
-            "shot_camera_angle": "three_quarter",
-            "first_frame_anchor_role": "character_main_card",
-            "first_frame_angle_match": {"anchor_view": "front_3/4", "angle_match_confirmed": True},
-            "reset_anchor": True,
-            "narration_lines": [{"text": "那一刻，我终于看清了门口的人。", "start": 0.0, "end": 3.6}],
-            "dialogue_lines": [{"speaker": "萧珩", "line": "你该行礼了。", "start": 4.1, "end": 6.0}],
-        }],
-        "assets": {
-            "characters": [{"name": "林夏", "main_card": "a.png", "three_view": "b.png"}],
-            "scenes": [{"name": "客厅", "main_card": "c.png", "aux_card": "d.png"}],
-            "props": [],
-        },
-    }
-    return sb
 
 
 def main():
@@ -113,64 +91,11 @@ def main():
         check("2D 交付到成片（不再是旁白交接）", s2["delivery_stop"] == "final_video")
         check("真人一镜一张单帧分镜", SG.STYLES["live_action"]["storyboard_topology"] == "one_frame_per_clip")
 
-        # --- 三类校验：合规样本应通过 ---
-        SG._do_set(ws, "3d_manhua", None)
-        spec = SG.STYLES["3d_manhua"]
-        sb = _sb()
-        e, w = HC.check_windows(sb, spec)
-        check("合规样本 windows 无硬失败", not e, str(e))
-        e, _ = HC.check_assets(sb, spec)
-        check("合规样本 assets 无硬失败", not e, str(e))
-        e, _ = HC.check_anchors(sb, spec)
-        check("合规样本 anchors 无硬失败", not e, str(e))
-
-        # --- 缺陷样本应被拦 ---
-        bad = _sb()
-        bad["shots"][0]["narration_lines"] = [
-            {"text": "她一步一步走近，每一步都像踩在我的心跳上，我几乎能听见自己血液倒流的声音，那种被看穿的恐惧让我无法呼吸。",
-             "start": 0.0, "end": 8.0}]
-        e, _ = HC.check_windows(bad, spec)
-        check("旁白超字数被拦", any("> 上限" in x for x in e), str(e[:2]))
-        check("尾缓冲越界被拦", any("尾缓冲" in x for x in e), str(e[:3]))
-
-        bad2 = _sb()
-        bad2["shots"].append({
-            "shot_id": "02", "duration": 8.0, "shot_camera_angle": "tracking",
-            "first_frame_anchor_role": "character_main_card",
-            "first_frame_angle_match": {"angle_match_confirmed": True}, "reset_anchor": True,
-            "narration_lines": [], "dialogue_lines": [],
-        })
-        e, _ = HC.check_anchors(bad2, spec)
-        check("侧跟拍用正面卡被拦", any("应使用锚点 character_3view_side" in x for x in e), str(e))
-
-        bad3 = _sb()
-        bad3["assets"]["characters"][0].pop("three_view")
-        bad3["assets"]["scenes"][0].pop("aux_card")
-        bad3["assets"]["props"] = [{"name": "a", "card": "1.png"}, {"name": "b", "card": "2.png"}]
-        e, _ = HC.check_assets(bad3, spec)
-        check("缺三视图被拦", any("three_view" in x for x in e))
-        check("缺场景辅卡被拦", any("aux_card" in x for x in e))
-        check("道具卡超上限被拦", any("道具卡" in x for x in e))
-
-        # --- 2D 不要求三视图（同一缺陷样本在 2D 下应通过）---
-        e2, _ = HC.check_assets(bad3, SG.STYLES["2d_animation"])
-        check("2D 不因缺三视图报错", not any("three_view" in x for x in e2), str(e2))
-
-        # --- 跨镜间隔 ---
-        bad4 = _sb()
-        bad4["shots"][0]["dialogue_lines"] = [{"speaker": "萧珩", "line": "x", "start": 4.1, "end": 8.0}]
-        bad4["shots"].append({"shot_id": "02", "duration": 8.0, "reset_anchor": True,
-                              "first_frame_anchor_role": "scene_main_card",
-                              "first_frame_angle_match": {"angle_match_confirmed": True},
-                              "narration_lines": [{"text": "你好。", "start": 0.0, "end": 1.0}],
-                              "dialogue_lines": []})
-        e, _ = HC.check_windows(bad4, spec)
-        check("跨镜间隔不足被拦", any("跨镜语音间隔" in x for x in e), str(e))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("=" * 62)
-    print("style_gate + half_narrated_check 离线测试")
+    print("style_gate 画风库门禁离线测试")
     print("=" * 62)
     n_fail = 0
     for name, ok, detail in RESULTS:

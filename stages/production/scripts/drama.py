@@ -11,12 +11,11 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
 
 命令一览（`python scripts/drama.py guide` 也会打印同样内容）
 -----------------------------------------------------------
-    setup      show|ask|set|require|accounts  ★开工前置 9 项：画风 / 集数 / 每集时长 / 生图模型 /
-                                          视频模型与功能选项 / **工作流 API** / **账号 API Key** /
-                                          分辨率 / 是否流水线（落 project-setup.json；未齐退出码 4）
-    workflow   list|status|next|check|done|skip  ★标准作业 11 环节（产物判据 + 顺序门禁）
-    pipeline   plan|run --yes|mark|status  ★流水线模式：一次确认 → 预算上限 → 跑完整部剧
-    bgm        library|plan|check|mix      ★配乐：库 → 铺排计划 → 混音（在 S10 字幕烧录前自动接）
+    next|do|nodes|graph|skip                ★七环节 23 节点调度（唯一编排）：看下一步 / 执行 / 全状态 /
+                                          节点图 / 显式跳过（须给理由）
+    init       --title ... --episodes N   ★建项目骨架（9 目录 + 6 模板，不写内容）
+    style      list|status|set|reset|ask|require  ★画风库：形态 track × 视觉 look × 叙事 narrative
+    bgm        library|plan|check|mix      ★配乐：库 → 铺排计划 → 混音（在字幕烧录前接）
     status     [--json]                  全盘状态面板：数据/参考图/资产缺口/批次/台账（零网络）
     models     [list|status|set|reset|ask]  ★前置条件：首次生图/出片前确认模型
                                           （本地 ComfyUI / RunningHub / 闭源模型 三选一，写 model-plan.json）
@@ -30,7 +29,7 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
     video status [BATCH]                 某批次进度（读 summary.json）
     report     [--latest|--batch ID]     战报：批次汇总 + 台账聚合 + 成本
     balance                              两把 Key 的余额（只读，不计费）
-    cost [--checkpoint] [--balance] [--json]  成本台账：单次任务 + 全剧累计（三池表格）
+    cost [--checkpoint] [--balance] [--json]  成本台账：单次任务 + 全剧累计（markdown / JSON）
     guide                                打印这份速查
 
 全局参数
@@ -126,8 +125,8 @@ except SystemExit as _e:
         print('  全局参数: --workspace <DIR>   也可设环境变量 SOLODRAMA_WORKSPACE\n')
         print('命令: init / next / do / nodes / graph / skip /')
         print('      setup {show|ask|set|require} / workflow {list|status|check} /')
-        print('      pipeline {plan|run|mark|status} / status / preflight / assets / refs /')
-        print('      models / style / halfcheck / video {plan|run|resume-download|status} /')
+        print('      status / preflight / assets / refs /')
+        print('      models / style / video {plan|run|resume-download|status} /')
         print('      report / balance / cost / guide')
         print('\n例：drama.py init --workspace "D:/剧/新剧" --title "剧名"')
         print('    drama.py --workspace "D:/剧/某剧" status')
@@ -444,9 +443,11 @@ def estimate_video(limit=None, only=None, tier='consumer', calibrate=False) -> d
     # ★ 2026-10-21（反馈 11.1）：把开工确认单里的「步数 / 像素」喂进成本模型 ——
     #   段价不再写死一个数，才能回答「提分辨率还是提步数更贵」。
     steps = mp = None
+    # ★ 2026-11-01：不再 import project_setup（已删）。直接读它留在项目里的确认单文件 ——
+    #   老项目仍有 `project-setup.json`，新项目没有就走默认值，不影响估算。
     try:
-        import project_setup as _PS
-        _vo = (_PS.collect(WS)["items"].get("video_options") or {})
+        _ps = json.loads((WS / "project-setup.json").read_text(encoding="utf-8-sig"))
+        _vo = (_ps.get("video_options") or {})
         steps, mp = _vo.get("steps"), _vo.get("megapixels")
     except Exception:                                          # noqa: BLE001
         pass
@@ -768,15 +769,6 @@ def cmd_style(args) -> int:
     return run_cmd(cmd, 'style', quiet_ok=False)[0]
 
 
-def cmd_halfcheck(args) -> int:
-    """转发给 half_narrated_check.py（半解说结构三类硬校验）。"""
-    HC_PY = SCRIPTS / 'half_narrated_check.py'
-    cmd = [sys.executable, HC_PY, '--workspace', str(WS)]
-    if getattr(args, 'which', None):
-        cmd.append(args.which)
-    return run_cmd(cmd, 'halfcheck', quiet_ok=False)[0]
-
-
 # ---------------------------------------------------------------------------
 # assets：缺失资产出图（默认本地 ComfyUI ￥0；可选 RunningHub 云端计费）
 # ---------------------------------------------------------------------------
@@ -1039,8 +1031,7 @@ def cmd_report(args) -> int:
             print('  %-12s %-8s %-12s %s' % (sid, status, cost,
                                              (art or err or '')[:60].replace('\n', ' ')))
         print('\n合计：%d 条 attempt' % len(rows))
-    print('\n完整成本报表（含本地 agent token，DSH 账本）：')
-    print('  python scripts/cost_report.py')
+    print('\n完整成本报表：drama cost --json（或 cost_ledger.py --json）')
     return 0
 
 
@@ -1117,17 +1108,13 @@ def cmd_cost(args) -> int:
     """成本台账：转发给 cost_ledger.py（单次任务 + 全剧累计 + 三池表格 + Excel）。
 
     ★ 口径：消耗只取平台按任务返回的 usage；**不用余额差值倒推消耗**（用户 2026-09-19 明确）。
-    ★ 默认同时产出 Excel（docs\\成本台账_<剧名>.xlsx）与 markdown（docs\\成本台账.md）。
+    ★ 2026-11-01：Excel 导出已删（能力清单 L8），只产 markdown / JSON。
     """
     cmd = [sys.executable, SCRIPTS / 'cost_ledger.py']
     for flag, on in (('--checkpoint', args.checkpoint), ('--json', args.json),
                      ('--balance', args.balance), ('--no-write', args.no_write)):
         if on:
             cmd.append(flag)
-    if not args.no_xlsx:
-        cmd.append('--xlsx')
-    if args.xlsx_only:
-        cmd.append('--no-md')
     if args.md:
         cmd += ['--md', args.md]
     # ★ 2026-10-20（反馈 P0-3）：剧名默认从工作区推导（brief.json → project.json → 目录名），
@@ -1148,7 +1135,6 @@ def cmd_guide(args) -> int:
 # ---------------------------------------------------------------------------
 # setup / workflow / pipeline（★ 2026-10-21：开工前置条件 · 标准流程 · 流水线模式）
 #   三者都是**独立脚本**（各自是单一真源），这里只做薄转发：
-#     * project_setup.py —— 开工前置 7 项（画风/集数/时长/生图/视频/分辨率/流水线）
 #     * workflow.py      —— 11 环节标准流程（产物判据 + 顺序门禁）
 #     * pipeline.py      —— 流水线模式（预算上限 + 预计完工 + 一次跑完）
 #   透传用 REMAINDER：以后给这些脚本加参数，不必回来改 drama.py。
@@ -1344,11 +1330,6 @@ def main() -> int:
     q.set_defaults(fn=cmd_style)
     p.set_defaults(fn=cmd_style, style_cmd=None)
 
-    # ★ 半解说结构校验（旁白时间窗 / 资产规格 / 首帧锚点）
-    p = sub.add_parser('halfcheck', help='半解说结构三类硬校验（读 05-分镜/storyboard.json）')
-    _add_ws_arg(p)
-    p.add_argument('which', nargs='?', default='all', choices=('all', 'windows', 'assets', 'anchors'))
-    p.set_defaults(fn=cmd_halfcheck)
 
     pv = sub.add_parser('video', help='出片')
     _add_ws_arg(pv)
@@ -1399,8 +1380,6 @@ def main() -> int:
                    help='附带只读余额（仅判断够不够跑，不参与消耗统计）')
     p.add_argument('--md', default=None, help='markdown 输出路径（默认 docs\\成本台账.md）')
     p.add_argument('--no-write', action='store_true', help='只打印，不写任何文件')
-    p.add_argument('--no-xlsx', action='store_true', help='不生成 Excel（默认生成）')
-    p.add_argument('--xlsx-only', action='store_true', help='只出 Excel，不出 markdown')
     p.add_argument('--drama', default=None, help='短剧名（决定 Excel 文件名与表标题）')
     p.set_defaults(fn=cmd_cost)
 
@@ -1409,13 +1388,9 @@ def main() -> int:
     p.set_defaults(fn=cmd_guide)
 
     # ★ 2026-10-21：开工前置条件 · 标准流程 · 流水线模式（薄转发，参数全透传）
+    # ★ 2026-11-01：setup / workflow / pipeline 三条转发已删（能力清单 S2 / S6）。
+    #   它们对应的是「11 环节 + 九项确认」的旧编排；现行编排是 nodes.py 的 23 节点。
     for name, script, title, brief in (
-        ('setup', 'project_setup.py', '开工前置条件（9 项）',
-         'show / ask / set / require / accounts'),
-        ('workflow', 'workflow.py', '标准作业流程（11 环节）',
-         'list / status / next / check / done / skip'),
-        ('pipeline', 'pipeline.py', '流水线模式（一次确认跑完整部剧）',
-         'plan / run --yes / mark / status'),
         ('bgm', 'bgm.py', 'BGM 库与混音（配乐）',
          'library / plan --ep epNN --apply / check / mix / credits'),
     ):

@@ -590,11 +590,6 @@ def batches_in_scope(rows, cp) -> list[str]:
     return [r['batch_id'] for r in rows if r['batch_id'] not in known]
 
 
-# --------------------------------------------------------------------------
-# --------------------------------------------------------------------------
-# Excel（.xlsx）台账
-# --------------------------------------------------------------------------
-XLSX_STATE = WS / 'docs' / '.cost-xlsx-state.json'
 # ★ 2026-10-20（反馈 P0-3）：剧名不再硬编码。
 #   原来写死 `DRAMA_DEFAULT = '七大姑催婚'`（上一部剧的名字），于是**任何项目**跑
 #   `drama.py cost` 都会产出「成本台账_七大姑催婚.xlsx」，交付物里混进无关剧名。
@@ -663,177 +658,6 @@ def load_asset_specs() -> dict:
     return specs
 
 
-def build_xlsx_ctx(drama, batches, by_ep, tokens, attr, rates, state_prev) -> tuple[dict, dict]:
-    """把台账数据整理成 Excel 生成器要的形状。"""
-    cny_per_rh, rh_per_usd, usd_cny = rates
-    specs = load_asset_specs()
-
-    # token 按归属对象索引：{批次ID: ...} 与 {大类名: ...}
-    # scope='batch' → 归到具体批次（任务台账那一行的 token 列会引用它）
-    # scope='class' → 只能归到大类（同区间多个同大类批次），**只计一次**，避免重复累加
-    tok_by_obj: dict[str, dict] = {}
-    tok_rows = []
-    for bid, rec in (attr.get('batches') or {}).items():
-        if rec.get('scope') == 'class':
-            obj = big_class(rec.get('kind') or '')
-            cur = tok_by_obj.setdefault(obj, {'tokens': 0, 'notional_cny': 0.0})
-            cur['tokens'] += rec.get('tokens') or 0
-            cur['notional_cny'] += rec.get('notional_cny') or 0
-        else:
-            tok_by_obj[bid] = {'tokens': rec.get('tokens'),
-                               'notional_cny': rec.get('notional_cny')}
-    ua = attr.get('unattributed') or {}
-    if ua.get('tokens'):
-        tok_by_obj['未归属（无法归类）'] = {'tokens': ua.get('tokens'),
-                                           'notional_cny': ua.get('notional_cny')}
-
-    for obj, rec in sorted(tok_by_obj.items()):
-        if obj == '未归属（无法归类）':
-            scope, why = '未归属', '区间内跨多个大类 ⇒ 无法归属'
-        elif re.match(r'^(\d{8}_\d{6}|char_assets|scene_assets)', str(obj)):
-            scope, why = '批次', '按结账区间增量近似归属（★ 会混入同区间内其它工作）'
-        else:
-            scope, why = '大类', '同区间多个同大类批次，拆不到单批 ⇒ 归到大类（只计一次）'
-        tok_rows.append({
-            'obj': obj, 'scope': scope, 'at': (attr.get('_last_attribution') or {}).get('at', ''),
-            'calls': None, 'tokens': rec.get('tokens'), 'notional': rec.get('notional_cny'),
-            'why': why,
-        })
-
-    # 任务台账
-    tasks = []
-    for b in sorted(batches.values(), key=lambda x: x['batch_id']):
-        eps = episodes_of(b)
-        if b['kind'] in ('人物资产', '场景资产'):
-            label = '人物定妆图' if b['kind'] == '人物资产' else '场景空镜'
-        elif eps:
-            label = '%s 出片' % ','.join(eps)
-        else:
-            label = b['kind']
-        t0, t1 = _parse_ts(b['first_at']), _parse_ts(b['last_at'])
-        el = (t1 - t0).total_seconds() if (t0 and t1) else None
-        as_rh = b['rh_coins'] + b['wallet_usd'] * rh_per_usd
-        note = []
-        if b['fail']:
-            note.append('含 %d 次重跑' % b['fail'])
-        if el and el > 3 * 3600:
-            note.append('跨多次调用（时长为跨度）')
-        tasks.append({
-            'batch_id': b['batch_id'], 'at': (b['first_at'] or '')[:19], 'cls': big_class(b['kind']),
-            'label': label, 'qty': len(b['shots']), 'ok': b['ok'], 'fail': b['fail'],
-            'rh': round(b['rh_coins'], 1), 'usd': round(b['wallet_usd'], 4),
-            'as_rh': round(as_rh, 1), 'cny': round(as_rh * cny_per_rh, 2),
-            'elapsed': ('%.0f 分' % (el / 60)) if el else '', 'note': '；'.join(note),
-        })
-
-    # 资产明细
-    assets = []
-    for b in batches.values():
-        for sid, ps in b['per_shot'].items():
-            if not re.match(r'^(char|scene)_', sid):
-                continue
-            art = (ps.get('artifact') or '').split(';')[0]
-            assets.append({
-                'key': sid, 'name': (specs.get(sid) and '') or sid,
-                'type': '角色' if sid.startswith('char') else '场景',
-                'batch': b['batch_id'], 'task_id': ps.get('task_id') or '',
-                'rh': round(ps['rh_coins'], 1), 'usd': round(ps['wallet_usd'], 4),
-                'cny': round((ps['rh_coins'] + ps['wallet_usd'] * rh_per_usd) * cny_per_rh, 4),
-                'spec': specs.get(sid, ''), 'file': art,
-            })
-    # 资产名从清单补（key 形如 char_10 → 用清单里的名字）
-    name_map = {}
-    for fn in ('char_assets_manifest.json', 'scene_assets_manifest.json'):
-        f = DATA / fn
-        if f.is_file():
-            try:
-                for it in json.loads(f.read_text(encoding='utf-8')).get('items', []):
-                    if it.get('key'):
-                        name_map[it['key']] = it.get('name') or ''
-            except (OSError, json.JSONDecodeError):
-                pass
-    for a in assets:
-        a['name'] = name_map.get(a['key']) or a['key']
-    assets.sort(key=lambda x: (x['type'], x['key']))
-
-    # 剧集明细
-    episodes = []
-    for ep, v in sorted(by_ep.items()):
-        if not re.match(r'^ep\d+$', ep):
-            continue
-        outdir = ''
-        for b in batches.values():
-            if ep in episodes_of(b):
-                outdir = str(OUT_ROOT / b['batch_id'])
-                break
-        episodes.append({'ep': ep, 'shots': v['shots'], 'ok': v['ok'], 'fail': v['fail'],
-                         'rh': round(v['as_rh'], 1), 'dur': None, 'outdir': outdir})
-
-    # 逐段明细
-    shots = []
-    for b in batches.values():
-        for sid, ps in b['per_shot'].items():
-            if not re.match(r'^ep\d+_', sid):
-                continue
-            art = (ps.get('artifact') or '')
-            shots.append({'shot': sid, 'ep': sid.split('_')[0], 'dur': ps.get('duration_s'),
-                          'frames': ps.get('frames'), 'status': ps.get('status'),
-                          'rh': round(ps['rh_coins'], 1) or None, 'wall': ps.get('wall_s') and round(ps['wall_s'], 0),
-                          'task_id': ps.get('task_id') or '', 'file': art})
-    shots.sort(key=lambda x: x['shot'])
-
-    notes = [
-        ('短剧', drama),
-        ('生成时间', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-        ('生成脚本', 'scripts\\cost_ledger.py + scripts\\cost_xlsx.py'),
-        ('★ 消耗口径', '只取平台按任务返回的 usage（consumeCoins / consumeMoney / '
-                       'thirdPartyConsumeMoney），逐条累加。'),
-        ('★ 铁律', '**不用余额差值倒推消耗**（用户 2026-09-19 明确）。余额变动混入充值、订阅续费、'
-                   '其他产品与其他使用者，不属于本次消耗。'),
-        ('折算率', '1 RH币 = ¥%.4f；1 美元 = %.0f RH币（= ¥%.4f）。来源：docs\\runninghub-runs.json 的 rh_rate'
-                   % (cny_per_rh, rh_per_usd, usd_cny)),
-        ('资金池归属', 'RH币池 = 视频出片 / AI 应用 / 人物定妆图；美元钱包 = 闭源模型 API（场景空镜）。'),
-        ('token 名义 vs 实际', '名义计费按挂牌价折算，仅用于横向比较；实际扣费看「口径说明」下方与 '
-                               'cost_report.py 的实际扣费行（包月订阅时 apiCost=0）。'),
-        ('★ token 归类的限制', 'DSH 账本只有「按天/按会话」粒度，没有逐批次时间戳 ⇒ 单次 token 只能靠'
-                               '「结账区间增量」近似归属；且会混入同区间内我做的其它事。'
-                               '历史任务无法回溯拆分，故 token 列为空白。'),
-        ('RH币/钱包 的精度', '可精确到分镜与资产项（逐 attempt 台账，来自平台 usage）。'),
-        ('数据源', '平台消耗：video-pipeline\\ledger\\runs\\*.json（引擎自动落盘）；'
-                   'token：$DSH_HOME\\storages\\cost-meter\\ledger.json（按项目会话归属）；'
-                   '资产规格：data\\char_assets_manifest.json / scene_assets_manifest.json。'),
-        ('更新方式', '本工作簿由脚本**只刷数据区**（表头下那几行），保留其它工作表与单元格批注；'
-                     '数据区之外的备注行不会被清掉。'),
-        ('本表自动生成', '请勿手改数据区；要加说明请写在数据区之外。'),
-    ]
-    return ({
-        'drama': drama, 'tasks': tasks, 'assets': assets, 'episodes': episodes,
-        'shots': shots, 'tok_rows': tok_rows, 'tok_by_obj': tok_by_obj,
-        'rates': {'cny_per_rh': cny_per_rh, 'rh_per_usd': rh_per_usd, 'usd_cny': usd_cny},
-        'notes': notes,
-    }, {})
-
-
-def write_xlsx(path, ctx, state_prev) -> dict:
-    import cost_xlsx
-    cost_xlsx.STATE = state_prev or {}
-    st = cost_xlsx.build(path, ctx)
-    try:
-        XLSX_STATE.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
-    except OSError:
-        pass
-    return st
-
-
-def load_xlsx_state() -> dict:
-    if XLSX_STATE.is_file():
-        try:
-            return json.loads(XLSX_STATE.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError):
-            pass
-    return {}
-
-
 def main() -> int:
     _harden_stdio()
     ap = argparse.ArgumentParser(description='短剧成本台账（单次任务 + 全剧累计）')
@@ -843,11 +667,6 @@ def main() -> int:
                     help='附带只读余额（仅判断够不够跑；绝不用于倒推消耗）')
     ap.add_argument('--md', default=None, help='表格输出路径（默认 docs\\成本台账.md）')
     ap.add_argument('--no-write', action='store_true', help='只打印，不写文件')
-    ap.add_argument('--xlsx', action='store_true',
-                    help='★ 生成 Excel 台账 docs\\成本台账_<剧名>.xlsx（归类核算，7 个表）')
-    ap.add_argument('--drama', default=DRAMA_DEFAULT, help='短剧名（决定文件名与表标题）')
-    ap.add_argument('--no-md', action='store_true', help='不写 markdown（只出 Excel 时用）')
-    args = ap.parse_args()
 
     cny_per_rh, rh_per_usd, usd_cny = load_rates()
     batches = save_auto_ledger()
@@ -916,13 +735,6 @@ def main() -> int:
         out.write_text(md, encoding='utf-8')
         print('→ 表格台账已写入：%s' % out)
 
-    if args.xlsx:
-        ctx, _ = build_xlsx_ctx(args.drama, batches, by_ep, tokens, attr,
-                               (cny_per_rh, rh_per_usd, usd_cny), None)
-        xp = WS / 'docs' / ('成本台账_%s.xlsx' % args.drama)
-        st = write_xlsx(xp, ctx, load_xlsx_state())
-        print('→ Excel 台账已写入：%s' % xp)
-        print('   工作表：%s' % '、'.join('%s(%d 行)' % (k, v) for k, v in st.items()))
     return 0
 
 

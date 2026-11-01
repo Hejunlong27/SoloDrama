@@ -31,7 +31,6 @@ SCRIPTS = {
     "asset_md": paths.ASSETS_SCRIPTS / "asset_md.py",
     "convert": paths.PROD_SCRIPTS / "convert_storyboard.py",
     "ingest": paths.PROD_SCRIPTS / "ingest_check.py",
-    "halfcheck": paths.PROD_SCRIPTS / "half_narrated_check.py",
     "compliance": paths.PROD_SCRIPTS / "compliance_precheck.py",
     "prepare_refs": paths.PROD_SCRIPTS / "prepare_refs.py",
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
@@ -46,8 +45,6 @@ SCRIPTS = {
     "comfy_video": paths.STAGES_DIR / "video" / "comfyui" / "comfy_local_video.py",
     "gen_rh_wf": paths.PROD_SCRIPTS / "gen_assets_rh_workflow.py",
     # ★ Studio 阶段新增（只读）：流程状态 / 开工前置 / 环境自检 / 剧本连续性
-    "workflow": paths.PROD_SCRIPTS / "workflow.py",
-    "setup": paths.PROD_SCRIPTS / "project_setup.py",
     "env_check": paths.TOOLS_DIR / "env_check.py",
     "continuity": paths.PROD_SCRIPTS / "script_continuity.py",
 }
@@ -583,18 +580,6 @@ _add(_c("refs.prepare", "7 参考图", "参考图规格化（长边/质量/格�
         agent="先只体检给我看会改哪些文件，我确认后再带 --apply。"))
 
 # ===== 环节 8 分镜 / 提示词 ================================================
-_add(_c("halfcheck.all", "8 分镜提示词", "半解说结构三类硬校验", "drama",
-        argv=["halfcheck", "all"], mode="sync", danger=READ,
-        help="旁白时间窗 / 资产规格 / 首帧锚点（读 05-分镜/storyboard.json）。",
-        agent="逐类列出未过项与所在镜头，给出改法。"))
-_add(_c("halfcheck.windows", "8 分镜提示词", "只校验旁白时间窗", "drama",
-        argv=["halfcheck", "windows"], mode="sync", danger=READ,
-        help="旁白/对白零重叠、最小间隔、尾缓冲。",
-        agent="列出越界镜头。"))
-_add(_c("halfcheck.anchors", "8 分镜提示词", "只校验首帧锚点", "drama",
-        argv=["halfcheck", "anchors"], mode="sync", danger=READ,
-        help="3D 漫剧首帧强制且角度必须匹配。",
-        agent="列出缺锚点或角度不匹配的镜头。"))
 _add(_c("convert.apply", "8 分镜提示词", "分镜 → data/ 四文件", "convert",
         argv=[], danger=WRITE,
         flags={"--ep": "ep", "--src": "src"}, bools={"--apply": "apply"},
@@ -730,7 +715,7 @@ _add(_c("report.batch", "12 验收结账", "出片战报", "drama",
         flags={"--batch": "batch"}, params=[Param("batch", "批次号", "str")],
         help="四段式战报（结果 / 失败 / 用量 / 下一步）。",
         agent="把战报压成 3 行，并给出下一步建议。"))
-_add(_c("cost.checkpoint", "12 验收结账", "成本台账 + 结账基线（Excel）", "drama",
+_add(_c("cost.checkpoint", "12 验收结账", "成本台账 + 结账基线", "drama",
         argv=["cost", "--checkpoint"], danger=WRITE,
         flags={"--drama": "drama_name"}, bools={"--json": "as_json", "--balance": "balance"},
         params=[Param("drama_name", "剧名", "str"), Param("as_json", "机器可读", "bool", default=False),
@@ -793,33 +778,6 @@ _add(_c("diag.guide", "诊断", "打印速查（drama.py guide）", "drama",
         argv=["guide"], mode="sync", danger=READ, help="命令速查全文。",
         agent="把速查整理成「常用五条命令」。"))
 
-
-# ===== 流程门禁（Studio：G10 顺序校验，只读） ==============================
-_add(_c("workflow.list", "S 流程门禁", "11 环节清单（含完成判据）", "workflow",
-        argv=["list"], mode="sync", danger=READ,
-        help="打印 S1–S11 的顺序、类型（内容/自动/校验）与产物判据。",
-        agent="把 11 环节按顺序列成表，标出哪些必须人工产出、哪些可自动跑。"))
-_add(_c("workflow.status", "S 流程门禁", "流程状态（JSON）", "workflow",
-        argv=["status", "--json"], mode="sync", danger=READ,
-        help="各环节完成情况 + 当前应做哪一环（判据来自产物 probes，不靠勾选）。",
-        agent="只报「当前环节 + 卡在哪一项判据」，不要复述整张表。"))
-_add(_c("workflow.check", "S 流程门禁", "前置环节校验（G10）", "workflow",
-        argv=["check"], mode="sync", danger=READ, gate="G10",
-        flags={"--stage": "stage"},
-        params=[Param("stage", "目标环节", "enum", required=True,
-                      choices=["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11"])],
-        help="前置环节未完成 → 退出码 4（不是程序错误，是顺序门禁）。",
-        agent="退出码 4 时列出阻塞环节与其缺的判据，不要建议跳步。"))
-
-# ===== 开工前置（G-0 九项，只读） ==========================================
-_add(_c("setup.show", "G-0 开工前置", "九项确认单（JSON）", "setup",
-        argv=["show", "--json"], mode="sync", danger=READ,
-        help="画风 / 集数 / 分辨率 / 出图通道 / 出片通道 / 工作流 API / 账号 / 视频参数 / 流水线预算。",
-        agent="列出未通过的项与缺什么，按「先画风再其余」的顺序给补齐步骤。"))
-_add(_c("setup.require", "G-0 开工前置", "开工门禁", "setup",
-        argv=["require"], mode="sync", danger=READ, gate="G-0",
-        help="九项未齐 → 退出码 4，不许开工。",
-        agent="未过就说明缺哪几项，并强调不能跳步。"))
 
 # ===== 环境自检（零网络） ==================================================
 _add(_c("env.check", "诊断", "环境自检（JSON，零网络）", "env_check",
