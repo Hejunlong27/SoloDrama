@@ -112,26 +112,35 @@ def main():
         comfy_store.DIR, comfy_store.INDEX = real_dir, real_index
         shutil.rmtree(tmp.parent, ignore_errors=True)
 
-    section("6. 画风目录：轨道齐全、官方风格落在正确轨道")
+    section("6. 画风目录：风格库齐全、渲染流按轨挂")
     cat = styles.catalog()
     check(cat.get("ok") is True, "画风目录应能读出：%s" % cat.get("reason"))
     tracks = {t["id"]: t for t in cat.get("tracks") or []}
     for tid in ("3d_manhua", "2d_animation", "live_action"):
         check(tid in tracks, "缺少轨道 %s" % tid)
-    lib = {s["id"]: s for s in cat.get("styles") or []}
-    expect = {
-        "cinematic": "live_action", "magical-realism": "live_action",
-        "jp-youth-film": "live_action", "short-form-drama": "live_action",
-        "cel-shading": "2d_animation", "cn-anime-style": "2d_animation",
-    }
-    for sid, track in expect.items():
-        check(sid in lib, "风格库里缺少 %s" % sid)
-        if sid in lib:
-            check(lib[sid].get("track") == track, "%s 应在 %s 轨道" % (sid, track))
-            check(bool(lib[sid].get("prompt")), "%s 应有提示词原文" % sid)
-            check(sid in (tracks.get(track, {}).get("sub_modes") or []) or
-                  any(x["id"] == sid for x in tracks.get(track, {}).get("sub_modes") or []),
-                  "%s 应出现在 %s 的子模式里（否则引擎不接受这个画风）" % (sid, track))
+
+    # ★ 2026-11-01 口径变更：look 是**跨轨的风格库**，不再挂在某条轨的 sub_modes 里。
+    #   旧断言「cinematic 必须出现在 live_action 的子模式里」正是三轨合一时代的耦合，
+    #   拆分后它必然失败 —— 而失败信息会让人以为「风格丢了」，实际是断言过期了。
+    looks = {s["id"]: s for s in cat.get("looks") or []}
+    for lid in ("surreal-cinema", "cinematic", "magical-realism", "jp-youth-film",
+                "short-form-drama", "cel-shading", "cn-anime-style"):
+        check(lid in looks, "风格库里缺少 %s" % lid)
+        if lid in looks:
+            check(bool(looks[lid].get("prompt")), "%s 应有提示词原文" % lid)
+    check(len(looks) >= 13, "风格库应至少 13 条，实际 %d" % len(looks))
+    check("track" not in (looks.get("surreal-cinema") or {}),
+          "look 不该带 track 字段（拆分后只保留 recommended_for）")
+    check(any(x.get("recommended_for") for x in looks.values()),
+          "至少应有一条 look 给出 recommended_for")
+
+    rs = {s["id"]: s for s in cat.get("render_styles") or []}
+    for rid in ("guoman-3d-render", "pixar-disney", "cel-anime", "guoman-webtoon"):
+        check(rid in rs, "渲染流里缺少 %s" % rid)
+    check(all(x.get("track") for x in rs.values()), "每条渲染流都应标注所属轨道")
+    for tid, t in tracks.items():
+        for sub in t.get("sub_modes") or []:
+            check(sub["id"] in rs, "%s 的子模式 %s 不在渲染流表里" % (tid, sub["id"]))
     check(len(cat.get("presets", {}).get("resolution") or []) >= 3, "应有分辨率预设")
 
     print("\n" + "-" * 62)

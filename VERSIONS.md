@@ -1,6 +1,48 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-01 更新（V0.7.39 · 画风库成为唯一口径；修 Studio 目录回归）**
+  用户问：「画风已经从三轨增加到画风库，怎么项目还是用的『画风三轨规范』？」查下来是三件事叠在一起。
+
+  **① 文档层**：`docs/styles/画风三轨规范.md` 虽在 V0.7.32 加了「已降级」横幅，但**正文仍是旧口径**
+  （三轨 = 形态 + 题材 + 半解说三合一，含 `storyboard.json` 与三格分镜约束），而 README 还把它标成「★ 单一真源」。
+  现在：删除该文件，新建 `docs/styles/画风库规范.md` —— 四维对照表、**13 条 look 全表**、
+  **6 条渲染流表**（并说清「渲染流不是风格库」）、拼装公式、锁定时机、命令、常见误用、与旧文档逐条对照。
+
+  **② 代码层（真 bug，V0.7.32 引入）**：`web/core/styles.py::catalog()` 把 `style_lib()` 当成风格库返回。
+  但 V0.7.32 已把 `style_lib()` 的语义从「题材风格」改成「轨道渲染流」，且返回项**没有 `id` 字段** ——
+  后果：Studio 里只能看到 6 条渲染手法（`guoman-3d-render` / `cel-anime` / …），
+  **超现实电影、赛璐璐、拉美魔幻现实这 13 条真正风格一条都看不到**；
+  `web/tests/test_workflow_store.py` 直接 `KeyError: 'id'`。
+  现在 `catalog()` 返回 `looks`（风格库，含 id/name/prompt/tags/recommended_for）+ `render_styles`（渲染流，标注所属轨），
+  `styles` 保留为兼容别名。`web/app.py` 建项目时的 style→track 推断改读 `recommended_for[0]`
+  （look 拆分后不再有 `track` 字段，旧代码恒取空）。
+
+  **③ 命名层**：`configs/styles.json` 早已不含风格（只剩画幅/分辨率预设），改名为
+  `configs/render-presets.json`。改名理由很直接：打开一个叫 styles 的文件却找不到风格，
+  就会得出「风格没写进库」这个结论 —— 用户这次问的正是这个。
+
+  **④ 全仓库「三轨」措辞清理**：`style_gate.py`（头注释/argparse）、`drama.py`（style 帮助）、
+  `web/core/commands.py`（style.list 说明与 agent 提示）、`stages/_layout.py`、`project_setup.py`、README、三份 docs。
+  历史记录（`docs/patches/*`、`VERSIONS.md` 旧条目）**不动** —— 它们记的是当时的事实，改了就是伪造。
+
+  **⑤ 新增边界判据**：`test_style_gate.py` 加 3 例 —— `looks.json` 不得含
+  `track/narrative/delivery_stop/narration_*` 字段、至少 13 条、每条必须有 prompt。
+  这条把「look 只承载视觉」从文档约定变成机器判据：一旦有人往库里塞 track，换 look 又会连带换规格，
+  整轮拆分就白做。
+
+  **⑥ 顺带修 `env_check` 重复项**：`RUNNINGHUB_API_KEY` 同时在「配置」与「环境快照」两个组各出一条，
+  Studio 修复清单出现重复 id `cfg.rh_key`，`web/tests/test_health.py` 判失败（17 项 → 16 项）。
+  现在一个变量只一条体检项，`SNAPSHOT_KEYS` 改为 `(name, why)`，`missing` 时按「有没有 KEY」给不同修法。
+
+  **流程教训**：这批 bug 里有两条（Studio 目录、体检重复项）都在 `web/tests/` 覆盖范围内，
+  而我 V0.7.32–V0.7.38 期间**从未跑过 web 测试**。以后回归清单必须包含 `web/tests/*.py`。
+
+  **回归**：style 26 例（+3）；web 全绿（health 16 项、workflow_store、commands、inventory、jobs、pipeline、
+  assistant、assets_page、connections、generators、comfy_boot、llm_gateway；llm_e2e 缺 fastapi 跳过）；
+  其余全绿（nodes 25 / node_runs 6 / convert 17 / gen_boards 16 / init 14 / model 29 / release 15+14 /
+  migrate 16 / workflow 57 / channels 10 / slot_hygiene 32 / character_design 28 / env_check 22 /
+  comfy_ports / workflow_map / escape 3 / repo_paths 3）。
 - **2026-11-01 更新（V0.7.38 · 剪辑五节点接上执行体；节点执行体的错法从此可判）**
   第 14 项。`edit.*` 五个节点此前**只有判据、没有可用执行体**：`run` 字段是「想当然写下的」，
   四类错同时存在，而且都不会抛异常 —— 节点只会「一直过不去」，报错却是「找不到 `*_bgm.mp4`」，

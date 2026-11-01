@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""离线测试：画风三轨门禁（style_gate）+ 半解说三类校验（half_narrated_check）
+"""离线测试：画风库门禁（style_gate，四维）+ 半解说三类校验（half_narrated_check）
 
 零网络、零计费、零第三方依赖。
     python stages/production/scripts/tests/test_style_gate.py
@@ -58,6 +58,23 @@ def main():
     tmp = tempfile.mkdtemp(prefix="solodrama_style_")
     try:
         ws = _ws(tmp)
+
+        # --- 风格库的边界：look 只放视觉，不许承载轨道/叙事/交付 ---
+        #   这不是文档约定，是这次四维拆分的**机器判据**：
+        #   一旦有人往 looks.json 里塞 track / delivery_stop，换 look 又会连带换规格，
+        #   整轮整改就白做了。所以放在最前面，任何一次跑测试都会核对。
+        looks_raw = json.loads((SG._CFG_DIR / "looks.json").read_text(encoding="utf-8-sig"))
+        banned = ("track", "narrative", "delivery_stop", "narration_max_chars", "narration")
+        offenders = []
+        for it in looks_raw.get("looks") or []:
+            hit = [k for k in it if k in banned]
+            if hit:
+                offenders.append("%s(%s)" % (it.get("id"), "/".join(hit)))
+        check("looks.json 不含轨道/叙事字段", not offenders, "、".join(offenders))
+        check("looks.json 至少 13 条", len(looks_raw.get("looks") or []) >= 13,
+              "实际 %d" % len(looks_raw.get("looks") or []))
+        check("每条 look 都有 prompt",
+              all((it.get("prompt") or "").strip() for it in looks_raw.get("looks") or []))
 
         # --- 门禁：未确认 ---
         st = SG.gate_state(ws)

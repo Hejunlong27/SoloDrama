@@ -648,7 +648,7 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
 
 ### 14.2 画风库：6 个官方风格进了系统默认
 
-`configs/styles.json`（真源，可增补）+ `style_gate.py` 的轨道。轨道决定**生产规格**
+`configs/looks.json`（视觉风格库，可增补）+ `configs/tracks.json`（形态，含渲染流）。轨道决定**生产规格**
 （资产几张、单镜多长、交付到哪），风格只决定**看起来像什么** —— 两者不能混，选错轨道会在出片一半才发现资产不够。
 
 | 风格 | 轨道 | 场景 |

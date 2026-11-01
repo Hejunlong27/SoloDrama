@@ -62,18 +62,20 @@ BINS = [
      "见 stages/subtitle/references/：whisper.cpp release 或自行编译；不装也能用平台字幕"),
 ]
 
-ENV_KEYS = [
-    ("RUNNINGHUB_API_KEY", "云端出片通道（缺了只能走本地 ComfyUI）"),
-]
-
-# 这些变量的坑不在「有没有设置」，而在「设了但当前进程读不到」——
+# 环境变量的坑不在「有没有设置」，而在「设了但当前进程读不到」——
 # 进程环境是**启动快照**：改完用户级变量不重开终端，永远读到旧值。
 # 症状千奇百怪（装了说没装、改了站点说 Key 错、工作区说找不到），唯独不像变量过期。
 #
-# 站点（RUNNINGHUB_BASE_URL）已从本表移除：2026-11-01 起它是**死变量**，
-# 真源是 configs/channels.json，不再读它 —— 对一个不生效的变量做「有没有设」的检查，
-# 只会让「设了但没生效」继续冒充「配置正常」。
-SNAPSHOT_KEYS = ("RUNNINGHUB_API_KEY", "SOLODRAMA_WORKSPACE")
+# ★ 2026-11-01：这组取代了原来的 `ENV_KEYS`（配置组）。
+#   同一个变量在两个组里各出一条，会让 Studio 的修复清单出现**重复 id**
+#   （实测：`RUNNINGHUB_API_KEY` 同时在「配置」与「环境快照」→ `cfg.rh_key` 出现两次，
+#   `web/tests/test_health.py` 判失败）。一个变量只该有一条体检项：
+#   本组已经覆盖「有没有设」+「设了没读到」+「指向的目录还在不在」。
+# 站点（RUNNINGHUB_BASE_URL）已废弃：真源 `configs/channels.json`，故不在此表。
+SNAPSHOT_KEYS = (
+    ("RUNNINGHUB_API_KEY", "云端出片通道（缺了只能走本地 ComfyUI）"),
+    ("SOLODRAMA_WORKSPACE", "默认工作区（不设也行，命令里显式 --workspace 即可）"),
+)
 
 IS_WIN = os.name == "nt"
 EXE = "python.exe" if IS_WIN else "python3"
@@ -326,17 +328,7 @@ def collect() -> dict:
             "state": state, "path": got, "detail": detail, "hint": hint,
         })
 
-    # 4) 配置
-    for key, why in ENV_KEYS:
-        val = os.environ.get(key)
-        items.append({
-            "group": "配置", "name": key, "ok": bool(val), "required": False,
-            "detail": ("已设置 " + (val[:4] + "…" if val and len(val) > 4 else "…")) if val
-                      else "未设置（" + why + "）",
-            "hint": "" if val else "setx %s \"<值>\"  然后重开终端" % key,
-        })
-
-    # 站点：真源是 configs/channels.json，不看环境变量（旧变量已废弃）
+    # 4) 配置（站点真源；变量类的一条都不放这里，见 4.5 环境快照）
     site_url, site_src, site_dead = _resolved_site()
     items.append({
         "group": "配置", "name": "RunningHub 站点",
@@ -355,7 +347,7 @@ def collect() -> dict:
 
     # 4.5) 环境快照 —— 治「设了但当前进程没读到」这类假阴性
     #      以前这些全被归成「未设置 / 不存在」，于是同样的现象反复被当成新问题排查。
-    for key in SNAPSHOT_KEYS:
+    for key, why in SNAPSHOT_KEYS:
         proc = os.environ.get(key) or ""
         pers, scope = _persisted_env(key)
 
@@ -374,8 +366,9 @@ def collect() -> dict:
 
         if not proc and not pers:
             state, ok = "missing", True
-            detail = "未设置（不带 --workspace 时才需要；也可以一直显式传）"
-            hint = ""
+            detail = "未设置（%s）" % why
+            # 「没设」和「设了没读到」的修法完全不同：这里是去填值，别给重开终端的建议
+            hint = ('setx %s "<值>"  然后重开终端' % key) if "KEY" in key else ""
         elif proc and pers and proc == pers:
             state, ok = "present", True
             detail = "进程与持久化一致：%s" % _fmt(proc)

@@ -11,7 +11,7 @@
   assets   资产规格与数量：角色主卡/三视图、场景主卡/辅卡、道具卡上限（3D 要三视图+辅卡，2D 不要）
   anchors  首帧锚点（3D 硬关卡）：锚点必填、角度必须匹配、重置锚周期
 
-输入契约：`<05-分镜>/storyboard.json`（schema 见 `docs/styles/画风三轨规范.md`）
+输入契约：`<05-分镜>/storyboard.json`（schema 见 `docs/styles/画风库规范.md`）
 
 用法
 ----
@@ -260,7 +260,7 @@ def run(ws: pathlib.Path, which: str) -> int:
     print("=" * 74)
     if sb is None:
         print("[FAIL] 找不到分镜文件：%s" % path)
-        print("       请先产出 storyboard.json（schema 见 docs/styles/画风三轨规范.md）")
+        print("       请先产出 storyboard.json（schema 见 docs/styles/画风库规范.md）")
         return 2
     print("  分镜文件: %s" % path)
     print("  镜头数  : %d" % len(sb.get("shots") or []))

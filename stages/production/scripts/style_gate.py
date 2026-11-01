@@ -1,33 +1,36 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""style_gate.py —— 画风三轨「任务开始前确认」门禁（前置条件，与通道门禁并列）
+"""style_gate.py —— 画风库「任务开始前确认」门禁（前置条件，与通道门禁并列）
 
-为什么有它（2026-10-16 用户要求）
+为什么有它（2026-10-16 用户要求，2026-11-01 重构）
 --------------------------------
-短剧生产的**画风**决定后面一切的规格：资产要几张、单镜多长、旁白字数上限多少、
-H3 提示词带哪段风格块、要不要三格时间分镜、交付到哪一步。这些差异极大且**不可事后弥补**，
-所以必须在任务开始前一次性锁死。
+画风决定后面一切的规格，而且**不可事后弥补**，所以必须在开工前一次性锁死。
+但它不是一个选项，是四个正交维度：
 
-三轨来源 = MiniMax 官方半解说短剧技能族（`~/.hub/skills/half-narrated-*-short-drama`）：
-  * `3d_manhua`    3D 漫剧半解说短剧      —— 资产最重（角色三视图 + 场景辅卡）
-  * `2d_animation` 2D 动画半解说短剧      —— 交付止于「旁白交接」，不串成片
-  * `live_action`  半解说真人短剧        —— 强制「1 视频片段 = 1 张三格时间分镜」
+   形态 track      configs/tracks.json     时长 / 资产 / 首帧锚 / 分镜拓扑 / 交付终点 / 渲染流
+   视觉 look       configs/looks.json      纯 prompt（surreal-cinema / cel-shading / …）
+   叙事 narrative  configs/narratives.json 旁白配额 / 台词密度
+   通道 channel    configs/channels.json + capabilities/*.json
+
+旧版把这三件事压进同一个 `sub_modes` 字典（`guoman-3d-render` 与 `surreal-cinema` 并列），
+于是换一个 look 会连带换掉资产规格与交付终点 —— 这就是「画风库和 3D/2D/真人串在一起」的根因。
+现在 `sub_modes` 只放渲染流，题材风格走独立 `--look`，可跨轨使用。
 
 设计约定
 --------
 * **零第三方依赖**（纯标准库），与其余生产脚本一致。
-* 确认单落**工作区** `<ws>/style-plan.json`，不进仓库。
+* 确认单落**工作区**：`drama.json`（真源）+ `style-plan.json`（过渡期兼容），都不进仓库。
 * **只拦「首次」**：确认过就不再问；换画风需 `reset` 后重确认。
-* **不一致就拦**：确认了 A 画风却按 B 画风的规格产出 → 拦下，防「确认一套、做另一套」。
+* **不一致就拦**：确认了 A 形态却按 B 形态的规格产出 → 拦下，防「确认一套、做另一套」。
 * 中文 Windows 控制台纪律：正文不用 GBK 装不下的符号；UTF-8 无 BOM 写盘。
 
 命令
 ----
-    python style_gate.py status                     查看当前确认状态（只读）
-    python style_gate.py list                       打印可选画风清单
-    python style_gate.py set 3d_manhua [--sub-mode guoman-3d-render]
-    python style_gate.py set 2d_animation --sub-mode guoman-webtoon
-    python style_gate.py set live_action
+    python style_gate.py status                     查看当前四维（只读）
+    python style_gate.py list                       打印形态 / look / 叙事三段清单
+    python style_gate.py set live_action --look surreal-cinema
+    python style_gate.py set 3d_manhua --look guoman-xianxia --sub-mode guoman-3d-render
+    python style_gate.py set live_action --narrative narration
     python style_gate.py reset                      清除确认（换画风前用）
     python style_gate.py require [--expect 3d_manhua]   门禁查询（未过则退出码 4）
 """
@@ -45,7 +48,7 @@ PLAN_NAME = "style-plan.json"
 EXIT_WAIT_CONFIRM = 4   # 与 drama.py / model_gate.py 一致：4 = 等待用户确认
 
 # ---------------------------------------------------------------------------
-# 画风三轨（唯一真源；改这里即改所有下游菜单、校验与默认规格）
+# 四维配置（tracks / narratives / looks）。本文件只读它们做汇总，不复制规格。
 # ---------------------------------------------------------------------------
 _CFG_DIR = pathlib.Path(__file__).resolve().parents[3] / "configs"
 
@@ -481,7 +484,7 @@ def cmd_require(a) -> int:
 
 def main() -> int:
     _harden_stdio()
-    ap = argparse.ArgumentParser(description="画风三轨「任务开始前确认」门禁")
+    ap = argparse.ArgumentParser(description="画风库「任务开始前确认」门禁（形态 / 视觉 / 叙事）")
     ap.add_argument("--workspace", default=None, help="工作区（默认 SOLODRAMA_WORKSPACE）")
     sub = ap.add_subparsers(dest="cmd")
 

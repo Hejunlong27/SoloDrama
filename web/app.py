@@ -319,9 +319,13 @@ def project_create(payload: dict = Body(...)):
     if resolution and not re.match(r"^[0-9]{3,5}x[0-9]{3,5}$", resolution):
         raise HTTPException(status_code=400, detail="分辨率要写成 WxH，例如 1080x1920")
     if style_id and not track:
-        for it in (styles.catalog().get("styles") or []):
+        # ★ 2026-11-01：look 不再绑定轨道（四维拆分），只在 `recommended_for` 里给推荐。
+        #   旧代码读 `it["track"]`（那还是三轨合一时代留下的字段），拆分后恒为空 ——
+        #   于是「只给 style 不给 track」时轨道永远是空，建项目直接缺参数。
+        for it in (styles.catalog().get("looks") or []):
             if it.get("id") == style_id:
-                track = str(it.get("track") or "")
+                rec = it.get("recommended_for") or []
+                track = str(rec[0]) if rec else ""
                 break
 
     cmd = CMD.get("project.scaffold")

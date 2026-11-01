@@ -69,7 +69,7 @@ STAGE_DIRS: dict = {
 ASSET_SUBDIRS: dict = {
     "characters": "人物资产：出图产物 char_01_<名字>.png（主卡 + 三视图按画风）",
     "scenes": "场景资产：出图产物 scene_01_<名字>.png（主卡 + 辅卡按画风）",
-    "props": "道具资产：出图产物 prop_01_<名字>.png（上限见画风三轨规范）",
+    "props": "道具资产：出图产物 prop_01_<名字>.png（上限见 configs/tracks.json 的 prop_card_max）",
     "refs": "参考图原图（人/场/道各一张，未瘦身）；瘦身后落 `06-提示词/refs_h3/`",
 }
 

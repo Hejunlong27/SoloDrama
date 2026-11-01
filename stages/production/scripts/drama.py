@@ -745,7 +745,7 @@ def cmd_models(args) -> int:
 
 
 def cmd_style(args) -> int:
-    """转发给 style_gate.py（画风三轨门禁：status / list / set / reset / ask / require）。"""
+    """转发给 style_gate.py（画风库门禁：形态 track / 视觉 look / 叙事 narrative）。"""
     STYLE_GATE_PY = SCRIPTS / 'style_gate.py'
     cmd = [sys.executable, STYLE_GATE_PY, '--workspace', str(WS)]
     c = getattr(args, 'style_cmd', None)
@@ -1317,8 +1317,8 @@ def main() -> int:
     q.set_defaults(fn=cmd_models)
     p.set_defaults(fn=cmd_models, models_cmd=None)
 
-    # ★ 画风三轨门禁（前置条件）：任务开始前必须先确认画风（3D 漫剧 / 2D 动画 / 真人）
-    p = sub.add_parser('style', help='画风三轨确认：3d_manhua / 2d_animation / live_action')
+    # ★ 画风库门禁（前置条件）：开工前先确认形态（3D 漫剧 / 2D 动画 / 真人）+ 视觉 look + 叙事
+    p = sub.add_parser('style', help='画风库确认：track（3d_manhua/2d_animation/live_action）+ look + narrative')
     _add_ws_arg(p)
     ss = p.add_subparsers(dest='style_cmd')
     q = ss.add_parser('list', help='打印可选画风清单（含各自规格）')

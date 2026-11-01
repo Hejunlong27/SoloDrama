@@ -1,5 +1,5 @@
 {
-  "_comment": "2026-11-01：本文件的 `styles` 数组已迁出到 configs/looks.json（视觉 look 与轨道解绑）。这里只保留 aspect/resolution 预设与来源说明，不再参与画风门禁。",
+  "_comment": "画幅 / 分辨率预设（原 styles.json，2026-11-01 更名）。**本文件不含风格** —— 风格库在 configs/looks.json，形态（轨道）在 configs/tracks.json。改名是为了不再有人打开一个叫 styles 的文件却找不到风格。",
   "version": 2,
   "source": "RHSTORY 画风库 · 服务端全量（RunningHub 官方，306 条中收录 6 条为系统默认）",
   "note": "prompt 为官方原文，未改写。track 决定走哪条生产规格（真人 / 2D / 3D），选错会连带资产数量与单镜时长一起错。",
