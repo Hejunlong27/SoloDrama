@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import time
 
 from . import jsonout, paths, runner
@@ -148,43 +149,22 @@ def norm_models(ws) -> dict:
 # ---------------------------------------------------------------------------
 # 15 环节看板
 # ---------------------------------------------------------------------------
+# 看板环节（2026-11-02 分支 feat/pack-engine 重排为「执行链」）
+# 为什么从 17 条压到 7 条：创作环节（调研/拆解/选题/转译/剧本/台词审计）已移出引擎，
+# 留在这里只会让看板显示一排永远 todo 的进度条 —— 那不是「没做完」，是「不归引擎管」。
 ROUNDS = [
-    ("-1", "画风确认", "style"),
     ("0", "通道确认", "model"),
-    ("1", "榜单调研", "research"),
-    ("2", "爆款拆解", "research"),
-    ("3", "选题定位", "topic"),
-    ("3.5", "剧本转译", "script"),
-    ("3.6", "题材公式", "script"),
-    ("4", "剧本改写", "script"),
-    ("5", "台词时长审计", "script"),
-    ("6", "资产出图", "assets"),
-    ("7", "参考图接线", "assets"),
-    ("8", "分镜与提示词", "storyboard"),
-    ("9", "转换 + 入门口禁", "prompts"),
-    ("10", "批量出片", "film"),
-    ("11", "拼接 / 2K / 字幕", "film"),
-    ("12", "验收与结账", "film"),
-    ("13", "合规与发行", "compliance"),
+    ("1", "导入制作包", "prompts"),
+    ("2", "资产出图", "assets"),
+    ("3", "分镜图", "assets"),
+    ("4", "批量出片", "film"),
+    ("5", "拼接 / 放大 / 字幕", "film"),
+    ("6", "验收与发行", "release"),
 ]
 
-# (环节, 该环节的「完成证据」候选相对路径 —— 命中任一即视为完成)
+# 每个环节的「完成证据」由 pipeline() 直接判（要看子目录与批次状态），这张表只留固定文件。
 EVIDENCE = {
-    "1": ["market-data.json", "market/market-data.json", "市场数据.json"],
-    "2": ["hit-breakdown.md", "breakdown.md"],
-    "3": ["candidates.json", "raw-candidates.json", "positioning.json"],
-    "3.5": ["source-script.es.md", "translation-brief.md", "glossary.json"],
-    "3.6": ["genre-plan.json"],
-    "4": ["blueprint.json", "blueprint.md"],
-    "5": ["台词时长审计.md", "timing-audit.md"],
-    "6": ["refs.json", "assets-manifest.json"],
-    "7": ["refs.json"],
-    "8": ["storyboard.json"],
-    "9": ["data/shots.json", "data/h3_prompts.json"],
-    "10": [],
-    "11": [],
-    "12": [],
-    "13": [],
+    "2": ["refs.json"],
 }
 
 
@@ -201,39 +181,62 @@ def pipeline(ws) -> dict:
     batches = st.get("batches") or []
     for no, title, stage_key in ROUNDS:
         state, detail = "todo", ""
-        if no == "-1":
-            state, detail = ("done", "已确认：" + (sg.get("label") or "")) if sg["confirmed"] else ("blocked", "未确认（G-1，退出码 4）")
-        elif no == "0":
-            state, detail = ("done", "已确认：出图 %s / 出片 %s" % (mg["image"].get("choice"), mg["video"].get("choice"))) if mg["confirmed"] else ("blocked", "未确认（G0，退出码 4）")
-        elif no in ("10", "11", "12", "13"):
-            if no == "10":
-                tot = sum((b.get("totals") or {}).get("total", 0) for b in batches)
-                ok = sum((b.get("totals") or {}).get("success", 0) for b in batches)
-                fail = sum((b.get("totals") or {}).get("failed", 0) for b in batches)
-                # ★ 「建了批次」≠「出片完成」：只有全部成功才算 done，否则最多 doing
-                if tot and ok == tot:
-                    state, detail = "done", "累计 %d 段全部成功" % tot
-                elif ok or fail:
-                    state, detail = "doing", "累计 %d 段：成功 %d / 失败 %d" % (tot, ok, fail)
-                elif tot:
-                    state, detail = "todo", "已有批次但尚无成功段（%d 段待跑）" % tot
-            elif no == "11":
-                subs = _count_files(info["out_dir"], "subs")
-                state, detail = ("done", "字幕目录 %d 个文件" % subs) if subs else ("todo", "")
-            elif no == "12":
-                led = st.get("ledger") or {}
-                if led.get("files"):
-                    state, detail = "done", "台账 %d 份 / 消耗 %.0f RH币" % (led.get("files", 0), led.get("rh_coins", 0) or 0)
+        if no == "0":
+            if mg["confirmed"]:
+                state, detail = "done", "已确认：出图 %s / 出片 %s" % (
+                    mg["image"].get("choice"), mg["video"].get("choice"))
             else:
-                pass
+                state, detail = "blocked", "未确认（G0，退出码 4）"
+        elif no == "1":
+            # 导入的判据是「data/<ep>/shots.json 存在」——三件里的另外两件都跟它同生同灭
+            d = L.data_dir(ws)
+            eps = ([p for p in d.iterdir() if p.is_dir() and (p / "shots.json").is_file()]
+                   if d.is_dir() else [])
+            state, detail = ("done", "已导入 %d 集" % len(eps)) if eps else ("todo", "")
+        elif no == "2":
+            rj = L.assets_dir(ws) / "refs.json"
+            n = 0
+            if rj.is_file():
+                try:
+                    doc = json.loads(rj.read_text(encoding="utf-8-sig")) or {}
+                    n = sum(len(doc.get(k) or {}) for k in ("characters", "scenes", "props"))
+                except (OSError, json.JSONDecodeError, ValueError):
+                    n = 0
+            if n:
+                state, detail = "done", "已登记 %d 张资产图" % n
+        elif no == "3":
+            bd = L.assets_dir(ws) / "boards"
+            n = len([p for p in bd.rglob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg")]) \
+                if bd.is_dir() else 0
+            if n:
+                state, detail = "done", "分镜图 %d 张" % n
+        elif no == "4":
+            tot = sum((b.get("totals") or {}).get("total", 0) for b in batches)
+            ok = sum((b.get("totals") or {}).get("success", 0) for b in batches)
+            fail = sum((b.get("totals") or {}).get("failed", 0) for b in batches)
+            # ★ 「建了批次」≠「出片完成」：只有全部成功才算 done，否则最多 doing
+            if tot and ok == tot:
+                state, detail = "done", "累计 %d 段全部成功" % tot
+            elif ok or fail:
+                state, detail = "doing", "累计 %d 段：成功 %d / 失败 %d" % (tot, ok, fail)
+            elif tot:
+                state, detail = "todo", "已有批次但尚无成功段（%d 段待跑）" % tot
+        elif no == "5":
+            subs = _count_files(info["out_dir"], "subs")
+            state, detail = ("done", "字幕目录 %d 个文件" % subs) if subs else ("todo", "")
+        elif no == "6":
+            rel_dir = L.release_episode_dir(ws)
+            got = len([p for p in rel_dir.glob("Episode*.mp4")]) if rel_dir.is_dir() else 0
+            if got:
+                state, detail = "done", "发布版 %d 集" % got
         else:
             ev = EVIDENCE.get(no) or []
-            if ev:
-                for rel in ev:
-                    if _stage_has(L, ws, stage_key, rel):
-                        state, detail = "done", rel
-                        break
-        rounds.append({"no": no, "title": title, "stage": stage_key, "state": state, "detail": detail})
+            for rel in ev:
+                if _stage_has(L, ws, stage_key, rel):
+                    state, detail = "done", rel
+                    break
+        rounds.append({"no": no, "title": title, "stage": stage_key,
+                       "state": state, "detail": detail})
 
     return {"ok": True, "rounds": rounds, "layout": info}
 

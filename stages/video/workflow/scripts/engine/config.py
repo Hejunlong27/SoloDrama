@@ -393,12 +393,15 @@ ACTIVE_UPSCALE_PROVIDER: str = "rh_astra_iris"
 # 该信号量包住「提交 + 轮询直到终态 + 下载」的完整生命周期。
 # ==============================================================================
 CONCURRENCY_MAX: int = 5          # ★ 硬上限，全局唯一来源（并发不得高于此值）
-# ★ 2026-10-21（反馈 10.14 / 11.3）：默认并发从 5 降到 2。
-#   实测：标称 ≤5，但真按 5 提交会被拒 —— `errorCode=421 api queue limit reached`
-#   （shot_04/06/07 直接失败，失败未计费但要白等一轮）。改 2 后 8/8 零失败，
-#   且 `--resume` 不会重复提交已完成的段。要更高并发请显式 `--concurrency 4`，
-#   并且记住：421 不是失败，是排队，必须走 `--resume`。
-CONCURRENCY: int = 2              # 默认值（上限仍是 CONCURRENCY_MAX）
+# ★ 2026-11-02（分支 feat/pack-engine）：默认并发按项目预配置回到 5。
+#   历史：2026-10-21 因为实测 421（`api queue limit reached`）把默认从 5 降到 2。
+#   现在改回 5 的前提是**账号侧并发额度已提**，这一条由用户在预配置里明确要求
+#   （`docs/pack/PRESET.md` 的 video.concurrency）。
+#
+#   ⚠️ 如果你的账号仍是默认额度，5 并发会出现部分段 `421`。这不是失败，是排队：
+#      * 退出码 3 表示「批次有缺口」，**不要改提示词重跑**，直接 `--resume`；
+#      * 想稳一点就在项目 `config.local.json` 里写 `"concurrency": 2` 覆盖这一行。
+CONCURRENCY: int = 5              # 默认值（上限仍是 CONCURRENCY_MAX）
 BATCH_SIZE: int = 20              # 每批处理多少个 shot，批末检查熔断
 POLL_INTERVAL: float = 5.0        # 轮询间隔（秒）
 

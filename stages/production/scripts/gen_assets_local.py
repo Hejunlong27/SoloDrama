@@ -97,11 +97,12 @@ def _apply_model_plan_env() -> dict:
 
 
 VP = WS / 'video-pipeline'   # 引擎技术目录
+# ★ 2026-11-02（分支 feat/pack-engine）：资产提示词的真源不再只有「一份 md」。
+#   新分支的输入是制作包（`<ws>/pack/assets/*.json`），`--pack` 直接吃它；
+#   `SOLODRAMA_ASSET_MD` 保留给老项目和手工 md 通道。两者都缺时在 main() 里报错，
+#   而不是在 import 期 sys.exit —— 否则 `--pack` 这条路连 --help 都走不到。
 _MD_ENV = ((os.environ.get('SOLODRAMA_ASSET_MD') or os.environ.get('DRAMA_ASSET_MD')) or '').strip()
-if not _MD_ENV:
-    raise SystemExit('[FAIL] 未设置环境变量 SOLODRAMA_ASSET_MD'
-                     '（指向「资产提示词 md」：角色/场景/道具提示词真源）')
-ASSET_MD = pathlib.Path(_MD_ENV)
+ASSET_MD = pathlib.Path(_MD_ENV) if _MD_ENV else None
 
 MANIFEST = DATA / 'comfyui_manifest.json'
 PROD_MANIFEST = DATA / 'comfyui_assets_manifest.json'
@@ -111,6 +112,52 @@ BATCH_ID = 'local_assets_' + time.strftime('%Y%m%d_%H%M%S')
 SUBDIR = {'char': 'characters', 'scene': 'scenes', 'prop': 'props'}
 KIND_CN = {'char': '人物', 'scene': '场景', 'prop': '道具'}
 EXTS = ('.png', '.jpg', '.jpeg', '.webp')
+KIND_SHORT = {'character': 'char', 'scene': 'scene', 'prop': 'prop'}
+
+
+def assets_from_pack(pack_dir: pathlib.Path) -> list:
+    """制作包 → 出图清单（与 `asset_md.to_assets()` 同结构，便于复用同一条出图链）。
+
+    关键在 `prefix`：它是**产物文件名的主干**，也是 `_scan_outputs` 回扫时的唯一依据。
+    做成 `<ID>_<name>_<code>` 之后，`pack_import.py` 的 `_pick_image` 才能把
+    `P01_何暖_LOOK-A.png` 反查回 `P01 / LOOK-A` —— 两边靠这条命名约定闭合。
+    """
+    import sys as _sys
+    _imp = _PROJECT_ROOT / 'stages' / 'import'
+    if str(_imp) not in _sys.path:
+        _sys.path.insert(0, str(_imp))
+    import pack_spec as S                                    # noqa: PLC0415
+
+    pack, assets, _eps, rep = S.load_pack(pack_dir)
+    if not rep.ok:
+        print('[FAIL] 制作包校验不过，不进入出图：')
+        print(rep.render())
+        raise SystemExit(2)
+
+    out = []
+    for kind in S.ASSET_KINDS:
+        bucket = assets.get(kind) or {}
+        for aid, item in bucket.items():
+            for v in item['variants']:
+                code = v['code']
+                base = code.lower() in S.BASE_CODES
+                prefix = '%s_%s' % (aid, item['name'])
+                if not base:
+                    prefix += '_%s' % code
+                out.append({
+                    'id': S.variant_key(aid, code),
+                    'kind': KIND_SHORT[kind],
+                    'name': item['name'],
+                    'role': item.get('role') or '',
+                    'section': int(''.join(ch for ch in aid if ch.isdigit()) or 0),
+                    'variant': code,
+                    'prefix': prefix,
+                    'prompt': v['prompt'],
+                    'aspect': v.get('aspect') or '',
+                    'post_only': item.get('post_only', False),
+                })
+    out.sort(key=lambda a: (AM.KINDS.index(a['kind']), a['section'], a['id']))
+    return out
 
 
 def _size(p: pathlib.Path) -> tuple:
@@ -153,7 +200,7 @@ def _write_prod_manifest(items: list, manifest: dict) -> None:
     ok = [it for it in items if it['files']]
     PROD_MANIFEST.write_text(json.dumps({
         '_note': '本地 ComfyUI 通道产物清单（本工具自动维护）；与云端 char_/scene_assets_manifest.json 并列',
-        '_source': str(ASSET_MD),
+        '_source': str(ASSET_MD or '(制作包)'),
         '_manifest': str(MANIFEST),
         'channel': 'comfyui-local',
         'produced_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -205,6 +252,8 @@ def main() -> int:
     ap.add_argument('--kind', default='char,scene,prop',
                     help='生成哪些类型：char,scene,prop（逗号分隔），默认全部')
     ap.add_argument('--only', default=None, help='只生成这些资产 id（逗号分隔），如 char_01,scene_02')
+    ap.add_argument('--pack', default=None,
+                    help='制作包目录（含 pack.json）；给了它就不用 SOLODRAMA_ASSET_MD')
     ap.add_argument('--variant', default='基础造型', help='人物取哪个变体（关键字），默认「基础造型」')
     ap.add_argument('--all-variants', action='store_true', help='每个变体各出一张')
     ap.add_argument('--aspect', default='', help='强制全部资产用这个画幅（覆盖各类型默认）')
@@ -235,12 +284,8 @@ def main() -> int:
         print('[FAIL] 未知类型：%s（可选 %s）' % (', '.join(unknown), '/'.join(AM.KINDS)))
         return 2
 
-    entries = AM.parse_md(ASSET_MD, kinds)
-    if not entries:
-        print('[FAIL] 在 %s 里没解析到任何资产节（章节标题需为「一、角色资产库」等，节内含 ``` 提示词块）。'
-              % ASSET_MD.name)
-        return 2
-
+    # ★ 2026-11-02：两条输入通道 —— 制作包（新）或资产提示词 md（老）。
+    #   优先级：`--pack` > `SOLODRAMA_ASSET_MD`。都没给才是错误。
     aspects = dict(AM.ASPECT_DEFAULT)
     for k in AM.KINDS:
         v = getattr(args, 'aspect_%s' % k)
@@ -249,7 +294,36 @@ def main() -> int:
     if args.aspect:
         aspects = {k: args.aspect for k in AM.KINDS}
 
-    assets = AM.to_assets(entries, args.variant, args.all_variants, aspects)
+    if args.pack:
+        src = pathlib.Path(args.pack).expanduser().resolve()
+        if not src.is_dir():
+            print('[FAIL] --pack 指向的目录不存在：%s' % src)
+            return 2
+        assets = [a for a in assets_from_pack(src) if a['kind'] in kinds]
+        # 制作包里的每个变体都是剧本要用的图，不做 --variant 筛选；
+        # 画幅也以包内为准（`aspect` 只在包内没写时生效）。
+        for a in assets:
+            if not a.get('aspect') or args.aspect:
+                a['aspect'] = aspects.get(a['kind']) or a.get('aspect') or ''
+        source_label = str(src)
+        source_path = src / 'pack.json'
+        if not assets:
+            print('[FAIL] 制作包里没有 kind ∈ %s 的资产' % '/'.join(kinds))
+            return 1
+    else:
+        if not ASSET_MD:
+            print('[FAIL] 没有资产来源：给 --pack "<制作包目录>"，'
+                  '或设环境变量 SOLODRAMA_ASSET_MD 指向「资产提示词 md」。')
+            return 2
+        entries = AM.parse_md(ASSET_MD, kinds)
+        if not entries:
+            print('[FAIL] 在 %s 里没解析到任何资产节（章节标题需为「一、角色资产库」等，节内含 ``` 提示词块）。'
+                  % ASSET_MD.name)
+            return 2
+        assets = AM.to_assets(entries, args.variant, args.all_variants, aspects)
+        source_label = str(ASSET_MD)
+        source_path = ASSET_MD
+
     if args.only:
         want = {x.strip() for x in args.only.split(',') if x.strip()}
         assets = [a for a in assets if a['id'] in want]
@@ -261,14 +335,14 @@ def main() -> int:
         print('[FAIL] 没有选中任何资产')
         return 1
 
-    manifest = AM.build_manifest(ASSET_MD, assets, args.style_lock, args.aspect)
+    manifest = AM.build_manifest(source_path, assets, args.style_lock, args.aspect)
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 
     print('=' * 84)
     print('本地 ComfyUI 资产出图（￥0 成本）')
     print('=' * 84)
-    print('提示词真源: %s' % ASSET_MD)
+    print('提示词真源: %s' % source_label)
     print('清单      : %s' % MANIFEST)
     print('输出目录  : %s' % OUT_DIR)
     print('资产数    : %d（%s）'

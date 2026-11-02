@@ -1,0 +1,30 @@
+{
+  "spec": "solodrama-assets/1",
+  "kind": "prop",
+  "items": [
+    {
+      "id": "D01",
+      "name": "合约",
+      "role": "A4 纸质合约，夹在深蓝文件夹里",
+      "variants": [
+        {
+          "code": "base",
+          "label": "主卡",
+          "prompt": "美式复古影视风格道具设定图，胶片颗粒，A4 纸质合约夹在深蓝文件夹，45度俯视，1:1"
+        }
+      ]
+    },
+    {
+      "id": "FX01",
+      "name": "午后光晕",
+      "role": "氛围层，后期合成用",
+      "variants": [
+        {
+          "code": "base",
+          "label": "主卡",
+          "prompt": "纯黑背景，柔和暖橙光晕，低对比，可叠加合成，1:1"
+        }
+      ]
+    }
+  ]
+}

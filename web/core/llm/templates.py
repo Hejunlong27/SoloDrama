@@ -1,15 +1,23 @@
 # -*- coding: utf-8 -*-
-"""提示词模板注册表与业务用途路由（唯一真源）
+"""提示词模板注册表（唯一真源）—— 只剩一个用途：把创作 Skill 的产物转成制作包
 
-★ 复用原则：模板正文**直接读** `stages/creation/prompts/*.md`（仓库的权威提示词），
-  本模块只负责三件事：
-    1. 给每个模板登记稳定 ID、业务用途、版本与所需变量；
-    2. 追加「本次输入」与「输出契约」两段（把结构化要求显式写进提示词）；
-    3. 提供输出 Schema，供网关做机器校验。
-  不新写一套提示词——那样会和仓库里的方法论分叉。
+为什么从 8 个用途收敛到 1 个
+---------------------------
+`main` 上这张表登记的是**创作**用途（剧本改写、选题定位、爆款拆解、转译、审稿），
+模板正文直接读 `stages/creation/prompts/*.md`。分支 `feat/pack-engine` 把创作整体移出
+引擎后，那些模板文件不存在了，继续保留登记项的结果是：
 
-模板版本：`v1` 指「仓库原文件 + 本模块追加段」的口径。仓库原文件内容变化时，
-  用 `body_sha` 记录指纹，前端能看出提示词被改过（而不是静默漂移）。
+  * 界面上还能点「生成剧本」，点了报 `FileNotFoundError` —— 看起来像坏了，其实是没了；
+  * 每次启动都要扫一遍不存在的目录；
+  * 最糟的是「半死」：模板缺了但 Schema 还在，于是校验能过、正文永远生成不出来。
+
+所以只留 **`pack.convert`** 一个用途：把任意创作 Skill 产出的 Markdown 转成制作包 JSON。
+它服务的是「导入适配」，不是创作 —— 引擎仍然不改一个字提示词。
+
+本模块只做三件事：
+  1. 登记模板 ID、用途、版本与所需变量；
+  2. 追加「本次输入」与「输出契约」两段；
+  3. 提供输出 Schema（当前为空：转换结果由 `pack_spec.py` 做结构校验，不在这一层重复）。
 """
 from __future__ import annotations
 
@@ -18,250 +26,50 @@ import json
 from pathlib import Path
 
 from .. import paths
-from . import budget
 
-PROMPT_DIR = paths.STAGES_DIR / "creation" / "prompts"
+# 提示词正文的真源目录（与 `docs/pack/IMPORT-PROMPT.md` 同源，这里是机器可读的落地版）
+PROMPT_DIR = paths.STAGES_DIR / "import" / "prompts"
 
-# ---------------------------------------------------------------------------
-# 输出 Schema
-# ---------------------------------------------------------------------------
-# 单集正文：与 `script_rewrite.py lint` 的硬约束严格对齐
-#   镜头数 5-10（60 秒档）· DUR 4-15 · HEADER 六字段 · 镜头八字段 · 禁 MOOD/CAMERA/EMOTION/MUSIC/LIGHT
-EPISODE_SCHEMA = {
-    "type": "object",
-    "required": ["episode", "title", "cold_open", "reversal", "hook", "shots"],
-    "properties": {
-        "episode": {"type": "integer", "minimum": 1, "maximum": 200},
-        "title": {"type": "string", "minLength": 2, "maxLength": 60},
-        "platform": {"type": "string", "maxLength": 40},
-        "cold_open": {"type": "string", "minLength": 4, "maxLength": 200},
-        "core_conflict": {"type": "string", "maxLength": 200},
-        "reversal": {"type": "string", "minLength": 4, "maxLength": 240},
-        "hook": {"type": "string", "minLength": 4, "maxLength": 200},
-        "hook_type": {
-            "type": "string",
-            "enum": ["身份悬念", "危机逼近", "关系反转", "秘密揭露", "选择困境", "意外登场", "代价预告"],
-        },
-        "shots": {
-            "type": "array",
-            "minItems": 5,
-            "maxItems": 10,
-            "items": {
-                "type": "object",
-                "required": ["no", "shot", "location", "time", "char", "action", "dialog", "dur"],
-                "properties": {
-                    "no": {"type": "integer", "minimum": 1, "maximum": 20},
-                    "shot": {"type": "string", "minLength": 2, "maxLength": 40},
-                    "location": {"type": "string", "minLength": 2, "maxLength": 40},
-                    "time": {"type": "string", "minLength": 1, "maxLength": 20},
-                    "char": {"type": "string", "maxLength": 80},
-                    "action": {"type": "string", "minLength": 6, "maxLength": 400},
-                    "dialog": {"type": "string", "maxLength": 300},
-                    "vo": {"type": "string", "maxLength": 300},
-                    "sfx": {"type": "string", "maxLength": 120},
-                    "dur": {"type": "integer", "minimum": 4, "maximum": 15},
-                },
-            },
-        },
+# 输出 Schema：转换产物是**多份 JSON 文件**，由 pack_import 逐字段校验（那边能给出
+# 「第几个镜头的 duration 越界」这种定位信息）。这里留空，避免两套校验各说一套。
+SCHEMAS: dict = {}
+
+SCHEMA_NOTES: dict = {}
+
+FIELD_HINTS = {
+    "spec": "spec 必须是 solodrama-pack/1 / solodrama-assets/1 / solodrama-episode/1",
+    "style_lock": "style_lock 不能为空：画风只在这里定义一次，引擎不提供默认值",
+    "duration": "duration 是整数秒，平台只接受 4–15",
+    "cast": "cast 的顺序就是参考图上传顺序，必须与提示词里的图号逐位对应",
+}
+
+TEMPLATE_MAP = {
+    "convert-to-pack": {
+        "file": "convert_to_pack.md",
+        "title": "人读制作文档 → 制作包 JSON",
+        "purpose": "pack.convert",
+        "format": "json",
+        "schema_id": "",
+        "vars": ("source_dir", "output_dir", "style_hint"),
     },
 }
 
-# 改编诊断（A 选题诊断 / B 改编策略 / C 故事主线），对应 s3a-diagnosis.md
-DIAGNOSIS_SCHEMA = {
-    "type": "object",
-    "required": ["A_diagnosis", "B_strategy", "C_mainline"],
-    "properties": {
-        "A_diagnosis": {
-            "type": "object",
-            "required": ["hook", "retention_risk", "verdict"],
-            "properties": {
-                "hook": {"type": "string", "minLength": 6, "maxLength": 400},
-                "retention_risk": {"type": "string", "minLength": 6, "maxLength": 400},
-                "verdict": {"type": "string", "maxLength": 60},
-            },
-        },
-        "B_strategy": {
-            "type": "object",
-            "required": ["keep", "rework", "escalation"],
-            "properties": {
-                "keep": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
-                "rework": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
-                "escalation": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
-            },
-        },
-        "C_mainline": {
-            "type": "object",
-            "required": ["protagonist", "opposition", "turn_points"],
-            "properties": {
-                "protagonist": {"type": "string", "minLength": 2, "maxLength": 200},
-                "opposition": {"type": "string", "minLength": 2, "maxLength": 200},
-                "turn_points": {"type": "array", "minItems": 2, "maxItems": 10, "items": {"type": "string", "maxLength": 200}},
-            },
-        },
-    },
-}
-
-# 观众视角审稿（七问 + 三条优先修改），对应 s3c-audience-review.md
-REVIEW_SCHEMA = {
-    "type": "object",
-    "required": ["episode", "verdict", "answers", "top_fixes"],
-    "properties": {
-        "episode": {"type": "integer", "minimum": 1, "maximum": 200},
-        "verdict": {"type": "string", "enum": ["PASS", "MINOR", "FAIL"]},
-        "answers": {
-            "type": "array",
-            "minItems": 5,
-            "maxItems": 9,
-            "items": {
-                "type": "object",
-                "required": ["q", "a"],
-                "properties": {
-                    "q": {"type": "string", "maxLength": 120},
-                    "a": {"type": "string", "minLength": 2, "maxLength": 400},
-                },
-            },
-        },
-        "top_fixes": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string", "maxLength": 240}},
-    },
-}
-
-# 选题候选池（s2-topic-positioning.md 的回填对象）
-CANDIDATES_SCHEMA = {
-    "type": "object",
-    "required": ["candidates"],
-    "properties": {
-        "candidates": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 30,
-            "items": {
-                "type": "object",
-                "required": ["title", "logline"],
-                "properties": {
-                    "title": {"type": "string", "minLength": 2, "maxLength": 60},
-                    "logline": {"type": "string", "minLength": 10, "maxLength": 300},
-                    "genre": {"type": "string", "maxLength": 40},
-                    "hook": {"type": "string", "maxLength": 200},
-                },
-            },
-        }
-    },
-}
-
-SCHEMAS = {
-    "script.episode": EPISODE_SCHEMA,
-    "script.diagnosis": DIAGNOSIS_SCHEMA,
-    "script.review": REVIEW_SCHEMA,
-    "topic.candidates": CANDIDATES_SCHEMA,
-}
-
-# ---------------------------------------------------------------------------
-# 业务用途（6.5 模型用途路由）
-# ---------------------------------------------------------------------------
-# requires: 模型能力要求；template/schema 为默认绑定（可在配置里改 provider/model，但不改语义）
 PURPOSES = [
     {
-        "id": "assistant.chat", "label": "工作台助手（对话控制）", "group": "助手",
-        "template_id": "assistant-chat", "schema_id": None,
-        "requires": ["json"], "needs": "当前项目（可选）；没有项目也能回答全局问题",
-        "hint": "把一句话变成「回答 + 一个白名单动作」（跳页面 / 执行命令），动作由前端二次确认",
-    },
-    {
-        "id": "script.generate", "label": "剧本正文生成", "group": "剧本",
-        "template_id": "s3-script-rewrite", "schema_id": "script.episode",
-        "requires": ["json"], "needs": "项目已确认诊断卡与集数规划",
-        "hint": "按 blueprint 的单集规划写 FFS 正文（开场钩子/核心冲突/反转/集尾钩子）",
-    },
-    {
-        "id": "script.diagnose", "label": "剧本改编诊断", "group": "剧本",
-        "template_id": "s3a-diagnosis", "schema_id": "script.diagnosis",
-        "requires": ["json"], "needs": "源剧本 + 选题定位",
-        "hint": "动笔前判断「靠什么留住观众」与「源稿怎么改」",
-    },
-    {
-        "id": "script.review", "label": "观众视角审稿", "group": "剧本",
-        "template_id": "s3c-audience-review", "schema_id": "script.review",
-        "requires": ["json"], "needs": "已成稿的单集剧本",
-        "hint": "只看「观众会不会看下去」，不看格式",
-    },
-    {
-        "id": "topic.position", "label": "选题定位", "group": "创作",
-        "template_id": "s2-topic-positioning", "schema_id": "topic.candidates",
-        "requires": ["json"], "needs": "榜单拆解结果",
-        "hint": "产出原始候选池，交确定性的七维评分脚本排序",
-    },
-    {
-        "id": "topic.research", "label": "榜单调研", "group": "创作",
-        "template_id": "s0-market-research", "schema_id": "",
-        "requires": [], "needs": "目标市场",
-        "hint": "补齐市场数据缺口；回填对象由 market_data.py 校验",
-    },
-    {
-        "id": "topic.breakdown", "label": "爆款拆解", "group": "创作",
-        "template_id": "s1-hit-breakdown", "schema_id": "",
-        "requires": [], "needs": "榜单原始数据",
-        "hint": "确定性算法已完成拆解，本用途只做洞察增补",
-    },
-    {
-        "id": "script.translate", "label": "剧本转译", "group": "剧本",
-        "template_id": "s0b-script-translate", "schema_id": "",
-        "requires": [], "needs": "源剧本 + 目标语种",
-        "hint": "非目标语种先转译，质检通过后再进改写",
+        "id": "pack.convert", "label": "制作包转换（格式搬运）", "group": "导入",
+        "template_id": "convert-to-pack", "schema_id": None,
+        "requires": ["json"],
+        "needs": "创作 Skill 产出的 Markdown（企划案 / 资产库 / 剧本 / 导演手册）",
+        "hint": "只做格式搬运：不改剧情、不改台词、不改提示词、不补写内容",
     },
 ]
 
 PURPOSE_MAP = {p["id"]: p for p in PURPOSES}
 
+
 # ---------------------------------------------------------------------------
-# 模板登记
+# 正文读取
 # ---------------------------------------------------------------------------
-# vars: 渲染时要求的变量名（缺失即报 config，不静默变成空串）
-TEMPLATES = [
-    {
-        "id": "assistant-chat", "title": "工作台助手 · 对话控制", "purpose": "assistant.chat",
-        "file": "assistant-chat.md", "format": "json", "schema_id": None,
-        "vars": ["context", "history", "message"],
-    },
-    {
-        "id": "s3-script-rewrite", "title": "剧本改写 · 写正文", "purpose": "script.generate",
-        "file": "s3-script-rewrite.md", "format": "json", "schema_id": "script.episode",
-        "vars": ["blueprint_row", "style_lock", "char_header", "scene_header", "ep_seconds", "shot_count"],
-    },
-    {
-        "id": "s3a-diagnosis", "title": "剧本改编诊断", "purpose": "script.diagnose",
-        "file": "s3a-diagnosis.md", "format": "json", "schema_id": "script.diagnosis",
-        "vars": ["source_script", "positioning"],
-    },
-    {
-        "id": "s3c-audience-review", "title": "观众视角审稿", "purpose": "script.review",
-        "file": "s3c-audience-review.md", "format": "json", "schema_id": "script.review",
-        "vars": ["episode_no", "script_text"],
-    },
-    {
-        "id": "s2-topic-positioning", "title": "选题定位", "purpose": "topic.position",
-        "file": "s2-topic-positioning.md", "format": "json", "schema_id": "topic.candidates",
-        "vars": ["breakdown", "market"],
-    },
-    {
-        "id": "s0-market-research", "title": "榜单调研", "purpose": "topic.research",
-        "file": "s0-market-research.md", "format": "text", "schema_id": "",
-        "vars": ["market", "gaps"],
-    },
-    {
-        "id": "s1-hit-breakdown", "title": "爆款拆解", "purpose": "topic.breakdown",
-        "file": "s1-hit-breakdown.md", "format": "text", "schema_id": "",
-        "vars": ["breakdown", "market"],
-    },
-    {
-        "id": "s0b-script-translate", "title": "剧本转译", "purpose": "script.translate",
-        "file": "s0b-script-translate.md", "format": "text", "schema_id": "",
-        "vars": ["source_script", "target_language"],
-    },
-]
-
-TEMPLATE_MAP = {t["id"]: t for t in TEMPLATES}
-
-
 def body_path(tid: str) -> Path:
     t = TEMPLATE_MAP.get(tid)
     return PROMPT_DIR / t["file"] if t else None
@@ -298,53 +106,33 @@ def describe(tid: str) -> dict:
         "format": t["format"],
         "schema_id": t["schema_id"],
         "vars": list(t["vars"]),
-        "file": "stages/creation/prompts/" + t["file"],
-        "body_sha": body_sha(tid),
-        "body_lines": body.count("\n") + 1 if body else 0,
-        "body": body,
+        "sha": body_sha(tid),
+        "missing_file": ("" if body else str(body_path(tid))),
     }
 
 
 def all_templates() -> list:
-    return [describe(t["id"]) for t in TEMPLATES]
+    return [describe(tid) for tid in TEMPLATE_MAP]
 
 
-# ---------------------------------------------------------------------------
-# Schema 表达不了的业务约定（随提示词下发，并在校验失败时作为「下一步」提示）
-# ---------------------------------------------------------------------------
-SCHEMA_NOTES = {
-    "script.episode": [
-        "没有台词的镜头，`dialog` 必须写字符串「无」，**不要留空字符串**："
-        "引擎 lint 要求 `DIALOG:` 后面必须有内容（仓库提示词里写的也是「台词 或 无」）。",
-        "没有旁白的镜头，`vo` 同样写「无」，不要留空。",
-        "旁白（`vo`）每集不超过 2 条、只在开头或结尾出现；叙事靠台词推进。",
-        "60 秒档台词不少于 10 句（可分布在 5-10 个镜头里），单句中文不超过 20 字。",
-        # 实测（2026-10-28）模型会自创「男客」「经理」这类临时角色，
-        # 引擎 lint 只 WARN，但分镜阶段无法映射资产，白跑一趟。
-        "`char` 只能使用 HEADER 里 CHAR 已登记的代号；需要群众角色时用已登记代号，"
-        "不要自创「男客」「经理」这类名字。",
-    ],
-}
-
-# 字段级「怎么改」提示：只在 Schema 校验失败时追加一行，不改变判定结果
-FIELD_HINTS = {
-    "dialog": "无台词的镜头请填「无」，不要留空字符串",
-    "vo": "没有旁白请填「无」，不要留空字符串",
-}
+def purpose_list() -> list:
+    return [dict(p) for p in PURPOSES]
 
 
 def field_hint(path: str) -> str:
-    """从 `shots[7].dialog` 这样的路径里取出最后一节，给出可执行的修改建议。"""
+    """从 `shots[7].duration` 这样的路径里取出最后一节，给出可执行的修改建议。"""
     tail = str(path or "").split(".")[-1].strip()
     return FIELD_HINTS.get(tail, "")
 
 
+# ---------------------------------------------------------------------------
+# 渲染
+# ---------------------------------------------------------------------------
 def render_parts(tid: str, variables: dict):
     """渲染成 (system, user) 两段。
 
     system = 仓库提示词原文（方法论，权威）；
-    user   = 本次输入 + 输出契约（机器可读要求）。
-    这样既不改写仓库原文，又让模型看到明确的 Schema。
+    user   = 本次输入（从哪读到哪写）。
     """
     t = TEMPLATE_MAP.get(tid)
     if not t:
@@ -354,7 +142,9 @@ def render_parts(tid: str, variables: dict):
         raise FileNotFoundError(str(body_path(tid)))
 
     vars_ = variables or {}
-    missing = [v for v in t["vars"] if v not in vars_ or vars_[v] in (None, "")]
+    # `style_hint` 是可选的：有的 Skill 已经把风格写在提示词里，不必再给
+    missing = [v for v in t["vars"]
+               if v != "style_hint" and (v not in vars_ or vars_[v] in (None, ""))]
     if missing:
         from .errors import LLMError
         raise LLMError("config", "模板 %s 缺少输入变量：%s" % (tid, "、".join(missing)))
@@ -362,36 +152,16 @@ def render_parts(tid: str, variables: dict):
     parts = ["## 本次输入"]
     for key in t["vars"]:
         val = vars_.get(key)
+        if val in (None, ""):
+            continue
         if isinstance(val, (dict, list)):
             val = json.dumps(val, ensure_ascii=False, indent=2)
         parts += ["", "### %s" % key, "", str(val).strip()]
 
-    if t["format"] == "json" and t["schema_id"]:
-        sch = SCHEMAS.get(t["schema_id"]) or {}
-        parts += ["", "## 输出契约（必须严格遵守）", "",
-                  "只输出**一个 JSON 对象**：不要解释、不要前言、不要 markdown 代码围栏、不要在 JSON 前后加任何文字。",
-                  "下列 Schema 为硬约束，字段类型/取值范围/枚举不满足即视为失败：", "",
-                  "```json", json.dumps(sch, ensure_ascii=False, indent=2), "```"]
-        # ★ Schema 只能约束「类型/范围」，管不了「空字符串是合法值吗」这类业务约定。
-        #   实测（2026-10-28，DeepSeek 真实通道）模型会把无台词的镜头写成 dialog: ""，
-        #   而引擎 lint 要求 `DIALOG:` 后有内容（无台词写「无」）—— 不看这段约定就会整集失败。
-        notes = SCHEMA_NOTES.get(t["schema_id"]) or []
-        if notes:
-            parts += ["", "### 字段填写约定（Schema 表达不了的业务规则，违反同样算失败）", ""]
-            parts += ["- %s" % n for n in notes]
-        # ★ 数值预算也写进来：Schema 能管住单镜 DUR ∈ [4,15]，管不住「所有 DUR 之和」。
-        #   实测（2026-10-28）模型会写出 90 秒的「60 秒档」剧集，被服务端拒收。
-        #   这里的数字取自 budget.bounds_for()，与校验器**同一个函数**，不会各说一套。
-        if t["schema_id"] == "script.episode":
-            sec = int(vars_.get("ep_seconds") or 60)
-            s_min, s_max, t_min, t_max = budget.bounds_for(sec)
-            parts += ["", "### 本集硬指标（服务端会复算，超界直接判失败）", "",
-                      "- 镜头数：%d–%d 个（`shots` 数组长度）" % (s_min, s_max),
-                      "- 所有镜头的 `dur` 之和：%d–%d 秒（这是 %d 秒档）" % (t_min, t_max, sec),
-                      "- 单个 `dur`：4–15 秒"]
-    else:
-        parts += ["", "## 输出契约", "",
-                  "按上文要求输出正文。本环节没有机器可校验的 Schema，输出将由人工复核。"]
+    parts += ["", "## 输出契约", "",
+              "把结果直接写到 `output_dir`：`pack.json`、`assets/*.json`、`episodes/epNN.json`。",
+              "同时写一份 `_import_report.md`，逐条说明「原文位置 → 输出字段」以及所有留空、",
+              "合并、跳过的项及原因。不要输出解释性正文。"]
     return body.rstrip() + "\n", "\n".join(parts).strip() + "\n"
 
 
@@ -402,118 +172,34 @@ def render(tid: str, variables: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 离线演练（Mock）的样例输出
+# 离线演练（Mock）
 # ---------------------------------------------------------------------------
-# 为什么要有它：没有凭据时也要能验证**整条链路**（解析 → Schema → 草稿 → 落盘 → 引擎 lint）。
-# 它只替换「网络那一段」，下游全部走真实代码路径；结果一律带 `simulated: true`，不许冒充真实生成。
-_HOOK_TYPES = ["身份悬念", "危机逼近", "关系反转", "秘密揭露", "选择困境", "意外登场", "代价预告"]
-
-
-def _header_codes(line, prefix):
-    """从 `# CHAR: CAMILA: 描述; ADRIAN: 描述` 里取出代号。"""
-    s = str(line or "").strip()
-    if s.upper().startswith(prefix):
-        s = s.split(":", 1)[1] if ":" in s else ""
-    out = []
-    for part in s.split(";"):
-        name = part.split(":")[0].strip()
-        if len(name) >= 2 and name.replace("_", "").isupper() and name.isascii():
-            out.append(name)
-    return out
+# 没有凭据时也要能验证整条链路（渲染 → 网关 → 落盘 → 导入校验）。
+# 只替换「网络那一段」，下游全走真实代码；结果一律带 `simulated: true`。
+_MOCK_PACK = {
+    "pack.json": {
+        "spec": "solodrama-pack/1", "title": "演练用最小包", "slug": "mock-pack",
+        "delivery": {"width": 1080, "height": 1920, "fps": 24,
+                     "episode_count": 1, "target_duration": 10},
+        "style_lock": "美式复古影视风格，胶片颗粒，年代色偏",
+        "negative": "文字，水印",
+    },
+    "assets/characters.json": {
+        "spec": "solodrama-assets/1", "kind": "character",
+        "items": [{"id": "P01", "name": "演练角色",
+                   "variants": [{"code": "base", "prompt": "演练用提示词"}]}],
+    },
+    "episodes/ep01.json": {
+        "spec": "solodrama-episode/1", "episode": 1, "title": "演练",
+        "shots": [{"id": "shot_001", "duration": 5,
+                   "cast": [{"asset": "P01"}],
+                   "board_prompt": "演练构图", "video_prompt": "演练视频提示词"}],
+    },
+}
 
 
 def mock_payload(purpose, variables):
-    """返回一段「会被下游当成模型输出」的文本（JSON 字符串或纯文本）。
-
-    ★ 结构化用途一律按 **Schema 的边界**构造（镜数/时长/枚举都取合法值），
-      这样它既能证明链路通，也能证明校验器真的在工作（越界会被拦下）。
-    """
-    v = variables or {}
-    if purpose == "script.generate":   # 用途 id（不是 schema id）
-        row = v.get("blueprint_row") if isinstance(v.get("blueprint_row"), dict) else {}
-        try:
-            ep = int(row.get("ep") or 1)
-        except (TypeError, ValueError):
-            ep = 1
-        try:
-            shots = int(v.get("shot_count") or 8)
-        except (TypeError, ValueError):
-            shots = 8
-        shots = max(5, min(10, shots))
-        try:
-            secs = int(v.get("ep_seconds") or 60)
-        except (TypeError, ValueError):
-            secs = 60
-        dur = max(4, min(15, int(round(float(secs) / max(shots, 1)))))
-
-        chars = _header_codes(v.get("char_header"), "# CHAR:") or ["CHAR_A"]
-        scenes = _header_codes(v.get("scene_header"), "# SCENE:") or ["SCENE_A"]
-        hook_type = row.get("hook_type")
-        if hook_type not in _HOOK_TYPES:
-            hook_type = "身份悬念"
-
-        body = []
-        for i in range(1, shots + 1):
-            body.append({
-                "no": i,
-                "shot": "特写, 推" if i % 4 == 0 else ("中景, 固定" if i % 2 else "全景, 跟随"),
-                "location": scenes[(i - 1) % len(scenes)],
-                "time": "夜",
-                "char": chars[(i - 1) % len(chars)],
-                "action": "演练第 %d 镜：她把手里的东西放下，抬眼看向门口的人，动作停在半空，呼吸乱了一拍" % i,
-                "dialog": "无" if i % 2 else "“你终于肯开口了。”",
-                "vo": "无",
-                "sfx": "环境底噪与远处车声",
-                "dur": dur,
-            })
-        return json.dumps({
-            "episode": ep,
-            "title": "演练单集（Mock 生成，非真实模型输出）",
-            "platform": "演练",
-            "cold_open": row.get("cold_open") or "演练开场：冲突直接摆到台面上",
-            "core_conflict": row.get("core_conflict") or "演练冲突：她要保住手里这一点东西",
-            "reversal": row.get("reversal") or "演练反转：力量对比发生变化，主动权换人",
-            "hook": row.get("hook") or "演练钩子：门外有人停下脚步",
-            "hook_type": hook_type,
-            "shots": body,
-        }, ensure_ascii=False)
-
-    if purpose == "script.diagnose":
-        return json.dumps({
-            "A_diagnosis": {"hook": "演练：开场 3 秒把冲突摆到台面上",
-                            "retention_risk": "演练：中段缺少力量对比的阶梯",
-                            "verdict": "可写"},
-            "B_strategy": {"keep": ["演练：核心人设"], "rework": ["演练：集尾钩子改写"],
-                           "escalation": ["演练：每 3 集一次中型爆点"]},
-            "C_mainline": {"protagonist": "演练：女主", "opposition": "演练：压制方",
-                           "turn_points": ["演练：第一次打脸", "演练：身份揭示"]},
-        }, ensure_ascii=False)
-
-    if purpose == "script.review":
-        ep = 1
-        try:
-            ep = int((v.get("episode_no") or 1))
-        except (TypeError, ValueError):
-            ep = 1
-        return json.dumps({
-            "episode": ep,
-            "verdict": "PASS",
-            "answers": [{"q": "开场 3 秒有没有钩子？", "a": "演练：有，直接泼汤。"},
-                        {"q": "女主是否被动？", "a": "演练：第一镜之后开始反击。"},
-                        {"q": "反转是否改变格局？", "a": "演练：名分被公开。"},
-                        {"q": "集尾是否想让人看下一集？", "a": "演练：门外车里有人盯着。"},
-                        {"q": "有没有看不懂的信息？", "a": "演练：没有。"}],
-            "top_fixes": ["演练：把 SC-02 的骂句缩短到 18 字以内"],
-        }, ensure_ascii=False)
-
-    if purpose == "topic.position":
-        return json.dumps({"candidates": [
-            {"title": "演练候选 A", "logline": "演练：她被当众认作陌生人的妻子，名分成了武器。", "genre": "逆袭"},
-            {"title": "演练候选 B", "logline": "演练：她替人背了三年黑锅，出狱那天有人来接她。", "genre": "复仇"},
-        ]}, ensure_ascii=False)
-
-    return "（演练输出）本用途没有机器可校验的 Schema；这段文本只用于验证链路连通，不含真实内容。\n"
-
-
-def purpose_list() -> list:
-    return [dict(p) for p in PURPOSES]
+    """离线演练返回的样例（结构与真实转换产物一致，字段值只是占位）。"""
+    return {"simulated": True,
+            "note": "演练结果：只验证链路，不产生可用的制作包",
+            "files": _MOCK_PACK}

@@ -188,7 +188,7 @@ def main() -> int:
 
     # ---- 0. 目录本身 ----
     if not release.is_dir():
-        fails.append("发行目录不存在：%s ⇒ 先跑 `creation.py scaffold`，或手工建 `09-发行/`" % release)
+        fails.append("发行目录不存在：%s ⇒ 先跑 `drama init`，或手工建 `09-发行/`" % release)
         return _report(a, ws, release, fails, warns, notes, {}, downstream)
 
     # ---- 1. 封面 ----

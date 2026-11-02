@@ -62,7 +62,7 @@ def target_root(ws: Path) -> Path:
     lay = L.load(ws)
     if lay.get("_fallback"):
         raise SystemExit("[FAIL] 该工作区没有 layout.json（旧布局）⇒ 先跑 "
-                         "`creation.py scaffold` 或手工建 layout.json 再迁移。")
+                         "`drama init` 或手工建 layout.json 再迁移。")
     return ws / lay["stages"].get("assets", "04-资产")
 
 

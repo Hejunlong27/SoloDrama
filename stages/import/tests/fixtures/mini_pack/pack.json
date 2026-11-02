@@ -1,0 +1,16 @@
+{
+  "spec": "solodrama-pack/1",
+  "title": "最小测试剧",
+  "slug": "mini-test",
+  "logline": "只为验证导入契约，不承载任何剧情。",
+  "skill": { "name": "unit-test", "version": "2026-11-02" },
+  "delivery": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "episode_count": 1,
+    "target_duration": 21
+  },
+  "style_lock": "美式复古影视风格，胶片颗粒，年代色偏，自然窗光与钨丝灯，轻微褪色",
+  "negative": "多余手指，五官扭曲，比例失调，Q版，卡通，文字，水印"
+}

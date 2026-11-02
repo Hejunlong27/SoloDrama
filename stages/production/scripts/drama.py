@@ -532,7 +532,8 @@ PER_EP_FILES = ("shots.json", "h3_prompts.json", "boards.json",
 def data_f(name: str):
     """数据文件路径：优先 `<DATA>/<name>`，再找各集子目录里最新的一份。
 
-    ★ 2026-11-01：`convert_storyboard` 起把 data 按集分目录（`data/ep01/shots.json`）。
+    ★ 2026-11-01：data 起按集分目录（`data/ep01/shots.json`）；2026-11-02 起由
+      `stages/import/pack_import.py` 从制作包生成同一结构。
       本文件里十几处 `DATA / "shots.json"` 于是全部读空，`drama status` 显示「没有分镜」，
       而文件就在 `data/ep01/` 里 —— 症状像「数据丢了」，其实是读错了目录。
     """
@@ -771,6 +772,70 @@ def cmd_style(args) -> int:
 # assets：缺失资产出图（默认本地 ComfyUI ￥0；可选 RunningHub 云端计费）
 # ---------------------------------------------------------------------------
 LOCAL_ASSETS_PY = SCRIPTS / 'gen_assets_local.py'
+IMPORT_PY = _PROJECT_ROOT / 'stages' / 'import'    # ★ 制作包导入层（pack_import / preset_apply）
+
+
+def cmd_pack(args) -> int:
+    """制作包：导入（校验 + 写 data/）、预配置落地。
+
+    三个动作对应新分支的三件事：
+      * `pack import` —— 把创作 Skill 的产物变成引擎能吃的 data/（唯一入口）
+      * `pack preset` —— 把出图/出片/放大通道一次性落到工作区
+      * `pack check`  —— 只校验制作包，不写任何文件（给上游 Skill 自查用）
+    """
+    sub = getattr(args, 'pack_cmd', None) or 'import'
+    if sub == 'preset':
+        cmd = [sys.executable, str(IMPORT_PY / 'preset_apply.py')]
+        if getattr(args, 'list', False):
+            cmd += ['--list']
+        if getattr(args, 'preset', None):
+            cmd += ['--preset', args.preset]
+        if getattr(args, 'apply', False):
+            cmd += ['--apply']
+        if getattr(args, 'json', False):
+            cmd += ['--json']
+        if getattr(args, 'workspace', None):
+            cmd += ['--workspace', args.workspace]
+        return run_cmd(cmd, 'pack_preset', quiet_ok=False)[0]
+
+    pack = _pack_dir(args)
+    if not pack:
+        print('[FAIL] 找不到制作包：给 --pack "<目录>"，或把它放到 <工作区>/pack/ 下')
+        return 2
+    cmd = [sys.executable, str(IMPORT_PY / 'pack_import.py'), '--pack', pack]
+    if getattr(args, 'ep', None):
+        cmd += ['--ep', args.ep]
+    if getattr(args, 'prune', False):
+        cmd += ['--prune']
+    if sub == 'import' and getattr(args, 'apply', False):
+        cmd += ['--apply']
+    if getattr(args, 'json', False):
+        cmd += ['--json']
+    if getattr(args, 'workspace', None):
+        cmd += ['--workspace', args.workspace]
+    title = {'import': '制作包导入', 'check': '制作包校验（只读）'}.get(sub, sub)
+    print('【%s】%s' % (title, pack))
+    return run_cmd(cmd, 'pack_' + sub, quiet_ok=False)[0]
+
+
+def _pack_dir(args) -> str | None:
+    """解析制作包目录：显式 `--pack` > `<ws>/pack`（存在才算）。
+
+    为什么默认 `<ws>/pack`：新分支的输入契约就放在那里（见 docs/pack/PACK-SPEC.md），
+    导入器、出图、预配置都按这个位置找。让用户每次手打一遍路径，等于把这个约定
+    降级成「口头约定」—— 迟早有人放到别处，然后报「找不到 pack.json」。
+    """
+    p = getattr(args, "pack", None)
+    if p:
+        # 必须转绝对：`run_cmd` 的 cwd 是工作区，相对路径会被解析到工作区下去，
+        # 报「制作包目录不存在」而实际它就在仓库里。
+        return str(pathlib.Path(p).expanduser().resolve())
+    ws = getattr(args, "workspace", None) or os.environ.get("SOLODRAMA_WORKSPACE") \
+        or os.environ.get("DRAMA_WORKSPACE") or ""
+    if not ws:
+        return None
+    cand = pathlib.Path(ws).expanduser().resolve() / "pack"
+    return str(cand) if (cand / "pack.json").is_file() else None
 
 
 def cmd_assets_local(args) -> int:
@@ -785,6 +850,9 @@ def cmd_assets_local(args) -> int:
         if rc:
             return rc
     cmd = [sys.executable, LOCAL_ASSETS_PY]
+    pack = _pack_dir(args)
+    if pack:
+        cmd += ['--pack', pack]
     if args.kind and args.kind != 'all':
         cmd += ['--kind', args.kind]
     if args.only:
@@ -1253,8 +1321,38 @@ def main() -> int:
     _add_ws_arg(p)
     p.set_defaults(fn=cmd_preflight)
 
+    # ---------------- 制作包（新分支的唯一输入入口） ----------------
+    p = sub.add_parser('pack', help='制作包：导入 → data/ 契约 ｜ 预配置落地')
+    _add_ws_arg(p)
+    pk = p.add_subparsers(dest='pack_cmd')
+
+    q = pk.add_parser('import', help='导入制作包（默认干跑，--apply 落盘）')
+    _add_ws_arg(q)
+    q.add_argument('--pack', default=None, help='制作包目录（默认 <工作区>/pack）')
+    q.add_argument('--ep', default=None, help='只导这一集（ep01 / 1）')
+    q.add_argument('--apply', action='store_true', help='真写（默认干跑）')
+    q.add_argument('--prune', action='store_true', help='删除本集 data 里不在本次输出里的 *.json')
+    q.add_argument('--json', action='store_true', help='机器可读输出')
+    q.set_defaults(fn=cmd_pack)
+
+    q = pk.add_parser('check', help='只校验制作包，不写任何文件')
+    _add_ws_arg(q)
+    q.add_argument('--pack', default=None, help='制作包目录（默认 <工作区>/pack）')
+    q.add_argument('--ep', default=None)
+    q.add_argument('--json', action='store_true')
+    q.set_defaults(fn=cmd_pack)
+
+    q = pk.add_parser('preset', help='把项目预配置（出图/出片/放大通道）落到工作区')
+    _add_ws_arg(q)
+    q.add_argument('--preset', default='local-comfyui-rh', help='预配置卡 id（默认 local-comfyui-rh）')
+    q.add_argument('--list', action='store_true', help='列出可用预配置卡')
+    q.add_argument('--apply', action='store_true', help='真写（默认干跑）')
+    q.add_argument('--json', action='store_true')
+    q.set_defaults(fn=cmd_pack)
+
     p = sub.add_parser('assets', help='缺失资产出图（默认本地 ComfyUI ￥0，干跑）')
     _add_ws_arg(p)
+    p.add_argument('--pack', default=None, help='制作包目录（默认 <工作区>/pack）')
     p.add_argument('--engine', choices=('local', 'wf', 'rh'), default='local',
                    help='出图通道：local=本地 ComfyUI（￥0，默认）｜wf=RunningHub 工作流（★计费）'
                         '｜rh 是 wf 的旧别名')

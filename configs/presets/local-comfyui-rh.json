@@ -1,0 +1,47 @@
+{
+  "_comment": "项目预配置卡：出图走本地 ComfyUI（￥0），出片与放大走 RunningHub。来源：Owner 2026-11-02 指定的《solodrama预配置(本地出图)》。用 `python stages/import/preset_apply.py --preset local-comfyui-rh --workspace <ws> --apply` 落到工作区。",
+  "id": "local-comfyui-rh",
+  "label": "本地 ComfyUI 出图 + RunningHub 出片 / 放大",
+  "version": 1,
+
+  "style_lock": "美式复古影视风格",
+  "delivery": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "episode_count": 30,
+    "target_duration": 60
+  },
+
+  "image": {
+    "engine": "local_comfyui",
+    "choice": "local_comfyui",
+    "capability": "comfy.qwen21_t2i_hq.v1",
+    "comfy_url": "http://127.0.0.1:8188",
+    "workflows": {
+      "t2i": "stages/assets/comfyui/workflow_qwen21_t2i_hq.json",
+      "edit": "stages/assets/comfyui/workflow_qwen21_edit.json"
+    },
+    "_note": "两份工作流已按 Owner 提供的 API 导出件入库；文生图版为 cfg=1 / multiple=8 / megapixels=2，图生图版与仓库版一致。画幅由 manifest 的 aspect 覆盖，不受工作流默认 3:4 影响。"
+  },
+
+  "video": {
+    "engine": "runninghub",
+    "choice": "runninghub",
+    "capability": "rh.h3.multiref.v1",
+    "workflow_id": "2113319585146560513",
+    "concurrency": 5,
+    "megapixels": 0.8,
+    "steps": 8,
+    "max_seconds": 10,
+    "_note": "并发 5 是账号侧额度；若出现 421（api queue limit reached）不是失败而是排队，退出码 3 后直接 --resume。"
+  },
+
+  "upscale": {
+    "backend": "rh",
+    "capability": "rh.upscale.v1",
+    "workflow_id": "2100177270433476609",
+    "target": { "mode": "exact", "width": 1080, "height": 1920 },
+    "_note": "放大工作流按预配置换成 2100177270433476609；节点映射 2/3/4/5/7 尚未对该工作流探测确认，首次真跑前跑一次 probe。"
+  }
+}

@@ -17,7 +17,10 @@ REPO_ROOT = WEB_DIR.parent
 
 STAGES_DIR = REPO_ROOT / "stages"
 PROD_SCRIPTS = STAGES_DIR / "production" / "scripts"
-CREATION_SCRIPTS = STAGES_DIR / "creation" / "scripts"
+# ★ 2026-11-02（分支 feat/pack-engine）：`stages/creation/` 已整体移除（创作归 Skill）。
+#   这里保留一个指向不存在目录的常量会让任何误引用都「静默返回一个 Path」，
+#   于是错误以「文件不存在」的形式飘到运行期。明确删掉，引用处会立刻 NameError。
+IMPORT_SCRIPTS = STAGES_DIR / "import"
 ASSETS_SCRIPTS = STAGES_DIR / "assets" / "scripts"
 COMIFY_SCRIPTS = STAGES_DIR / "assets" / "comfyui"
 VIDEO_SCRIPTS = STAGES_DIR / "video" / "workflow" / "scripts"

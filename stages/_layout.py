@@ -53,9 +53,11 @@ LEGACY_DATA_REL = "video-pipeline/data"
 LEGACY_OUT_REL = "video-pipeline/output"
 
 # 阶段键 → 默认目录名（新布局）
+# ★ 2026-11-02（分支 feat/pack-engine）：删掉 `research` / `topic` 两个阶段。
+#   理由：调研与选题是**创作**，已整体移出引擎（见 docs/BRANCH-ENGINE.md）。
+#   保留 `script` / `storyboard` 两个目录，但语义变了 —— 它们现在是
+#   **创作 Skill 的产物留档（只读）**，引擎不写、也不解析；字幕要取台词时才读 `script`。
 STAGE_DIRS: dict = {
-    "research": "01-调研",
-    "topic": "02-选题",
     "script": "03-剧本",
     "assets": "04-资产",
     "storyboard": "05-分镜",
@@ -94,12 +96,11 @@ def release_episode_dir(ws) -> Path:
 
 # 各阶段目录的唯一用途（供脚手架写 README、供 layout 子命令展示）
 STAGE_PURPOSE: dict = {
-    "research": "市场调研：market-data.json（多市场榜单/对标剧/趋势）、多市场对比表、检索证据",
-    "topic": "选题定位：candidates.json（七维评分）、positioning.json（定位卡）",
-    "script": "剧本：blueprint.json/md（集数规划）、ep_XX.md（单集）、台词时长审计报告",
-    "assets": "资产：资产卡（人物/场景/道具 md）、参考图原图（refs/）",
-    "storyboard": "分镜：storyboard/epXX.md（11 字段分镜脚本，含 <Picture N> 与 [Shot N]）",
-    "prompts": "提示词：H3 六段式提示词 md + data/ 四文件（出片引擎唯一输入契约）+ refs_h3/",
+    "script": "剧本（只读）：创作 Skill 产出的分集剧本原文。引擎不写、不改；字幕对齐时取台词文本。",
+    "assets": "资产：出图产物 characters/ scenes/ props/、分镜图 boards/<ep>/、refs.json 登记表、refs/ 原图",
+    "storyboard": "分镜（只读）：创作 Skill 产出的导演手册原文，仅留档；引擎的镜头契约在 06-提示词/",
+    "prompts": "提示词：<ep>/ 下 shots.json / boards.json / h3_prompts.json / characters.json / scenes.json"
+               "（出片引擎唯一输入契约，由 stages/import/pack_import.py 从制作包生成）",
     "film": "成片：逐段 final.mp4、整集母版、2K、字幕成片、样张（**工作产物**；发布版另见 09-发行/剧集/）",
     "compliance": "合规：发布前预检报告、TikTok 条款映射、整改记录、申诉材料",
     "release": "发行：剧集/（发布版 EpisodeNN.mp4）、封面（多尺寸成组，抓马构图）、文案（六槽位 + 三档描述）、"

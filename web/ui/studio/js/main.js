@@ -3,7 +3,6 @@
    视图按路由**动态加载**（每个页面一个模块），避免单文件膨胀，也让单页故障不影响外壳。
    ============================================================ */
 import { api, clearCache } from './api.js';
-import { openAssistant } from './assistant.js';
 import { esc, icon, paintIcons, errorCard, openDrawer, closeDrawer, closeModal, skeleton, toast } from './ui.js';
 import {
   S, loadProjects, loadCaps, loadHealth, loadRunning, project as currentProject,
@@ -26,9 +25,8 @@ const NAV = [
     label: '当前项目', project: true, items: [
       { key: 'overview', label: '项目详情', ico: 'layers' },
       { key: 'pipeline', label: '流水线', ico: 'terminal' },
-      { key: 'creation', label: '创作中心', ico: 'spark' },
       { key: 'assets', label: '资产中心', ico: 'image' },
-      { key: 'storyboard', label: '分镜与视频', ico: 'film' },
+      { key: 'storyboard', label: '镜头与出片', ico: 'film' },
       { key: 'post', label: '后期制作', ico: 'scissors' },
       { key: 'release', label: '发行中心', ico: 'upload' }
     ]
@@ -36,14 +34,13 @@ const NAV = [
   { label: '系统', items: [{ key: 'settings', label: '系统设置', ico: 'settings' }] }
 ];
 
-const PROJECT_ROUTES = ['overview', 'pipeline', 'creation', 'assets', 'storyboard', 'post', 'release'];
+const PROJECT_ROUTES = ['overview', 'pipeline', 'assets', 'storyboard', 'post', 'release'];
 
 const VIEWS = {
   workbench: () => import('./views/workbench.js'),
   projects: () => import('./views/projects.js'),
   overview: () => import('./views/overview.js'),
   pipeline: () => import('./views/pipeline.js'),
-  creation: () => import('./views/creation.js'),
   assets: () => import('./views/assets.js'),
   storyboard: () => import('./views/storyboard.js'),
   post: () => import('./views/post.js'),
@@ -360,8 +357,6 @@ async function boot() {
       toast('刷新失败：' + (e.detail || e.message), 'bad');
     } finally { btn.disabled = false; }
   };
-  const aiBtn = document.getElementById('btnAssistant');
-  if (aiBtn) aiBtn.onclick = () => openAssistant(ctx());
   document.getElementById('scrim').onclick = () => { closeModal(); closeDrawer(); };
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeModal(); closeDrawer(); }

@@ -28,7 +28,6 @@ SCRIPTS = {
     "drama": paths.PROD_SCRIPTS / "drama.py",
     "env": paths.TOOLS_DIR / "env_check.py",
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
-    "continuity": paths.PROD_SCRIPTS / "script_continuity.py",
     "release_check": paths.PROD_SCRIPTS / "release_check.py",
     "release_export": paths.PROD_SCRIPTS / "release_export.py",
 }
@@ -165,7 +164,17 @@ def cost_ledger(ws, *, balance: bool = False) -> dict:
 
 
 def continuity(ws) -> dict:
-    return run_json("continuity", ["--json"], ws, ttl=10)
+    """已下线（2026-11-02，分支 feat/pack-engine）。
+
+    `script_continuity.py` 是**剧作层**的五锚检查（镜号/台词指纹/代号/时长），
+    它服务的对象是「引擎自己写剧本」。创作移出引擎后，这套锚点由创作 Skill 保证，
+    引擎只校验制作包的结构（`stages/import/pack_spec.py`）。
+
+    保留这个空函数是为了让老调用方拿到「明确的下线结果」而不是 AttributeError ——
+    静默消失会让人以为「检查通过了」。
+    """
+    return {"ok": False, "skipped": True,
+            "error": "剧本连续性门禁已随创作层下线（画风/剧本/分镜改由制作包提供）"}
 
 
 # ---------------------------------------------------------------------------

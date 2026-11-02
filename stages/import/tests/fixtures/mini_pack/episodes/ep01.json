@@ -1,0 +1,44 @@
+{
+  "spec": "solodrama-episode/1",
+  "episode": 1,
+  "title": "契约成婚",
+  "duration_total": 21,
+  "shots": [
+    {
+      "id": "shot_001",
+      "duration": 12,
+      "ratio": "9:16",
+      "cast": [
+        { "asset": "P01", "variant": "LOOK-A" },
+        { "asset": "P02", "variant": "LOOK-A" },
+        { "asset": "S01" },
+        { "asset": "D01" }
+      ],
+      "board_prompt": "办公室。何暖在画左站着，手拿合约，面朝画右；靳衍在画右坐在办公桌后，抬头看她。",
+      "video_prompt": "资产图锚定：\n角色 何暖（LOOK-A） 的参考图是 {{Mixed 2}}\n角色 靳衍（LOOK-A） 的参考图是 {{Mixed 3}}\n场景 S01 的参考图是 {{Mixed 4}}\n\n0-4秒：\n画面：中景。何暖把合约放到桌上。\n约束：口型对齐台词。",
+      "dialogue": [
+        { "asset": "P01", "text": "一年，互不干涉。", "start": 0.4, "end": 2.2 }
+      ]
+    },
+    {
+      "id": "shot_002",
+      "duration": 5,
+      "cast": [
+        { "asset": "P01", "variant": "LOOK-B" },
+        { "asset": "S01" }
+      ],
+      "board_prompt": "夜晚。何暖在画右坐在沙发上，低头看手机，窗外霓虹反射。",
+      "video_prompt": "画面：近景。何暖低头，手指停在屏幕上。\n约束：何暖闭口。"
+    },
+    {
+      "id": "shot_003",
+      "duration": 4,
+      "cast": [
+        { "asset": "S01" },
+        { "asset": "FX01" }
+      ],
+      "board_prompt": "空镜。办公室落地窗，午后光穿过百叶。",
+      "video_prompt": "画面：空镜。光带缓慢移动。\n约束：无人物。"
+    }
+  ]
+}

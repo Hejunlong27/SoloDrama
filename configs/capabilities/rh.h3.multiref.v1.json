@@ -80,7 +80,7 @@
   "hard_limits": {
     "megapixels": 0.8,
     "steps": 8,
-    "concurrency": 2,
+    "concurrency": 5,
     "max_seconds": 10
   },
   "measured": {

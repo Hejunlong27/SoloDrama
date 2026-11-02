@@ -119,8 +119,6 @@ export const api = {
   healthFixes: (limit) => get('/api/health/fixes', { limit }),
 
   /* 对话模式：开场引导（只读状态，不调模型）+ 提问（只读 + 只出提案） */
-  assistantWelcome: (ws) => get('/api/assistant/welcome', { ws }),
-  assistantChat: (body) => post('/api/assistant/chat', body),
 
   /* 本地出片工作流：清单 / 上传 / 切换 */
   comfyWorkflows: () => get('/api/comfy/workflows'),
@@ -187,13 +185,6 @@ export const api = {
   llmUsage: (limit, purpose) => get('/api/llm/usage', { limit: limit || 100, purpose }),
 
   /* ---- 创作闭环：剧本草稿 ---- */
-  scriptGates: (ws) => get('/api/studio/script/gates', { ws }),
-  scriptContext: (ws, ep) => get('/api/studio/script/context', { ws, ep }),
-  drafts: (ws) => get('/api/studio/drafts', { ws }),
-  draft: (ws, id) => get('/api/studio/drafts/' + encodeURIComponent(id), { ws }),
-  draftSave: (ws, id, body) => post('/api/studio/drafts/' + encodeURIComponent(id) + '/save', body, { ws }),
-  draftConfirm: (ws, id, body) => post('/api/studio/drafts/' + encodeURIComponent(id) + '/confirm', body, { ws }),
-  scriptGenerate: (ws, body) => post('/api/studio/script/generate', body, { ws })
 };
 
 export function mediaUrl(ws, rel) {

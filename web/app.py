@@ -25,11 +25,11 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, assistant, comfy_launcher, comfy_store, commands as CMD,
+from core import (adapters, artifacts, comfy_launcher, comfy_store, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
                     studio, styles, ux)
-from core.llm import drafts as llm_drafts, gateway as llm_gateway, store as llm_store
+from core.llm import gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
 
@@ -930,41 +930,6 @@ def api_pipeline_run(payload: dict = Body(...)):
                         max_steps=max(1, min(max_steps, 12)), dry_run=bool(dry_run))
 
 
-@app.get("/api/assistant/welcome")
-def api_assistant_welcome(ws: str = ""):
-    """助手开口第一屏：引导语 + 可点的下一步问题。
-
-    **不调模型、不花钱**：纯读状态拼出来的。前端打开抽屉先拿这个，
-    用户永远能看到「现在能问什么」，而不是对着空白输入框发呆。
-    """
-    ws_ok = None
-    if ws:
-        try:
-            ws_ok = str(_require_ws(ws))
-        except HTTPException:
-            ws_ok = None
-    return assistant.welcome(ws_ok)
-
-
-@app.post("/api/assistant/chat")
-def api_assistant_chat(payload: dict = Body(...)):
-    """对话模式：只读 + 只出提案。
-
-    服务端**不执行**模型给的动作：返回的是「建议跳到哪 / 建议跑哪条」，
-    前端弹确认后再走原有接口（流水线 only=、导航）。这样一次幻觉最多是多问一句，
-    不会变成删文件或花钱。
-    """
-    ws = str(payload.get("ws") or "").strip()
-    ws_ok = None
-    if ws:
-        try:
-            ws_ok = str(_require_ws(ws))
-        except HTTPException:
-            ws_ok = None
-    return assistant.chat(payload.get("message"), ws=ws_ok,
-                          history=payload.get("history") or [])
-
-
 @app.get("/api/comfy/workflows")
 def api_comfy_workflows():
     """本地出片工作流清单（内置 + 上传件），标出当前用的是哪一份。"""
@@ -1239,84 +1204,6 @@ def llm_complete(payload: dict = Body(...)):
 def llm_usage(limit: int = Query(default=100), purpose: str = Query(default=None),
               provider: str = Query(default=None)):
     return llm_gateway.get_gateway().usage(limit=limit, purpose=purpose, provider=provider)
-
-
-# ---- 创作闭环：剧本草稿 -----------------------------------------------------
-@app.get("/api/studio/script/gates")
-def script_gates(ws: str = Query(...)):
-    return llm_drafts.gates(str(_require_ws(ws)))
-
-
-@app.get("/api/studio/script/context")
-def script_context(ws: str = Query(...), ep: int = Query(...)):
-    try:
-        return llm_drafts.context(str(_require_ws(ws)), int(ep))
-    except LLMError as exc:
-        _llm_err(exc)
-
-
-@app.get("/api/studio/drafts")
-def drafts_list(ws: str = Query(...)):
-    return llm_drafts.list_drafts(str(_require_ws(ws)))
-
-
-@app.get("/api/studio/drafts/{did}")
-def drafts_get(did: str, ws: str = Query(...)):
-    try:
-        return llm_drafts.get_draft(str(_require_ws(ws)), did)
-    except LLMError as exc:
-        _llm_err(exc, 404)
-
-
-@app.post("/api/studio/drafts/{did}/save")
-def drafts_save(did: str, payload: dict = Body(...), ws: str = Query(...)):
-    _write_guard()
-    try:
-        return llm_drafts.update_draft(str(_require_ws(ws)), did, payload or {})
-    except LLMError as exc:
-        _llm_err(exc, 404 if exc.kind == "not_found" else 400)
-
-
-@app.post("/api/studio/drafts/{did}/confirm")
-def drafts_confirm(did: str, payload: dict = Body(default=None), ws: str = Query(...)):
-    _write_guard()
-    body = payload or {}
-    if not body.get("confirm"):
-        raise HTTPException(status_code=428, detail={
-            "need_confirm": True,
-            "reason": "确认后会把草稿写成正式剧本（03-剧本/ep_NN.md）；已有文件会被备份后覆盖",
-            "cmd": "llm.script.confirm", "args": {"draft_id": did},
-        })
-    try:
-        return llm_drafts.confirm(str(_require_ws(ws)), did,
-                                  overwrite=bool(body.get("overwrite")),
-                                  expected_sha=body.get("expected_sha") or None,
-                                  allow_simulated=bool(body.get("allow_simulated")))
-    except LLMError as exc:
-        _llm_err(exc, 404 if exc.kind == "not_found" else 400)
-
-
-@app.post("/api/studio/script/generate")
-def script_generate(payload: dict = Body(...), ws: str = Query(...)):
-    _write_guard()
-    if not payload.get("confirm"):
-        raise HTTPException(status_code=428, detail={
-            "need_confirm": True,
-            "reason": "生成剧本正文会向所选模型发起真实请求，可能产生费用",
-            "cmd": "llm.script.generate", "args": {"ep": payload.get("ep")},
-        })
-    w = str(_require_ws(ws))
-    try:
-        res = llm_drafts.generate(w, int(payload.get("ep") or 0),
-                                  gateway=llm_gateway.get_gateway(),
-                                  provider_id=payload.get("provider_id") or None,
-                                  model=payload.get("model") or None,
-                                  timeout_s=payload.get("timeout_s") or None)
-    except LLMError as exc:
-        _llm_err(exc)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="集号不合法") from None
-    return res
 
 
 # ---------------------------------------------------------------------------

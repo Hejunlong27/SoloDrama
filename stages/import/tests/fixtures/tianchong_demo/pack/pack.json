@@ -1,0 +1,27 @@
+{
+  "spec": "solodrama-pack/1",
+  "title": "亿万丈夫的三个月合约",
+  "slug": "billionaire-contract",
+  "logline": "为了给母亲治病，女设计师和冷面总裁签了一年的契约婚姻。",
+  "skill": {
+    "name": "tianchong-manju",
+    "version": "2026-11-02",
+    "source": "总裁甜宠AI漫剧 SKILL.MD"
+  },
+  "delivery": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "episode_count": 1,
+    "target_duration": 16
+  },
+  "style_lock": "美式复古影视风格，胶片颗粒，年代色偏，自然窗光与钨丝灯，轻微褪色",
+  "negative": "多余手指，五官扭曲，比例失调，Q版，卡通，真人实拍，塑料皮肤，磨皮滤镜，网红脸，锥子脸，美瞳，现代高清数码感，过度锐化，品牌标识，文字，水印，复杂背景",
+  "aspect": {
+    "character": "16:9",
+    "scene": "16:9",
+    "prop": "1:1",
+    "board": "9:16",
+    "video": "9:16"
+  }
+}

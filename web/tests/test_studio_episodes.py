@@ -25,6 +25,8 @@ from pathlib import Path
 WEB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WEB))
 
+import pytest  # noqa: E402
+
 from core import studio   # noqa: E402
 
 FAILS = []
@@ -69,6 +71,20 @@ def build_ws(root: Path):
     for name in ("ep01_master.mp4", "ep01_master_1080x1920.mp4", "ep01_subbed_1080p.mp4"):
         (s1 / name).write_bytes(b"0" * 4096)
     (s1 / "ep01.ass").write_text("dummy", encoding="utf-8")
+
+
+@pytest.fixture
+def root():
+    """造一个临时工作区并交给用例。
+
+    ★ 2026-11-02：这个 fixture 此前**不存在** —— 两个用例签名写着 `root`，
+      于是每次跑都 `fixture 'root' not found`，而 `-k` 过滤时看起来像「没有这组测试」。
+      一个永远 ERROR 的用例比没有用例更糟：它给人「有覆盖」的错觉。
+    """
+    d = Path(tempfile.mkdtemp(prefix="studio_ep_"))
+    build_ws(d)
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def test_batches_by_content(root):

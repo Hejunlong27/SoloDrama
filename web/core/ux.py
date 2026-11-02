@@ -23,6 +23,7 @@ Web 控制台有**两张脸**，本模块是「用户端」那一张的脸面层
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import commands as CMD
@@ -44,13 +45,18 @@ GLOSSARY = [
 
 # 6 个「用户阶段」← 由 15 个引擎环节归并（用户不需要知道 15 个环节）
 USER_STAGES = [
-    {"key": "idea", "name": "定题材", "rounds": ["-1", "0", "1", "2", "3", "3.6"],
-     "hint": "先定画风和用哪台机器，再选题材"},
-    {"key": "script", "name": "写剧本", "rounds": ["3.5", "4", "5"], "hint": "把故事写成每集的剧本"},
-    {"key": "cast", "name": "定形象", "rounds": ["6", "7"], "hint": "把角色和场景的样子定下来"},
-    {"key": "storyboard", "name": "画分镜", "rounds": ["8"], "hint": "把剧本拆成一个个镜头"},
-    {"key": "shoot", "name": "出画面", "rounds": ["9", "10"], "hint": "把镜头做成真正的画面"},
-    {"key": "deliver", "name": "审片发布", "rounds": ["11", "12", "13"], "hint": "拼成一集、检查、准备发布"},
+    {"key": "setup", "name": "配通道", "rounds": ["0"],
+     "hint": "确认出图、出片、放大分别走哪条通道（一次配好，全季复用）"},
+    {"key": "import", "name": "导入", "rounds": ["1"],
+     "hint": "把创作 Skill 做好的制作包交给引擎"},
+    {"key": "cast", "name": "出图", "rounds": ["2"],
+     "hint": "批量出角色、场景、道具的形象图"},
+    {"key": "boards", "name": "分镜图", "rounds": ["3"],
+     "hint": "每个镜头一张首帧，出片时当作构图锚"},
+    {"key": "shoot", "name": "出片", "rounds": ["4"],
+     "hint": "把镜头做成真正的画面"},
+    {"key": "deliver", "name": "成片发行", "rounds": ["5", "6"],
+     "hint": "接成整集、放大、加字幕、导出发布版"},
 ]
 
 # 用户可见状态（不是 todo/doing/blocked 这些工程词）
@@ -140,22 +146,20 @@ VIDEO_MACHINE_OPTIONS = [
 ]
 
 TASKS = [
-    Task("choose_style", "选好这部剧的画风", "画风决定后面所有素材的样子，必须最先定下来",
-         "挑一种你喜欢的呈现方式", ["style.list", "style.set"], stage="idea",
-         after="接下来选择用哪台机器做画面",
-         ui={"kind": "choice", "spec": "style.set", "field": "choice", "options": STYLE_OPTIONS,
-             "preview_spec": "style.list", "preview_label": "先看看三种画风分别长什么样"}),
     Task("choose_machine", "选择用哪台机器做画面", "这一步决定后面要不要花钱",
-         "画形象和做画面可以分别选", ["models.list", "models.set"], stage="idea",
-         after="接下来把故事写成剧本",
+         "出图、出片、放大可以分别选；一次配好，全季复用", ["models.list", "models.set"], stage="setup",
+         after="接下来把创作 Skill 做好的制作包导进来",
          ui={"kind": "dual_choice", "spec": "models.set",
              "groups": [{"label": "画角色和场景的形象", "key": "image", "options": IMAGE_MACHINE_OPTIONS},
                         {"label": "把镜头做成画面", "key": "video", "options": VIDEO_MACHINE_OPTIONS}]}),
-    Task("write_script", "把故事写成剧本", "剧本是后面画形象、做画面的依据",
-         "由 AI 助手按你的题材写出每集剧本，你只需要确认好不好看",
-         [], stage="script", after="剧本定稿后开始给角色定形象",
-         ui={"kind": "prompt", "topic": "帮我把这部剧的故事写成每集剧本",
-             "note": "剧本创作需要你的想法参与，所以这一步交给 AI 助手和你一起完成 —— 复制下面这段话发给我即可。"}),
+    Task("import_pack", "把制作包交给引擎",
+         "选题、剧本、资产设计、导演、分镜、提示词都在创作 Skill 里完成；引擎只负责把它们做出来",
+         "把制作包放进这部剧的 pack/ 目录，先校验、再导入", ["pack.check", "pack.import"],
+         stage="import", after="导入成功后开始批量出图",
+         ui={"kind": "sequence", "steps": [
+             {"spec": "pack.check", "label": "先校验制作包（只读，不写盘）", "free": True},
+             {"spec": "pack.import", "label": "导入并生成 data/ 契约"},
+         ]}),
     Task("cast_assets", "给角色和场景定形象", "形象定好之后，每个镜头里的长相才能保持一致",
          "先看要画哪些，再决定用哪台机器画", ["assets.check", "assets.local", "assets.rh_wf"],
          stage="cast", cost_hint="用云端画会花钱，开始前会显示金额", after="接下来把剧本拆成分镜",
@@ -163,6 +167,12 @@ TASKS = [
              {"spec": "assets.check", "label": "先检查画图工具", "free": True, "next": "清单"},
              {"spec": "assets.local", "label": "用这台电脑画（免费）", "params": {"kind": "all"}},
              {"spec": "assets.rh_wf", "label": "用云端画（要花钱）", "params": {"kind": "all"}, "confirm": True},
+         ]}),
+    Task("draw_boards", "给每个镜头画一张首帧", "首帧决定这一镜的构图、站位和光线，出片时当第一张参考图",
+         "一集一集画，缺哪镜会列出来", ["board.frame"], stage="boards",
+         cost_hint="用这台电脑画不花钱，只是占 GPU", after="首帧齐了就能批量出片",
+         ui={"kind": "sequence", "steps": [
+             {"spec": "board.frame", "label": "画这一集的分镜图", "params": {"ep": "{ep}"}},
          ]}),
     Task("make_episode", "做出这一集的画面", "这是最花时间的一步，做完就能看到活动的剧",
          "先算清楚要花多少钱，你同意后再交给云端生成",
@@ -246,9 +256,10 @@ def user_problems(ws) -> list:
     for a in ov.get("next_actions") or []:
         text = a.get("text") or ""
         if "画风" in text:
-            out.append({"kind": "action", "title": "还没有选画风",
-                        "detail": "画风决定后面所有素材的样子，需要先定下来。",
-                        "task": "choose_style"})
+            # 画风不再由引擎选；它来自制作包的 style_lock（创作 Skill 定的）。
+            out.append({"kind": "action", "title": "还没导入制作包",
+                        "detail": "画风写在制作包的 style_lock 里；导入之后这里就不再提示。",
+                        "task": "import_pack"})
         elif "通道确认" in text or "G0" in text:
             out.append({"kind": "action", "title": "还没有选择用哪台机器做画面",
                         "detail": "这一步决定后面要不要花钱。",
@@ -364,6 +375,24 @@ def switch_hint(ws) -> dict:
     }
 
 
+def _pack_style(ws) -> str:
+    """从制作包读画风锁（`pack/pack.json` 的 `style_lock`）。
+
+    为什么不在引擎里放一份画风清单：画风是创作决策，写在包里等于「谁做的谁负责」；
+    引擎里留一份选项列表，迟早会出现「单子上有 A、实际出了 B」的账实不符。
+    读不到就返回空串 —— 界面上显示「还没导入制作包」，而不是编一个默认画风出来。
+    """
+    try:
+        p = Path(ws) / "pack" / "pack.json"
+        if not p.is_file():
+            return ""
+        doc = json.loads(p.read_text(encoding="utf-8-sig")) or {}
+        s = str(doc.get("style_lock") or "").strip()
+        return (s[:40] + "…") if len(s) > 40 else s
+    except (OSError, json.JSONDecodeError, ValueError):
+        return ""
+
+
 def _drama_name(ws, info) -> str:
     try:
         p = Path(ws)
@@ -417,19 +446,18 @@ def next_task(ws) -> dict:
     rounds = {r["no"]: r["state"] for r in _rounds(ws)}
     pl = {s["key"]: s["state"] for s in stage_progress(_rounds(ws))}
 
-    # ★ 前置设置（画风 / 用哪台机器）属于「定题材」阶段，必须先拦住
-    if rounds.get("-1") == "blocked":
-        return TASK_BY_ID["choose_style"].as_dict()
+    # ★ 2026-11-02 分支 feat/pack-engine：创作环节已移出引擎，主行动链只剩五步。
+    #   顺序是有依赖的：没配通道 → 不知道图往哪出；没导入 → 没有镜头可做。
     if rounds.get("0") == "blocked":
         return TASK_BY_ID["choose_machine"].as_dict()
-    if pl.get("idea") in ("todo", "blocked"):
-        return TASK_BY_ID["write_script"].as_dict()
-    if pl.get("script") in ("todo", "blocked"):
-        return TASK_BY_ID["write_script"].as_dict()
+    if pl.get("setup") in ("todo", "blocked"):
+        return TASK_BY_ID["choose_machine"].as_dict()
+    if pl.get("import") in ("todo", "blocked"):
+        return TASK_BY_ID["import_pack"].as_dict()
     if pl.get("cast") in ("todo", "blocked"):
         return TASK_BY_ID["cast_assets"].as_dict()
-    if pl.get("storyboard") in ("todo", "blocked"):
-        return TASK_BY_ID["write_script"].as_dict()
+    if pl.get("boards") in ("todo", "blocked"):
+        return TASK_BY_ID["draw_boards"].as_dict()
     if pl.get("shoot") in ("todo", "blocked", "doing"):
         return TASK_BY_ID["make_episode"].as_dict()
     if pl.get("deliver") in ("todo", "blocked", "doing"):
@@ -450,7 +478,7 @@ def home(ws) -> dict:
 
     drama = {
         "name": _drama_name(ws, info),
-        "style_text": style.get("label") or "还没选画风",
+        "style_text": style.get("label") or _pack_style(ws) or "还没导入制作包",
         "machine_text": _machine_text(models),
     }
     probs = user_problems(ws)
@@ -595,8 +623,9 @@ def spend_for_shots(n) -> str:
 
 
 _STEP_TEXT = {
-    "style.list": "先给你看几种画风分别长什么样",
-    "style.set": "把你选定的画风记下来",
+    "pack.check": "先校验制作包（只读，不写盘）",
+    "pack.import": "把制作包导入成引擎能做的镜头清单",
+    "board.frame": "给每个镜头画一张首帧",
     "models.list": "先给你看两种做法各自的代价",
     "models.set": "把你选定的做法记下来",
     "project.scaffold": "建好这部剧的文件夹",

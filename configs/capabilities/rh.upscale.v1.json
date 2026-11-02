@@ -3,7 +3,7 @@
   "stage": "edit",
   "engine": "runninghub",
   "label": "RunningHub 放大 · RH_Astra Iris（短边/长边）",
-  "workflow_id": "2110614419863592961",
+  "workflow_id": "2100177270433476609",
   "site": "https://www.runninghub.cn",
   "nodes": {
     "video_in": {
@@ -35,6 +35,7 @@
     "output": "1062x1920（按源宽高比吸附后裁到精确目标）"
   },
   "known_issues": [
+    "2026-11-02 按项目预配置换成工作流 2100177270433476609（原 2110614419863592961）。节点映射 2/3/4/5/7 沿用旧卡，**尚未对新工作流探测确认**；首次真跑前应跑一次 `python stages/video/workflow/scripts/run.py probe` 或 `tools/probe_nodes.py` 核对节点号，否则会报 nodeId 不存在或把参数写到错的输入上。",
     "节点 4/5 是【短边/长边】不是宽/高：竖版给 4=1080、5=1920；给反输出 598×1080",
     "输入必须先转 h264 / yuv420p / 8bit —— RH 的 LoadVideo 解不动 hevc Main 10（报 805）",
     "提交必须走 /openapi/v2/run/workflow/{id}，v1 legacy 通道同样报 805",

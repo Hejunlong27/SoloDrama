@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""nodes.py —— 七环节 23 节点的状态机（调度器的唯一真源）
+"""nodes.py —— 五环节 12 节点的状态机（调度器的唯一真源）
 
 它替代了什么
 ------------
@@ -8,7 +8,7 @@
 `workflow.py` 里再写一遍 S1–S11，三份文档各自声称自己是真源。三套编号对不上，
 于是「现在该干什么」这个问题有三个答案。
 
-现在只有一份：**七环节 23 节点**，每个节点六个字段齐全（触发 / 读 / 产物 / 判据 / 接替 / 回流）。
+现在只有一份：**五环节 12 节点**，每个节点六个字段齐全（触发 / 读 / 产物 / 判据 / 接替 / 回流）。
 
 为什么流程归代码、内容归模型
 ----------------------------
@@ -83,20 +83,18 @@ import _layout as L                          # noqa: E402
 EXIT_OK, EXIT_FAIL, EXIT_NOINPUT, EXIT_HUMAN, EXIT_STUCK, EXIT_TODO = 0, 2, 3, 4, 5, 6
 
 # ===========================================================================
-# 七环节
+# 五环节
 # ===========================================================================
 STAGES = [
-    {"id": "research", "name": "调研", "why": "先有事实，再有选题；调研结论必须落 JSON"},
-    {"id": "script", "name": "剧本", "why": "唯一事实源：台词/代号/镜号/时长/节点五项锚从这里往下传"},
-    {"id": "asset", "name": "资产", "why": "3 项签名（身份/造型/可选锚），不是 7 维骨相"},
-    {"id": "board", "name": "分镜", "why": "把文字契约翻成视觉契约：每镜一张 9:16 单帧构图"},
-    {"id": "prompt", "name": "提示词", "why": "只做装配不做决策；<Picture n> 由槽位机械生成"},
-    {"id": "video", "name": "出片", "why": "★计费。分镜图 + 角色 + 场景三参"},
-    {"id": "edit", "name": "剪辑", "why": "母版拼接（首帧封面+片段+BGM）→ 高清放大 → 字幕生成与烧录 → 发布版"},
+    {"id": "import", "name": "导入", "why": "把创作 Skill 的制作包翻译成 data/ 契约；引擎不读创作文档，也不改一个字提示词"},
+    {"id": "asset", "name": "资产", "why": "批量出资产图（人/场/道）；本地通道 ￥0，云端逐张计费"},
+    {"id": "board", "name": "分镜图", "why": "每镜一张 9:16 首帧；它是出片的第一张参考图，不是可选装饰"},
+    {"id": "video", "name": "出片", "why": "★计费。分镜图 + 角色 + 场景三参；退出码 3 是批次缺口，--resume 而不是重写提示词"},
+    {"id": "edit", "name": "剪辑", "why": "母版拼接（帧数校验）→ 高清放大 → 字幕 → 交付规格 → 发布版"},
 ]
 
 # ===========================================================================
-# 23 节点（剪辑 4 个：master / upscale / subtitle / release）
+# 12 节点（导入 3 / 资产 1 / 分镜图 1 / 出片 3 / 剪辑 4）
 # ---------------------------------------------------------------------------
 # 每个节点六个字段：
 #   trigger  触发命令（唯一入口，重复执行结果相同）
@@ -107,114 +105,52 @@ STAGES = [
 #   reflow   不过时的回流边白名单（只能回这些，不许自由跳）
 # ===========================================================================
 NODES: list = [
-    # ---------------- 调研 ----------------
-    {"id": "research.market", "stage": "research", "ep": False,
-     "trigger": "drama do research.market",
-     "reads": [], "output": "01-调研/market-data.json", "optional": True,
-     "check": "json:market>=1", "next": "research.breakdown", "reflow": [],
-     "run": "python stages/creation/scripts/creation.py market"},
-    {"id": "research.breakdown", "stage": "research", "ep": False,
-     "trigger": "drama do research.breakdown",
-     "reads": ["research.market"], "output": "01-调研/breakdown.json", "optional": True,
-     "check": "json:counts", "next": "research.topic", "reflow": ["research.market"],
-     "run": "python stages/creation/scripts/creation.py breakdown"},
-    {"id": "research.topic", "stage": "research", "ep": False,
-     "trigger": "drama do research.topic",
-     "reads": ["research.breakdown"], "output": "01-调研/positioning.json", "optional": True,
-     "check": "json:score", "next": "script.blueprint", "reflow": ["research.breakdown"],
-     "run": "python stages/creation/scripts/creation.py topic"},
-
-    # ---------------- 剧本 ----------------
-    {"id": "script.blueprint", "stage": "script", "ep": False,
-     "trigger": "drama do script.blueprint",
-     "reads": ["research.topic"], "output": "03-剧本/blueprint.md",
-     "check": "file>=800", "next": "script.episode", "reflow": ["research.topic"],
-     "run": "python stages/creation/scripts/script_rewrite.py plan"},
-    {"id": "script.episode", "stage": "script", "ep": True,
-     "trigger": "drama do script.episode --ep ep01",
-     "reads": ["script.blueprint"], "output": "03-剧本/<ep>.md",
-     "check": "script", "next": "script.gate", "reflow": ["script.blueprint"],
-     "run": "python stages/creation/scripts/script_rewrite.py write"},
-    {"id": "script.gate", "stage": "script", "ep": True,
-     "trigger": "drama do script.gate --ep ep01",
-     "reads": ["script.episode"], "output": "_done/script.gate.<ep>.json",
-     # 判据走**内置**，不调 `tools/cli.py`：后者要求工作区有 `project.json`，
-     # 而实跑项目（US01 这类「引擎视角」工作区）没有那个文件 —— 挂它会永远 exit 1。
-     "check": "ffs", "next": "script.continuity",
-     "reflow": ["script.episode"], "run": "（内置 FFS 结构检查，无需执行）"},
-    {"id": "script.dialogue", "stage": "script", "ep": True,
-     "trigger": "drama do script.dialogue --ep ep01",
-     "reads": ["script.gate"], "output": "_done/script.dialogue.<ep>.json",
-     # ★ 2026-11-01 新增（Owner 要求）：台词逻辑复核。
-     #   规则来自 3d 技能的 dialogue-driven-rules.md，只取**能机器判**的那部分：
-     #   单镜句数 / 单句长度 / 旁白与对白同镜 / 旁白配额与位置 / 台词密度。
-     #   放在剧本环节而不是分镜环节 —— 台词是剧本的产物，等分镜才发现，改的是剧本。
-     "check": "cmd:dialogue_gate.py", "next": "script.continuity",
-     "reflow": ["script.episode"], "run": "python stages/production/scripts/dialogue_gate.py"},
-    {"id": "script.continuity", "stage": "script", "ep": True, "optional": True,
-     "trigger": "drama do script.continuity --ep ep01",
-     "reads": ["script.dialogue"], "output": "_done/script.continuity.<ep>.json",
-     # ★ 2026-11-01：这个脚本的 `--ep` 是 `type=int`（要 1，不要 ep01）。
-     #   不声明 ep_style 就会传 `--ep ep01` → argparse 直接 exit 2，
-     #   节点永远过不去，且报错是「invalid int value」——看起来像脚本坏了。
-     "check": "cmd:script_continuity.py", "ep_style": "int", "next": "asset.roster",
-     "reflow": ["script.episode"], "run": "python stages/production/scripts/script_continuity.py"},
+    # ---------------- 导入 ----------------
+    # ⚠️ 这一环节**不创作**：它只把制作包（docs/pack/PACK-SPEC.md）翻译成 data/ 契约，
+    #    提示词逐字搬运，一个字都不改。缺字段就报错，不猜、不补、不润色。
+    {"id": "import.pack", "stage": "import", "ep": True,
+     "trigger": "drama do import.pack --ep ep01",
+     "reads": [], "output": "06-提示词/<ep>/shots.json",
+     "check": "imported", "next": "asset.render", "reflow": [],
+     "run": "python stages/import/pack_import.py --pack {ws}/pack --apply"},
 
     # ---------------- 资产 ----------------
-    {"id": "asset.roster", "stage": "asset", "ep": False,
-     "trigger": "drama do asset.roster",
-     "reads": ["script.blueprint"], "output": "04-资产/design/roster.json",
-     "check": "roster", "next": "asset.prompt", "reflow": ["script.blueprint"],
-     "run": "（手写：模板见 character_design.py template）"},
-    {"id": "asset.prompt", "stage": "asset", "ep": False,
-     "trigger": "drama do asset.prompt",
-     "reads": ["asset.roster"], "output": "04-资产/design/character-bible.json",
-     "check": "cmd:character_design.py check --bible {bible}", "next": "asset.render",
-     "reflow": ["asset.roster"],
-     # ★ 2026-11-01（Owner 口径）：人物设计（A1）与角色卡提示词（A2）改由**会话/技能**产出，
-     #   引擎不再代做。`character_design.py plan` 仍可用作骨架生成器，但不是这个节点的执行体 ——
-     #   节点只负责「产物在不在、四条规则过不过」。
-     "run": "（手写：会话/技能产出 character-bible.json 与角色卡提示词；校验用 character_design.py check）"},
     {"id": "asset.render", "stage": "asset", "ep": False,
      "trigger": "drama do asset.render",
-     "reads": ["asset.prompt"], "output": "04-资产/refs.json",
-     "check": "assets", "next": "board.script", "reflow": ["asset.prompt", "asset.roster"],
-     "run": "python stages/production/scripts/gen_assets_local.py"},
+     "reads": ["import.pack"], "output": "04-资产/refs.json",
+     "check": "assets", "next": "import.bind", "reflow": ["import.pack"],
+     # 本地 ComfyUI：￥0，占 GPU 不占钱。`--pack` 直接吃制作包的资产清单；
+     # 已出过且提示词指纹未变的图会跳过（断点续跑）。
+     "run": "python stages/production/scripts/gen_assets_local.py --pack {ws}/pack --submit"},
 
-    # ---------------- 分镜 ----------------
-    {"id": "board.script", "stage": "board", "ep": True,
-     "trigger": "drama do board.script --ep ep01",
-     "reads": ["script.continuity", "asset.prompt"], "output": "05-分镜/<ep>_storyboard.md",
-     "check": "board", "next": "board.frame", "reflow": ["script.episode", "asset.prompt"],
-     "run": "（手写：5 字段 duration/ratio/refs/board/prompt）"},
+    {"id": "import.bind", "stage": "import", "ep": True,
+     "trigger": "drama do import.bind --ep ep01",
+     "reads": ["asset.render"], "output": "_done/import.bind.<ep>.json",
+     "check": "five", "next": "board.frame", "reflow": ["asset.render"],
+     # 出完图要**重跑同一条导入命令**回填 characters.json / scenes.json。
+     # 这一步单独立节点，是因为「图没出就导入」会写出一张空参考表，
+      # 而空表在出片时表现为「key 找不到」——看起来像导入坏了，其实只是顺序反了。
+     "run": "python stages/import/pack_import.py --pack {ws}/pack --apply"},
+
+    # ---------------- 分镜图 ----------------
     {"id": "board.frame", "stage": "board", "ep": True,
      "trigger": "drama do board.frame --ep ep01",
-     "reads": ["board.script"], "output": "04-资产/boards/<ep>/",
-     "check": "boards", "next": "board.gate", "reflow": ["board.script"],
+     "reads": ["import.bind"], "output": "04-资产/boards/<ep>/",
+     "check": "boards", "next": "import.gate", "reflow": ["import.bind"],
      "run": "python stages/production/scripts/gen_boards.py --apply"},
-    {"id": "board.gate", "stage": "board", "ep": True,
-     "trigger": "drama do board.gate --ep ep01",
-     "reads": ["board.script", "board.frame"], "output": "_done/board.gate.<ep>.json",
-     "check": "cmd:prompt_gate.py", "next": "prompt.contract",
-     "reflow": ["board.script", "board.frame"], "run": "python stages/production/scripts/prompt_gate.py"},
 
-    # ---------------- 提示词 ----------------
-    {"id": "prompt.assemble", "stage": "prompt", "ep": True,
-     "trigger": "drama do prompt.assemble --ep ep01",
-     "reads": ["board.script"], "output": "06-提示词/<ep>/h3_prompts.json",
-     "check": "five", "next": "prompt.contract", "reflow": ["board.script"],
-     "run": "python stages/production/scripts/convert_storyboard.py --apply"},
-    {"id": "prompt.contract", "stage": "prompt", "ep": True,
-     "trigger": "drama do prompt.contract --ep ep01",
-     "reads": ["prompt.assemble", "board.gate"], "output": "_done/prompt.contract.<ep>.json",
+    {"id": "import.gate", "stage": "import", "ep": True,
+     "trigger": "drama do import.gate --ep ep01",
+     "reads": ["board.frame"], "output": "_done/import.gate.<ep>.json",
      "check": "cmd:ingest_check.py", "next": "video.resolve",
-     "reflow": ["prompt.assemble", "board.frame"], "run": "python stages/production/scripts/ingest_check.py"},
+     "reflow": ["import.bind", "board.frame"],
+     "run": "python stages/production/scripts/ingest_check.py"},
 
     # ---------------- 出片 ----------------
     {"id": "video.resolve", "stage": "video", "ep": True,
      "trigger": "drama do video.resolve --ep ep01",
-     "reads": ["prompt.contract"], "output": "_done/video.resolve.<ep>.json",
-     "check": "cmd:capabilities.py check", "next": "video.batch", "reflow": ["prompt.contract"],
+     "reads": ["import.gate"], "output": "_done/video.resolve.<ep>.json",
+     "check": "cmd:capabilities.py check", "next": "video.batch", "reflow": ["import.gate"],
      "run": "python stages/production/scripts/capabilities.py check"},
     {"id": "video.batch", "stage": "video", "ep": True,
      "trigger": "drama do video.batch --ep ep01 --yes",
@@ -228,43 +164,31 @@ NODES: list = [
      "run": "（逐段校验：存在/时长/分辨率/音轨）"},
 
     # ---------------- 剪辑 ----------------
-    # 这五个节点的执行体 2026-11-01 才接上。此前只有判据、`run` 写的是「想当然的路径」——
-    # 两条是错的（`subtitle/scripts/upscale.py` 不存在、`bgm.py` 在 production 下），
-    # 两条是空转的（`bgm.py mix` / `release_export` 默认干跑，不带 `--apply` 永远不落盘）。
-    # 判据全绿、节点永远过不去，而报错只是「找不到 *_bgm.mp4」。
     {"id": "edit.master", "stage": "edit", "ep": True,
      "trigger": "drama do edit.master --ep ep01",
      "reads": ["video.audit"], "output": "07-成片/<ep>/*_master.mp4",
      "check": "master", "next": "edit.upscale", "reflow": ["video.batch"],
-     # ★ 2026-11-01：母版拼接 = 首帧封面 + 视频片段 + BGM（可选），一次产出
-     #   `<ep>_master.mp4`。此前 BGM 是独立节点、且在放大之后 —— 与用户定的顺序
-     #   「母版（封面+片段+BGM）→ 放大 → 字幕」不符，也导致 master 与 mix 两个
-     #   产物谁是真母版说不清。
+     # 母版 = 首帧封面 + 视频片段 + BGM（可选），一次产出 `<ep>_master.mp4`。
      "run": "python stages/subtitle/scripts/subtitle.py --stage master"},
     {"id": "edit.upscale", "stage": "edit", "ep": True,
      "trigger": "drama do edit.upscale --ep ep01",
      "reads": ["edit.master"], "output": "07-成片/<ep>/*_master_1080x1920.mp4",
      "check": "upscaled", "next": "edit.subtitle", "reflow": ["edit.master"],
-     # ★ 2026-11-01 更正：这个脚本**存在**，原写法本来就是对的。
-     #   我先前只在一个筛过的文件名列表里没看到它，就断言「文件不存在」，把它改成了
-     #   `subtitle.py --stage upscale` —— 而那个 stage 受 `upscale.enabled` 开关控制，
-     #   默认关着就什么都不做，节点会永远过不去。现改回直连：
-     #   `upscale.py` 自带 `--ep/--workspace/--target`，产物名就是 `_master_<W>x<H>.mp4`。
-     #   后端三选一由 config.upscale.json 的 backend 决定：topaz（默认）/ rh（计费）/ off。
+     # 后端由 config.upscale.json 的 backend 决定：topaz（本地）/ rh（计费）/ off。
+     # 本分支的项目预配置默认 rh + exact 1080x1920。
      "run": "python stages/subtitle/scripts/upscale.py"},
     {"id": "edit.subtitle", "stage": "edit", "ep": True,
      "trigger": "drama do edit.subtitle --ep ep01",
      "reads": ["edit.upscale"], "output": "07-成片/<ep>/*_subbed.mp4",
      "check": "subtitled", "next": "edit.release", "reflow": ["edit.upscale"],
-     # 字幕：生成（对齐 → cues → ASS）+ 烧录，样式按 configs/subtitle-styles.json 的
-     # 三语规范锁死（en/zh/es），不再按画布百分比临时算字号。
+     # 字幕时间只认对齐结果（ASR/CTC）。cues=0 直接拒绝出片 —— 旧行为会静默烧一条空字幕
+     # 还叫 `_subbed.mp4`，与「已加字幕」从文件名上分不出来。
      "run": "python stages/subtitle/scripts/subtitle.py --stage render"},
     {"id": "edit.release", "stage": "edit", "ep": True,
      "trigger": "drama do edit.release --ep ep01",
      "reads": ["edit.subtitle"], "output": "09-发行/剧集/EpisodeNN.mp4",
      "check": "release", "next": "", "reflow": ["edit.subtitle"],
-     # 按集导出，不是 --all：节点本身是 ep 级的，--all 会把其它集一起过一遍，
-     # 于是「跑 ep01」变成「重导全部」，且失败时分不清是哪一集。
+     # 按集导出，不是 --all：节点本身是 ep 级的，--all 会把其它集一起过一遍。
      "run": "python stages/production/scripts/release_export.py --apply"},
 ]
 
@@ -448,8 +372,12 @@ def _eps_of(ws: pathlib.Path) -> int:
 
 
 def _shots_of(ctx: Ctx) -> int:
-    """本集镜数：data/<ep>/shots.json 的条数。"""
-    d = _read_json(ctx.data / ctx.ep / "shots.json", [])
+    """本集镜数：data/<ep>/shots.json 的条数。
+
+    `ctx.ep` 为空时（`status` 不带 --ep）退回 ep01 —— 与 `five` / `imported` 判据同口径。
+    不兜底的话，整块面板会显示「0 镜」，看起来像制作包坏了，其实只是没指定集。
+    """
+    d = _read_json(ctx.data / (ctx.ep or "ep01") / "shots.json", [])
     if isinstance(d, dict):
         d = d.get("shots") or []
     return len(d or [])
@@ -489,28 +417,6 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
             return False, "%s 只有 %s 条，要求 ≥%s" % (key, n, need)
         return True, "%s=%s" % (key, n if not isinstance(val, (str, int)) else val)
 
-    # ---- 名册：占位角色不算数 ----
-    # ★ 2026-11-01：原来判 `json:characters>=1`，而 `drama init` 的名册模板里自带
-    #   两个占位角色（「主角姓名」「LEAD」）—— 新项目一建就直接通过，人以为名册填好了，
-    #   下游照样拿占位角色去出图。这里改成「占位检测」：名字或身份还是模板文案的不算数。
-    if spec == "roster":
-        d = _read_json(out, None)
-        if not isinstance(d, dict):
-            return False, "名册不存在或不是 JSON：%s" % out
-        chars = [c for c in (d.get("characters") or []) if isinstance(c, dict)]
-        if not chars:
-            return False, "名册里没有 characters"
-        PH = ("姓名", "占位", "TODO", "待填", "示例")
-        real = [str(c.get("name") or "") for c in chars
-                if str(c.get("name") or "")
-                and not any(x in str(c.get("name") or "") for x in PH)
-                and str(c.get("identity") or "").strip()
-                and not any(x in str(c.get("identity") or "") for x in PH)]
-        if not real:
-            return False, ("名册还是 init 模板（%d 个占位角色：%s）—— 换成真实角色再往下走"
-                           % (len(chars), "、".join(str(c.get("name") or "?") for c in chars[:3])))
-        return True, "%d 个角色（%s）" % (len(real), "、".join(real[:4]))
-
     # ---- 文件类：file>=N（字节）----
     if spec.startswith("file>="):
         n = int(spec[6:])
@@ -521,74 +427,19 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
         size = out.stat().st_size
         return (size >= n), "%.1f KB" % (size / 1024.0)
 
-    # ---- 剧本：集数与结构 ----
-    if spec == "script":
-        f = ctx.ep_script()
-        if not f:
-            return False, "剧本不存在（找过 ep_01.md / ep01.md / EP01.md）：%s" % (ctx.ws / "03-剧本")
-        t = f.read_text(encoding="utf-8", errors="replace")
-        shots = len(re.findall(r"(?m)^\[SC-\d+\]", t))
-        durs = re.findall(r"(?m)^DUR:\s*(\d+)", t)
-        if not shots:
-            return False, "没有 [SC-nn] 镜头标记"
-        if not durs:
-            return False, "没有 DUR: 行"
-        return True, "%d 镜 / %d 个 DUR" % (shots, len(durs))
-
-    # ---- FFS 结构（替代 cli.py check；不依赖 project.json）----
-    if spec == "ffs":
-        f = ctx.ep_script()
-        if not f:
-            return False, "剧本不存在"
-        if _is_draft(f):
-            return False, "仍是骨架（含 STATUS: DRAFT 标记），写完后删掉该行"
-        t = f.read_text(encoding="utf-8", errors="replace")
-        head = t[:1200]
-        # 实跑剧本的 HEADER 是 `# TITLE: ...`（Markdown 标题前缀），
-        # 只认行首裸 `TITLE:` 会把 6 项全判成缺失 —— 这是「格式判断太窄」的典型。
-        miss = [k for k in ("TITLE", "EP", "PLATFORM", "STYLE LOCK", "CHAR", "SCENE")
-                if not re.search(r"(?m)^#?\s*%s\s*[:：]" % re.escape(k), head)]
-        shots = re.findall(r"(?m)^#?\s*\[SC-(\d+)\]", t)
-        durs = [int(x) for x in re.findall(r"(?m)^#?\s*DUR\s*[:：]\s*(\d+)", t)]
-        # ★ 2026-11-01（P2-5 的结论搬进来）：只认**行首**的禁用字段。
-        #   带缩进的是续行内容（`    MOOD: 紧张` 属于上一条 ACTION 的延续），
-        #   原先 `^#?\s*` 会把续行也算作字段，导致「合法剧本被判含禁用字段」。
-        banned = [k for k in ("MOOD", "CAMERA", "EMOTION", "MUSIC", "LIGHT")
-                  if re.search(r"(?m)^#?%s\s*[:：]" % k, t)]
-        # HEADER 不全只告警：老项目用别的 HEADER 写法，不该因此挡住整条链。
-        note = ("HEADER 缺 %s（不阻塞）" % "、".join(miss)) if miss else ""
-        if not shots:
-            return False, "没有 [SC-nn] 镜头" + ("；" + note if note else "")
-        if not durs:
-            return False, "没有 DUR 行" + ("；" + note if note else "")
-        bad = [d for d in durs if not (4 <= d <= 15)]
-        if bad:
-            return False, "%d 个 DUR 越界（应为 4–15 秒）：%s" % (len(bad), bad[:6])
-        if banned:
-            return False, "含禁用字段：%s" % "、".join(banned)
-        return True, ("%d 镜 / DUR %d 个（4–15s）" % (len(shots), len(durs))
-                      + ("；" + note if note else ""))
-
-    # ---- 分镜 md：5 字段齐全 ----
-    if spec == "board":
-        f = ctx.ws / "05-分镜" / ("%s_storyboard.md" % ctx.ep)
-        if not f.is_file():
-            return False, "分镜 md 不存在：%s" % f
-        if _is_draft(f):
-            return False, "仍是骨架（含 STATUS: DRAFT 标记），写完后删掉该行"
-        t = f.read_text(encoding="utf-8", errors="replace")
-        blocks = re.split(r"(?m)^##\s+", t)[1:]
-        if not blocks:
-            return False, "没有 `## <shot_id>` 段落"
-        miss = []
-        for b in blocks:
-            sid = b.split("\n")[0].strip().split()[0] if b.strip() else "?"
-            for field in ("duration", "ratio", "refs", "board", "prompt"):
-                if not re.search(r"(?m)^-\s*%s:" % field, b):
-                    miss.append("%s 缺 %s" % (sid, field))
+    # ---- 导入：三件必需（参考表由出图后回填，这一步不查）----
+    # 为什么只查三件：`characters.json` / `scenes.json` 在资产图出来之前必然是空的，
+    # 把它们算进「导入是否成功」会让「先导入、再出图」这个正确顺序永远过不去。
+    if spec == "imported":
+        d = ctx.data / (ctx.ep or "ep01")
+        need = ("shots.json", "boards.json", "h3_prompts.json")
+        miss = [n for n in need if not (d / n).is_file()]
         if miss:
-            return False, "%d 处缺字段：%s" % (len(miss), "；".join(miss[:5]))
-        return True, "%d 镜 × 5 字段齐全" % len(blocks)
+            return False, "缺 %s（先跑 import.pack）" % "、".join(miss)
+        n = _shots_of(ctx)
+        if not n:
+            return False, "shots.json 为空（制作包里这一集没有镜头）"
+        return True, "%d 镜" % n
 
     # ---- 分镜图：张数 = 镜数 ----
     if spec == "boards":
@@ -715,13 +566,12 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
 def _run_checker_cmd(ctx: Ctx, node: dict, cmd: str) -> tuple:
     """跑一个「只读」校验脚本，退出码 0 = 通过。
 
-    ⚠ 这里只允许挂**不花钱、不改产物**的检查器（cli check / prompt_gate / ingest_check /
-      character_design check / script_continuity）。跑批与出图绝不走这条路。
+    ⚠ 这里只允许挂**不花钱、不改产物**的检查器（ingest_check / capabilities check 这类）。
+      跑批与出图绝不走这条路。
     """
     # `cmd:` 后面可以是「脚本名」也可以是一整条命令（含参数）。
-    # 占位符：{ws} / {ep} / {bible} / {data}。脚本名自动在仓库里找。
+    # 占位符：{ws} / {ep} / {data}。脚本名自动在仓库里找。
     raw = cmd.format(ws=str(ctx.ws), ep=ctx.ep or "ep01",
-                     bible=str(ctx.ws / "04-资产" / "design" / "character-bible.json"),
                      data=str(ctx.data))
     parts = raw.split()
     script, extra = parts[0], parts[1:]
@@ -730,7 +580,7 @@ def _run_checker_cmd(ctx: Ctx, node: dict, cmd: str) -> tuple:
     else:
         cand = [HERE / script,
                 ROOT / "stages" / "assets" / "scripts" / script,
-                ROOT / "stages" / "creation" / "scripts" / script,
+                ROOT / "stages" / "import" / script,
                 ROOT / "stages" / "subtitle" / "scripts" / script]
         path = next((x for x in cand if x.is_file()), cand[0])
     args = [sys.executable, str(path)] + extra
@@ -871,7 +721,7 @@ def _node_state_uncached(ctx: Ctx, node: dict, _memo: dict | None = None) -> dic
 
 def evaluate(ctx: Ctx) -> dict:
     """全量状态快照。★ 2026-11-01：每条节点带 `stage`，并附 `stages` 定义 ——
-    Studio 的流程视图（adapters.norm_workflow）据此把 23 节点聚合成 7 环节，
+    Studio 的流程视图（adapters.norm_workflow）据此把 12 节点聚合成 5 环节，
     不再依赖已删除的 `workflow.py`（S1–S11 那套）。"""
     memo = {}                    # 一轮评估一份备忘录：上游节点会被反复问
     rows = []
@@ -1057,9 +907,11 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
         rec = record_attempt(ctx, node_id, {"check": node.get("check"), "ep": ctx.ep}, ok, detail)
         return EXIT_STUCK if rec["verdict"] == "stuck" else EXIT_FAIL
 
-    if cmd.startswith("python stages/creation/scripts/"):
-        # 这两类要么是人写、要么依赖 LLM 会话，调度器不能替它做决定
-        print("[TODO] 该节点没有可自动执行的命令，需要人或会话完成。")
+    if cmd.startswith("（"):
+        # 以「（…）」开头的是**说明性占位**，没有可自动执行的命令。
+        # 例：`video.audit` 的「（逐段校验：存在/时长/分辨率/音轨）」—— 它的判据是内置的，
+        # 执行体就是判据本身，不需要再起一个进程。
+        print("[TODO] 该节点没有可自动执行的命令（产物即判据）。")
         print("       产物：%s" % ctx.ep_path(node))
         print("       完成后续跑：python stages/production/scripts/nodes.py do %s%s"
               % (node_id, (" --ep " + ctx.ep) if ctx.ep else ""))
@@ -1132,7 +984,7 @@ ICON = {"passed": "OK  ", "failed": "FAIL", "absent": "--  ", "stale": "OLD ",
 
 
 def render_status(ev: dict) -> str:
-    L_ = ["七环节 23 节点 · 状态", "=" * 92]
+    L_ = ["五环节 12 节点 · 状态", "=" * 92]
     counts = ev["counts"]
     L_.append("通过 %d ｜ 不过 %d ｜ 缺失 %d ｜ 过期 %d ｜ 阻塞 %d ｜ 跳过 %d"
               % (counts["passed"], counts["failed"], counts["absent"],
@@ -1153,7 +1005,7 @@ def render_status(ev: dict) -> str:
 
 
 def render_graph() -> str:
-    L_ = ["七环节 23 节点 · 触发与接替", "=" * 100]
+    L_ = ["五环节 12 节点 · 触发与接替", "=" * 100]
     for st in STAGES:
         L_.append("")
         L_.append("【%s】%s" % (st["name"], st["why"]))
@@ -1183,7 +1035,7 @@ def _resolve_ws(v) -> pathlib.Path:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="七环节 23 节点状态机（只读磁盘，确定性）")
+    ap = argparse.ArgumentParser(description="五环节 12 节点状态机（只读磁盘，确定性）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("next", help="打印下一步该做什么（不执行）")
@@ -1217,7 +1069,7 @@ def main(argv=None) -> int:
     if a.cmd == "next":
         nx = next_node(ctx)
         if not nx:
-            print("[DONE] 23 节点全部通过。")
+            print("[DONE] 12 节点全部通过。")
             return EXIT_OK
         if a.json:
             print(json.dumps({"node": nx["node"]["id"], "stage": nx["node"]["stage"],

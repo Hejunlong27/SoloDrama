@@ -38,7 +38,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import _ws as W  # noqa: E402
 
-PIC = re.compile(r"<Picture\s+(\d+)\s*>")
+PIC = re.compile(r"<Picture\s+(\d+)\s*>|\{\{\s*(?:Mixed|Picture)\s*(\d+)\s*\}\}")
 SHOT_TS = re.compile(r"\[Shot\s+(\d+)\]\s*(?:At\s+(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?)?")
 D_TAG = re.compile(r"<d>\[[^\]]*\]\s*([^<]*)</d>", re.S)
 # ★ 平台硬限：H3 图片槽 ≤6，改不了
@@ -61,16 +61,30 @@ def total_seconds(frag: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
-def check_shot(sid: str, prompt: str, duration, refs: list, data_dir: pathlib.Path) -> list:
+def check_shot(sid: str, prompt: str, duration, refs: list, data_dir: pathlib.Path,
+               first_pic: int = 1, refs_map: dict | None = None) -> tuple:
+    """单镜校验。
+
+    `first_pic` 是**提示词里第一张图的编号**：
+      * 有分镜图 → 2（分镜图固定占 `<Picture 1>`，与引擎 `board_ref` 节点的位置一致）
+      * 无分镜图 → 1
+    这个参数是 2026-11-02 分叉时补的：旧实现硬编码「必须从 1 开始」，于是所有
+    「分镜图 + 2 角色 + 1 场景」的合法镜次全部被判「编号不连续」—— 一次误杀整集。
+    """
     errs, warns = [], []
     if not prompt.strip():
         return ["%s: prompt 为空" % sid], warns
+    refs_map = refs_map or {}
 
     # 3) <Picture N> 连续且 ≤6
-    nums = sorted({int(m.group(1)) for m in PIC.finditer(prompt)})
+    # ★ 两种图号写法都要认：`<Picture N>`（旧 FFS 契约）与 `{{Mixed N}}`（制作包/外部
+    #   Skill 的写法，见 docs/pack/PACK-SPEC.md §5.1）。引擎两者都不解析，只按槽位顺序提交；
+    #   这里查的是「提示词点到第几张」与「实际挂了几张」是否闭合 —— 写法不同，语义一样。
+    nums = sorted({int(g1 or g2) for g1, g2 in (m.groups() for m in PIC.finditer(prompt))})
     if nums:
-        if nums != list(range(1, max(nums) + 1)):
-            errs.append("%s: <Picture N> 编号不连续 %s（留空号会让后面全部错位）" % (sid, nums))
+        if nums != list(range(first_pic, max(nums) + 1)):
+            errs.append("%s: 图号不连续 %s（应从 %d 起连续；留空号会让后面全部错位）"
+                        % (sid, nums, first_pic))
         if max(nums) > PICTURE_MAX:
             errs.append("%s: <Picture N> 最大 %d 超过硬上限 %d（须删槽位改纯文字，不能只改 refs）"
                         % (sid, max(nums), PICTURE_MAX))
@@ -107,11 +121,24 @@ def check_shot(sid: str, prompt: str, duration, refs: list, data_dir: pathlib.Pa
     elif ts:
         warns.append("%s: 有时间戳但 h3_prompts 里没有 duration（引擎无法校验节奏）" % sid)
 
-    # 7) 参考图文件存在
+    # 7) 参考图可解析：先查 key 是否登记，再查文件是否存在。
+    #    两件事分开报，因为修法完全不同 —— 未登记 = 还没出图（跑 asset 环节）；
+    #    文件丢了 = 产物被删/搬走（重出或改路径）。旧实现混成一句「路径不存在」，
+    #    实测会让人去翻 characters.json，其实那里压根没这个 key。
     for r in refs:
-        if isinstance(r, str) and not r.startswith(("http://", "https://", "data:")):
-            if not (data_dir / r).is_file():
-                errs.append("%s: 参考图本地路径不存在（相对 data/）：%s" % (sid, r))
+        if r == "__board__":
+            continue
+        if not isinstance(r, str) or r.startswith(("http://", "https://", "data:")):
+            continue
+        if r not in refs_map:
+            errs.append("%s: 参考图 key=%s 未在 characters/scenes.json 登记（先出资产图，再重跑导入）"
+                        % (sid, r))
+            continue
+        real = str(refs_map[r])
+        if real.startswith(("http://", "https://", "data:")):
+            continue
+        if not (data_dir / real).is_file():
+            errs.append("%s: 参考图 key=%s 指向的文件不存在：%s" % (sid, r, real))
     return errs, warns
 
 
@@ -129,7 +156,7 @@ def main() -> int:
     DATA = W.data_ep(ws, a.ep or "")
     if not DATA.is_dir():
         print("[FAIL] 找不到输入目录：%s" % DATA)
-        print("       先跑 convert_storyboard.py，或检查 layout.json / config.local.json")
+        print("       先跑 pack_import.py（或 drama pack import），再检查 layout.json / config.local.json")
         return 2
     shots = load(DATA / "shots.json", None)
     prompts = load(DATA / "h3_prompts.json", None)
@@ -180,44 +207,38 @@ def main() -> int:
         if not _bref:
             warns.append("%s: 缺 board_ref（分镜图 key）——出片退化为两参" % sid)
         else:
-            _ep = _bref.replace("board_", "").rsplit("_", 1)[0]
-            _bp = DATA.parent / "04-资产" / "boards" / _ep / ("%s.png" % sid)
+            # ★ 2026-11-02 修两个 bug（分叉 pack-engine 时实测出来的）：
+            #   ① `board_ep01_shot_001` 用 rsplit("_", 1) 会拆成 `ep01_shot` —— 因为 shot_id
+            #      自己带下划线。改为按**后缀**剥：board_ref 必然以 `_<shot_id>` 结尾。
+            #   ② 分镜图不在 `<data>/../04-资产/` 下，而在工作区的资产目录（layout 真源）。
+            #      旧写法在 `06-提示词/04-资产/...` 找一个不存在的路径，于是**恒报缺图**。
+            _suffix = "_" + sid
+            _ep = _bref[len("board_"):-len(_suffix)] if _bref.endswith(_suffix) else (a.ep or "")
+            _assets = (W.L.assets_dir(ws) if getattr(W, "L", None) else W.ASSETS)
+            _bp = _assets / "boards" / _ep / ("%s.png" % sid)
             if not _bp.is_file():
                 errs.append("%s: board_ref=%s 但没有分镜图 %s" % (sid, _bref, _bp))
         v = prompts.get(sid)
         if not isinstance(v, dict) or not v.get("prompt"):
             errs.append("%s: h3_prompts.json 里没有该段的 prompt（引擎会直接 FAILED，不猜）" % sid)
             continue
-        # ★ 槽位口径：H3 的 6 个参考槽 = 角色图在前、场景图在后，共用一套编号，
-        #   所以 <Picture N> 的 N 上限按「两张表合并后的张数」算（2026-10-17 修正）。
+        # ★ 槽位口径：H3 的 6 个参考槽 = 分镜图 + 角色图 + 场景图，按顺序共用一套编号。
+        #   分镜图排在 `<Picture 1>`（引擎的 `first_frame` 节点），所以有 board 时
+        #   资产图从 2 号起；没有 board 才从 1 号起。
         refs_all = list(s.get("character_refs") or []) + list(s.get("scene_refs") or [])
-        refs_all = [REFS_MAP.get(x, x) for x in refs_all]
-        # 分镜图排在 `<Picture 1>`，所以要算进总张数，否则编号会判「超出一张」。
-        # 判据是「1 张分镜图 + 角色 + 场景」，与引擎 build_h3_node_list 的槽位顺序一致。
         if s.get("board_ref"):
             refs_all = ["__board__"] + refs_all
-        e, w = check_shot(sid, v["prompt"], v.get("duration"), refs_all, DATA)
+        e, w = check_shot(sid, v["prompt"], v.get("duration"), refs_all, DATA,
+                          first_pic=2 if s.get("board_ref") else 1,
+                          refs_map=REFS_MAP)
         errs += e
         warns += w
 
-    # ★ 2026-11-01：把「提示词一致性」并进来。理由很实在 —— EP03 有 3 个镜、EP04 有 5 个镜
-    #   出现「SUBJECT 锁 1 人、SHOT 写 Two bodies」，出片当然乱，但此前**没有任何一步报错**。
-    #   这类错误必须在计费之前挡住，而且判据要能机器复算（见 prompt_gate.py 的 C1–C5）。
-    if a.ep:
-        try:
-            import sys as _sys
-            _sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-            import prompt_gate as _pg
-            _rep = _pg.run_ep(ws, a.ep)
-            if _rep.get("error"):
-                warns.append("prompt_gate：%s" % _rep["error"])
-            else:
-                for _s in _rep.get("shots") or []:
-                    for _i in _s.get("issues") or []:
-                        _line = "%s %s %s：%s" % (_s["shot"], _i["code"], _i["level"], _i["msg"])
-                        (errs if _i["level"] == "ERROR" else warns).append(_line)
-        except Exception as _exc:                                # noqa: BLE001
-            warns.append("prompt_gate 未执行（%s: %s）" % (type(_exc).__name__, _exc))
+    # ★ 2026-11-02（分叉 pack-engine）：`prompt_gate.py` 已随创作层一起下线。
+    #   它查的 C1–C5（人数锁 / 图号闭合 / 缺 board）里，能与**提示词文本**无关地机械判定的
+    #   那几条，已经前移到 `stages/import/pack_spec.py` 的结构校验（导入时一次报全）；
+    #   剩下几条依赖「SUBJECT 锁几个人」这类语义，本来就只能靠模型自查 —— 留在引擎里
+    #   等于让引擎读中文判断剧情。宁可不查，也不装一个会误判的门禁。
 
     print("=" * 74)
     print("入 data/ 生成端门禁（B7）")

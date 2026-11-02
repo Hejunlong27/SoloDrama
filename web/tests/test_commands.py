@@ -60,14 +60,16 @@ def test_rounds_coverage():
 
 def test_validate():
     print("[3] 参数校验")
-    c = CMD.get("style.set")
+    # 2026-11-02：`style.set` 已下线（画风由制作包的 style_lock 决定），
+    # 换成同样带「必填枚举」的 `pack.preset` —— 被测的校验逻辑没变，只是换了个壳。
+    c = CMD.get("pack.preset")
     v = c.validate({})
-    check(not v["ok"] and any("画风" in e for e in v["errors"]), "必填缺失未报错")
-    v = c.validate({"choice": "3d_manhua"})
-    check(v["ok"] and v["values"]["choice"] == "3d_manhua", "合法枚举被拒")
-    v = c.validate({"choice": "nope"})
+    check(not v["ok"] and any("预配置" in e for e in v["errors"]), "必填缺失未报错")
+    v = c.validate({"preset": "local-comfyui-rh"})
+    check(v["ok"] and v["values"]["preset"] == "local-comfyui-rh", "合法枚举被拒")
+    v = c.validate({"preset": "nope"})
     check(not v["ok"], "非法枚举未报错")
-    v = c.validate({"choice": "--evil"})
+    v = c.validate({"preset": "--evil"})
     check(not v["ok"], "以 - 开头的值未报错")
 
     c2 = CMD.get("video.run")
@@ -104,12 +106,12 @@ def test_workspace_passing():
     # 自带 --workspace 的脚本：显式传参，且位置正确
     a = CMD.get("ingest.check").build_argv({"ep": "ep03"}, ws)
     check(a[-2:] == ["--workspace", ws], "ingest 未在末尾传 --workspace：%s" % a)
-    a = CMD.get("project.status").build_argv({}, ws)
-    check(a[2:4] == ["--workspace", ws], "creation.py 的 --workspace 必须放在子命令之前：%s" % a)
+    a = CMD.get("pack.import").build_argv({}, ws)
+    check(a[2:4] == ["--workspace", ws], "pack_import.py 的 --workspace 必须放在子命令之前：%s" % a)
     a = CMD.get("media.render").build_argv({"ep": "ep01"}, ws)
     check("--workspace" in a, "subtitle.py 未传 --workspace")
     # drama.py 没有全局 --workspace，只能靠环境变量；传了会 argparse 报错
-    for cid in ("video.plan", "style.status", "assets.local", "cost.checkpoint", "refs.report"):
+    for cid in ("video.plan", "pack.check", "assets.local", "cost.checkpoint", "refs.report"):
         a = CMD.get(cid).build_argv({}, ws)
         check("--workspace" not in a, "%s 不应给 drama.py 传 --workspace（会报 unrecognized arguments）" % cid)
     # 未给工作区时不得凭空加参数

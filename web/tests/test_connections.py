@@ -263,7 +263,9 @@ def test_purposes_auto_ready():
         check(all(x["ready"] for x in items), "全部用途应因自动选路而就绪")
         check(all(x["auto"] for x in items), "应标记为自动")
         check(not any(x["bound"] for x in items), "bound 必须仍为 False：自动 ≠ 用户显式绑定")
-        g = sb.S.get_purpose("script.generate")
+        # 2026-11-02：用途表已收敛到 pack.convert；这里改成「取表里第一个」，
+        # 免得到下一个用途再改一次测试。
+        g = sb.S.get_purpose(items[0]["id"])
         check(g["provider_id"] == "m1", "网关取到的 provider 应为自动选中的那个")
         check(g["auto"] is True, "get_purpose 应标明这是自动选路")
 

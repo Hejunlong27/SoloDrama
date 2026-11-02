@@ -72,7 +72,9 @@ def test_no_stale_result():
     print("\n[B] 直接调用不缓存（Ctx 复用时不会拿上一轮结论）")
     ws = (HERE / "fixtures" / "mini_drama").resolve()
     ctx = N.Ctx(ws, "ep01")
-    node = N.NODE_BY_ID["research.market"]
+    # 2026-11-02：`research.market` 已随创作层下线，换成执行链第一个节点。
+    # 这个用例测的是「Ctx 复用时不会拿到上一轮结论」，与具体是哪个节点无关。
+    node = N.NODE_BY_ID["import.pack"]
 
     n = {"hit": 0}
     real = N._node_state_uncached
