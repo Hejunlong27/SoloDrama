@@ -9,20 +9,23 @@
   集/镜  → `<out>/<批次>/summary.json` 的 `shots[]`（引擎自己写的逐镜结果）
   后期   → `<out>/subs/<ep>/` 的真实产物名（master / master_WxH / mix / subbed）
   发行   → `09-发行/剧集/EpisodeNN.mp4`
-  成本   → `ledger/runs/*.json` 的 `attempts[].usage`（只认平台用量）
+  时间   → `ledger/runs/*.json` 的 `attempts[].elapsed`（★ 2026-11-04：口径由钱改时间）
 
 口径纪律（与项目一致，不放宽）
 ------------------------------
 1. 批次目录只认 `YYYYmmdd_HHMMSS` 形状，避免把 `chain_epNN` 这类派生目录当批次；
 2. **同一镜头多批次出现时按优先级去重**：成功 > 有状态 > 无状态，同级取最新批次，
    否则返工批次会把旧的成功覆盖成「未跑」；
-3. 金额只累加 `usage.consumeCoins / usage.consumeMoney`，失败不计费；
+3. 时间只累加成功尝试的 `elapsed`；失败不计入（它没产出画面，但确实占了 GPU ——
+   这部分单列在 `failed` 计数里，不混进「产出耗時」，否则平均值会被失败拉高）；
 4. 拿不到就是 `None`，不用 0 假装有数据（UI 会显示「未接入」）。
 """
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -432,7 +435,12 @@ def episodes(ws) -> list:
 # 成本（只认平台 usage）
 # ---------------------------------------------------------------------------
 def _attempts(ws):
-    """台账里的全部尝试（含失败，失败由调用方过滤金额）。"""
+    """台账里的全部尝试（含失败）。
+
+    ★ 2026-11-04：字段口径从「花了多少币」改为「占了多少 GPU 时间」。
+      `coins` / `money` 保留（旧台账文件里还有这些字段，前端也可能存了旧 JSON），
+      但新代码一律看 `sec` —— 本机出片零费用，唯一稀缺的是时间。
+    """
     lr = engine_root(ws) / "ledger" / "runs"
     if not lr.is_dir():
         return []
@@ -451,11 +459,16 @@ def _attempts(ws):
                 money = float(u.get("consumeMoney") or 0)
             except (TypeError, ValueError):
                 money = 0.0
+            try:
+                sec = float(a.get("elapsed") or a.get("elapsed_seconds")
+                            or a.get("wall_elapsed_s") or 0)
+            except (TypeError, ValueError):
+                sec = 0.0
             rows.append({
                 "shot_id": d.get("shot_id"), "episode": d.get("episode") or "",
                 "stage": d.get("stage") or "", "status": (a.get("status") or "").upper(),
                 "billed": bool(a.get("billed")),
-                "coins": coins, "money": money,
+                "coins": coins, "money": money, "sec": sec,
                 "task_id": str(a.get("task_id") or ""),
                 "at": a.get("started_at") or d.get("created_at") or "",
                 "error_class": a.get("error_class") or "",
@@ -464,52 +477,124 @@ def _attempts(ws):
     return rows
 
 
+def _human_sec(sec: float) -> str:
+    """秒 → 「1 小时 16 分」；与 stages/production/scripts/time_model.py 同一口径。"""
+    try:
+        s = int(round(float(sec)))
+    except (TypeError, ValueError):
+        return "—"
+    if s < 60:
+        return "%d 秒" % s
+    m, s = divmod(s, 60)
+    if m < 60:
+        return "%d 分" % m if s < 30 else "%d 分 %d 秒" % (m, s)
+    h, m = divmod(m, 60)
+    return "%d 小时 %d 分" % (h, m) if m else "%d 小时" % h
+
+
 def cost(ws) -> dict:
-    """成本明细：台账逐条 + 按阶段/按集汇总 + inventory 口径徽标。"""
+    """时间账：已经占了多少 GPU 时间、花在哪、还差多久。
+
+    ★ 2026-11-04：整页口径从「钱」换成「时间」。
+      本仓库出图出片全在本机，平台费用恒为 0 —— 一个永远显示 ¥0 的成本页
+      不只是没用，还会让人以为「计费没接上」而去排查一个不存在的问题。
+      这里回答的是真问题：这一集占了几小时、哪一步最吃时间、整季还要几天。
+
+    字段兼容：`ledger.coins / usd / cny` 仍返回（恒为 0），因为旧前端或导出脚本
+    可能还在读；新增 `sec` 系列是唯一有意义的数值。
+    """
     inv = inventory.inventory(ws)
     rows = _attempts(ws)
-    usd_cny = 7.2
+    ok_rows = [r for r in rows if r["status"] in ("SUCCESS", "SUCCEEDED", "OK")]
+    total_sec = sum(r["sec"] for r in ok_rows)
+
     by_stage, by_ep = {}, {}
-    total_coins = total_usd = 0.0
-    for r in rows:
-        if r["status"] not in ("SUCCESS", "SUCCEEDED", "OK"):
-            continue
-        total_coins += r["coins"]
-        total_usd += r["money"]
+    for r in ok_rows:
         st = r["stage"] or "其他"
-        by_stage[st] = by_stage.get(st, 0.0) + r["coins"]
+        by_stage[st] = by_stage.get(st, 0.0) + r["sec"]
         if r["episode"]:
-            by_ep[r["episode"]] = by_ep.get(r["episode"], 0.0) + r["coins"]
-    coin_to_cny = 0.0025
-    # ★ 口径：台账（ledger attempts）是本模块的**主源**；inventory 只作资产云端用量补充。
-    #   旧 inventory 读的是 ledger 顶层的 usage，而真实 ledger 把用量放在 attempts[] 里，
-    #   因此它会低估成 0 —— 这里不能拿它当总额，否则会出现「花了钱显示 ¥0」。
-    if total_coins or total_usd:
-        source, source_text = "ledger", "来自平台用量台账（逐次尝试）"
-    elif inv["spend"]["workflow_hits"]:
-        source, source_text = "workflow", "金额来自云端生成记录，系统账单明细尚未收录"
+            by_ep[r["episode"]] = by_ep.get(r["episode"], 0.0) + r["sec"]
+
+    if ok_rows:
+        source, source_text = "ledger", "来自本机耗时台账（逐次尝试的实际占用）"
     else:
-        source, source_text = "none", ""
+        source, source_text = "none", "还没有跑过任何任务"
+
+    # 预估：用台账实测反推（有样本）否则给经验值，两者都标明来源。
+    est = _estimate(ws, avg_shot_sec=(total_sec / len(ok_rows)) if ok_rows else 0.0,
+                    sample=len(ok_rows))
+
     return {
         "ok": True,
+        "unit": "sec",
         "source": source,
         "source_text": source_text,
         "ledger": {
-            "coins": round(total_coins, 2),
-            "usd": round(total_usd, 4),
-            "cny": round(total_coins * coin_to_cny + total_usd * usd_cny, 4),
+            # 兼容字段：本仓库恒为 0，仅防旧前端读不到而崩
+            "coins": 0.0, "usd": 0.0, "cny": 0.0,
             "attempts": len(rows),
+            "success": len(ok_rows),
+            "failed": len(rows) - len(ok_rows),
+            "sec": round(total_sec, 1),
+            "human": _human_sec(total_sec),
         },
-        "assets_usage": {"coins": inv["spend"]["coins"], "tasks": inv["spend"]["tasks"],
-                         "workflow_hits": inv["spend"]["workflow_hits"],
-                         "note": "资产云端出图的独立记录，可能尚未进台账"},
-        "by_stage": [{"stage": k, "coins": round(v, 2)} for k, v in
-                     sorted(by_stage.items(), key=lambda kv: kv[1], reverse=True)],
-        "by_episode": [{"ep": k, "coins": round(v, 2)} for k, v in sorted(by_ep.items())],
+        "avg_shot": {
+            "sec": round(total_sec / len(ok_rows), 1) if ok_rows else 0.0,
+            "human": _human_sec(total_sec / len(ok_rows)) if ok_rows else "—",
+            "sample": len(ok_rows),
+        },
+        "by_stage": [{"stage": k, "sec": round(v, 1), "human": _human_sec(v)}
+                     for k, v in sorted(by_stage.items(), key=lambda kv: kv[1], reverse=True)],
+        "by_episode": [{"ep": k, "sec": round(v, 1), "human": _human_sec(v)}
+                       for k, v in sorted(by_ep.items())],
         "rows": sorted(rows, key=lambda r: r["at"], reverse=True)[:200],
-        "rate": {"coin_to_cny": coin_to_cny, "usd_to_cny": usd_cny},
+        "estimate": est,
+        # 资产图张数：这是「还要跑多少」的分母，不是钱
+        "assets": {"images": (inv.get("images") or {}).get("total", 0),
+                   "loose": len(inv.get("loose") or [])},
         "updated_at": time.time(),
     }
+
+
+def _estimate(ws, *, avg_shot_sec: float = 0.0, sample: int = 0) -> dict:
+    """单集 / 整季的耗时预估。系数优先用实测，没有就用经验值并说明。"""
+    import json as _json
+    import subprocess as _sp
+
+    root = Path(__file__).resolve().parents[2]
+    script = root / "stages" / "production" / "scripts" / "time_model.py"
+    if not script.is_file():
+        return {"ok": False, "reason": "time_model.py 缺失"}
+    args = [sys.executable, str(script), "--workspace", str(ws), "--json",
+            "--episodes", "30"]
+    try:
+        out = _sp.run(args, capture_output=True, text=True, timeout=60,
+                      env={**os.environ, "SOLODRAMA_WORKSPACE": str(ws)})
+        doc = _json.loads(out.stdout[out.stdout.index("{"):]) if "{" in out.stdout else {}
+    except Exception as exc:                     # noqa: BLE001
+        return {"ok": False, "reason": "%s: %s" % (type(exc).__name__, exc)}
+    if not doc or not isinstance(doc.get("episode"), dict):
+        return {"ok": False, "reason": "预估脚本无输出"}
+    # 结构：{"episode": {...单集...}, "season": {...整季...}}
+    doc["ok"] = True
+    doc["measured_sample"] = sample
+    doc["measured_shot_sec"] = round(avg_shot_sec, 1)
+    ep, se = doc["episode"], doc.get("season") or {}
+    # 实测优先：有样本就用「样本数 × 实测单镜秒数」推算，并在文案里说清依据，
+    # 不把经验系数当实测数字展示 —— 那会让人对一张不准的表产生信任。
+    if sample and avg_shot_sec > 0:
+        doc["confidence"] = "measured"
+        doc["basis"] = "按本机实测 %d 次、平均每镜 %.1f 秒反推" % (sample, avg_shot_sec)
+    else:
+        doc["confidence"] = ep.get("confidence") or "estimated"
+        doc["basis"] = "经验系数（尚未实测），首次真跑后用 time plan --calibrate 校准"
+    doc["summary"] = {
+        "episode_human": ep.get("total_human"),
+        "season_human": se.get("total_human"),
+        "bottleneck": ep.get("bottleneck"),
+        "episodes": se.get("episodes"),
+    }
+    return doc
 
 
 # ---------------------------------------------------------------------------

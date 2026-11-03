@@ -37,6 +37,6 @@
 
   "upscale": {
     "backend": "off",
-    "_note": "H3 出片已是 1344×1792 量级，交付 1080×1920 用 crop-to-fill 即可，不需要超分。要超分时把 backend 改 topaz（本地）或 rh（计费）。"
+    "_note": "H3 出片已是 1344×1792 量级，交付 1080×1920 用 crop-to-fill 即可，不需要超分。要超分时把 backend 改 topaz（本地）。RunningHub 放大通道已于 2026-11-04 移除。"
   }
 }

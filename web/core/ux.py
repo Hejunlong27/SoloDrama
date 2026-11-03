@@ -136,13 +136,16 @@ STYLE_OPTIONS = [
 ]
 
 # 机器选项（用户语言）
+# ★ 2026-11-04：只剩「这台电脑」。云端通道（RunningHub）已整体移除，
+#   不是「隐藏」而是删掉 —— 留一个选不动的选项比没有更让人困惑。
+#   `closed_model` 也去掉了：它没有引擎执行路径，选它等于承诺一件做不到的事。
 IMAGE_MACHINE_OPTIONS = [
-    {"value": "local_comfyui", "title": "这台电脑（免费）", "desc": "不花钱，但会占用电脑，出图时电脑会比较忙", "recommend": True},
-    {"value": "runninghub", "title": "云端（要花钱）", "desc": "不占电脑，速度快；按张计费"},
+    {"value": "local_comfyui", "title": "这台电脑（免费）",
+     "desc": "不花钱，但会占用电脑；出图时电脑会比较忙", "recommend": True},
 ]
 VIDEO_MACHINE_OPTIONS = [
-    {"value": "runninghub", "title": "云端（要花钱）", "desc": "按镜头计费，开始前会显示金额", "recommend": True},
-    {"value": "closed_model", "title": "外部模型（站外付费）", "desc": "自己在外部平台生成好，再把图片放进这部剧的文件夹"},
+    {"value": "local_comfyui", "title": "这台电脑（免费）",
+     "desc": "占本机 GPU，一集通常几十分钟；不联网、不产生费用", "recommend": True},
 ]
 
 TASKS = [
@@ -504,8 +507,7 @@ def home(ws) -> dict:
 def _machine_text(models: dict) -> str:
     im = (models.get("image") or {})
     vi = (models.get("video") or {})
-    label = {"local_comfyui": "这台电脑（免费）", "cloud_comfyui": "云端 ComfyUI（要花钱）",
-             "runninghub": "云端（要花钱）", "closed_model": "外部模型"}
+    label = {"local_comfyui": "这台电脑（免费）"}
     parts = []
     if im.get("choice"):
         parts.append("画形象：" + label.get(im["choice"], im["choice"]))

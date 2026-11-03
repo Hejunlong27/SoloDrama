@@ -1,4 +1,4 @@
-/* 生成通道：图像 / 视频 各条通道的真实状态（本地 ComfyUI ｜ RunningHub 工作流）
+/* 生成通道：图像 / 视频 各条通道的真实状态（全部在本机 ComfyUI）
    数据来自 /api/generators —— 只读台账，不提交任务、不产生费用。
    为什么单独一页：文生图与图生图是**两套工作流**，混在一起看就会出现
    「传了参考图却出纯文生图」这种花钱买错东西的情况。 */
@@ -56,11 +56,10 @@ export async function render(ctx, opts) {
   const c = d.counts || {};
   const comfy = d.comfy || {};
 
-  const acts = '<button class="btn quiet" id="btnReload">' + icon('refresh', 14) + ' 重新探测</button>'
-    + '<button class="btn quiet" id="btnRhCfg">' + icon('settings', 14) + ' 配置云端工作流</button>';
+  const acts = '<button class="btn quiet" id="btnReload">' + icon('refresh', 14) + ' 重新探测</button>';
   const summary = '图像 ' + ((c.image || {}).ready || 0) + '/' + ((c.image || {}).total || 0)
     + ' 可用 · 视频 ' + ((c.video || {}).ready || 0) + '/' + ((c.video || {}).total || 0)
-    + ' 可用 · 本地出图/出片 ￥0，云端工作流按点数计费';
+    + ' 可用 · 出图与出片都在本机，￥0（占 GPU 时间）';
   /* 嵌入到连接中心时不再画页头（否则一个页面两个大标题），只留一行工具按钮 */
   const html = ''
     + (embedded
@@ -78,58 +77,15 @@ export async function render(ctx, opts) {
     + '</div></div>'
 
     + section('image', '图像模型', '文生图 / 图生图 是两套工作流，分别登记', imgs)
-    + section('video', '视频模型', '本地 H3 图生视频 ｜ 云端 H3 工作流出片', vids)
+    + section('video', '视频模型', '本地 MiniMax H3 图生视频', vids)
 
     + '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-    + '「状态」来自真实探测：本地通道核对 ComfyUI 在线 + 工作流节点类 + 模型文件；'
-    + '云端通道核对项目 <span class="mono">video-pipeline/config.local.json</span> 里的工作流 ID 与节点映射。'
-    + '换项目后这里会跟着变。</div></div>';
+    + '「状态」来自真实探测：核对 ComfyUI 在线 + 工作流节点类 + 模型文件齐全。'
+    + '不联网、不提交任务、不产生任何费用。</div></div>';
 
   return {
     html,
     mount: (root) => {
-      const cfgBtn = root.querySelector('#btnRhCfg');
-      if (cfgBtn) {
-        cfgBtn.onclick = () => {
-          const cur = (items.find((x) => x.id === 'image.rh.t2i') || {});
-          openModal({
-            title: '配置 RunningHub 工作流出图',
-            html: '<div class="field"><label>文生图工作流 ID</label>'
-              + '<input class="input mono" id="rhT2i" placeholder="在 RH 工作流页面运行一次后生成的 API 快照 ID">'
-              + '<div class="help">纯提示词出图用这条。</div></div>'
-              + '<div class="field"><label>图生图工作流 ID（可留空）</label>'
-              + '<input class="input mono" id="rhI2i">'
-              + '<div class="help">★ 图生图是**另一套**工作流：必须带一个「加载图像」节点，否则参考图不会被用上。</div></div>'
-              + '<div class="field"><label>提示词节点 id</label>'
-              + '<input class="input mono" id="rhPNode" placeholder="例如 6"></div>'
-              + '<div class="field"><label>「加载图像」节点 id（填了图生图才需要）</label>'
-              + '<input class="input mono" id="rhINode" placeholder="例如 12"></div>'
-              + '<div class="help">只改本项目的 image_providers，其余配置原样保留；写前自动备份。</div>',
-            foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
-              + '<button class="btn primary" id="rhOk">写入配置</button>',
-            mount: () => {
-              document.getElementById('rhOk').onclick = async () => {
-                const body = {
-                  ws: ctx.ws,
-                  t2i_id: document.getElementById('rhT2i').value.trim(),
-                  i2i_id: document.getElementById('rhI2i').value.trim(),
-                  prompt_node: document.getElementById('rhPNode').value.trim(),
-                  image_node: document.getElementById('rhINode').value.trim()
-                };
-                try {
-                  const r = await api.setRhWorkflow(body);
-                  document.getElementById('modal').classList.remove('on');
-                  toast('已写入 ' + (r.provider || '') + '（已备份原配置）');
-                  ctx.refresh();
-                } catch (e) {
-                  toast('写入失败：' + (e && e.message ? e.message : e), 'bad');
-                }
-              };
-            }
-          });
-        };
-      }
-
       const b = root.querySelector('#btnReload');
       if (b) {
         b.onclick = async () => {

@@ -13,7 +13,12 @@
 > 需要「一句话到成片」的全链路版本，请留在 `main`。
 
 把一部竖屏短剧从「制作包」推到「可发行成片」的批量执行引擎：  
-资产出图默认 **￥0**，云端出片逐笔可核，字幕时间只认强制对齐，交付规格不过关就不许导出。
+出图、出片、放大**全部在本机跑**（￥0，不联网），唯一的成本是 GPU 时间；字幕时间只认强制对齐，
+交付规格不过关就不许导出。
+
+> **硬约束：本仓库不调用任何 RunningHub API。** 这不是「默认不用」，是代码里没有：
+> `stages/_netguard.py` 在 socket 与 URL 两层拦截出站，`runninghub.*` 无论怎么配都不可达；
+> `stages/production/scripts/tests/test_no_rh_api.py` 每次跑测试都会重新验一遍。
 
 全程在一台 **RTX 4060（8G 显存）+ 16G 内存的笔记本**上开发并验证 —— 不需要工作站、服务器或云主机。
 
@@ -29,7 +34,7 @@
 | ------- | ------------------------------------------------------------- | ----------------------------------------------------- |
 | **产能**  | 一集 60 秒 = 6–10 个生成段 + 20–40 张资产图 + 分镜图 + 字幕，跨 5 个环节（导入 / 出图 / 分镜图 / 出片 / 剪辑） | 每集都要人肉串，串错一步整集返工                                      |
 | **一致性** | 角色跨集换脸、跨镜换衣服；参考图槽位残留，上一集的场景串进下一集                              | 观众认不出是同一个人，投放即掉                                       |
-| **成本**  | 云端按次计费，跑错一步重跑整批；同样的时长，段数拆得越碎越贵          | 账单事后才看见，逐笔核对无从下手                                    |
+| **成本**  | 本机出片零费用，但一集要占 2–3 小时 GPU；30 集 ≈ 76 小时，跑错一步重跑整批 | 时间花在哪一步说不清，进度只能靠感觉                                    |
 | **交付**  | 发布版叫 `EP01_1080p_ES.mp4`、资产混进成片目录、9:16 靠补边凑                   | 平台判规格不符，人工复核一次发现一次                                    |
 
 这四件事都不是「模型不够好」，是流程缺工程约束。所以本仓库大部分代码不在写提示词，在写门禁、校验与台账。
@@ -139,7 +144,7 @@ SoloDrama/
 │   ├── import/           ★ 制作包导入：校验 → data/ 契约 ｜ 项目预配置落地
 │   ├── assets/           资产出图：提示词净化 + 本地 ComfyUI 客户端
 │   │   └── comfyui/      ★ 本地 ComfyUI 出图引擎（￥0、零第三方依赖、不出网）
-│   ├── video/workflow/   批量出片（RunningHub 工作流 / AI 应用）
+│   ├── video/comfyui/    批量出片（本地 ComfyUI · Minimax H3）
 │   ├── subtitle/         字幕与成片：对齐 → ASS → 拼接 → 2K → 烧录 → 七道断言
 │   └── production/       一集总控：门禁 / 体检 / 调度 / 验收 / 成本台账 / 发行门禁
 ├── tools/                环境自检、创作层确定性工具
@@ -200,7 +205,7 @@ SoloDrama/
 | 落点与命名事故复盘（必读） / 踩坑清单 / 产线对账关卡             | [`docs/patches/`](docs/patches/)                                                                                                                                  |
 | Studio 工作台说明（启动 / 页面能力矩阵 / LLM 系统 / 安全边界） | [`web/STUDIO.md`](web/STUDIO.md)                                                                                                                                  |
 | 架构、数据契约、执行流程                              | [`docs/Agent项目技术文档.md`](docs/Agent项目技术文档.md)                                                                                                                      |
-| 出片数据契约 / RunningHub 行为契约 / 生产总控坑册         | [`stages/video/workflow/references/`](stages/video/workflow/references/) · [`stages/production/references/pitfalls.md`](stages/production/references/pitfalls.md) |
+| 出片数据契约 / 本地 ComfyUI 行为契约 / 生产总控坑册         | [`docs/pack/PACK-SPEC.md`](docs/pack/PACK-SPEC.md) · [`stages/production/references/pitfalls.md`](stages/production/references/pitfalls.md) |
 
 ## License
 

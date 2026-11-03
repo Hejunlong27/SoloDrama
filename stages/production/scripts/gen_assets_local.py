@@ -8,7 +8,7 @@
 |---|---|---|---|
 | **本地 ComfyUI**（本脚本） | `gen_assets_local.py` | `stages/assets/comfyui/comfy_client.py` | **￥0**（只花本机电与时间） |
 | 云端 ComfyUI | 同脚本 | `COMFYUI_URL` 指向云端 | 云主机费用 |
-| RunningHub 工作流 | `gen_assets_rh_workflow.py` | RH nodeInfoList | 按张计费 |
+| 云端 ComfyUI | 同一个客户端，`COMFYUI_URL` 指向远端 | 同上 | 远端机器的时间 |
 
 两条**通道**，由 `drama.py assets --engine {local,wf}` 切换（默认 local）。
 ★ 2026-11-01：原来的「RH AI 应用」两个脚本（`gen_char_assets` / `gen_scene_assets`）已删 ——
@@ -27,7 +27,7 @@
 理由不是省钱（本地不花钱），而是**别在没确认风格时批量跑掉十几分钟 GPU**。
 
 依赖纪律：纯标准库 + `asset_md` + `run_ledger`（后者亦为纯标准库）。
-**不需要 httpx、不需要 `RUNNINGHUB_*` 任何 Key。**
+**不需要 httpx、不需要任何平台 Key；出站只连本机 ComfyUI。**
 """
 from __future__ import annotations
 
@@ -41,12 +41,14 @@ import sys
 import time
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]      # .../SoloDrama
-ENGINE = _PROJECT_ROOT / 'stages' / 'video' / 'workflow' / 'scripts' / 'engine'
+# ★ 2026-11-04：RunningHub 出片引擎已整体移除（只留本地 ComfyUI）。
+#   `run_ledger` 是纯标准库的耗时台账，挪到这里继续用；不再需要 ENGINE 目录。
+_SCRIPTS = pathlib.Path(__file__).resolve().parent
 COMFY_DIR = _PROJECT_ROOT / 'stages' / 'assets' / 'comfyui'
 COMFY_PY = COMFY_DIR / 'comfy_client.py'
 ASSETS_SCRIPTS = _PROJECT_ROOT / 'stages' / 'assets' / 'scripts'
 
-sys.path.insert(0, str(ENGINE))            # run_ledger（纯标准库）
+sys.path.insert(0, str(_SCRIPTS))          # run_ledger（纯标准库）
 sys.path.append(str(ASSETS_SCRIPTS))       # asset_md（纯标准库）
 sys.path.append(str(pathlib.Path(__file__).resolve().parent))   # _ws
 os.environ.setdefault('PYTHONUTF8', '1')

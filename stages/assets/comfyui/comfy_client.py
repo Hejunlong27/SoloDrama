@@ -47,6 +47,33 @@ import urllib.error
 import urllib.request
 import urllib.parse
 
+
+# ---------------------------------------------------------------------------
+# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
+#   这里不是「删掉调用点」，而是把出站通道收窄到本机/内网。任何试图连
+#   runninghub.* 的代码都会在 DNS 解析那一步抛 RemoteForbidden —— 包括未来
+#   某次合并里被悄悄加回来的 httpx 调用。细则见 stages/_netguard.py。
+# ---------------------------------------------------------------------------
+def _boot_netguard() -> None:
+    import pathlib as _pl
+    import sys as _sys
+    for _p in _pl.Path(__file__).resolve().parents[:5]:
+        for _cand in ((_p / "_netguard.py"), (_p / "stages" / "_netguard.py")):
+            if _cand.is_file():
+                if str(_cand.parent) not in _sys.path:
+                    _sys.path.insert(0, str(_cand.parent))
+                try:
+                    import importlib as _il
+                    _il.import_module("_netguard").install()
+                except Exception:        # noqa: BLE001 —— 守卫自身异常不能拖垮主流程
+                    pass
+                return
+
+
+_boot_netguard()
+
+
+
 # Windows 控制台默认 GBK，强制 UTF-8 输出，避免中文资产名乱码
 try:
     sys.stdout.reconfigure(encoding="utf-8")

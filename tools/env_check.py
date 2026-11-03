@@ -17,7 +17,7 @@
 检查分三层
 ----------
     必需（创作/出片主链路）  Python ≥3.10、Pillow、ffmpeg、ffprobe
-    可选（云端/放大/识别）   httpx、whisper-cli、Topaz、ComfyUI 端口、RunningHub Key
+    可选（放大/识别）        httpx、whisper-cli、Topaz、ComfyUI 端口
     完整性                   manifest.sha256 自校验（抽查全部受管文件）
 
 用法
@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # (import 名, 包名, 用途, 是否必需)
 LIBS = [
     ("PIL", "Pillow", "封面排版/叠字兜底（cover_forge）、图像体检", True),
-    ("httpx", "httpx", "RunningHub 云端通道", False),
+    ("httpx", "httpx", "大模型网关（可选；本仓库出图出片不出网）", False),
 ]
 
 # (可执行名, 用途, 是否必需, 缺失时的安装提示)
@@ -68,12 +68,12 @@ BINS = [
 #
 # ★ 2026-11-01：这组取代了原来的 `ENV_KEYS`（配置组）。
 #   同一个变量在两个组里各出一条，会让 Studio 的修复清单出现**重复 id**
-#   （实测：`RUNNINGHUB_API_KEY` 同时在「配置」与「环境快照」→ `cfg.rh_key` 出现两次，
+#   （实测：同一个 Key 同时在「配置」与「环境快照」→ 同一 id 出现两次，
 #   `web/tests/test_health.py` 判失败）。一个变量只该有一条体检项：
 #   本组已经覆盖「有没有设」+「设了没读到」+「指向的目录还在不在」。
-# 站点（RUNNINGHUB_BASE_URL）已废弃：真源 `configs/channels.json`，故不在此表。
+# ★ 2026-11-04：RUNNINGHUB_API_KEY / RUNNINGHUB_BASE_URL 已从体检表删除 ——
+#   本仓库不调任何平台 API，留着它们只会让人以为「还需要配一个 Key」。
 SNAPSHOT_KEYS = (
-    ("RUNNINGHUB_API_KEY", "云端出片通道（缺了只能走本地 ComfyUI）"),
     ("SOLODRAMA_WORKSPACE", "默认工作区（不设也行，命令里显式 --workspace 即可）"),
 )
 
@@ -255,21 +255,6 @@ def _bin_candidates(name: str) -> list:
     return uniq
 
 
-def _resolved_site() -> tuple:
-    """→ (站点, 来源, 被忽略的旧环境变量值)。实现在 `stages/production/scripts/_site.py`。
-
-    体检不自己算站点：算第二份就一定会有两份不一致，而「三方各说各话」正是这次要收掉的东西。
-    """
-    try:
-        scripts = ROOT / "stages" / "production" / "scripts"
-        if str(scripts) not in sys.path:
-            sys.path.insert(0, str(scripts))
-        from _site import runtime_site
-        return runtime_site()
-    except Exception as exc:                                   # noqa: BLE001
-        return ("", "站点真源读取失败（%s）" % type(exc).__name__, "")
-
-
 def _persisted_env(name: str) -> tuple:
     """→ (值, 作用域)。读 Windows 注册表里的**持久化**用户/机器环境变量。
 
@@ -399,16 +384,8 @@ def collect() -> dict:
             "state": state, "path": got, "detail": detail, "hint": hint,
         })
 
-    # 4) 配置（站点真源；变量类的一条都不放这里，见 4.5 环境快照）
-    site_url, site_src, site_dead = _resolved_site()
-    items.append({
-        "group": "配置", "name": "RunningHub 站点",
-        "ok": bool(site_url), "required": False,
-        "detail": ("%s（来源：%s）" % (site_url, site_src)) if site_url
-                  else "取不到（%s）" % site_src,
-        "hint": ("环境变量里还留着 %s —— 已不生效，建议删掉，免得下次 `echo` 到旧值又排查一轮"
-                 % site_dead) if site_dead else "",
-    })
+    # 4) 配置（变量类的一条都不放这里，见 4.5 环境快照）
+    # ★ 2026-11-04：原「RunningHub 站点」体检项已删 —— 本仓库没有平台站点。
     items.append({
         "group": "配置", "name": "ComfyUI 本地端口",
         "ok": _port_open("127.0.0.1", 8188), "required": False,

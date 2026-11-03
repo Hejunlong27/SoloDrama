@@ -27,16 +27,15 @@ SCRIPTS = {
     "compliance": paths.PROD_SCRIPTS / "compliance_precheck.py",
     "prepare_refs": paths.PROD_SCRIPTS / "prepare_refs.py",
     "release_export": paths.PROD_SCRIPTS / "release_export.py",
-    "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
+    "time_model": paths.PROD_SCRIPTS / "time_model.py",
+    "time_report": paths.PROD_SCRIPTS / "time_report.py",
     "preflight_ep": paths.PROD_SCRIPTS / "episode_preflight.py",
-    "rhdoctor": paths.PROD_SCRIPTS / "rh_doctor.py",
     "subtitle": paths.SUBTITLE_SCRIPTS / "subtitle.py",
     "upscale": paths.SUBTITLE_SCRIPTS / "upscale.py",
     "layout": paths.STAGES_DIR / "_layout.py",
     "comfy_check": paths.COMIFY_SCRIPTS / "comfy_client.py",
     # ★ 2026-10-29：视频本地出片（H3，￥0）与 RH 工作流出图（t2i / i2i 双工作流）
     "comfy_video": paths.STAGES_DIR / "video" / "comfyui" / "comfy_local_video.py",
-    "gen_rh_wf": paths.PROD_SCRIPTS / "gen_assets_rh_workflow.py",
     # ★ 新分支补入：批量出图 / 分镜图 / 节点状态机
     "gen_local": paths.PROD_SCRIPTS / "gen_assets_local.py",
     "gen_boards": paths.PROD_SCRIPTS / "gen_boards.py",
@@ -48,7 +47,7 @@ SCRIPTS = {
 # 计费口径
 FREE = "free"           # 完全免费
 GPU = "gpu"             # 不花钱，但独占本机 GPU
-PAID = "paid"           # ★ 计费（RH币 / 美元）
+PAID = "paid"           # 站外计费（本仓库已无平台 API；保留给闭源模型通道）
 EXTERNAL = "external"   # 站外计费（闭源模型 / 人工）
 
 BILLING_LABEL = {
@@ -287,7 +286,7 @@ _add(_c("models.set", "0 通道", "确认通道（G0）", "drama",
         argv=["models", "set", "{pairs}"], gate="G0", danger=WRITE,
         flags={"--comfy-url": "comfy_url", "--comfy-workflow": "comfy_workflow",
                "--app-url": "app_url", "--app-id": "app_id", "--workflow-id": "workflow_id"},
-        params=[Param("pairs", "确认项", "str", required=True, placeholder="image=local_comfyui video=runninghub",
+        params=[Param("pairs", "确认项", "str", required=True, placeholder="image=local_comfyui video=local_comfyui",
                       help="形如 image=<通道> video=<通道>"),
                 Param("comfy_url", "ComfyUI 地址", "str", placeholder="http://127.0.0.1:8188"),
                 Param("comfy_workflow", "工作流 API 文件", "str"),
@@ -379,24 +378,6 @@ _add(_c("board.frame", "3 分镜图", "批量出分镜图（每镜一张 9:16 �
         help="读 data/<ep>/boards.json 的 prompt，每镜出一张与成片同构的首帧。"
              "缺 board_prompt 的镜会跳过并列出来。",
         agent="汇报出了几张、跳过哪几镜、为什么跳过。"))
-_add(_c("assets.rh_wf", "2 资产", "云端工作流出图（文生图/图生图，★计费）", "gen_rh_wf",
-        billing=PAID, danger=DANGER,
-        flags={"--md": "md", "--only": "only", "--ratio": "ratio",
-               "--mode": "mode", "--ref": "ref"},
-        bools={"--submit": "submit", "--force": "force"},
-        params=[Param("md", "资产提示词 md", "str", required=True,
-                      placeholder="<工作区>/04-资产/资产提示词.md"),
-                Param("only", "只做这些", "str", placeholder="char_01,char_02"),
-                Param("ratio", "画幅", "str", default="16:9"),
-                Param("mode", "模式", "enum", default="t2i", choices=["t2i", "i2i"]),
-                Param("ref", "参考图路径", "str", placeholder="i2i 必填，如 04-资产/characters/xxx.png"),
-                Param("submit", "确认提交（★计费）", "bool", default=False),
-                Param("force", "已生成的也重跑（重复计费）", "bool", default=False)],
-        resources=["RH"],
-        help="走 RunningHub「工作流」通道（nodeInfoList）。★ 文生图与图生图是**两套工作流**："
-             "t2i 用 image_providers[active].id，i2i 用 id_i2i 且必须给 --ref（先上传再喂给加载图像节点）。"
-             "默认干跑。",
-        agent="先干跑列出清单与将用的工作流 ID；i2i 要确认参考图路径存在，等我明确确认后再 --submit。"))
 # ===== 环节 7 参考图 =======================================================
 _add(_c("refs.report", "2 资产", "参考图瘦身体检", "drama",
         argv=["refs"], mode="sync", danger=READ,
@@ -475,43 +456,30 @@ _add(_c("video.workflow.mapcheck", "4 出片", "校验节点映射（离线）",
         help="离线校验：映射里的节点 id 在工作流里是否存在、类型是否对得上。"
              "换工作流后先跑这个，能在花 GPU 之前抓出「id 写错」这类必然失败。",
         agent="有 [NG] 就按提示改映射文件的 id；[? ] 只是类型提醒，可以说清风险后继续。"))
-_add(_c("video.plan", "4 出片", "出片计划与成本预估（G3）", "drama",
-        argv=["video", "plan"], mode="sync", danger=READ, gate="G3",
-        flags={"--limit": "limit", "--only": "only"},
-        params=[Param("limit", "只算前 N 段", "int"), Param("only", "指定段", "str")],
-        help="免费，不提交；预估偏高约 4%，只作闸门参考。",
-        agent="告我将提交几段、跳过几段、预估消耗与按 145 RH币/段的对照值。"))
-_add(_c("video.run", "4 出片", "真跑出片（★计费，G5）", "drama",
-        argv=["video", "run"], billing=PAID, danger=DANGER, gate="G5",
-        flags={"--limit": "limit", "--only": "only", "--resume": "resume", "--concurrency": "concurrency"},
-        bools={"--yes": "yes"},
-        params=[Param("yes", "确认计费闸门", "bool", default=False),
+_add(_c("video.plan", "4 出片", "出片计划与耗时预估（不提交任务）", "drama",
+        argv=["video", "plan"], mode="sync", danger=READ,
+        flags={"--limit": "limit", "--only": "only", "--ep": "ep"},
+        params=[Param("ep", "集号", "str", required=True, placeholder="ep01"),
+                Param("limit", "只算前 N 段", "int"), Param("only", "指定段", "str")],
+        help="零开销、不提交任何任务。给出总耗时与该集的时间分解（出片通常占七成以上）。",
+        agent="报出「这一集预计多久 / 瓶颈在哪个阶段」，并说明哪些系数还没实测校准。"))
+_add(_c("video.run", "4 出片", "真跑出片（本机 GPU，￥0）", "drama",
+        argv=["video", "run", "--engine", "local"], billing=GPU, danger=DANGER,
+        flags={"--limit": "limit", "--only": "only", "--ep": "ep"},
+        bools={"--yes": "yes", "--force": "force"},
+        params=[Param("ep", "集号", "str", required=True, placeholder="ep01"),
+                Param("yes", "确认执行（会占 GPU）", "bool", default=False),
                 Param("limit", "只跑前 N 段（小样）", "int"),
                 Param("only", "指定段", "str"),
-                Param("resume", "续跑批次号", "str", placeholder="20261017_141530"),
-                Param("concurrency", "并发（平台硬限 ≤5）", "int", default=5)],
-        resources=["RH"], help="★ 不加 --resume 的全量重跑 = 重复扣费；续跑必须带批次号。",
-        agent="执行前必须报出：批次号、将提交段数、预估金额、是否续跑。等我明确确认后再执行；失败段重跑一律带 --resume 与 --only。"))
-_add(_c("video.sample", "4 出片", "小样 1 段（G4）", "drama",
-        argv=["video", "run", "--limit", "1"], billing=PAID, danger=DANGER, gate="G4",
-        flags={"--only": "only"}, bools={"--yes": "yes"},
-        params=[Param("only", "指定段（更精准）", "str"), Param("yes", "确认计费", "bool", default=False)],
-        resources=["RH"], help="先出 1 段，用户看过成片再全量。",
-        agent="出完后提醒我：必须先看过这一段成片，再决定是否全量。"))
+                Param("force", "已有产物也重跑", "bool", default=False)],
+        resources=["GPU"],
+        help="￥0，占本机 GPU。已有产物的镜自动跳过；缺口的镜再跑同一条命令即可补，不用改提示词。",
+        agent="执行前报出：将跑几镜、预计多久（用 video.plan 的数字）。跑完若退出码 3，说明有缺口，直接重跑同一条命令。"))
 _add(_c("video.status", "4 出片", "批次进度", "drama",
         argv=["video", "status"], mode="sync", danger=READ,
         params=[Param("batch", "批次号（留空取最新）", "str")],
         help="读 summary.json / state.json。",
         agent="汇总：总数 / 成功 / 失败 / 待跑 / 消耗 / 用时，并列出失败段 id。"))
-_add(_c("video.resume", "4 出片", "续跑批次（★计费）", "drama",
-        argv=["video", "run"], billing=PAID, danger=DANGER, gate="G5",
-        flags={"--resume": "resume", "--only": "only"}, bools={"--yes": "yes"},
-        params=[Param("resume", "批次号", "str", required=True),
-                Param("only", "只补这些段", "str"),
-                Param("yes", "确认计费", "bool", default=False)],
-        resources=["RH"], help="复用 taskId，不重复提交已成功的段。",
-        agent="续跑前先查该批次的在途任务，避免重复提交；告我这次会补哪些段、预估金额。"))
-
 # ===== 环节 7 剪辑：母版拼接 → 高清放大 → 字幕 ==========================
 # ★ 2026-11-01：分组名从「11 拼接字幕」改为「7 剪辑」，并删掉 `media.assemble`
 #   —— 它的 help 写「拼接 + 2K 放大」，argv 却是 `subtitle.py --stage upscale`（受开关
@@ -556,23 +524,25 @@ _add(_c("media.upscale_verify", "5 剪辑", "放大产物自检", "upscale",
         agent="列出未过的自检项；若退化为插值（锐度增益不足）要明确告警。"))
 
 # ===== 环节 12 验收与结账 ==================================================
-_add(_c("report.batch", "6 验收", "出片战报", "drama",
-        argv=["report"], mode="sync", danger=READ,
-        flags={"--batch": "batch"}, params=[Param("batch", "批次号", "str")],
-        help="四段式战报（结果 / 失败 / 用量 / 下一步）。",
-        agent="把战报压成 3 行，并给出下一步建议。"))
-_add(_c("cost.checkpoint", "6 验收", "成本台账 + 结账基线", "drama",
-        argv=["cost", "--checkpoint"], danger=WRITE,
-        flags={"--drama": "drama_name"}, bools={"--json": "as_json", "--balance": "balance"},
-        params=[Param("drama_name", "剧名", "str"), Param("as_json", "机器可读", "bool", default=False),
-                Param("balance", "附带只读余额", "bool", default=True)],
-        help="口径：只认平台 usage，不用余额倒推；产出 xlsx + markdown。",
-        agent="报告本次增量消耗与全剧累计，并说明余额是否够再跑一集。"))
-_add(_c("cost.json", "6 验收", "成本台账（只读 JSON）", "cost_ledger",
-        argv=["--json", "--no-write"], mode="sync", danger=READ, flags={"--balance": "balance"},
-        params=[Param("balance", "附带余额", "bool", default=True)],
-        help="不写任何文件。",
-        agent="汇总消耗构成（RH币 / 美元 / token）与单价口径。"))
+_add(_c("time.plan", "6 验收", "耗时预估：单集 / 整季", "time_model",
+        argv=[], mode="sync", danger=READ,
+        flags={"--episodes": "episodes", "--shots": "shots",
+               "--shot-seconds": "shot_seconds", "--images": "images"},
+        bools={"--upscale": "upscale", "--calibrate": "calibrate", "--json": "as_json"},
+        params=[Param("episodes", "算几集", "int", default=1),
+                Param("shots", "每集镜头数", "int", default=8),
+                Param("shot_seconds", "平均每镜秒数", "float", default=6.0),
+                Param("images", "每集资产图张数", "int", default=12),
+                Param("upscale", "计入超分耗时", "bool", default=False),
+                Param("calibrate", "用台账实测反推系数", "bool", default=False)],
+        help="成本口径 = 时间。默认系数是经验值；跑过几次后加 calibrate 就换成本机实测。",
+        agent="报出单集与整季的总时长、瓶颈阶段，并说明系数是否已校准。"))
+_add(_c("time.report", "6 验收", "耗时台账：已跑了多久", "time_report",
+        argv=[], mode="sync", danger=READ,
+        flags={"--ep": "ep"}, bools={"--per-shot": "per_shot", "--json": "as_json"},
+        params=[Param("ep", "只看这一集", "str"), Param("per_shot", "逐镜明细", "bool", default=False)],
+        help="按集 / 按阶段 / 逐镜汇总实际耗时（读 video-pipeline/ledger/）。",
+        agent="指出哪个阶段最费时间、哪几镜明显偏慢（可能是参考图或提示词的问题）。"))
 _add(_c("episode.preflight", "6 验收", "集级前置体检", "preflight_ep",
         argv=["{eps}"], mode="sync", danger=READ,
         params=[Param("eps", "集号（可多个）", "str", required=True, placeholder="ep01 ep02")],
@@ -620,18 +590,6 @@ _add(_c("diag.preflight", "9 诊断", "一次性体检（免费）", "drama",
         argv=["preflight"], mode="sync", danger=READ,
         help="Key 分级 + 引擎 doctor + check + 预演。",
         agent="按「环境 / 密钥 / 通道 / 数据」四类汇总问题清单，并给出可照抄的修法。"))
-_add(_c("diag.balance", "9 诊断", "Key 余额（只读）", "drama",
-        argv=["balance"], mode="sync", danger=READ,
-        help="仅用于判断够不够跑，不参与消耗统计。",
-        agent="告我各账号余额与「够跑几集」的粗略估计（按 145 RH币/段）。"))
-_add(_c("diag.rhdoctor", "9 诊断", "RunningHub 双 Key 体检", "rhdoctor",
-        argv=[], mode="sync", danger=READ,
-        flags={"--check": "check", "--key": "key"}, bools={"--live": "live"},
-        params=[Param("check", "预检类型", "enum", choices=["workflow", "ai-app", "model", "llm"]),
-                Param("key", "Key 类型", "enum", choices=["consumer", "ent_shared", "ent_exclusive"]),
-                Param("live", "真发只读请求", "bool", default=False)],
-        help="默认零网络；--live 才发请求。",
-        agent="默认先零网络体检；要联网前先问我。"))
 _add(_c("diag.comfy", "9 诊断", "本地 ComfyUI 在线体检", "comfy_check",
         argv=["--check"], mode="sync", danger=READ,
         help="零网络依赖，检查 127.0.0.1:8188。",

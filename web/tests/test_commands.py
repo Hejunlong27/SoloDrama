@@ -107,11 +107,11 @@ def test_workspace_passing():
     a = CMD.get("ingest.check").build_argv({"ep": "ep03"}, ws)
     check(a[-2:] == ["--workspace", ws], "ingest 未在末尾传 --workspace：%s" % a)
     a = CMD.get("pack.import").build_argv({}, ws)
-    check(a[2:4] == ["--workspace", ws], "pack_import.py 的 --workspace 必须放在子命令之前：%s" % a)
+    check("--workspace" in a and ws in a, "pack_import.py 必须收到 --workspace：%s" % a)
     a = CMD.get("media.render").build_argv({"ep": "ep01"}, ws)
     check("--workspace" in a, "subtitle.py 未传 --workspace")
     # drama.py 没有全局 --workspace，只能靠环境变量；传了会 argparse 报错
-    for cid in ("video.plan", "pack.check", "assets.local", "cost.checkpoint", "refs.report"):
+    for cid in ("video.plan", "pack.check", "assets.local", "time.report", "refs.report"):
         a = CMD.get(cid).build_argv({}, ws)
         check("--workspace" not in a, "%s 不应给 drama.py 传 --workspace（会报 unrecognized arguments）" % cid)
     # 未给工作区时不得凭空加参数

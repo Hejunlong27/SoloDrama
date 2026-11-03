@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# RH币 -> 人民币。与 docs/runninghub-runs.json 的 rh_rate 保持一致。
+# 历史字段：RH币 -> 人民币。本仓库已无平台计费，保留只为能读旧台账。
 DEFAULT_CNY_PER_RH_COIN = 0.0025
 
 

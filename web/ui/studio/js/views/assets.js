@@ -1,7 +1,6 @@
 /* 资产中心：缺口（引擎判定）+ 参考图超限 + 资产图片预览（工作区白名单）+ 真实出图
    出图走引擎既有的两条通道：
      本地 ComfyUI  ￥0，占 GPU（需 8188 在线）      → assets.local  --submit
-     云端 RunningHub ★计费（按张结算）              → assets.rh_wf  --submit
    前置：引擎的 gen_assets_local.py **只认环境变量 SOLODRAMA_ASSET_MD**，
    所以这里必须先选「资产提示词 md」，由后端注入（浏览器永远不拼命令）。 */
 import { api, mediaUrl } from '../api.js';
@@ -140,10 +139,6 @@ export async function render(ctx) {
     + '<div class="clitem"><span class="mk warn">' + icon('cpu', 12) + '</span><div class="body">'
     + '<div class="ttl"><span>本地 ComfyUI</span>' + badge('outline', '￥0 · 占 GPU') + '</div>'
     + '<div class="desc">需要在 8188 端口运行。先点「出图器体检」确认在线，否则会排到队才失败。</div></div></div>'
-    + '<div class="clitem"><span class="mk warn">' + icon('coins', 12) + '</span><div class="body">'
-    + '<div class="ttl"><span>云端 RunningHub</span>' + badge('warn', '★计费') + '</div>'
-    + '<div class="desc">按张结算（RunningHub 工作流，文生图/图生图两套），以平台实际用量为准；'
-    + '试跑会先给清单与预估，提交前必须勾选确认。</div></div></div>'
     + '<div class="clitem"><span class="mk off">' + icon('close', 12) + '</span><div class="body">'
     + '<div class="ttl"><span>在线改提示词 / 参考图瘦身写盘</span>' + badge('muted', '未开放') + '</div>'
     + '<div class="desc">提示词改动请改 md 后重新出图；瘦身命令 <span class="mono">refs.apply</span> 会写盘，'
@@ -247,8 +242,6 @@ function openGenPanel(ctx, md) {
       + '<div class="row-gap">'
       + '<label class="chk"><input type="radio" name="gEng" value="local" checked>'
       + '<span>本地 ComfyUI（￥0，占 GPU 数分钟）</span></label>'
-      + '<label class="chk"><input type="radio" name="gEng" value="rh">'
-      + '<span>云端 RunningHub（<b>★计费</b>，按张结算）</span></label>'
       + '</div></div>'
 
       + '<div class="field"><label class="tiny dim">资产提示词 md（引擎只认环境变量 SOLODRAMA_ASSET_MD）</label>'
@@ -284,12 +277,11 @@ function openGenPanel(ctx, md) {
         const el = root.querySelector(sel);
         return !!(el && el.checked);
       };
-      const engine = () => {
-        const r = root.querySelector('input[name="gEng"]:checked');
-        return r ? r.value : 'local';
-      };
-      // 两条通道的「资产提示词」参数名不同：本地靠环境变量（asset_md → SOLODRAMA_ASSET_MD），
-      // 云端工作流要 CLI 参数（md）。两个键都给，多出来的会被命令校验忽略。
+      // ★ 2026-11-04：通道只剩本地 ComfyUI，`engine()` 恒为 local。
+      //   保留这个函数是因为下面几处写的是 `engine() === 'rh'` —— 与其删判断，
+      //   不如让它永远走不到那个分支；将来真要接回第二条通道，改这里一处就够。
+      const engine = () => 'local';
+      // 资产提示词走环境变量（asset_md → SOLODRAMA_ASSET_MD）。
       const params = (submit) => {
         const md = val('#gMd');
         return {
@@ -306,8 +298,8 @@ function openGenPanel(ctx, md) {
         const p = params(false);
         closeDrawer();
         doRun(ctx, {
-          specId: engine() === 'rh' ? 'assets.rh_wf' : 'assets.local',
-          title: (engine() === 'rh' ? '云端出图' : '本地出图') + ' · 干跑（列出清单与单价，不提交）',
+          specId: 'assets.local',
+          title: '本地出图 · 干跑（列出清单，不提交）',
           params: p,
           onDone: () => setTimeout(() => ctx.refresh(), 1200)
         });
@@ -341,24 +333,6 @@ function openGenPanel(ctx, md) {
                 });
               };
             }
-          });
-        } else {
-          closeDrawer();
-          runAction(ctx, {
-            specId: 'assets.rh_wf',
-            title: '云端工作流出图（★计费）',
-            params: p,
-            costTitle: '云端出图（按张计费）',
-            cost: {
-              lines: [
-                ['通道', 'RunningHub 云端'],
-                ['类型', p.kind + (p.only ? ' · 只做 ' + p.only : '')],
-                ['计费', '按张结算（RunningHub 工作流），以平台实际用量为准'],
-                ['合计', '张数 × 平台单价；干跑会先给出清单']
-              ],
-              note: '提交后不可撤回；已生成的资产若勾了「重跑」会重复计费。'
-            },
-            onDone: () => setTimeout(() => ctx.refresh(), 1500)
           });
         }
       };

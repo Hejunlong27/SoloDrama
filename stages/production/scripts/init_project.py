@@ -270,9 +270,10 @@ def main(argv=None) -> int:
     ap.add_argument("--region", default="east_asian",
                     choices=["east_asian", "western", "south_asian", "latin"])
     ap.add_argument("--image-engine", dest="image_engine", default="local_comfyui",
-                    choices=["local_comfyui", "runninghub"])
-    ap.add_argument("--video-engine", dest="video_engine", default="runninghub",
-                    choices=["runninghub", "local_h3"])
+                    choices=["local_comfyui"])
+    # ★ 2026-11-04：只剩本地 ComfyUI（出图出片同一台机器、同一个 ComfyUI）。
+    ap.add_argument("--video-engine", dest="video_engine", default="local_comfyui",
+                    choices=["local_comfyui"])
     ap.add_argument("--force", action="store_true", help="覆盖已有模板文件（默认跳过）")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)

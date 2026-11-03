@@ -70,17 +70,19 @@ def main() -> int:
         check("确认 local 却跑 rh 被拦", ok is False, msg[:80])
 
         # 4. video 独立（未确认）
-        ok, _ = mg.require(ws, "video", expected_engine="workflow")
+        ok, _ = mg.require(ws, "video", expected_engine="local")
         check("video 尚未确认被拦", ok is False)
 
         # 5. 两条一起 set + 读写往返
-        mg.cmd_set(_ns(workspace=str(ws), pairs=["video=runninghub"], detail="workflow_id=demo"))
+        #   ★ 2026-11-04：视频侧只剩 local_comfyui（RunningHub 通道整体移除），
+        #   原来这里确认的是 runninghub + expected_engine="workflow"，两条都不存在了。
+        mg.cmd_set(_ns(workspace=str(ws), pairs=["video=local_comfyui"], detail="workflow=demo.json"))
         plan = mg.load_plan(ws)
-        check("确认单落盘且可读回", plan["models"]["video"]["choice"] == "runninghub")
-        check("detail 已记录", (plan["models"]["video"].get("detail") or {}).get("workflow_id") == "demo",
+        check("确认单落盘且可读回", plan["models"]["video"]["choice"] == "local_comfyui")
+        check("detail 已记录", (plan["models"]["video"].get("detail") or {}).get("workflow") == "demo.json",
               json.dumps(plan["models"]["video"].get("detail"), ensure_ascii=False))
-        ok, _ = mg.require(ws, "video", expected_engine="workflow")
-        check("确认 runninghub 后 require(workflow) 放行", ok is True)
+        ok, _ = mg.require(ws, "video", expected_engine="local")
+        check("确认 local_comfyui 后 require(local) 放行", ok is True)
 
         # 6. reset
         mg.cmd_reset(_ns(workspace=str(ws), kind="image"))
@@ -98,12 +100,11 @@ def main() -> int:
         # 8. 选项 id 与清单一致（★ 2026-10-16 gate v2：加入「云端 ComfyUI」；视频再加「RH AI 应用」）
         for kind in ("image", "video"):
             ids = [o["id"] for o in mg.MODEL_OPTIONS[kind]]
-            # ★ 2026-11-01：图片侧的 `runninghub`（AI 应用）已删，图片云端只有
-            #   `runninghub_workflow`；视频侧仍是 `runninghub`（工作流出片）。两者都算「有 RH」。
-            check("%s 选项含本地/云端 ComfyUI 与 RH" % kind,
-                  ids[:2] == ["local_comfyui", "cloud_comfyui"]
-                  and any(x.startswith("runninghub") for x in ids),
-                  str(ids))
+            # ★ 2026-11-04：RunningHub 的所有选项已删。视频侧只剩 local_comfyui ——
+            #   这不是「保守」，是本仓库没有云端执行路径，给了选项也跑不了。
+            check("%s 选项里不许出现 runninghub" % kind,
+                  not any(x.startswith("runninghub") for x in ids), str(ids))
+            check("%s 首项是 local_comfyui" % kind, ids[0] == "local_comfyui", str(ids))
             check("%s 每项都有 requires 字段" % kind,
                   all("requires" in o for o in mg.MODEL_OPTIONS[kind]))
 
@@ -124,10 +125,11 @@ def main() -> int:
 
         # 8c. ★ 本地 ComfyUI 不强制要工作流文件（有仓库默认工作流），但选了云端就必须给
         check("本地ComfyUI 生图无强制依据", mg.missing_evidence("image", "local_comfyui", {}) == [])
-        # ★ 2026-11-01：图片侧的「RH AI 应用」通道已删（引擎无 provider，与工作流通道重复），
-        #   这条断言随之取消；图片云端只剩 runninghub_workflow（要工作流文件）。
-        check("RH 工作流 生图必须给工作流文件",
-              mg.missing_evidence("image", "runninghub_workflow", {}) == ["comfy_workflow"])
+        # ★ 2026-11-04：`runninghub_workflow` 已删，改测「云端 ComfyUI 必须给工作流文件」
+        #   （同一套依据判据，只是换了通道名 —— 判据本身仍需要有覆盖）。
+        check("云端 ComfyUI 生图必须给工作流文件",
+              mg.missing_evidence("image", "cloud_comfyui", {}) == ["comfy_url", "comfy_workflow"],
+              str(mg.missing_evidence("image", "cloud_comfyui", {})))
 
         # 9. 渲染非空且含全部标签
         for kind in ("image", "video"):

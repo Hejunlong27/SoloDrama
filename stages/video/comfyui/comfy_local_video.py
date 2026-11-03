@@ -65,6 +65,31 @@ except Exception:  # noqa: BLE001
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
+
+
+# ---------------------------------------------------------------------------
+# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
+#   这里不是「删掉调用点」，而是把出站通道收窄到本机/内网。任何试图连
+#   runninghub.* 的代码都会在 DNS 解析那一步抛 RemoteForbidden —— 包括未来
+#   某次合并里被悄悄加回来的 httpx 调用。细则见 stages/_netguard.py。
+# ---------------------------------------------------------------------------
+def _boot_netguard() -> None:
+    import pathlib as _pl
+    import sys as _sys
+    for _p in _pl.Path(__file__).resolve().parents[:5]:
+        for _cand in ((_p / "_netguard.py"), (_p / "stages" / "_netguard.py")):
+            if _cand.is_file():
+                if str(_cand.parent) not in _sys.path:
+                    _sys.path.insert(0, str(_cand.parent))
+                try:
+                    import importlib as _il
+                    _il.import_module("_netguard").install()
+                except Exception:        # noqa: BLE001 —— 守卫自身异常不能拖垮主流程
+                    pass
+                return
+
+
+_boot_netguard()
 # ★ 2026-11-04：默认工作流换成 Owner 指定的「Minimax+H3 无损融合单采（满血 API 画布级）」。
 #   它是界面格式，由 `workflow_ui2api.py` 转成这里的 API 格式（64 → 30 节点），
 #   映射与两处断链修补见同名 sidecar `workflow_h3_minimax_canvas.map.json`。

@@ -66,22 +66,6 @@ os.environ["SOLODRAMA_WORKSPACE"] = str(_FAKE_WS)
 os.environ["DRAMA_WORKSPACE"] = str(_FAKE_WS)
 
 
-# ---------------------------------------------------------------- P0-2
-def t_probe_readonly() -> None:
-    doc = load(PROD / "rh_doctor.py", "rh_doctor_t")
-    cases = [
-        (200, {"code": 0, "msg": "ok"}, "ok"),
-        (200, {"code": "1", "msg": "API Key不存在"}, "bad_key"),
-        (200, {"code": 1007, "msg": "任务不存在"}, "ok"),
-        (404, None, "route_missing"),
-        (0, None, "network"),
-    ]
-    for status, payload, want in cases:
-        doc.post = lambda *a, **k: (status, payload, "raw")      # 打桩：零网络
-        got = doc.probe_readonly("https://www.runninghub.cn", "k")
-        check("P0-2 探针判定 %s -> %s" % (payload, want), got["verdict"] == want, got)
-
-
 # ---------------------------------------------------------------- P0-3
 def t_drama_name() -> None:
     ws = pathlib.Path(tempfile.mkdtemp(prefix="sd_name_"))
@@ -91,12 +75,9 @@ def t_drama_name() -> None:
                                    encoding="utf-8")
     check("P0-3 brief.json 的 title 优先",
           load(PROD / "_ws.py", "_ws_t2").drama_name(ws) == "Loteria 580")
-    # 注释里可以提到事故本身，但**代码行**不许再把剧名当默认值
-    src = (PROD / "cost_ledger.py").read_text(encoding="utf-8")
-    code_lines = [ln for ln in src.splitlines()
-                  if "DRAMA_DEFAULT =" in ln and not ln.lstrip().startswith("#")]
-    check("P0-3 默认剧名不再是硬编码字面量",
-          code_lines == ["DRAMA_DEFAULT = drama_name(WS)"], code_lines)
+    # ★ 2026-11-04：原来这里还断言 cost_ledger.py 的 DRAMA_DEFAULT 不是硬编码字面量。
+    #   cost_ledger.py 已随云端计费口径一起删除，这条断言失去对象；
+    #   `drama_name()` 本身的两条断言（目录名回落 / brief 优先）仍然有效，保留。
 
 
 # ---------------------------------------------------------------- P0-6
@@ -150,115 +131,20 @@ def t_model_gate_executor() -> None:
     wf.write_text("{}", encoding="utf-8")
     doc = gate.MODEL_OPTIONS["video"]
     local = next(o for o in doc if o["id"] == "local_comfyui")
-    check("P1-1 video=local_comfyui 标注为无执行器",
-          local.get("executor") is None and not local.get("manual"), local)
-    check("P1-1 菜单显式写「暂无执行器」",
-          "暂无执行器" in gate.render_menu("video"))
+    # ★ 2026-11-04 反转：原断言是「本地 H3 没有执行器」（反馈 P1-1 当时的真实情况）。
+    #   现在 comfy_local_video.py 就是本地执行器，判据必须跟着反过来 ——
+    #   留着旧断言等于守着一个已经修好的 bug，还会让人以为它没修。
+    check("P1-1 video=local_comfyui 有执行器",
+          bool(local.get("executor")) and not local.get("manual"), local)
+    # 注意：菜单里**云端 ComfyUI** 那条仍然标「暂无执行器」—— 那是真的（视频侧没有
+    # 云端提交器）。所以不能断言「整个菜单没有这五个字」，只能断言本地那条写的是执行器。
+    check("P1-1 本地那条菜单写出了执行器",
+          "执行器：stages/video/comfyui/comfy_local_video.py" in gate.render_menu("video"),
+          gate.render_menu("video"))
     rc = gate._do_set(ws, "video", "local_comfyui", {"comfy_workflow": str(wf)})
-    check("P1-1 无执行器的选项被拦下（退出码 4）", rc == 4, rc)
-    ok, msg = gate.require(ws, "video", expected_engine="workflow")
-    check("P1-1 未确认时门禁不放行", not ok)
-
-
-# ---------------------------------------------------------------- P1-7 / P0-7
-def t_inflight_pending() -> None:
-    import asyncio
-    eng = ROOT / "stages" / "video" / "workflow" / "scripts" / "engine"
-    mod = load(eng / "inflight.py", "inflight_t")
-    d = pathlib.Path(tempfile.mkdtemp(prefix="sd_inf_"))
-
-    async def run():
-        inf = mod.Inflight(d)
-        await inf.add("shot_001", "T1", duration_s=8)
-        await inf.add("shot_002", "T2")
-        got = inf.load()
-        await inf.remove("shot_001")
-        return got, inf.load()
-
-    got, left = asyncio.run(run())
-    check("P0-7 提交即落 inflight", set(got) == {"shot_001", "shot_002"}, got)
-    check("P0-7 终态后移除 inflight", list(left) == ["shot_002"], left)
-
-    async def run2():
-        pd = mod.PendingDownloads(d)
-        await pd.add(shot_id="shot_003", task_id="T3", url="http://x/a.mp4",
-                     dest=str(d / "a.mp4"), error="reset")
-        await pd.add(shot_id="shot_003", task_id="T3", url="http://x/a.mp4",
-                     dest=str(d / "a.mp4"), error="reset again")
-        n = len(pd.load())
-        await pd.remove("shot_003")
-        return n, pd.load()
-
-    n, left2 = asyncio.run(run2())
-    check("P1-7 同一段重复记录不产生多条", n == 1, n)
-    check("P1-7 补下载后可清除记录", left2 == [], left2)
-
-
-# ---------------------------------------------------------------- P1-13
-def t_oom_plan() -> None:
-    eng = ROOT / "stages" / "video" / "workflow" / "scripts" / "engine"
-    pipeline = load(eng / "pipeline.py", "pipeline_t")
-    plan = pipeline._oom_retry_plan()
-    check("P1-13 OOM 三级重试（原实例 → 升实例 → 升实例+降时长）",
-          len(plan) == 3 and plan[1][0] != plan[0][0] and plan[2][1] < 0, plan)
-    check("P1-13 时长下移不小于 2 秒", pipeline._shift_duration(3, -2) == 2.0,
-          pipeline._shift_duration(3, -2))
-    rc = load(eng / "runninghub_client.py", "rhc_t")
-    check("P1-13 OOM 文本识别（errorCode 805 / VRAM grow / 中文告警）",
-          rc.is_oom_error("errorCode 805 VRAM grow failed") and
-          rc.is_oom_error("torch.OutOfMemoryError【显存不足告警】") and
-          not rc.is_oom_error("内容策略拦截"), "")
-    check("P2-10 421 queue limit 归为可重试关键词",
-          any("queue limit" in w for w in rc._RETRY_HINT_WORDS), rc._RETRY_HINT_WORDS)
-
-
-# ---------------------------------------------------------------- P2-1/6/7
-def t_cost_model() -> None:
-    cm = load(PROD / "cost_model.py", "cost_model_t")
-    p = cm.load_params(None)
-    c5 = cm.estimate([5], tier="consumer", params=p)
-    check("P2-1 消费级 5 秒 = 27+5 = 32 币", abs(c5["coins"] - 32) < 0.01, c5["coins"])
-    e5 = cm.estimate([5], tier="ent_shared", params=p)
-    check("P2-6 企业级 5 秒 ≈ ¥0.147", abs(e5["cny"] - 0.147) < 0.006, e5["cny"])
-    check("P2-6 两个 tier 用不同的计价货币",
-          c5["currency"] == "RH币" and e5["currency"] == "money",
-          (c5["currency"], e5["currency"]))
-    check("P2-7 同时给出 GPU 运行秒口径",
-          c5["gpu_seconds"] > 0 and abs(c5["gpu_model_coins"] - 0.205 * c5["gpu_seconds"]) < 1,
-          (c5["gpu_seconds"], c5["gpu_model_coins"]))
-    recs = [{"duration_s": d, "coins": 27 + d, "money": None, "task_cost_time": 100 + 7 * d}
-            for d in (5, 8, 10, 12)]
-    cal = cm.calibrate(recs, p)
-    check("P2-7 用台账校准出币/运行秒与固定+变动",
-          cal["fitted"] and abs(cal["fitted"].get("consumer_fixed", 0) - 27) < 0.5,
-          cal["fitted"])
-    empty = cm.calibrate([], p)
-    check("P2-7 样本不足时不臆造（fitted 为空）", not empty["fitted"], empty["fitted"])
-
-
-# ---------------------------------------------------------------- P2-3
-def t_outline() -> None:
-    m = load(ROOT / "stages" / "creation" / "scripts" / "script_rewrite.py", "sr_t")
-    p = pathlib.Path(tempfile.mkdtemp(prefix="sd_out_")) / "o.md"
-    p.write_text("| 集 | 开场 | 冲突 | 反转 | 钩子 |\n|---|---|---|---|---|\n"
-                 "| EP01 | 被赶出家门 | 家族夺产 | 亮出股权书 | 门口站着生父 |\n"
-                 "EP02: 前夫带新欢上门\n", encoding="utf-8")
-    rows, warns = m.parse_outline(p)
-    check("P2-3 四列表格解析成四件套",
-          rows[1]["cold_open"] == "被赶出家门" and rows[1]["hook"] == "门口站着生父", rows)
-    check("P2-3 冒号单行写法落到核心冲突",
-          rows[2] == {"core_conflict": "前夫带新欢上门"}, rows)
-    check("P2-3 解析无告警", warns == [], warns)
-
-
-# ---------------------------------------------------------------- P2-9
-def t_light() -> None:
-    m = load(PROD / "convert_storyboard.py", "cs_t")
-    check("P2-9 夜→单灯深影", "lamp" in m.light_phrase("夜"), m.light_phrase("夜"))
-    check("P2-9 日→窗光柔补", "daylight" in m.light_phrase("白天"), m.light_phrase("白天"))
-    check("P2-9 黄昏优先于日（避免子串误判）",
-          "low warm side light" in m.light_phrase("黄昏"), m.light_phrase("黄昏"))
-    check("P2-9 认不出不猜", m.light_phrase("未来") == "", m.light_phrase("未来"))
+    check("P1-1 有执行器的选项可确认（退出码 0）", rc == 0, rc)
+    ok, msg = gate.require(ws, "video", expected_engine="local")
+    check("P1-1 确认后门禁放行", ok, msg)
 
 
 # ---------------------------------------------------------------- P1-14 / P2-13
@@ -309,9 +195,12 @@ def main() -> int:
     print("=" * 62)
     print("反馈单修复 · 离线回归（2026-10-20）")
     print("=" * 62)
-    for fn in (t_probe_readonly, t_drama_name, t_release_verdict, t_model_gate_executor,
-               t_inflight_pending, t_oom_plan, t_cost_model, t_outline,
-               t_light, t_subtitle_template, t_lock, t_workflow_validate):
+    # ★ 2026-11-04：删掉 6 个失效用例（被测模块已随 RunningHub 通道与创作层移除）：
+    #   t_probe_readonly(_site.py)、t_inflight_pending / t_oom_plan(云端引擎)、
+    #   t_cost_model(RH 币口径)、t_outline / t_light(剧本改写与分镜转换)。
+    #   留下的都在跑真实逻辑：剧名回落、发行判定、模型门禁、字幕模板、单例锁、工作流校验。
+    for fn in (t_drama_name, t_release_verdict, t_model_gate_executor,
+               t_subtitle_template, t_lock, t_workflow_validate):
         try:
             fn()
         except BaseException as e:                                # noqa: BLE001

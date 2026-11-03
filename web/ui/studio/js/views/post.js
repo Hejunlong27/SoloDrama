@@ -27,7 +27,7 @@ export async function render(ctx) {
     { n: 1, t: '拼接母版', ok: !!e.master, file: e.master,
       hint: '首帧封面（0.8s）+ 片段 + BGM（有 plan 才混）+ 帧数校验' },
     { n: 2, t: '高清放大', ok: !!e.upscaled, file: e.upscaled,
-      hint: 'Topaz（本机）/ RunningHub（计费）/ 跳过，产物 _master_WxH.mp4' },
+      hint: 'Topaz（本机 GPU）/ 跳过；产物 _master_WxH.mp4' },
     { n: 3, t: '字幕', ok: !!e.subbed, file: e.subbed, hint: 'G6：不问你就不烧' }
   ] : [];
 

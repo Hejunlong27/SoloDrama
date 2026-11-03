@@ -66,6 +66,21 @@ def _loose_count(ws: Path) -> int:
         return 0
 
 
+def _human_sec(sec: float) -> str:
+    """秒 → 「1 小时 16 分」；与 stages/production/scripts/time_model.py 同一口径。"""
+    try:
+        s = int(round(float(sec)))
+    except (TypeError, ValueError):
+        return "—"
+    if s < 60:
+        return "%d 秒" % s
+    m, s = divmod(s, 60)
+    if m < 60:
+        return "%d 分" % m if s < 30 else "%d 分 %d 秒" % (m, s)
+    h, m = divmod(m, 60)
+    return "%d 小时 %d 分" % (h, m) if m else "%d 小时" % h
+
+
 def _read_json(p: Path):
     try:
         return json.loads(p.read_text(encoding="utf-8-sig"))
@@ -156,7 +171,10 @@ def _inventory(ws: Path) -> dict:
 
     # ---- 金额：台账优先，工作流兜底，按 taskId 去重 ----
     ledger_files = _ledger_records(ws)
+    # ★ 2026-11-04：成本口径改为**时间**。coins/money 保留字段（旧调用方还在读），
+    #   但新代码一律看 `wall_sec` —— 本机出片零费用，唯一稀缺的是 GPU 时间。
     coins = money = 0.0
+    wall_sec = 0.0
     ledger_tasks, wf_tasks = set(), set()
     ledger_hits = wf_hits = 0
     for f in ledger_files:
@@ -172,6 +190,10 @@ def _inventory(ws: Path) -> dict:
                 coins += c
                 money += m
                 ledger_hits += 1
+            try:
+                wall_sec += float(r.get("wall_elapsed_s") or 0)
+            except (TypeError, ValueError):
+                pass
             if tid:
                 ledger_tasks.add(tid)
 
@@ -217,6 +239,9 @@ def _inventory(ws: Path) -> dict:
         "spend": {
             "coins": round(coins, 2),
             "usd": round(money, 4),
+            # ★ 真实成本：本机 GPU 时间（秒）。coins/usd 在本仓库恒为 0。
+            "wall_sec": round(wall_sec, 1),
+            "wall_human": _human_sec(wall_sec),
             "tasks": len(ledger_tasks | wf_tasks) or (ledger_hits + wf_hits),
             "ledger_files": len(ledger_files),
             "ledger_hits": ledger_hits,

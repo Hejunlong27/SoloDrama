@@ -125,20 +125,21 @@ def test_hint():
 def test_save_keeps_key():
     section("2 保存语义：不传=保留，空串=清除")
     with Sandbox():
-        CONN.save({"runninghub": {"base_url": "https://www.runninghub.cn", "workflow_id": "123"}})
-        CONN.set_key("runninghub", "sk-test-key-1234567890")
+        # 2026-11-04：只剩 llm / comfyui 两类连接（RH 已移除），这套语义用 llm 验
+        CONN.save({"llm": {"base_url": "https://api.example.com/v1"}})
+        CONN.set_key("llm", "sk-test-key-1234567890")
         # 只改地址 → Key 必须还在
-        CONN.save({"runninghub": {"base_url": "https://www.runninghub.ai"}})
-        check(CONN.get_key("runninghub") == "sk-test-key-1234567890", "只改地址不应抹掉 Key")
+        CONN.save({"llm": {"base_url": "https://api2.example.com/v1"}})
+        check(CONN.get_key("llm") == "sk-test-key-1234567890", "只改地址不应抹掉 Key")
         # api_key 不许被 save 写进非密钥文件
-        CONN.save({"runninghub": {"api_key": "leaked", "workflow_id": "999"}})
+        CONN.save({"llm": {"api_key": "leaked", "base_url": "https://api3.example.com/v1"}})
         raw = CONN.CFG_PATH.read_text(encoding="utf-8")
         check("leaked" not in raw, "api_key 不能写进 connections.json")
-        check(CONN.load()["runninghub"]["workflow_id"] == "999", "普通字段应正常合并")
+        check("llm" in CONN.load(), "llm 段应存在（普通字段合并）")
         # 清除
-        CONN.set_key("runninghub", "")
-        check("runninghub" not in CONN._keys(), "空串应把 Key 从本机文件里删掉")
-        check(CONN.get_key("runninghub") == "", "没有其它来源时 get_key 应为空")
+        CONN.set_key("llm", "")
+        check("llm" not in CONN._keys(), "空串应把 Key 从本机文件里删掉")
+        check(CONN.get_key("llm") == "", "没有其它来源时 get_key 应为空")
 
 
 def test_autostart_toggle():
@@ -159,42 +160,38 @@ def test_autostart_toggle():
 
 
 def test_overview_masked():
-    section("3 概览：三条通道，且无明文")
+    section("3 概览：两条通道，且无明文")
     with Sandbox():
-        CONN.set_key("runninghub", "sk-very-secret-value-0001")
+        CONN.set_key("llm", "sk-very-secret-value-0001")
         ov = CONN.overview()
         kinds = [i["kind"] for i in ov["items"]]
-        check(kinds == ["llm", "comfyui", "runninghub"], "通道顺序应为 llm/comfyui/runninghub，实际 %s" % kinds)
+        check(kinds == ["llm", "comfyui"], "通道顺序应为 llm/comfyui，实际 %s" % kinds)
         blob = json.dumps(ov, ensure_ascii=False)
         check("sk-very-secret-value-0001" not in blob, "概览响应体不能含明文 Key")
-        rh = [i for i in ov["items"] if i["kind"] == "runninghub"][0]
-        check(rh["has_key"] is True, "存了 Key 应标记 has_key")
-        check(rh["key_source"] == "file", "来源应为 file，实际 %r" % rh["key_source"])
-        check("0001" in rh["key_hint"], "指纹应含末 4 位")
+        lm = [i for i in ov["items"] if i["kind"] == "llm"][0]
+        check(lm["has_key"] is True, "存了 Key 应标记 has_key")
+        check(lm["key_source"] == "file", "来源应为 file，实际 %r" % lm["key_source"])
+        check("0001" in lm["key_hint"], "指纹应含末 4 位")
 
 
 def test_env_injection():
     section("4 runner.base_env 必须注入")
     with Sandbox():
         CONN.save({"comfyui": {"base_url": "http://127.0.0.1:9999"}})
-        CONN.set_key("runninghub", "sk-inject-abcdefgh")
         env = runner.base_env(None)
         check(env.get("COMFYUI_URL") == "http://127.0.0.1:9999",
               "COMFYUI_URL 应来自连接配置，实际 %r" % env.get("COMFYUI_URL"))
-        check(env.get("RUNNINGHUB_API_KEY") == "sk-inject-abcdefgh",
-              "RUNNINGHUB_API_KEY 应被注入")
-        check(env.get("RUNNINGHUB_BASE_URL"), "RUNNINGHUB_BASE_URL 必须有值")
+        # 2026-11-04：不再下发任何平台 Key —— 本仓库只调本机 ComfyUI
+        check(not any(k.startswith("RUNNINGHUB") for k in env),
+              "不应再注入 RunningHub 变量：%r" % [k for k in env if k.startswith("RUNNINGHUB")])
         # 命令级 extra 优先级最高（不能反过来被连接配置覆盖）
         env2 = runner.base_env(None, {"COMFYUI_URL": "http://127.0.0.1:1111"})
         check(env2["COMFYUI_URL"] == "http://127.0.0.1:1111", "命令级 extra 应覆盖连接配置")
 
 
 def test_site_and_unknown():
-    section("5 站点校验与未知通道")
-    check(CONN._rh_site_ok("https://www.runninghub.ai"), ".ai 应通过")
-    check(CONN._rh_site_ok("https://www.runninghub.cn"), ".cn 应通过")
-    check(not CONN._rh_site_ok("https://evil.com"), "其它域名必须拒绝")
-    check(not CONN._rh_site_ok("http://runninghub.ai.evil.com"), "后缀伪装必须拒绝")
+    section("5 未知通道")
+    # 站点校验随 RunningHub 一起移除（本仓库不再有平台站点）
     r = CONN.test("nope")
     check(r["ok"] is False and r["reason"] == "unknown_kind", "未知通道应明确报错")
 

@@ -18,10 +18,10 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
     bgm        library|plan|check|mix      ★配乐：库 → 铺排计划 → 混音（在字幕烧录前接）
     status     [--json]                  全盘状态面板：数据/参考图/资产缺口/批次/台账（零网络）
     models     [list|status|set|reset|ask]  ★前置条件：首次生图/出片前确认模型
-                                          （本地 ComfyUI / RunningHub / 闭源模型 三选一，写 model-plan.json）
+                                          （本地 ComfyUI 一条通道；确认单写 model-plan.json）
     preflight                            一次性体检：Key 分级 + 引擎 doctor + check + 预演（全免费）
     assets     [--engine local|rh] [...] 缺失资产出图（默认本地 ComfyUI ￥0 且干跑）
-                                          local=本机出图（不花钱，占 GPU）；rh=RunningHub 云端（★计费）
+                                          local=本机出图（不花钱，占 GPU）；已无云端通道
                                           ★首次 --submit 前会先查模型选择门禁
     refs       [--apply]                 参考图瘦身（6000px 超 H3 上限 5760 必须做）
     video plan [--limit N] [--only ids]  出片计划与成本预估（免费，不提交）
@@ -42,7 +42,7 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
 --------------------------
 * **默认不花钱**：所有会提交任务的命令都要显式 `--submit` / `--yes`，否则只干跑。
 * **模型先确认**：每个项目**首次生图 / 首次出片**前必须先确认模型选择（本地 ComfyUI /
-  RunningHub / 闭源模型）；确认单落 `<工作区>/model-plan.json`，未确认即停（退出码 4）。
+  只剩本地 ComfyUI）；确认单落 `<工作区>/model-plan.json`，未确认即停（退出码 4）。
 * **进度可见**：子进程输出实时落日志文件，同时打印进度行；失败才回显日志尾部。
 * **战报优先**：成功路径只打印几行摘要 + 产物绝对路径；不贴长日志。
 * **机密不进文件**：Key 只从环境变量/用户级环境变量读，永不写盘、永不打印全文。
@@ -58,6 +58,33 @@ import re
 import subprocess
 import sys
 import time
+
+
+# ---------------------------------------------------------------------------
+# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
+#   这里不是「删掉调用点」，而是把出站通道收窄到本机/内网。任何试图连
+#   runninghub.* 的代码都会在 DNS 解析那一步抛 RemoteForbidden —— 包括未来
+#   某次合并里被悄悄加回来的 httpx 调用。细则见 stages/_netguard.py。
+# ---------------------------------------------------------------------------
+def _boot_netguard() -> None:
+    import pathlib as _pl
+    import sys as _sys
+    for _p in _pl.Path(__file__).resolve().parents[:5]:
+        for _cand in ((_p / "_netguard.py"), (_p / "stages" / "_netguard.py")):
+            if _cand.is_file():
+                if str(_cand.parent) not in _sys.path:
+                    _sys.path.insert(0, str(_cand.parent))
+                try:
+                    import importlib as _il
+                    _il.import_module("_netguard").install()
+                except Exception:        # noqa: BLE001 —— 守卫自身异常不能拖垮主流程
+                    pass
+                return
+
+
+_boot_netguard()
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +151,7 @@ except SystemExit as _e:
         print('用法: drama.py <命令> [...]  （init 之外都需要先指定工作区）')
         print('  全局参数: --workspace <DIR>   也可设环境变量 SOLODRAMA_WORKSPACE\n')
         print('命令: init / next / do / nodes / graph / skip /')
-        print('      status / preflight / assets [--engine local|wf] / refs /')
+        print('      status / preflight / assets [--engine local] / refs /')
         print('      models / style / video {plan|run|resume-download|status} /')
         print('      report / balance / cost / guide')
         print('\n例：drama.py init --workspace "D:/剧/新剧" --title "剧名"')
@@ -138,22 +165,19 @@ DATA = _WSMOD.DATA    # 出片引擎输入目录（新布局 = 06-提示词；�
 OUT = _WSMOD.OUT      # 出片引擎输出根（新布局 = 07-成片；旧布局 = video-pipeline/output）
 # ★ 2026-10-10 修复：收编进本仓库后，生产脚本不再住在 <工作区>/scripts/，而是**与本文件同目录**
 #   （`stages/production/scripts/`）。原先的 `WS / 'scripts'` 是上游项目布局的残留，
-#   会让 rh_doctor / cost_ledger / gen_char_assets / gen_scene_assets / gen_assets_local 全部找不到。
+#   会让 gen_assets_local / ingest_check / subtitle 等子脚本全部找不到。
 #   如需复刻旧布局，用环境变量 SOLODRAMA_SCRIPTS_DIR（旧名 DRAMA_SCRIPTS_DIR 仍兼容）覆盖。
 SCRIPTS = pathlib.Path(os.environ.get('SOLODRAMA_SCRIPTS_DIR')
                        or os.environ.get('DRAMA_SCRIPTS_DIR')
                        or pathlib.Path(__file__).resolve().parent)
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]   # .../SoloDrama
-SKILL = pathlib.Path(os.environ.get('AI_VIDEO_PIPELINE_SKILL')
-                     or _PROJECT_ROOT / 'stages' / 'video' / 'workflow')
-RUN_PY = SKILL / 'scripts' / 'run.py'
-CHECK_BILLING = SKILL / 'scripts' / 'check_billing.py'
+# ★ 2026-11-04：`SKILL` / `RUN_PY` / `CHECK_BILLING` 三个常量已删 —— 它们指向
+#   stages/video/workflow（RunningHub 出片引擎），该目录已随云端通道整体移除。
+#   本地出片的入口是 stages/video/comfyui/comfy_batch_video.py。
+COMFY_VIDEO_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_local_video.py'
 MODEL_GATE_PY = SCRIPTS / 'model_gate.py'      # ★ 首次生图/出片前的模型选择门禁
 LOG_DIR = OUT / 'logs'
 
-CNY_PER_RH = 0.0025          # 1 RH币 ≈ ¥0.0025（用户 2026-09-18）；★ 2026-09-19 用户另给 RH币↔USD：
-                             # 1 美元 = 2746 RH币（1 RH币 ≈ $0.0003642）。两者隐含 USD/CNY ≈ 6.865，该汇率未确认。
-CHAR_RH_PER_IMAGE = 27       # 实测：人物定妆图 27 RH币/张
 SCENE_USD_PER_IMAGE = 0.01   # 实测：场景图扣美元钱包 $0.01/张 ≈ ￥0.07
 USD_CNY = 7.0
 
@@ -168,18 +192,16 @@ def _harden_stdio() -> None:
     harden_stdio()
 
 def hydrate_env() -> None:
-    # ★ 进程环境里缺的，从「用户级环境变量」补（agent 的 shell 常拿不到）：
-    #   前三个是云端通道用的 Key；SOLODRAMA_ASSET_MD 是「资产提示词 md」真源，**本地通道也要用**。
-    #   ★ 2026-10-13 改名过渡：新旧两个名字都参与补全，子脚本按「新名优先、旧名回退」读取。
-    # ★ 2026-11-01：`RUNNINGHUB_BASE_URL` 已从这张表移除 —— 站点真源是
-    #   `configs/channels.json`，再把死变量补进子进程环境只会让「哪来的 .ai」重新出现。
-    want = ('RUNNINGHUB_API_KEY', 'RUNNINGHUB_ENT_API_KEY',
-            'SOLODRAMA_ASSET_MD', 'DRAMA_ASSET_MD')
+    # ★ 进程环境里缺的，从「用户级环境变量」补（agent 的 shell 常拿不到）。
+    #   2026-11-04：RunningHub 的 Key 已从这张表删除 —— 本仓库不调任何平台 API，
+    #   补一个用不上的 Key 只会让「引擎是不是还在走云端」这个问题重新变得可疑。
+    #   SOLODRAMA_ASSET_MD 是「资产提示词 md」真源，**本地通道也要用**。
+    want = ('SOLODRAMA_ASSET_MD', 'DRAMA_ASSET_MD')
     os.environ.setdefault('PYTHONUTF8', '1')
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
     os.environ['VIDEO_PIPELINE_WORKSPACE'] = str(VP)
-    # ★ 2026-10-10：把已解析出的工作区**下传给子进程**。子脚本（gen_*_assets / cost_ledger /
-    #   rh_doctor / gen_assets_local …）都靠 `_ws.resolve()` 定位工作区，而它们自己无法从
+    # ★ 2026-10-10：把已解析出的工作区**下传给子进程**。子脚本（gen_assets_local /
+    #   ingest_check / time_report …）都靠 `_ws.resolve()` 定位工作区，而它们自己无法从
     #   脚本位置推断出来（脚本住在仓库里，不在工作区里）—— 不传就会全部报「找不到短剧工作区」。
     #   ★ 两个名字都下发：子脚本读新名，外部工具/用户脚本若仍读旧名也不会失灵。
     os.environ.setdefault('SOLODRAMA_WORKSPACE', str(WS))
@@ -331,25 +353,21 @@ def collect_status() -> dict:
                                 'elapsed': s.get('elapsed_seconds'),
                                 'fuse': s.get('fuse', {})})
 
-    # 台账聚合
-    led = {'files': 0, 'success': 0, 'failed': 0, 'rh_coins': 0.0, 'wallet_usd': 0.0}
+    # 台账聚合（★ 2026-11-04：口径从「花了多少币」改为「占了多少 GPU 时间」）
+    # 本机出片零费用，唯一稀缺资源是时间。所以这里不再读 consumeCoins /
+    # thirdPartyConsumeMoney（那两个字段只有平台任务才有），改为累加 wall_elapsed_s。
+    led = {'files': 0, 'success': 0, 'failed': 0, 'wall_sec': 0.0}
     lr = VP / 'ledger' / 'runs'
     if lr.is_dir():
         for f in lr.glob('*.json'):
             d = read_json(f, {}) or {}
             for a in d.get('attempts', []):
-                led['files'] += 0
                 if a.get('status') == 'SUCCESS':
                     led['success'] += 1
                 elif a.get('status') == 'FAILED':
                     led['failed'] += 1
-                u = a.get('usage') or {}
                 try:
-                    led['rh_coins'] += float(u.get('consumeCoins') or 0)
-                except (TypeError, ValueError):
-                    pass
-                try:
-                    led['wallet_usd'] += float(u.get('thirdPartyConsumeMoney') or 0)
+                    led['wall_sec'] += float(a.get('elapsed') or a.get('wall_elapsed_s') or 0)
                 except (TypeError, ValueError):
                     pass
         led['files'] = len(list(lr.glob('*.json')))
@@ -377,7 +395,9 @@ def collect_status() -> dict:
                'ready': bool((h3n.get('prompt') or {}).get('nodeId') and slots)},
         'batches': batches[:5],
         'ledger': led,
-        'keys': {'consumer': has('RUNNINGHUB_API_KEY'), 'enterprise': has('RUNNINGHUB_ENT_API_KEY')},
+        # 2026-11-04：原来这里报的是 RH Key 有没有配。现在没有平台 Key 这回事了，
+        # 换成「出口守卫是否生效」—— 这才是此刻真正该盯的运行时状态。
+        'netguard': _netguard_state(),
     }
 
 
@@ -402,42 +422,6 @@ def _durations(shots) -> list:
         except (TypeError, ValueError):
             out.append(12.0)
     return out
-
-
-def estimate_video(limit=None, only=None, tier='consumer', calibrate=False) -> dict:
-    """成本预估（反馈 P2-1 / P2-6 / P2-7）。
-
-    口径真源：`cost_model.py`。给出**两套**可比的预估，不再用按帧的构造性拟合：
-      * 两段式（固定 + 每秒）—— 与平台实际计费结构一致；
-      * GPU 运行秒式 —— 解释「5 秒与 8 秒差价很小」（冷启动占大头）。
-    真实消耗始终只认平台 `usage`；本函数只用于闸门判断。
-    """
-    import cost_model as CM
-
-    shots = _selected_shots(limit, only)
-    params = CM.load_params(WS)
-    calib = None
-    if calibrate:
-        calib = CM.calibrate(CM.iter_ledger_records(WS), params)
-        params = calib['params']
-    # ★ 2026-10-21（反馈 11.1）：把开工确认单里的「步数 / 像素」喂进成本模型 ——
-    #   段价不再写死一个数，才能回答「提分辨率还是提步数更贵」。
-    steps = mp = None
-    # ★ 2026-11-01：不再 import project_setup（已删）。直接读它留在项目里的确认单文件 ——
-    #   老项目仍有 `project-setup.json`，新项目没有就走默认值，不影响估算。
-    try:
-        _ps = json.loads((WS / "project-setup.json").read_text(encoding="utf-8-sig"))
-        _vo = (_ps.get("video_options") or {})
-        steps, mp = _vo.get("steps"), _vo.get("megapixels")
-    except Exception:                                          # noqa: BLE001
-        pass
-    est = CM.estimate(_durations(shots), tier=tier, params=params, steps=steps, megapixels=mp)
-    est['_calibrate'] = calib
-    est['_params_source'] = ('%s' % (WS / 'cost-model.json')
-                             if (WS / 'cost-model.json').is_file() else '内置实测默认值')
-    est['_caveat'] = ('预估仅作闸门参考；真实消耗以平台 usage 为准'
-                      '（不用余额差值倒推）。`--calibrate` 可用历史台账自校准。')
-    return est
 
 
 def cmd_init_project(args) -> int:
@@ -572,9 +556,13 @@ def cmd_status(args) -> int:
     if a.get('local_generated'):
         print('本地出图    : %d 项（人物 %d / 场景 %d）— 本地 ComfyUI 通道，￥0 成本'
               % (a['local_generated'], a['local_chars'], a['local_scenes']))
-    print('Key         : 消费级-%s 企业级-%s' % (st['keys']['consumer'], st['keys']['enterprise']))
-    print('台账        : %d 个任务文件 | 成功 %d / 失败 %d | 累计 %d RH币 + $%.2f 钱包'
-          % (led['files'], led['success'], led['failed'], round(led['rh_coins']), led['wallet_usd']))
+    ng = st.get('netguard') or {}
+    print('出口守卫    : %s%s'
+          % ('已启用（只许本机/内网）' if ng.get('installed') else '[未启用] 立即检查 stages/_netguard.py',
+             '  ★ 已放宽远端（RH 仍禁止）' if ng.get('allow_remote') else
+             ('  ' + ng['error'] if ng.get('error') else '')))
+    print('台账        : %d 个任务文件 | 成功 %d / 失败 %d | 累计占用 %.1f 分钟'
+          % (led['files'], led['success'], led['failed'], led['wall_sec'] / 60.0))
     if st['batches']:
         for b in st['batches']:
             t = b['totals'] or {}
@@ -609,9 +597,26 @@ def _is_noise(detail: str) -> bool:
 #   此前直接跑 rh_doctor / doctor，缺 httpx 时第一屏就是 `ModuleNotFoundError: httpx`，
 #   新机器上极易被误判成「配置错」。这里先自检，缺什么直接把安装命令给出来。
 _REQUIRED_MODULES = (
-    ('httpx', '云端提交/轮询（引擎 runninghub_client）'),
+    ('PIL', '本地出图的参考图裁剪与尺寸（引擎 assets）'),
     ('PIL', '九宫格裁剪与图片尺寸（引擎 pipeline）'),
 )
+
+
+def _netguard_state() -> dict:
+    """出口守卫当前状态（给 status 看）。
+
+    为什么状态面板要有这一项：本仓库唯一的硬约束就是「不许调平台 API」，
+    而它生效与否是**运行期**的事 —— 装没装、有没有被 SOLODRAMA_ALLOW_REMOTE 放宽，
+    光看代码看不出来。放在 status 第一屏，出问题时一眼就知道该查哪里。
+    """
+    st = {'installed': False, 'allow_remote': False, 'error': ''}
+    try:
+        import _netguard as ng          # 同目录 / stages 根，drama 已把它塞进 sys.path
+        st['installed'] = bool(getattr(ng, '_installed', False))
+        st['allow_remote'] = bool(ng._allow_remote())
+    except Exception as exc:            # noqa: BLE001
+        st['error'] = '%s: %s' % (type(exc).__name__, exc)
+    return st
 
 
 def check_dependencies() -> list:
@@ -638,57 +643,37 @@ def _print_dep_report(rows) -> bool:
 
 
 def cmd_preflight(args) -> int:
+    """一次过体检：依赖 → 出口守卫 → 数据契约 → ComfyUI。
+
+    ★ 2026-11-04 重写。旧版本四步里有两步跑的是 `stages/video/workflow/scripts/run.py`
+      （RunningHub 出片引擎）和 `rh_doctor.py` —— 两个文件都已随云端通道移除，
+      于是 preflight 会在第一步就 `FileNotFoundError`，比不做体检更误导。
+      新四步全部只依赖本仓库现存的东西，且每一步都能给出「怎么修」。
+    """
     verdict = []
 
     print('【0/4】运行依赖自检（不联网）')
     if not _print_dep_report(check_dependencies()):
         verdict.append(('运行依赖', False, '装完依赖再体检'))
-        print('\n' + '=' * 74)
-        print('体检结论')
-        print('=' * 74)
-        for name, ok, extra in verdict:
-            print('  %-12s %s %s' % (name, '[OK] 通过' if ok else '[NG] 需处理', extra))
-        return 1
+        return _preflight_report(verdict)
     verdict.append(('运行依赖', True, ''))
 
-    print('\n【1/4】RunningHub Key 分级（只读，不计费）')
-    rc1, _, _ = run_cmd([sys.executable, SCRIPTS / 'rh_doctor.py', '--check', 'model'],
-                        'preflight_rhdoctor', quiet_ok=False)
-    verdict.append(('Key 分级路由', rc1 == 0, ''))
+    print('\n【1/4】网络出口守卫（用户强制命令：禁止任何平台 API 调用）')
+    ng_ok, ng_note = _preflight_netguard()
+    verdict.append(('出口守卫', ng_ok, ng_note))
 
-    print('\n【2/4】引擎环境体检（不联网）')
-    rc2, log2, _ = run_cmd([sys.executable, RUN_PY, 'doctor', '--json'], 'preflight_doctor')
-    real_fail, noise = [], 0
-    try:
-        doc = json.loads(pathlib.Path(log2).read_text(encoding='utf-8', errors='replace'))
-        for c in doc.get('checks', []):
-            if c.get('level') in ('FAIL', 'WARN'):
-                if _is_noise(c.get('detail')):
-                    noise += 1
-                else:
-                    real_fail.append(c)
-    except (OSError, json.JSONDecodeError):
-        real_fail = [{'id': 'doctor', 'detail': '无法解析 doctor --json（请看日志）'}]
-    if noise:
-        print('  （%d 项属 image_providers 未配置 —— 本线只用 --video-only，已知噪音，忽略）' % noise)
-    if real_fail:
-        print('  ★真正需要处理的 %d 项：' % len(real_fail))
-        for c in real_fail:
-            print('    - %s: %s' % (c.get('id'), str(c.get('detail'))[:110]))
-    verdict.append(('引擎体检', not real_fail, '%d 项真问题' % len(real_fail) if real_fail else ''))
+    print('\n【2/4】数据契约（制作包导入的产品）')
+    dc_ok, dc_note = _preflight_data()
+    verdict.append(('数据契约', dc_ok, dc_note))
 
-    print('\n【3/4】必填配置检查')
-    # ★ 必须带 --video-only：本线只跑 --video-only，图片工作流(banana)确实不需要。
-    #   不带的话引擎会拿「图片工作流未配置」判失败，而这里以前**只取 rc 不进 verdict**，
-    #   于是体检永远显示全绿、真实出片却被配置闸门挡下（2026-09-19 实测踩到）。
-    rc3, _, _ = run_cmd([sys.executable, RUN_PY, 'check', '--video-only'], 'preflight_check')
-    verdict.append(('必填配置', rc3 == 0, '图片工作流不参与 --video-only 校验'))
+    print('\n【3/4】本机 ComfyUI（出图与出片共用的唯一通道）')
+    cf_ok, cf_note = _preflight_comfy()
+    verdict.append(('ComfyUI', cf_ok, cf_note))
 
-    print('\n【4/4】预演（零网络请求，不提交任何任务）')
-    rc4, _, _ = run_cmd([sys.executable, RUN_PY, '--video-only', '--dry-run', '--strict'],
-                        'preflight_dryrun')
-    verdict.append(('引擎预演', rc4 == 0, ''))
+    return _preflight_report(verdict)
 
+
+def _preflight_report(verdict) -> int:
     print('\n' + '=' * 74)
     print('体检结论')
     print('=' * 74)
@@ -696,6 +681,72 @@ def cmd_preflight(args) -> int:
         print('  %-12s %s %s' % (name, '[OK] 通过' if ok else '[NG] 需处理', extra))
     print('  日志目录：%s' % LOG_DIR)
     return 0 if all(v[1] for v in verdict) else 1
+
+
+def _preflight_netguard() -> tuple:
+    """核对出口守卫：装上了没有、黑名单是否真的拦得住。"""
+    try:
+        import _netguard as ng
+    except Exception as exc:                     # noqa: BLE001
+        print('  [NG] 找不到 stages/_netguard.py：%s' % exc)
+        return False, '守卫缺失'
+    rows = ng.selfcheck()
+    bad = [r for r in rows if not r[1]]
+    for name, ok, detail in rows:
+        print('  %s %-22s %s' % ('[OK] ' if ok else '[NG] ', name, detail))
+    if bad:
+        return False, '%d 条判定不符' % len(bad)
+    return True, '仅本机+内网；RH 全域拒绝'
+
+
+def _preflight_data() -> tuple:
+    """逐集跑入厂门禁（ingest_check），把它的结论汇总成一条。
+
+    为什么是子进程而不是 import：`ingest_check` 只暴露 `main()`，它的口径
+    （退出码 + stdout）本来就是给人看的。在这里复刻一份判断逻辑，
+    迟早会和它分叉 —— 而「两个门禁说法不一样」比没有门禁更耗人。
+    """
+    d = DATA
+    eps = [x for x in d.iterdir() if x.is_dir() and (x / 'shots.json').is_file()] if d.is_dir() else []
+    if not eps:
+        print('  [--] 还没有导入任何一集（%s 下无 shots.json）' % d)
+        print('       先跑：drama pack import --pack <制作包目录> --apply')
+        # 没导入不算失败：preflight 对「刚建好的空项目」也要能跑。
+        return True, '尚未导入（正常，若刚建项目）'
+    print('  已导入 %d 集：%s' % (len(eps), '、'.join(sorted(x.name for x in eps)[:8])))
+    bad = 0
+    for x in sorted(eps):
+        rc, _, _ = run_cmd([sys.executable, str(SCRIPTS / 'ingest_check.py'), '--ep', x.name],
+                           'preflight_ingest_%s' % x.name)
+        if rc != 0:
+            bad += 1
+            print('  [NG] %s 未通过入厂门禁（详见日志）' % x.name)
+    if bad:
+        return False, '%d 集未过门禁' % bad
+    return True, '%d 集通过入厂门禁' % len(eps)
+
+
+def _preflight_comfy() -> tuple:
+    """ComfyUI 在线 + 出片工作流可提交。没启动算 WARN（出片时会自动拉起）。"""
+    import urllib.request as _ur
+    base = (os.environ.get('COMFYUI_URL') or 'http://127.0.0.1:8188').rstrip('/')
+    try:
+        with _ur.urlopen(base + '/system_stats', timeout=5) as r:
+            stats = json.loads(r.read().decode('utf-8', 'replace'))
+        dev = (stats.get('devices') or [{}])[0]
+        print('  [OK] %s 在线（%s · 空闲 %.1fG）'
+              % (base, dev.get('name') or '?', (dev.get('vram_free') or 0) / 1024 ** 3))
+    except Exception as exc:                       # noqa: BLE001
+        print('  [--] %s 未启动（%s）' % (base, type(exc).__name__))
+        print('       出图/出片时会自动拉起后台实例；也可以先开 ComfyUI 桌面版。')
+        return True, '未启动（会自动拉起）'
+    if not COMFY_VIDEO_PY.is_file():
+        print('  [NG] 找不到出片客户端 %s' % COMFY_VIDEO_PY)
+        return False, '客户端缺失'
+    rc, _, _ = run_cmd([sys.executable, str(COMFY_VIDEO_PY), '--check'], 'preflight_comfy', quiet_ok=False)
+    if rc != 0:
+        return False, '出片工作流体检未通过（见上）'
+    return True, '在线，出片工作流可提交'
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +780,7 @@ def cmd_models(args) -> int:
         if getattr(args, 'detail', None):
             cmd += ['--detail', args.detail]
         # ★ 执行依据（ComfyUI 工作流 API 文件 / 云端地址 / RH 应用地址）透传
-        for flag in ('comfy_url', 'comfy_workflow', 'app_url', 'app_id', 'workflow_id'):
+        for flag in ('comfy_url', 'comfy_workflow'):
             v = getattr(args, flag, None)
             if v:
                 cmd += ['--' + flag.replace('_', '-'), str(v)]
@@ -742,38 +793,6 @@ def cmd_models(args) -> int:
         if getattr(args, 'json', False):
             cmd.append('--json')
     return run_cmd(cmd, 'models', quiet_ok=False)[0]
-
-
-def cmd_style(args) -> int:
-    """转发给 style_gate.py（画风库门禁：形态 track / 视觉 look / 叙事 narrative）。"""
-    STYLE_GATE_PY = SCRIPTS / 'style_gate.py'
-    cmd = [sys.executable, STYLE_GATE_PY, '--workspace', str(WS)]
-    c = getattr(args, 'style_cmd', None)
-    if c == 'list':
-        cmd.append('list')
-    elif c == 'set':
-        cmd += ['set', args.choice]
-        if getattr(args, 'sub_mode', None):
-            cmd += ['--sub-mode', args.sub_mode]
-    elif c == 'reset':
-        cmd.append('reset')
-    elif c == 'ask':
-        cmd.append('ask')
-    elif c == 'require':
-        cmd.append('require')
-    else:                                    # 默认 status
-        cmd.append('status')
-        if getattr(args, 'json', False):
-            cmd.append('--json')
-    return run_cmd(cmd, 'style', quiet_ok=False)[0]
-
-
-# ---------------------------------------------------------------------------
-# assets：缺失资产出图（默认本地 ComfyUI ￥0；可选 RunningHub 云端计费）
-# ---------------------------------------------------------------------------
-LOCAL_ASSETS_PY = SCRIPTS / 'gen_assets_local.py'
-IMPORT_PY = _PROJECT_ROOT / 'stages' / 'import'    # ★ 制作包导入层（pack_import / preset_apply）
-COMFY_BATCH_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_batch_video.py'
 
 
 def cmd_pack(args) -> int:
@@ -869,50 +888,19 @@ def cmd_assets_local(args) -> int:
 
 
 def cmd_assets(args) -> int:
-    """资产出图 —— **只留本地 ComfyUI 一条通道**。
+    """资产出图 —— **只有本地 ComfyUI 一条通道**。
 
-    ★ 2026-11-01：删掉旧的 `--engine rh`（走 `gen_char_assets.py` / `gen_scene_assets.py` 两个
-      RunningHub **AI 应用**脚本）。理由：引擎配置里已没有 AI 应用通道（`IMAGE_PROVIDERS`
-      只有 `rh_t2i` 工作流），那两个脚本只是同一件事的两个人肉特例，且各自复制了一套
-      manifest/清洗/站点逻辑。现在只剩两条**真通道**：
-        · local —— 本地 ComfyUI（￥0）
-        · wf    —— RunningHub 工作流（★计费；旧的 `rh` 仍作为别名可用）
+    ★ 2026-11-04：RunningHub 出图（`gen_assets_rh_workflow.py`）已随整个 RH 通道移除。
+      传 `--engine wf|rh` 会明确报错，而不是静默回落到本地 —— 后者会让人以为
+      「切了通道」，其实一直在跑本机。
     """
-    if getattr(args, 'engine', 'local') in ('wf', 'rh'):
-        return cmd_assets_wf(args)
+    eng = getattr(args, 'engine', 'local')
+    if eng != 'local':
+        print('[FAIL] 只剩本地通道：--engine=%s 已不可用（RunningHub 已从本仓库移除）' % eng)
+        return 2
     return cmd_assets_local(args)
 
 
-def cmd_assets_wf(args) -> int:
-    """云端「工作流」出图（★计费）：转发 gen_assets_rh_workflow.py。"""
-    if args.submit:                       # ★ 首次生图前：模型选择门禁（云端通道）
-        rc = _model_gate('image', expected_engine='rh')
-        if rc:
-            return rc
-    cmd = [sys.executable, SCRIPTS / 'gen_assets_rh_workflow.py']
-    if args.kind and args.kind != 'all':
-        cmd += ['--kind', args.kind]
-    if args.only:
-        cmd += ['--only', args.only]
-    if getattr(args, 'ratio', None):
-        cmd += ['--ratio', args.ratio]
-    if getattr(args, 'mode', None):
-        cmd += ['--mode', args.mode]
-    for r in (getattr(args, 'ref', None) or []):
-        cmd += ['--ref', r]
-    if args.force:
-        cmd += ['--force']
-    if args.submit:
-        cmd += ['--submit']
-    print('【资产出图 · RunningHub 工作流】%s（按张计费）'
-          % ('★真实提交' if args.submit else '干跑，不花钱'))
-    rc, _, _ = run_cmd(cmd, 'assets_rh_wf', quiet_ok=False)
-    return rc
-
-
-# ---------------------------------------------------------------------------
-# video：计划 / 出片 / 批次进度
-# ---------------------------------------------------------------------------
 def _latest_batch() -> str:
     out_root = OUT
     best, best_t = None, 0.0
@@ -926,54 +914,57 @@ def _latest_batch() -> str:
 
 
 def cmd_video_plan(args) -> int:
-    est = estimate_video(args.limit, args.only.split(',') if args.only else None,
-                         tier=getattr(args, 'tier', 'consumer'),
-                         calibrate=getattr(args, 'calibrate', False))
-    print('出片计划（免费，不提交任何任务）')
+    """出片计划：**时间口径**（不提交任何任务）。
+
+    2026-11-04 起成本口径从「钱」改为「时间」：本机出片零费用，唯一的稀缺资源是 GPU 时间。
+    所以这张表回答的是「这一集要占多久、时间花在哪一阶段」，而不是「要花多少币」。
+    """
+    import time_model as TM
+
+    only = args.only.split(',') if args.only else None
+    shots = _selected_shots(args.limit, only)
+    durs = _durations(shots) or []
+    n = len(shots) or 1
+    avg = (sum(durs) / len(durs)) if durs else 6.0
+    # 本集参考图张数：把每镜的 cast 求并集（同一张图在多个镜里出现只算一次）
+    keys = set()
+    for s in shots:
+        for k in (s.get("cast") or []) + list(s.get("character_refs") or []) + list(s.get("scene_refs") or []):
+            keys.add(str(k))
+    n_img = len(keys) or n
+
+    p = TM.load_params(WS)
+    ep = TM.estimate_episode(n, avg, n_img, params=p)
+
+    print('出片计划（时间口径，不提交任何任务）')
     print('-' * 74)
-    print('  将提交      : %d 段' % est['segments'])
-    print('  Key tier    : %s' % est['tier_label'])
-    print('  两段式预估  : 固定 %s + 变动 %s = %s%s ≈ ￥%.2f'
-          % (est['fixed_total'], est['variable_total'],
-             est['coins'], ' RH币', est['cny']))
-    print('  GPU 秒口径  : %.0f 运行秒 × 0.205 ≈ %d RH币'
-          % (est['gpu_seconds'], round(est['gpu_model_coins'])))
-    print('  参数来源    : %s' % est['_params_source'])
-    _a = est.get('assumptions') or {}
-    if _a:
-        print('  计算量口径  : %s 步 / %s MP（相对基准 ×%.2f；沿用开工确认单）'
-              % (_a['steps'], _a['megapixels'], _a['work_scale']))
-    cal = est.get('_calibrate')
-    if cal:
-        ev = cal.get('evidence') or {}
-        if cal.get('fitted'):
-            print('  自校准      : %s（样本 %s：币 %s / 钱包 %s / 运行秒 %s）'
-                  % (json.dumps(cal['fitted'], ensure_ascii=False),
-                     ev.get('samples'), ev.get('coin_fit_samples', 0),
-                     ev.get('money_fit_samples', 0), ev.get('gpu_ratio_samples', 0)))
-        else:
-            print('  自校准      : 历史台账样本不足（需 ≥3 条带 usage 的记录），本次沿用默认参数')
-    print('  口径说明    : %s' % est['_caveat'])
-    only = ['--only', args.only] if args.only else []
-    lim = ['--limit', str(args.limit)] if args.limit else []
-    print('\n  真实跑（★计费）：')
-    print('    python scripts/drama.py video run --yes %s %s'
-          % (' '.join(lim), ' '.join(only)))
-    print('\n  先小样更稳（1 段）：')
-    print('    python scripts/drama.py video run --yes --limit 1')
-    print('\n  更精确的「将提交 N / 跳过 M」口径（引擎自带；本线走 --video-only，'
-          '所以「图片」那部分不会真的发生）：')
-    run_cmd([sys.executable, CHECK_BILLING, '--workspace', VP] + lim + only,
-            'video_check_billing', quiet_ok=False)
-    print('  续跑同一批次（不重复扣费）：python scripts/drama.py video run --yes --resume <批次>')
-    print('  用历史台账校准单价：python scripts/drama.py video plan --calibrate --save-calibration')
-    if getattr(args, 'save_calibration', False):
-        if cal and cal.get('fitted'):
-            import cost_model as CM
-            p = CM.write_params(WS, cal['params'])
-            print('  [OK] 已把校准结果写入 %s（下次预估自动使用）' % p)
-        else:
-            print('  [WARN] 样本不足，未写 cost-model.json（不臆造单价）')
+    print('  将提交      : %d 段（平均 %.1fs/段）' % (n, avg))
+    print('  参考图      : %d 张（本集）' % n_img)
+    print('  硬件        : %s' % (ep.get('hardware') or '本机'))
+    print('-' * 74)
+    for ph in ep['phases']:
+        print('  %-10s %-14s %s' % (ph['label'], ph['human'], ph['detail']))
+    print('-' * 74)
+    print('  合计        : %s ｜ 瓶颈：%s' % (ep['total_human'], ep['bottleneck']))
+    if ep['confidence'] != TM.CONF_MEASURED:
+        print()
+        print('  [注意] 系数是经验值，尚未在本机实测。首次真跑后校准一次，这张表就准了：')
+        print('    python stages/production/scripts/time_model.py --calibrate --workspace "%s"' % WS)
+    if args.limit:
+        print()
+        print('  本次只跑前 %d 段（--limit），时间为其中一部分。' % args.limit)
+    print()
+    print('  真实跑（占 GPU，不花钱）：')
+    print('    python stages/production/scripts/drama.py video run --ep %s --yes%s'
+          % (getattr(args, 'ep', None) or 'ep01',
+             (' --only ' + args.only) if args.only else ''))
+    print('  先小样更稳（1 段）：')
+    print('    python stages/production/scripts/drama.py video run --ep %s --limit 1 --yes'
+          % (getattr(args, 'ep', None) or 'ep01'))
+    if getattr(args, 'json', False):
+        import json as _json
+        print()
+        print(_json.dumps(ep, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1023,50 +1014,17 @@ def cmd_video_local(args) -> int:
 
 
 def cmd_video_run(args) -> int:
-    # ★ 2026-11-04：出片默认走本地（￥0）。`--engine workflow` 显式切回 RunningHub。
-    #   默认值改本地不是「省钱优先」，而是这条链现在的定位：创作在 Skill、执行在引擎，
-    #   执行层不该默认产生平台费用。要算钱的通道必须被显式选中。
-    if (getattr(args, 'engine', None) or 'local') == 'local':
-        return cmd_video_local(args)
-    if not args.yes:
-        print('[闸门] 这会真实提交任务并计费。确认无误后加 --yes 重跑：')
-        print('       python scripts/drama.py video run --yes%s%s'
-              % (' --limit %d' % args.limit if args.limit else '',
-                 ' --only %s' % args.only if args.only else ''))
-        cmd_video_plan(argparse.Namespace(limit=args.limit, only=args.only))
+    """出片。**只有本地 ComfyUI 一条通道**（RunningHub 已于 2026-11-04 整体移除）。
+
+    保留 `--engine` 参数只是为了让旧命令不被 argparse 拒绝；传 `workflow` 会明确报错，
+    而不是悄悄回落到本地 —— 「以为切换了通道，其实没切」比报错危险得多。
+    """
+    eng = getattr(args, 'engine', None) or 'local'
+    if eng != 'local':
+        print('[FAIL] 只剩本地通道：--engine=%s 已不可用（RunningHub 已从本仓库移除）' % eng)
+        print('       直接跑：drama video run --ep ep01 --yes')
         return 2
-    rc = _model_gate('video', expected_engine='workflow')   # ★ 首次出片前：模型选择门禁
-    if rc:
-        return rc
-    est = estimate_video(args.limit, args.only.split(',') if args.only else None,
-                         tier=getattr(args, 'tier', 'consumer'))
-    print('★ 开始真实出片：%d 段，预估 %d RH币 ≈ ￥%.2f（%s；以 usage 为准）'
-          % (est['segments'], est['coins'], est['cny'], est['tier_label']))
-    cmd = [sys.executable, RUN_PY, '--video-only']
-    if args.resume:
-        cmd += ['--resume', args.resume]
-    if args.limit:
-        cmd += ['--limit', str(args.limit)]
-    if args.only:
-        cmd += ['--only', args.only]
-    if args.concurrency:
-        cmd += ['--concurrency', str(args.concurrency)]
-    # ★ 2026-10-20（反馈 P2-14）：单例锁。实测「同一脚本被启动两次 → 两条 lane 变四条 →
-    #   同一镜重复生成，浪费约 2400 币」。这里在**提交任何任务之前**拦住。
-    from _lock import single_instance
-    try:
-        with single_instance('video_run', WS):
-            rc, log, dt = run_cmd(cmd, 'video_run', quiet_ok=False)
-    except SystemExit:
-        print('（已由单例锁拦下，未提交任何任务、未产生费用）')
-        raise
-    print('\n引擎退出码 %s（耗时 %.1fs）；日志：%s' % (rc, dt, log))
-    batch = args.resume or _latest_batch()
-    if batch:
-        cmd_video_status(argparse.Namespace(batch=batch))
-        print('\n单条重跑（不重复扣费）：python scripts/drama.py video run --yes --resume %s --only <shot_id>'
-              % batch)
-    return rc
+    return cmd_video_local(args)
 
 
 def cmd_video_status(args) -> int:
@@ -1106,57 +1064,6 @@ def cmd_video_status(args) -> int:
     return 0
 
 
-def cmd_video_resume_download(args) -> int:
-    """补下载「任务已成功但产物没落盘」的段（反馈 P1-7）。
-
-    引擎在下载失败时会写 `<批次>/pending_download.json`（含 taskId + 直链），
-    这里转调引擎的 `--resume-download`：只重下、不重新提交，因此**不会再扣一次费**。
-    """
-    cmd = [sys.executable, RUN_PY, '--resume-download']
-    if getattr(args, 'batch', None):
-        cmd += [args.batch]
-    print('【补下载】读 pending_download.json，只重下不重提（不重复计费）')
-    rc, log, dt = run_cmd(cmd, 'video_resume_download', quiet_ok=False)
-    print('引擎退出码 %s（耗时 %.1fs）；日志：%s' % (rc, dt, log))
-    return rc
-
-
-# ---------------------------------------------------------------------------
-# report / balance / refs / guide
-# ---------------------------------------------------------------------------
-def cmd_report(args) -> int:
-    batch = args.batch or _latest_batch()
-    if batch:
-        cmd_video_status(argparse.Namespace(batch=batch))
-        print()
-    print('RunningHub 任务台账（自动记录，失败也记）')
-    print('-' * 74)
-    lr = VP / 'ledger' / 'runs'
-    rows = []
-    if lr.is_dir():
-        for f in sorted(lr.glob('*.json')):
-            d = read_json(f, {}) or {}
-            for a in d.get('attempts', []):
-                rows.append((d.get('shot_id'), a.get('status'), a.get('usage') or {},
-                             a.get('artifact'), a.get('error')))
-    if not rows:
-        print('（台账为空）')
-    else:
-        for sid, status, u, art, err in rows[-40:]:
-            cost = u.get('consumeCoins') and ('%s RH币' % u['consumeCoins']) or \
-                   (u.get('thirdPartyConsumeMoney') and ('$%s' % u['thirdPartyConsumeMoney'])) or '—'
-            print('  %-12s %-8s %-12s %s' % (sid, status, cost,
-                                             (art or err or '')[:60].replace('\n', ' ')))
-        print('\n合计：%d 条 attempt' % len(rows))
-    print('\n完整成本报表：drama cost --json（或 cost_ledger.py --json）')
-    return 0
-
-
-def cmd_balance(args) -> int:
-    rc, log, _ = run_cmd([sys.executable, SCRIPTS / 'rh_doctor.py', '--live'], 'balance')
-    return rc
-
-
 def cmd_refs(args) -> int:
     # ★ 2026-11-02：`prepare_refs.py` 的默认工作区是**脚本所在目录**的 video-pipeline/，
     #   不是 cwd。不显式传 --workspace 时，它永远去 `<仓库>/stages/production/video-pipeline/`
@@ -1173,77 +1080,72 @@ def cmd_refs(args) -> int:
     return rc
 
 
-GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
+GUIDE = """短剧生产线 · 速查（python stages/production/scripts/drama.py <命令>）
 ════════════════════════════════════════════════════════════════════════
-★开工     setup               前置 7 项：画风/集数/每集时长/生图模型/视频模型+功能选项/分辨率/流水线
-         setup set --style live_action --episodes 30 --ep-seconds 60 \\
-             --image-model local_comfyui --video-model runninghub \\
-             --workflow-id <id> --site https://www.runninghub.ai --account "主账号A" \\
-             --resolution 1080x1920 --pipeline on --budget-coins 9000
-         setup accounts      列出可用账号（只显示指纹，Key 本体不落盘）
-         setup require       九项不齐 → 退出码 4（不许开工）
-★流程     workflow            11 环节表：调研→剧本→资产设计→资产生成→视频提示词→视频生成
-                             →发行资料→拼接→放大→字幕→定稿（顺序不可调）
-         workflow status     进度 + 当前应做哪一环
-         workflow check --stage S6   前置环节未完成 → 退出码 4
-★流水线   pipeline plan       开工预告：预计完工时间 + 预计花费 + 预算余量（不花钱）
-         pipeline run --yes  一次跑到底（预算熔断 → 退出码 3；等 Agent 产出 → 4）
-         pipeline mark S3    登记内容环节完成
-★配乐     bgm library         看库（--scan 用 ffprobe 补时长；共享库已预置 12 首 CC BY）
-         bgm plan --ep ep01 --apply    生成铺排计划（情绪→增益/淡入淡出→ducking；相邻集自动不重复）
-         bgm mix --ep ep01 --apply     混音（视频直通只重编码音频；S10 会自动接）
-         bgm credits --ep ep01         出署名段（CC BY 必须署名，粘进发布文案）
-看状态   status              全盘面板：数据/参考图/资产缺口/批次/台账（零网络，先跑这个）
-模型     models              ★前置条件：首次生图/出片前必须确认模型（本地/云端/闭源三选一）
-         models --ask        交互式引导确认（生图；换 video 传 models ask video）
-         models list         可选清单：本地ComfyUI(￥0) / RunningHub(★计费) / 闭源模型(★计费)
-         models set image=local_comfyui video=runninghub    记录确认（可一次两条）
-         models reset video  换模型：先清除再重确认
-体检     preflight           一次过 Key 分级 + 引擎 doctor + check + 预演（全免费）
-资产     assets              缺资产就出图：默认**本地 ComfyUI ￥0**，干跑
-         assets --engine local --submit            本机出图（不花钱，占 GPU；先出一张看风格）
-         assets --engine local --check             体检 ComfyUI 是否在线（不出图）
-         assets --engine local --only char_01      只出某个资产（断点续跑默认跳过已出图）
-         assets --engine rh --submit --kind char   云端计费通道（人物 27 RH币/张，场景 $0.01/张）
-参考图   refs                瘦身体检；refs --apply --write-config 才写盘+改配置
-出片     video plan          计划与成本预估（免费）；带 --limit/--only 可缩小范围
-         video run --yes     真跑出片（★计费）；--limit 1 先出小样
-         video status [批次] 某批次进度与失败清单
-         video run --yes --resume <批次> --only <shot_id>   单条重跑（不重复扣费）
-战报     report              批次汇总 + 台账（含每笔消耗与产物路径）
-余额     balance             两把 Key 的余额（只读，不计费）
-成本台账 cost                单次任务 + 全剧累计（RH币/美元钱包/token 三池表格）
-         cost --checkpoint   ★ 收工结账：打印台账 + 记基线，下次即可看「单次任务增量」
-════════════════════════════════════════════════════════════════════════
-铁律：默认不花钱（要 --submit / --yes）；中断后一律用 --resume 续跑，不重新提交。
-成本   ：资产 本地 ComfyUI ￥0 / 云端人物 17-27 RH币/张 / 场景 $0.01/张 | 视频 78-209 RH币/段
-通道   ：assets --engine local（本地，￥0，默认）| rh（云端，★计费）
-口径   ：消耗只认平台按任务返回的 usage —— **不用余额差值倒推消耗**
-日志   ：video-pipeline/output/logs/   台账：video-pipeline/ledger/runs/
-成本表 ：docs/成本台账.md（由 cost 命令生成）
+全部在本机跑（本地 ComfyUI）：出图 ￥0、出片 ￥0、不需要任何平台 Key。
+唯一的成本是**时间** —— 预估看 `time plan`，实测看 `time report`。
+
+★主链     pack import        导入制作包 → data/ 契约（默认干跑，--apply 落盘）
+         pack preset        应用预配置（出图/出片/放大通道一次性写三处）
+         assets             批量出资产图（本地 ComfyUI；--submit 才真跑）
+         video plan         这一集会跑多久（时间分解，不提交任何任务）
+         video run --ep ep01 --yes   批量出片（本地，占 GPU）
+         nodes / next       接下来跑哪个节点（12 节点状态机）
+看状态   status             全盘面板：数据/参考图/资产缺口/批次（零网络，先跑这个）
+时间     time plan          预估：单集 / 整季要跑多久（--episodes 30 看整季）
+         time report        实测：已经跑了多久，按集 / 按阶段 / 逐镜
+         time plan --calibrate   用实测反推系数，之后预估就准了
+★资产     refs               参考图瘦身（出片前把原图裁到可用尺寸）
+         models             通道确认单（只剩本地；首次出图/出片前需确认一次）
+环境     preflight          一次过体检：依赖 / ComfyUI / 工作区 / 资产缺口
+         guide              打印本页
+子命令透传 bgm                配乐库与混音（library / plan / mix / credits）
+
+常用一条线：
+  1) drama pack preset --preset local-comfyui-all --apply
+  2) drama pack import --pack <制作包目录> --apply
+  3) drama assets --submit                  # 出资产图（￥0，占 GPU）
+  4) drama pack import --apply              # 回填参考表（出完图必须重跑一次）
+  5) drama video plan --ep ep01             # 先看时间，再决定要不要跑
+  6) drama video run --ep ep01 --yes
+  7) 之后按 drama next 走：拼接 → 放大 → 字幕 → 发布版
+
+时间量级（RTX 4060 8G，默认系数）：
+  一集 8 镜 × 6 秒 ≈ 2.5 小时，其中出片占 78%
+  30 集 ≈ 76 小时（单卡并发只能是 1）
+  ★ 首次真跑后执行 `drama time plan --calibrate`，这些数字会换成本机实测值。
 """
 
 
-def cmd_cost(args) -> int:
-    """成本台账：转发给 cost_ledger.py（单次任务 + 全剧累计 + 三池表格）。
+def cmd_time(args) -> int:
+    """耗时台账：已经花了多久（实测），替代已删除的 cost_ledger。"""
+    cmd = [sys.executable, str(SCRIPTS / 'time_report.py'), '--workspace', str(WS)]
+    if getattr(args, 'ep', None):
+        cmd += ['--ep', args.ep]
+    if getattr(args, 'per_shot', False):
+        cmd += ['--per-shot']
+    if getattr(args, 'json', False):
+        cmd += ['--json']
+    print('【耗时台账】成本口径 = 时间（本机 GPU 时间）')
+    rc, _, _ = run_cmd(cmd, 'time_report', quiet_ok=False)
+    return rc
 
-    ★ 口径：消耗只取平台按任务返回的 usage；**不用余额差值倒推消耗**（用户 2026-09-19 明确）。
-    ★ 2026-11-01：Excel 导出已删（能力清单 L8），只产 markdown / JSON。
-    """
-    cmd = [sys.executable, SCRIPTS / 'cost_ledger.py']
-    for flag, on in (('--checkpoint', args.checkpoint), ('--json', args.json),
-                     ('--balance', args.balance), ('--no-write', args.no_write)):
-        if on:
-            cmd.append(flag)
-    if args.md:
-        cmd += ['--md', args.md]
-    # ★ 2026-10-20（反馈 P0-3）：剧名默认从工作区推导（brief.json → project.json → 目录名），
-    #   不再让 cost_ledger 里的 `DRAMA_DEFAULT` 决定交付物文件名。
-    drama_name = args.drama or _WSMOD.drama_name(WS)
-    cmd += ['--drama', drama_name]
-    print('【成本台账】单次任务 + 全剧累计（口径：只认平台 usage，不用余额倒推）')
-    print('           剧名：%s%s' % (drama_name, '' if args.drama else '（由工作区推导；可用 --drama 覆盖）'))
-    rc, _, _ = run_cmd(cmd, 'cost_ledger', quiet_ok=False)
+
+def cmd_time_plan(args) -> int:
+    """耗时预估：这一集/这一季要跑多久（不跑任何任务）。"""
+    cmd = [sys.executable, str(SCRIPTS / 'time_model.py'), '--workspace', str(WS)]
+    for flag, key in (('--episodes', 'episodes'), ('--shots', 'shots'),
+                      ('--shot-seconds', 'shot_seconds'), ('--images', 'images')):
+        v = getattr(args, key, None)
+        if v:
+            cmd += [flag, str(v)]
+    if getattr(args, 'upscale', False):
+        cmd += ['--upscale']
+    if getattr(args, 'calibrate', False):
+        cmd += ['--calibrate']
+    if getattr(args, 'json', False):
+        cmd += ['--json']
+    rc, _, _ = run_cmd(cmd, 'time_model', quiet_ok=False)
     return rc
 
 
@@ -1293,11 +1195,6 @@ def _add_ws_arg(p) -> None:
                    help='工作区根目录（也可用环境变量 SOLODRAMA_WORKSPACE）')
 
 
-def _add_cost_tier_args(q) -> None:
-    q.add_argument('--tier', choices=('consumer', 'ent_shared'), default='consumer',
-                   help='按哪类 Key 的计价公式预估（consumer=消费级会员；ent_shared=企业级共享）')
-
-
 def main() -> int:
     _harden_stdio()
     hydrate_env()
@@ -1323,10 +1220,13 @@ def main() -> int:
     p.add_argument('--world', default='')
     p.add_argument('--region', default='east_asian',
                    choices=['east_asian', 'western', 'south_asian', 'latin'])
+    # ★ 2026-11-04：引擎只剩本地 ComfyUI（出图与出片同一个 ComfyUI）。
+    #   以前这里默认 `runninghub`，等于每个新项目一建出来就指向云端 ——
+    #   本仓库已不允许任何 RH 调用，这个默认值必须跟着消失。
     p.add_argument('--image-engine', dest='image_engine', default='local_comfyui',
-                   choices=['local_comfyui', 'runninghub'])
-    p.add_argument('--video-engine', dest='video_engine', default='runninghub',
-                   choices=['runninghub', 'local_h3'])
+                   choices=['local_comfyui'])
+    p.add_argument('--video-engine', dest='video_engine', default='local_comfyui',
+                   choices=['local_comfyui'])
     p.add_argument('--force', action='store_true')
     p.add_argument('--dry-run', action='store_true')
     _add_ws_arg(p)
@@ -1346,7 +1246,7 @@ def main() -> int:
     _add_ws_arg(p)
     p.set_defaults(fn=cmd_do_node)
 
-    p = sub.add_parser('nodes', help='七环节 23 节点全状态')
+    p = sub.add_parser('nodes', help='五环节 12 节点全状态')
     p.add_argument('--ep', default='')
     p.add_argument('--json', action='store_true')
     _add_ws_arg(p)
@@ -1404,20 +1304,14 @@ def main() -> int:
     p = sub.add_parser('assets', help='缺失资产出图（默认本地 ComfyUI ￥0，干跑）')
     _add_ws_arg(p)
     p.add_argument('--pack', default=None, help='制作包目录（默认 <工作区>/pack）')
-    p.add_argument('--engine', choices=('local', 'wf', 'rh'), default='local',
-                   help='出图通道：local=本地 ComfyUI（￥0，默认）｜wf=RunningHub 工作流（★计费）'
-                        '｜rh 是 wf 的旧别名')
-    p.add_argument('--ratio', default=None, help='仅 wf：画幅裸值，如 9:16')
-    p.add_argument('--mode', choices=('t2i', 'i2i'), default=None,
-                   help='仅 wf：t2i=文生图｜i2i=图生图（必须给 --ref）')
-    p.add_argument('--ref', action='append', default=[],
-                   help='仅 wf：参考图路径（i2i 必填，可多次）')
+    p.add_argument('--engine', choices=('local',), default='local',
+                   help='出图通道：只剩 local（本机 ComfyUI，￥0）')
     p.add_argument('--submit', action='store_true',
-                   help='真的出图：local 占 GPU 不花钱；wf ★计费（按张）')
+                   help='真的出图（占 GPU，不花钱）')
     p.add_argument('--kind', choices=('all', 'char', 'scene', 'prop'), default='all',
                    help='只做某一类（prop 仅本地通道支持）')
     p.add_argument('--only', default=None, help='只做这些（名字或序号 / 资产 id，逗号分隔）')
-    p.add_argument('--force', action='store_true', help='已生成的也重跑（rh 通道会重复计费）')
+    p.add_argument('--force', action='store_true', help='已生成的也重跑（本地不花钱，只是费时间）')
     p.add_argument('--check', action='store_true', help='仅 local：体检 ComfyUI 是否在线，不出图')
     p.set_defaults(fn=cmd_assets)
 
@@ -1438,16 +1332,15 @@ def main() -> int:
     _add_ws_arg(q)
     q.add_argument('--json', action='store_true')
     q.set_defaults(fn=cmd_models)
-    q = ms.add_parser('set', help='记录确认：set image=local_comfyui [video=runninghub]')
+    q = ms.add_parser('set', help='记录确认：set image=local_comfyui [video=local_comfyui]')
     _add_ws_arg(q)
     q.add_argument('pairs', nargs='+', metavar='kind=choice')
     q.add_argument('--detail', default=None)
     q.add_argument('--comfy-url', dest='comfy_url', default=None, help='ComfyUI 服务地址（本地/云端）')
     q.add_argument('--comfy-workflow', dest='comfy_workflow', default=None,
                    help='ComfyUI 工作流 API 文件路径（「导出（API）」得到的 json）')
-    q.add_argument('--app-url', dest='app_url', default=None, help='RunningHub AI 应用地址')
-    q.add_argument('--app-id', dest='app_id', default=None, help='RunningHub AI 应用 ID（webappId）')
-    q.add_argument('--workflow-id', dest='workflow_id', default=None, help='RunningHub 工作流 ID')
+    # ★ 2026-11-04：--app-url / --app-id / --workflow-id 已删 —— 它们只对应
+    #   RunningHub 的通道形态，本仓库没有云端通道，留着会让人以为还能填。
     q.set_defaults(fn=cmd_models)
     q = ms.add_parser('reset', help='清除某类确认（换通道前用）')
     _add_ws_arg(q)
@@ -1460,50 +1353,20 @@ def main() -> int:
     p.set_defaults(fn=cmd_models, models_cmd=None)
 
     # ★ 画风库门禁（前置条件）：开工前先确认形态（3D 漫剧 / 2D 动画 / 真人）+ 视觉 look + 叙事
-    p = sub.add_parser('style', help='画风库确认：track（3d_manhua/2d_animation/live_action）+ look + narrative')
-    _add_ws_arg(p)
-    ss = p.add_subparsers(dest='style_cmd')
-    q = ss.add_parser('list', help='打印可选画风清单（含各自规格）')
-    _add_ws_arg(q)
-    q.set_defaults(fn=cmd_style)
-    q = ss.add_parser('status', help='查看当前画风确认状态（只读）')
-    _add_ws_arg(q)
-    q.add_argument('--json', action='store_true')
-    q.set_defaults(fn=cmd_style)
-    q = ss.add_parser('set', help='记录确认：set 3d_manhua|2d_animation|live_action [--sub-mode ...]')
-    _add_ws_arg(q)
-    q.add_argument('choice', choices=('3d_manhua', '2d_animation', 'live_action'))
-    q.add_argument('--sub-mode', dest='sub_mode', default=None)
-    q.set_defaults(fn=cmd_style)
-    q = ss.add_parser('reset', help='清除画风确认（换画风前用；已产出素材会作废）')
-    _add_ws_arg(q)
-    q.set_defaults(fn=cmd_style)
-    q = ss.add_parser('ask', help='交互式引导确认（需 TTY）')
-    _add_ws_arg(q)
-    q.set_defaults(fn=cmd_style)
-    q = ss.add_parser('require', help='门禁查询（未过则退出码 4；供上游脚本调用）')
-    _add_ws_arg(q)
-    q.set_defaults(fn=cmd_style)
-    p.set_defaults(fn=cmd_style, style_cmd=None)
-
-
     pv = sub.add_parser('video', help='出片')
     _add_ws_arg(pv)
     vs = pv.add_subparsers(dest='vcmd')
-    q = vs.add_parser('plan', help='计划与成本预估（免费）')
+    q = vs.add_parser('plan', help='出片计划与耗时预估（不提交任何任务）')
     _add_ws_arg(q)
     q.add_argument('--limit', type=int)
     q.add_argument('--only')
-    _add_cost_tier_args(q)
-    q.add_argument('--calibrate', action='store_true',
-                   help='用历史台账（真实 usage）拟合单价，而不是用内置默认值')
-    q.add_argument('--save-calibration', dest='save_calibration', action='store_true',
-                   help='把校准结果写入 <工作区>/cost-model.json（样本不足则不写）')
+    q.add_argument('--ep', default=None, help='集号（ep01）')
+    q.add_argument('--json', action='store_true')
     q.set_defaults(fn=cmd_video_plan)
     q = vs.add_parser('run', help='真跑出片（本地 ￥0 / 云端 ★计费；都需 --yes）')
     _add_ws_arg(q)
-    q.add_argument('--engine', choices=('local', 'workflow'), default='local',
-                   help='出片通道：local=本机 ComfyUI（￥0，默认）｜workflow=RunningHub（★计费）')
+    q.add_argument('--engine', choices=('local',), default='local',
+                   help='出片通道：只剩 local（本机 ComfyUI，￥0）')
     q.add_argument('--ep', default=None, help='集号（local 通道必填；ep01 / 1）')
     q.add_argument('--force', action='store_true', help='local：已有产物也重跑')
     q.add_argument('--timeout-min', dest='timeout_min', type=float, default=None,
@@ -1512,38 +1375,38 @@ def main() -> int:
     q.add_argument('--limit', type=int)
     q.add_argument('--only')
     q.add_argument('--resume', metavar='BATCH_ID')
-    q.add_argument('--concurrency', type=int)
-    _add_cost_tier_args(q)
     q.set_defaults(fn=cmd_video_run)
-    q = vs.add_parser('resume-download', help='补下载：任务已成功但产物没落盘（不重复计费）')
-    _add_ws_arg(q)
-    q.add_argument('batch', nargs='?', default=None, help='批次 ID；默认扫描全部批次')
-    q.set_defaults(fn=cmd_video_resume_download)
     q = vs.add_parser('status', help='批次进度')
     _add_ws_arg(q)
     q.add_argument('batch', nargs='?', default=None)
     q.set_defaults(fn=cmd_video_status)
 
-    p = sub.add_parser('report', help='战报')
+    # ★ 2026-11-04：成本口径改为**时间**。`report` / `balance` / `cost` 三个命令删掉：
+    #   前两个是 RunningHub 的账户与战报，后者的币口径已无意义。换成 time 的两个子命令。
+    p = sub.add_parser('time', help='耗时：预计跑多久（plan）/ 已经跑了多久（report）')
     _add_ws_arg(p)
-    p.add_argument('--batch', default=None)
-    p.set_defaults(fn=cmd_report)
+    ts = p.add_subparsers(dest='tcmd')
 
-    p = sub.add_parser('balance', help='Key 余额（只读）')
-    _add_ws_arg(p)
-    p.set_defaults(fn=cmd_balance)
+    q = ts.add_parser('plan', help='预计耗时：单集/整季（不跑任何任务）')
+    _add_ws_arg(q)
+    q.add_argument('--episodes', type=int, default=1, help='算几集（默认 1）')
+    q.add_argument('--shots', type=int, default=8, help='每集镜头数（默认 8）')
+    q.add_argument('--shot-seconds', dest='shot_seconds', type=float, default=6.0)
+    q.add_argument('--images', type=int, default=12, help='每集资产图张数')
+    q.add_argument('--upscale', action='store_true', help='计入本地超分耗时')
+    q.add_argument('--calibrate', action='store_true',
+                   help='用台账实测反推系数并写进 <工作区>/time-model.json')
+    q.add_argument('--json', action='store_true')
+    q.set_defaults(fn=cmd_time_plan)
 
-    p = sub.add_parser('cost', help='成本台账：单次任务 + 全剧累计（markdown / JSON）')
-    _add_ws_arg(p)
-    p.add_argument('--checkpoint', action='store_true',
-                   help='★ 收工结账：打印台账 + 记基线（下次即可看单次增量与 token 归属）')
-    p.add_argument('--json', action='store_true', help='机器可读')
-    p.add_argument('--balance', action='store_true',
-                   help='附带只读余额（仅判断够不够跑，不参与消耗统计）')
-    p.add_argument('--md', default=None, help='markdown 输出路径（默认 docs\\成本台账.md）')
-    p.add_argument('--no-write', action='store_true', help='只打印，不写任何文件')
-    p.add_argument('--drama', default=None, help='短剧名（决定报表文件名与表标题）')
-    p.set_defaults(fn=cmd_cost)
+    q = ts.add_parser('report', help='耗时台账：按集 / 按阶段 / 逐镜')
+    _add_ws_arg(q)
+    q.add_argument('--ep', default=None, help='只看这一集（ep01）')
+    q.add_argument('--per-shot', dest='per_shot', action='store_true', help='逐镜明细')
+    q.add_argument('--json', action='store_true')
+    q.set_defaults(fn=cmd_time)
+
+    p.set_defaults(fn=cmd_time)
 
     p = sub.add_parser('guide', help='打印速查')
     _add_ws_arg(p)

@@ -143,7 +143,7 @@ def main(argv=None) -> int:
     if a.apply:
         # _do_set 自带「同一 kind 重设会写 history」的行为，幂等
         rc1 = M._do_set(ws, "image", img.get("choice") or "local_comfyui", detail_img, source="preset")
-        rc2 = M._do_set(ws, "video", vid.get("choice") or "runninghub", detail_vid, source="preset")
+        rc2 = M._do_set(ws, "video", vid.get("choice") or "local_comfyui", detail_vid, source="preset")
         if rc1 != 0 or rc2 != 0:
             print("[WARN] 通道确认单写入有告警（退出码 %s / %s），请检查 model-plan.json"
                   % (rc1, rc2))

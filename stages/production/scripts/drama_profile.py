@@ -97,7 +97,7 @@ def from_legacy(ws) -> dict:
       * look    ← style-plan.style.look；老档案把题材风格写在 sub_mode 里，
                   那个值如果命中 looks.json 就认作 look
       * narrative ← style-plan.style.narrative，缺省 dialogue
-      * channel.image.engine ← model-plan.models.image.choice（local_comfyui / runninghub）
+      * channel.image.engine ← model-plan.models.image.choice（只剩 local_comfyui / cloud_comfyui）
       * episodes / delivery ← project-setup
     """
     ws = pathlib.Path(ws)
@@ -142,14 +142,23 @@ def from_legacy(ws) -> dict:
         d["channel"]["image"]["engine"] = str(img["choice"])
 
     # 视频通道：旧三份里没有（model-plan 只登记了 image），真源在引擎侧。
-    # 只做「能判定的映射」，不猜默认值：命中 h3 就是 runninghub，命中 comfy_url 就是本地。
+    # ★ 2026-11-04：改判据。以前「h3.id 存在」= 走 RunningHub 云端；
+    #   现在本仓库没有云端通道，h3.id 这种遗留字段只记录在 workflow_id_note 里，
+    #   engine 一律写 local_comfyui —— 迁移后的档案不能指回一条无法执行的通道。
     eng = _read(ws / "video-pipeline" / "config.local.json")
     h3 = eng.get("h3") or {}
-    if str(h3.get("id") or "").strip():
-        d["channel"]["video"]["engine"] = "runninghub"
-        d["channel"]["video"]["workflow"] = str(h3.get("id")).strip()
-    elif str(h3.get("comfy_url") or "").strip() or str(h3.get("workflow") or "").strip():
-        d["channel"]["video"]["engine"] = "local_h3"
+    legacy_id = str(h3.get("id") or "").strip()
+    wf = str(h3.get("workflow") or "").strip()
+    comfy_url = str(h3.get("comfy_url") or eng.get("comfy_url") or "").strip()
+    d["channel"]["video"]["engine"] = "local_comfyui"
+    if wf:
+        d["channel"]["video"]["workflow"] = wf
+    if comfy_url:
+        d["channel"]["video"]["comfy_url"] = comfy_url
+    if legacy_id:
+        # 老项目留下的云端工作流 ID：保留事实、标清楚它已不生效，不做静默丢弃。
+        d["channel"]["video"]["workflow_id_note"] = (
+            "旧档案里的云端工作流 ID %s（2026-11-04 起不再使用）" % legacy_id)
     return d
 
 

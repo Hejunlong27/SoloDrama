@@ -33,6 +33,34 @@ from core.llm import gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
 
+# ---------------------------------------------------------------------------
+# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
+#   装在服务端进程上，覆盖所有出站：谁在哪个路由里偷偷加了 RH 调用都会被拦。
+#   注意：默认连普通远端也拦（只放行本机/内网）；要让大模型网关出网，
+#   启动前设 SOLODRAMA_ALLOW_REMOTE=1 —— 但 RunningHub 无论怎样都不可达。
+# ---------------------------------------------------------------------------
+def _boot_netguard() -> None:
+    import pathlib as _pl
+    import sys as _sys
+    for _p in _pl.Path(__file__).resolve().parents[:5]:
+        for _cand in ((_p / "_netguard.py"), (_p / "stages" / "_netguard.py")):
+            if _cand.is_file():
+                if str(_cand.parent) not in _sys.path:
+                    _sys.path.insert(0, str(_cand.parent))
+                try:
+                    import importlib as _il
+                    _mod = _il.import_module("_netguard")
+                    _mod.install()
+                    print("[netguard] 已启用：只许本机/内网出站%s"
+                          % ("（已放宽普通远端，RH 仍禁止）" if _mod._allow_remote() else ""))
+                except Exception as _e:      # noqa: BLE001
+                    print("[netguard][WARN] 未启用：%s" % _e)
+                return
+
+
+_boot_netguard()
+
+
 # ★ 静态资源的 MIME 必须显式钉住：Windows 上 mimetypes 会读注册表，
 #   历史机器可能把 .js 报成 text/plain —— 浏览器会拒绝加载 ES module。
 for _ext, _type in ((".js", "text/javascript"), (".mjs", "text/javascript"),
@@ -783,7 +811,7 @@ def studio_env():
 
 
 # ---------------------------------------------------------------------------
-# 连接中心：LLM / ComfyUI / RunningHub 的配置、注入与只读探测
+# 连接中心：LLM / ComfyUI 的配置、注入与只读探测（RunningHub 已于 2026-11-04 移除）
 # 纪律：保存是写操作但不计费；测试一律只读（0 费用），不产生作业。
 # ---------------------------------------------------------------------------
 @app.get("/api/connections")

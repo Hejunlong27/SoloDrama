@@ -207,7 +207,7 @@ export async function render(ctx) {
 
 /* ---------- 接入状态（LLM / 本地出图 / 云端出片） ----------
    只报「配置状态 + 已做过的检测结果」，不在打开页面时主动联网探测：
-   探测要有明确触发（点「检测」跑 diag.comfy，0 费用；RunningHub 的真实请求需 --live，控制台不自动发）。 */
+   探测要有明确触发（点「检测」跑 diag.comfy，0 费用；控制台不自动发任何请求）。 */
 function channelCard(ctx, setup, providers, purposes, conn) {
   /* 口径统一：机器级通道（大模型 / 本地出图 / 云端出片）只认「连接中心」，
      项目级要求（工作流 API）才认 G-0。以前两套各算一套，会出现
@@ -255,7 +255,6 @@ function channelCard(ctx, setup, providers, purposes, conn) {
       '<button class="btn quiet sm" data-go="' + (on.length ? 'connections' : 'models') + '">'
       + (on.length ? '连接中心' : '去配置') + '</button>')
     + chan('comfyui', '本地出图', 'ComfyUI 未验证', '<button class="btn quiet sm" data-probe="comfyui">检测</button>')
-    + chan('runninghub', '云端出片', 'RunningHub 未验证', '<button class="btn quiet sm" data-go="connections">连接中心</button>')
     + (ctx.ws
       ? row(wfApi.ok ? 'done' : 'todo', '工作流 API',
         esc((wfApi.detail && wfApi.detail.ref) || '未确认（项目级要求）'),
@@ -264,5 +263,5 @@ function channelCard(ctx, setup, providers, purposes, conn) {
         '<button class="btn quiet sm" data-go="projects">选项目</button>'))
     + '</div>'
     + '<div class="card-foot"><span class="tiny dim">探测一律只读：ComfyUI 读 system_stats，'
-    + 'RunningHub 查账户余额，都不产生任务、不花钱。真实出片才会计费。</span></div></section>';
+    + '不产生任务、不花钱。</span></div></section>';
 }

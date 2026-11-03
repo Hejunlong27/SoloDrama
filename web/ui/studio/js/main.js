@@ -15,7 +15,7 @@ const NAV = [
       { key: 'workbench', label: '工作台', ico: 'workbench' },
       { key: 'projects', label: '项目管理', ico: 'folder' },
       { key: 'tasks', label: '任务中心', ico: 'list' },
-      { key: 'cost', label: '成本中心', ico: 'coins' },
+      { key: 'cost', label: '时间中心', ico: 'clock' },
       { key: 'models', label: 'AI 模型中心', ico: 'cpu' },
       { key: 'connections', label: '连接中心', ico: 'plug' },
       { key: 'health', label: '环境体检', ico: 'check' }
@@ -187,9 +187,8 @@ function renderTop() {
   const locks = h.locks && h.locks.summary ? h.locks.summary : {};
   health.innerHTML = '<span class="health-item"><i class="dot done"></i>服务在线</span>'
     + '<span class="health-item" title="GPU 资源令牌（放大/字幕独占）"><i class="dot '
-    + (locks.gpu && locks.gpu.split('/')[0] !== '0' ? 'doing' : 'todo') + '"></i>GPU ' + esc(locks.gpu || '—') + '</span>'
-    + '<span class="health-item" title="RunningHub 并发令牌"><i class="dot '
-    + (locks.rh && locks.rh.split('/')[0] !== '0' ? 'doing' : 'todo') + '"></i>RH ' + esc(locks.rh || '—') + '</span>';
+    + (locks.gpu && locks.gpu.split('/')[0] !== '0' ? 'doing' : 'todo') + '"></i>GPU ' + esc(locks.gpu || '—') + '</span>';
+  // ★ 2026-11-04：原来这里还有一条「RH 并发令牌」。本机只有一个 GPU，没有第二组槽位。
 }
 
 /* ---------- 视图装载 ---------- */

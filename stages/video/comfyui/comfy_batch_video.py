@@ -47,7 +47,6 @@ ROOT = HERE.parents[2]                       # stages/video/comfyui → 仓库�
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "stages"))
 sys.path.insert(0, str(ROOT / "stages" / "production" / "scripts"))
-sys.path.insert(0, str(ROOT / "stages" / "video" / "workflow" / "scripts" / "engine"))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # type: ignore[union-attr]

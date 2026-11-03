@@ -64,6 +64,33 @@ import subprocess
 import sys
 import time
 
+
+# ---------------------------------------------------------------------------
+# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
+#   这里不是「删掉调用点」，而是把出站通道收窄到本机/内网。任何试图连
+#   runninghub.* 的代码都会在 DNS 解析那一步抛 RemoteForbidden —— 包括未来
+#   某次合并里被悄悄加回来的 httpx 调用。细则见 stages/_netguard.py。
+# ---------------------------------------------------------------------------
+def _boot_netguard() -> None:
+    import pathlib as _pl
+    import sys as _sys
+    for _p in _pl.Path(__file__).resolve().parents[:5]:
+        for _cand in ((_p / "_netguard.py"), (_p / "stages" / "_netguard.py")):
+            if _cand.is_file():
+                if str(_cand.parent) not in _sys.path:
+                    _sys.path.insert(0, str(_cand.parent))
+                try:
+                    import importlib as _il
+                    _il.import_module("_netguard").install()
+                except Exception:        # noqa: BLE001 —— 守卫自身异常不能拖垮主流程
+                    pass
+                return
+
+
+_boot_netguard()
+
+
+
 _HINT = (
     "找不到短剧工作区。请二选一：\n"
     "  ① 命令行加 --workspace \"<项目根目录>\"\n"
@@ -239,7 +266,7 @@ DEFAULT_CONFIG = {
     "version": 1,
     "enabled": True,
     "backend": "topaz",
-    "_backend_note": "放大后端三选一：topaz（本地 GPU，免费，慢）/ rh（RunningHub RH_Astra Iris，约 35 币一集，2–3 分钟）/ off（跳过，母版直接进字幕）。命令行 --backend 可临时覆盖。",
+    "_backend_note": "放大后端二选一：topaz（本地 GPU，免费，慢）/ off（跳过，母版直接进字幕）。RunningHub 通道已于 2026-11-04 移除。命令行 --backend 可临时覆盖。",
     "tool": {
         "_note": "留空则自动探测 Topaz Video 安装目录与模型目录；探测不到会在报错里给出可照抄的改法",
         "install_dir": "",
@@ -784,33 +811,12 @@ def run_ffmpeg(cmd, env, log_path, total_frames, quiet=False):
 #   · rh   ：云端 RH_Astra + Iris，约 35 币/集、2–3 分钟，不占本机；
 #   · off  ：不放大，母版直接进字幕（只在母版本来就是交付规格时合理）。
 # 选哪一台是**配置**（config.upscale.json 的 backend），不是代码分支的分叉。
-RH_UPSCALE_DEFAULT = {
-    "_note": "RunningHub 放大通道。★ 节点映射不在这里 —— 唯一真源是能力卡 "
-             "configs/capabilities/rh.upscale.v1.json（卡里有 nodeId + fieldName，"
-             "换工作流只改卡，不改代码、不改项目配置）。",
-    "label": "RH 放大 · RH_Astra Iris",
-    "instance_type": "default",
-    "nodes": {},
-    "fields": {},
-    "keep_audio": True,
-    "cleaner_action": "Purge Model",
-    "timeout_min": 40.0,
-    "poll_interval": 5.0,
-}
-
-RH_CARD_REL = os.path.join("configs", "capabilities", "rh.upscale.v1.json")
 
 
 def _repo_root():
     """本脚本在 <repo>/stages/subtitle/scripts/ ⇒ 上溯四层是仓库根。"""
     return os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))))
-
-
-def _load_upscale_card():
-    """读放大能力卡；读不到返回 None（由调用方报「拿不到节点映射」）。"""
-    d = load_json(os.path.join(_repo_root(), RH_CARD_REL), None)
-    return d if isinstance(d, dict) else None
 
 
 def _flat_nodes(card_nodes):
@@ -827,64 +833,6 @@ def _flat_nodes(card_nodes):
     return ids, fields
 
 
-def rh_spec(cfg_rh=None):
-    """合成 RH 放大参数：代码默认 < 能力卡 < 项目配置（`config.upscale.json` 的 rh 段）。"""
-    spec = deep_merge(RH_UPSCALE_DEFAULT, {})
-    cap = _load_upscale_card()
-    if cap:
-        spec["workflow_id"] = str(cap.get("workflow_id") or "")
-        spec["nodes"], spec["fields"] = _flat_nodes(cap.get("nodes"))
-        if "keep_audio" in cap:
-            spec["keep_audio"] = bool(cap["keep_audio"])
-    return deep_merge(spec, cfg_rh or {})
-
-
-def _find_engine_dir():
-    """找引擎目录（runninghub_client.py 所在）。找不到返回 None。
-
-    RH 放大**不另写一套 HTTP**：协议层（上传/建任务/轮询）只有引擎那一份实现，
-    这里复用它。找不到就明确说「用 --backend topaz」，不要偷偷发请求。
-    """
-    cands = []
-    env = os.environ.get("SOLODRAMA_ENGINE")
-    if env:
-        cands.append(os.path.join(env, "stages", "video", "workflow", "scripts", "engine"))
-        cands.append(env)
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))))   # <repo>/stages/subtitle/scripts → 上溯四层
-    cands.append(os.path.join(repo, "stages", "video", "workflow", "scripts", "engine"))
-    for c in cands:
-        if c and os.path.isfile(os.path.join(c, "runninghub_client.py")):
-            return c
-    return None
-
-
-def _rh_base_url():
-    """运行时站点：问 `_site.runtime_site()`（与能力卡/体检同一真源），失败才读 channels.json。"""
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))))
-    try:
-        p = os.path.join(repo, "stages", "production", "scripts")
-        if p not in sys.path:
-            sys.path.insert(0, p)
-        from _site import runtime_site                       # noqa: WPS433
-        url, _src, _ignored = runtime_site()
-        if url:
-            return url, _src
-    except Exception:                                        # noqa: BLE001
-        pass
-    try:
-        ch = load_json(os.path.join(repo, "configs", "channels.json"), {}) or {}
-        rh = ch.get("runninghub") or {}
-        key = os.environ.get("SOLODRAMA_RH_SITE") or rh.get("site") or "cn"
-        url = ((rh.get("sites") or {}).get(key) or {}).get("url")
-        if url:
-            return url, "channels.json"
-    except Exception:                                        # noqa: BLE001
-        pass
-    return "", "站点未解析"
-
-
 def _probe_pix_fmt(tools, path):
     try:
         j = ffprobe_json(tools, path, "stream=codec_type,pix_fmt")
@@ -894,160 +842,6 @@ def _probe_pix_fmt(tools, path):
     except Exception:                                        # noqa: BLE001
         pass
     return ""
-
-
-def _prep_rh_input(tools, src, workdir):
-    """RH 的 LoadVideo 解不动 hevc / Main 10 / 10bit（实测报 805），先转 h264 8bit。
-
-    已是 h264 + yuv420p 就直接上传（不重复转码，省一次画质损失）。
-    """
-    os.makedirs(workdir, exist_ok=True)
-    info = video_info(tools, src)
-    pix = _probe_pix_fmt(tools, src)
-    if str(info.get("codec") or "").lower() == "h264" and pix in ("yuv420p", "yuvj420p"):
-        return src, "源已是 h264/%s，直接上传" % pix
-    dst = os.path.join(workdir, "_rh_in.mp4")
-    p = subprocess.run([tools["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
-                        "-i", src, "-c:v", "libx264", "-crf", "16", "-preset", "medium",
-                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                        "-ac", "2", "-ar", "48000", dst],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if not os.path.isfile(dst) or os.path.getsize(dst) < 1024:
-        raise RuntimeError("转 h264 输入失败：%s"
-                           % p.stdout.decode("utf-8", "replace")[-400:])
-    return dst, "转 h264/yuv420p（原 %s/%s，RH 服务端解不动）" % (info.get("codec"), pix)
-
-
-async def _rh_upscale_async(spec, base_url, api_key, src, dst, tw, th, prefix, log):
-    import httpx                                            # noqa: WPS433
-    from runninghub_client import RunningHubClient          # noqa: WPS433
-
-    client = RunningHubClient(api_key, base_url, timeout=90.0, channel="v2")
-    log("上传：%s（%.1f MB）" % (os.path.basename(src),
-                              os.path.getsize(src) / 1048576.0))
-    up = await client.upload_file(src)
-    short, long_ = (tw, th) if tw <= th else (th, tw)
-    n, f = (spec.get("nodes") or {}), (spec.get("fields") or {})
-    try:
-        vid, pref = n["video_in"], n["prefix"]
-        n_short, n_long = n["short_edge"], n["long_edge"]
-        n_clean = n.get("cleaner")
-    except KeyError as e:                                     # noqa: F841
-        raise RuntimeError("能力卡缺节点映射 %s —— 检查 configs/capabilities/rh.upscale.v1.json"
-                           % e)
-    nodes = RunningHubClient.build_node_list([
-        (vid, f.get("video_in") or "file", up["fileName"]),
-        # keep_audio 挂在 LoadVideo 上，卡里没单列（它是同一节点的另一个输入）
-        (vid, "keep_audio", "true" if spec.get("keep_audio", True) else "false"),
-        (pref, f.get("prefix") or "filename_prefix", prefix),
-        (n_short, f.get("short_edge") or "value", str(int(short))),
-        (n_long, f.get("long_edge") or "value", str(int(long_))),
-        (n_clean, f.get("cleaner") or "model_action",
-         spec.get("cleaner_action") or "Purge Model"),
-    ])
-    tid = await client.create_task("workflow", str(spec["workflow_id"]), nodes,
-                                  spec.get("instance_type") or "default")
-    log("任务已提交：%s（短边=%d 长边=%d）" % (tid, short, long_))
-    last = await client.poll_until_done(
-        tid, timeout_min=float(spec.get("timeout_min") or 40.0),
-        interval=float(spec.get("poll_interval") or 5.0),
-        on_poll=lambda _t, st: log("  … %s" % st))
-    if str(last.get("status")) != "SUCCESS":
-        raise RuntimeError("RH 放大失败：status=%s %s"
-                           % (last.get("status"), last.get("raw") and
-                              str(last["raw"])[:300] or ""))
-    urls = [r.get("url") for r in (last.get("results") or []) if r.get("url")]
-    if not urls:
-        raise RuntimeError("RH 放大成功但没返回文件：%s" % str(last.get("raw"))[:300])
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    async with httpx.AsyncClient(timeout=900.0, follow_redirects=True) as hc:
-        async with hc.stream("GET", urls[0]) as resp:
-            resp.raise_for_status()
-            with open(dst, "wb") as fh:
-                async for chunk in resp.aiter_bytes(1 << 20):
-                    fh.write(chunk)
-    return {"task_id": tid, "url": urls[0], "usage": last.get("usage") or {}}
-
-
-def _upscale_rh(cfg, src, dst, tw, th, result, quiet=False, spec=None):
-    """云端放大：上传 → 提交 → 轮询 → 下载 → 裁到精确目标。"""
-    spec = rh_spec(spec or (cfg.get("rh") or {}))
-    out = (lambda m: (not quiet) and say(m))
-    key = os.environ.get("RUNNINGHUB_API_KEY") or ""
-    if not key:
-        result["error"] = "未设置 RUNNINGHUB_API_KEY（云端放大要计费，必须显式给 key）"
-        return result
-    base_url, src_note = _rh_base_url()
-    if not base_url:
-        result["error"] = "拿不到 RunningHub 站点（%s）；改用 --backend topaz" % src_note
-        return result
-    eng = _find_engine_dir()
-    if not eng:
-        result["error"] = ("找不到引擎目录（runninghub_client.py）—— 云端放大复用引擎协议层，"
-                           "不另写一套 HTTP。改用 --backend topaz")
-        return result
-    tools = detect_toolchain(cfg)[0]
-    # 云端放大只用系统 ffmpeg/ffprobe，**不依赖 Topaz** —— 没装 Topaz 也能跑 RH。
-    tools = {"ffmpeg": tools.get("ffmpeg") or "ffmpeg",
-             "ffprobe": tools.get("ffprobe") or "ffprobe",
-             "model_dir": tools.get("model_dir"), "model_data_dir": tools.get("model_data_dir")}
-    workdir = os.path.join(os.path.dirname(dst), "_up_tmp")
-    os.makedirs(workdir, exist_ok=True)
-    t0 = time.time()
-    result["backend"] = "rh"
-    result["site"] = base_url
-    result["workflow_id"] = str(spec["workflow_id"])
-    try:
-        feed, feed_note = _prep_rh_input(tools, src, workdir)
-        result["actions"].append(feed_note)
-        out("上传前处理：%s" % feed_note)
-        if eng not in sys.path:
-            sys.path.insert(0, eng)
-        got = asyncio.run(_rh_upscale_async(
-            spec, base_url, key, feed, dst + ".raw.mp4", tw, th,
-            "%s_up" % os.path.splitext(os.path.basename(dst))[0].split("_master")[0],
-            out))
-        result["task_id"] = got["task_id"]
-        result["usage"] = got["usage"]
-        # 平台按源宽高比吸附输出（672×1216 → 1062×1920），这里裁到精确目标，
-        # 保证文件名 `_master_1080x1920` 名副其实；不补边（补边=黑边）。
-        vf = ("scale=%d:%d:force_original_aspect_ratio=increase:flags=lanczos,"
-              "crop=%d:%d,setsar=1" % (tw, th, tw, th))
-        p = subprocess.run([tools["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
-                            "-i", dst + ".raw.mp4", "-vf", vf,
-                            "-c:v", "libx264", "-crf", "17", "-preset", "medium",
-                            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                            "-movflags", "+faststart", dst],
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if not os.path.isfile(dst) or os.path.getsize(dst) < 1024:
-            raise RuntimeError("裁切输出失败：%s" % p.stdout.decode("utf-8", "replace")[-400:])
-        s_info = video_info(tools, src)
-        d_info = video_info(tools, dst)
-        checks = []
-        checks.append({"name": "分辨率", "ok": (d_info["width"], d_info["height"]) == (tw, th),
-                       "detail": "%dx%d（目标 %dx%d）"
-                                 % (d_info["width"], d_info["height"], tw, th)})
-        checks.append({"name": "时长", "ok": abs(d_info["duration"] - s_info["duration"]) < 1.0,
-                       "detail": "%.2fs / 源 %.2fs" % (d_info["duration"], s_info["duration"])})
-        if s_info.get("audio_codec"):
-            checks.append({"name": "音轨", "ok": bool(d_info.get("audio_codec")),
-                           "detail": "%s（keep_audio=true 必须保住台词）"
-                                     % (d_info.get("audio_codec") or "无")})
-        result["verify"] = {"passed": all(c["ok"] for c in checks), "checks": checks}
-        result["elapsed_s"] = round(time.time() - t0, 1)
-        result["ok"] = bool(result["verify"]["passed"])
-        if not result["ok"]:
-            result["error"] = "自检未通过：" + "；".join(
-                c["detail"] for c in checks if not c["ok"])
-        # 清理原始下载（保留会白占一份整集空间）
-        try:
-            os.remove(dst + ".raw.mp4")
-        except OSError:
-            pass
-    except Exception as e:                                    # noqa: BLE001
-        result["error"] = "%s: %s" % (type(e).__name__, e)
-        result["elapsed_s"] = round(time.time() - t0, 1)
-    return result
 
 
 def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=False,
@@ -1125,45 +919,14 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
             say("[i] 已按配置跳过放大（backend=off）；母版：%s" % src)
         return result
     if backend == "rh":
-        if sample:
-            result["error"] = "--sample 只支持本地 Topaz 测速；云端按整集计费，不做样片"
-            return result
-        spec = rh_spec(cfg.get("rh") or {})
-        if verify_only:
-            if not os.path.exists(dst):
-                result["error"] = "产物不存在，无法只做验证：%s" % dst
-                return result
-            result["ok"] = True
-            return result
-        if dry_run:
-            if not spec.get("nodes"):
-                # 干跑最容易骗人：节点映射读不到时，下面照样能打印"短边/长边"（那是算出来的，
-                # 不是从卡里来的）。必须在这里就红，否则真跑时才炸。
-                result["error"] = ("拿不到 RH 放大节点映射 —— 能力卡缺失或损坏：%s"
-                                   % os.path.join(_repo_root(), RH_CARD_REL))
-                return result
-            short, long_ = (tw, th) if tw <= th else (th, tw)
-            result["plan"] = {
-                "backend": "rh", "workflow_id": str(spec["workflow_id"]),
-                "site": _rh_base_url()[0],
-                "nodes": {"video_in": spec["nodes"].get("video_in"),
-                          "prefix": spec["nodes"].get("prefix"),
-                          "short_edge": short, "long_edge": long_,
-                          "keep_audio": spec.get("keep_audio", True)},
-                "source": src, "dst": dst,
-                "note": "云端放大按整集计费（实测约 35 币/61s 集）；加 --force 不会跳过缓存",
-            }
-            result["ok"] = True
-            if not quiet:
-                say("[dry-run] RH 放大：%s → %s（短边 %d / 长边 %d，节点 %s/%s）"
-                    % (os.path.basename(src), os.path.basename(dst), short, long_,
-                       spec["nodes"].get("short_edge"), spec["nodes"].get("long_edge")))
-            return result
-        result = _upscale_rh(cfg, src, dst, tw, th, result, quiet=quiet, spec=spec)
-        dump_json(report_path, result)
+        # ★ 2026-11-04：RunningHub 放大通道整体移除（本仓库只跑本地）。
+        #   明确报错而不是悄悄回落到 topaz —— 后者会让人以为「云端在跑」，
+        #   实际占了本机 GPU 几个小时。
+        result["error"] = ("backend=rh 已不可用：RunningHub 已从本仓库移除。"
+                           "改 config.upscale.json 的 backend 为 topaz（本地）或 off（跳过）")
         return result
     if backend not in ("topaz", "local"):
-        result["error"] = ("未知 backend=%r（可选 topaz / rh / off）；"
+        result["error"] = ("未知 backend=%r（可选 topaz / off）；"
                            "配置在 config.upscale.json 的 backend" % backend)
         return result
 
@@ -1370,8 +1133,8 @@ def main():
     ap.add_argument("--target", default=None, help="覆盖目标分辨率，如 2560x1440 或 3840x2160")
     ap.add_argument("--factor", type=float, default=None, help="按倍数放大，如 2")
     ap.add_argument("--model", default=None, help="覆盖模型，如 prob-4 / iris-3 / rhea-1")
-    ap.add_argument("--backend", default=None, choices=["topaz", "rh", "off"],
-                    help="放大后端：topaz=本地 GPU（默认）｜rh=RunningHub 云端（计费）｜off=跳过")
+    ap.add_argument("--backend", default=None, choices=["topaz", "off"],
+                    help="放大后端：topaz=本地 GPU（默认）｜off=跳过")
     ap.add_argument("--dry-run", action="store_true", help="只打印将要执行的命令")
     ap.add_argument("--verify-only", action="store_true", help="只对已有产物做断言")
     ap.add_argument("--sample", type=float, default=0.0, metavar="秒",
