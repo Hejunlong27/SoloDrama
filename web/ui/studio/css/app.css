@@ -512,11 +512,15 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   transform: translateX(12px); opacity: 0; pointer-events: none;
   transition: transform var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out);
   display: flex; flex-direction: column;
+  /* 内容再长也只让正文滚：标题栏（这一镜是哪一集第几镜）与底部按钮必须固定。
+     flex 子项默认 min-height:auto，不加这一对约束时正文会把整条抽屉撑高，
+     滚动的就变成抽屉本身 —— 人滚到一半就不知道自己在看什么了。 */
+  overflow: hidden;
 }
 .drawer.on { transform: none; opacity: 1; pointer-events: auto; }
 .drawer-h { height: 56px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--line); }
 .drawer-h h3 { font-size: var(--fs-14); }
-.drawer-b { flex: 1; overflow-y: auto; padding: 18px; }
+.drawer-b { flex: 1; min-height: 0; overflow-y: auto; padding: 18px; }
 .drawer-f { flex: none; padding: 10px 16px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
 
 .modal {
@@ -679,4 +683,164 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .chat-chip:active { transform: none; }
 .chat-input { flex: none; display: flex; gap: 8px; align-items: flex-end; }
 .chat-input .textarea { flex: 1; min-height: 62px; resize: vertical; }
+
+/* ==========================================================================
+   剧集画布（2026-11-04 · P1 只读）
+   表格 + 双向吸顶：左边集号列、顶部镜号行在滚动时都不动，
+   所以横竖随便滚，都能知道「这是第几集第几镜」。
+   视觉只做三件事，不做第四件：
+     ① 格子状态（已出片 / 有分镜图 / 待出片 / 无此镜）
+     ② 每集的进度（左列 5/8 + 2px 底条）
+     ③ 每列缺口（底行数字）—— 「卡在第几镜」由它回答
+   不做：发光、渐变、拖拽、自由连线。这张图的信息量来自行列对齐，不来自装饰。
+   ========================================================================== */
+.cv-stats { flex-wrap: wrap; margin-bottom: var(--sp-5); row-gap: var(--sp-3); }
+.cv-stats .chip { height: 26px; }
+.cv-legend { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-11); color: var(--txt-3); flex-wrap: wrap; }
+.cv-key { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-left: 10px; }
+.cv-key.done { background: rgba(86, 181, 127, .55); border: 1px solid rgba(86, 181, 127, .8); }
+.cv-key.board { background: radial-gradient(circle, rgba(79, 179, 199, .95) 2px, rgba(79, 179, 199, .16) 2.5px); border: 1px solid rgba(79, 179, 199, .55); }
+.cv-key.todo { background: transparent; border: 1px dashed var(--line-strong); }
+.cv-key.na { background: transparent; border: 1px solid var(--line); opacity: .4; }
+
+/* 画布底：比页面更深一档 + 24px 点阵，让它「凹」进去（缩放时点阵不动，所以不做 transform） */
+.cv-scroll {
+  max-height: min(68vh, 900px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-inset);
+  background-image: radial-gradient(circle, rgba(255, 255, 255, .045) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+  border-top: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+.cv-tb { border-collapse: separate; border-spacing: 0; }
+.cv-tb th, .cv-tb td { padding: 0; }
+
+.cv-tb thead th {
+  position: sticky; top: 0; z-index: 2;
+  height: 30px; min-width: 28px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--line-strong);
+  font-family: var(--font-mono); font-size: var(--fs-11); font-weight: 400;
+  color: var(--txt-3); text-align: center;
+}
+.cv-tb thead th.cv-col { color: var(--txt-3); }
+.cv-tb thead th.cv-corner {
+  left: 0; z-index: 3;
+  width: 108px; min-width: 108px;
+  padding: 0 10px;
+  text-align: left;
+  font-family: var(--font-ui); letter-spacing: .04em;
+  border-right: 1px solid var(--line);
+}
+.cv-tb thead th.cv-tags-h { width: 104px; text-align: left; padding-left: 8px; }
+
+.cv-tb tbody th.cv-ep {
+  position: sticky; left: 0; z-index: 1;
+  width: 108px; min-width: 108px; height: 28px;
+  padding: 0 10px;
+  text-align: left; font-weight: 400;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.cv-ep-n { font-size: var(--fs-11); color: var(--txt-2); }
+.cv-ep-p { font-size: var(--fs-11); color: var(--txt-3); margin-left: 7px; }
+.cv-ep.done .cv-ep-p { color: var(--ok); }
+.cv-ep.doing .cv-ep-p { color: var(--live); }
+.cv-ep-bar { position: absolute; left: 0; bottom: 0; height: 2px; display: block; background: var(--ok); opacity: .65; }
+.cv-ep.doing .cv-ep-bar { background: var(--live); }
+.cv-ep.todo .cv-ep-bar, .cv-ep.na .cv-ep-bar { display: none; }
+
+.cv-tb tbody td.cv-td { padding: 1px; }
+.cv-cell {
+  display: block; width: 26px; height: 26px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease);
+}
+.cv-cell.done { background: rgba(86, 181, 127, .55); border-color: rgba(86, 181, 127, .8); }
+.cv-cell.done:hover { background: rgba(86, 181, 127, .75); }
+/* 有分镜图 = 有「底子」但没有成品：淡青底 + 中心一个小方块。
+   为什么不用「左半边填满」的 ◐：一屏 8 列 × 30 行时，半格和相邻的虚线格会拼成条纹，
+   整片看着像条形码而不是状态。小方块在缩略密度下仍然分得清，且不制造纹理。 */
+.cv-cell.board { position: relative; overflow: hidden; background: rgba(79, 179, 199, .14); border-color: rgba(79, 179, 199, .5); }
+.cv-cell.board::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+  border-radius: 1px; background: rgba(79, 179, 199, .9);
+}
+.cv-cell.board:hover { border-color: var(--live); background: rgba(79, 179, 199, .22); }
+.cv-cell.todo { border-style: dashed; }
+.cv-cell.todo:hover { border-color: var(--accent); border-style: solid; }
+.cv-cell:hover { transform: scale(1.14); position: relative; z-index: 1; }
+.cv-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cv-na { width: 28px; }
+
+.cv-tb tbody td.cv-tags { padding: 0 8px; white-space: nowrap; }
+.cv-tags .badge { height: 20px; margin-right: 4px; }
+
+/* 缺口行：表头第二行（吸顶）。数值 = 该镜还没出片的集数。 */
+.cv-tb thead tr.cv-gap th,
+.cv-tb thead tr.cv-gap td { top: 30px; height: 26px; }
+.cv-tb thead tr.cv-gap th.cv-corner {
+  left: 0; z-index: 3;
+  width: 108px; min-width: 108px; padding: 0 10px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--txt-3); font-family: var(--font-ui); font-size: var(--fs-11);
+  text-align: left; font-weight: 400;
+}
+.cv-tb thead tr.cv-gap td.cv-foot {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--line-strong);
+  text-align: center;
+  font-family: var(--font-mono); font-size: var(--fs-11);
+  color: var(--accent);
+}
+.cv-tb thead tr.cv-gap td.cv-foot.zero { color: var(--txt-disabled); }
+.cv-tb thead tr.cv-gap td.cv-tags { background: var(--bg-panel); border-bottom: 1px solid var(--line-strong); }
+.cv-tb tbody tr:hover .cv-cell { border-color: var(--line-strong); }
+
+.cv-scroll.is-empty::after {
+  content: "当前筛选下没有集。把筛选切回「全部」看看。";
+  display: block; padding: 26px; text-align: center;
+  color: var(--txt-3); font-size: var(--fs-12);
+}
+
+/* ---- 单镜抽屉：四段链 ---- */
+.cv-chain { display: flex; align-items: stretch; }
+.cv-node {
+  flex: 1; min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+.cv-node .k { display: block; font-size: var(--fs-11); color: var(--txt-3); }
+.cv-node .v {
+  display: block; margin-top: 2px;
+  font-size: var(--fs-12); color: var(--txt-disabled);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cv-node.on { border-color: var(--line-strong); }
+.cv-node.on .v { color: var(--txt); }
+.cv-arr { display: flex; align-items: center; padding: 0 3px; color: var(--txt-disabled); transform: rotate(-90deg); }
+
+.cv-media { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+.cv-board { width: 100%; display: block; aspect-ratio: 9 / 16; max-height: 240px; object-fit: cover; background: var(--bg-inset); }
+.cv-media .mtile-ph.tall { max-height: 240px; }
+
+.cv-cast { display: flex; flex-wrap: wrap; gap: 8px; }
+.cv-cast-i { margin: 0; width: 58px; }
+.cv-cast-i img { width: 58px; height: 58px; display: block; object-fit: cover;
+  border-radius: var(--r-sm); border: 1px solid var(--line); }
+.cv-cast-ph { width: 58px; height: 58px; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--line-strong); border-radius: var(--r-sm); color: var(--txt-disabled); }
+.cv-cast-i figcaption { font-size: var(--fs-11); color: var(--txt-3); text-align: center; margin-top: 3px; }
 

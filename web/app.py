@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, comfy_launcher, comfy_probe, comfy_store,
+from core import (adapters, artifacts, canvas, comfy_launcher, comfy_probe, comfy_store,
                   creation, skills as SKILLS, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
@@ -701,6 +701,11 @@ CAPABILITIES = {
     "media": {"ok": True, "source": "本地文件流（Range 支持，仅媒体 6 类）"},
     "cost": {"ok": True, "source": "ledger/runs/*.json 的 attempts[].usage"},
     "env": {"ok": True, "source": "tools/env_check.py --json"},
+    "canvas_series": {"ok": True,
+                      "source": "只读聚合：06-提示词/<ep>/shots.json + 04-资产/boards/<ep>/ + 07-成片 段文件"},
+    "canvas_shot": {"ok": True,
+                    "source": "只读：单镜四段链（参考图 / 提示词 / 生成参数 / 产物）"},
+    "canvas_edit": {"ok": False, "reason": "画布 P1 只读：改时长/参考图顺序要成套回写 shots.json 与 {{Mixed n}} 图号，下一期做"},
     "storyboard_edit": {"ok": False, "reason": "分镜与提示词由创作阶段产出，控制台只读展示，不提供在线编辑"},
     "script_edit": {"ok": False, "reason": "剧本正文由 AI 助手按四段法产出并落 03-剧本/，控制台不提供编辑器"},
     "bgm": {"ok": False, "reason": "bgm.py 尚未纳入命令白名单（需先补白名单与门禁口径）"},
@@ -809,6 +814,21 @@ def studio_env():
     return {"ok": res.get("ok"), "rc": res.get("rc"),
             "data": res.get("data"), "reason": res.get("reason"),
             "text_tail": res.get("text_tail") if not res.get("ok") else ""}
+
+
+# ---------------------------------------------------------------------------
+# 画布（剧集画布 P1）：只读聚合，不落盘、不起子进程
+#   `series` 一屏给出「横向镜号 × 纵向集号」的格子状态；`shot` 给点开一格用的四段链。
+#   刻意只读：先让人判断「这个空间结构对不对」，改结构比改交互便宜十倍。
+# ---------------------------------------------------------------------------
+@app.get("/api/canvas/series")
+def canvas_series(ws: str = Query(...)):
+    return canvas.series(str(_require_ws(ws)))
+
+
+@app.get("/api/canvas/shot")
+def canvas_shot(ws: str = Query(...), ep: str = Query(...), shot: str = Query(...)):
+    return canvas.shot(str(_require_ws(ws)), ep, shot)
 
 
 # ---------------------------------------------------------------------------
@@ -1566,13 +1586,35 @@ def _startup():
 
 
 UI_DIR = paths.WEB_DIR / "ui"
+
+
+class _FreshStatic(StaticFiles):
+    """静态资源每次都回源校验（ETag 命中仍返回 304，成本近乎为零）。
+
+    为什么必须显式加 `Cache-Control: no-cache`
+    ------------------------------------------
+    Starlette 的 StaticFiles 不发 Cache-Control，Chrome 于是按
+    「(现在 - Last-Modified) 的 10%」做**启发式缓存**。本项目零构建、直接改源文件，
+    这条启发式的直接后果是：改完 css/js 刷新页面，看到的还是旧样式旧逻辑 ——
+    人以为「改了没生效」，其实是浏览器根本没来问。
+
+    2026-11-04 踩过：画布样式写完了，页面上一个格子都没有，排查半小时发现
+    是浏览器拿缓存里的 app.css。这种失败**不报错**，只能靠这条头避免。
+    """
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 if UI_DIR.is_dir():
-    app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
+    app.mount("/ui", _FreshStatic(directory=str(UI_DIR), html=True), name="ui")
 
 # Studio（新工作台）：独立目录、独立样式与 ES module，删掉 /studio 即回滚，旧的两张脸不受影响
 STUDIO_DIR = UI_DIR / "studio"
 if STUDIO_DIR.is_dir():
-    app.mount("/studio", StaticFiles(directory=str(STUDIO_DIR), html=True), name="studio")
+    app.mount("/studio", _FreshStatic(directory=str(STUDIO_DIR), html=True), name="studio")
 
 
 @app.get("/")

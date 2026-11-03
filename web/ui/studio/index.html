@@ -13,8 +13,13 @@
 <link rel="shortcut icon" href="img/favicon.ico">
 <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="css/tokens.css">
-<link rel="stylesheet" href="css/app.css">
+<!-- ★ 静态资源必须带版本号（本项目零构建，直接改源文件）。
+     不带版本号时，Chrome 会按「(现在 - Last-Modified) 的 10%」做启发式缓存，
+     于是改完 css/js 刷新页面看到的还是旧文件 —— 表现是「改了没生效」。
+     2026-11-04 踩过一次：画布样式写完了，页面上一个格子都没有。
+     发布时把下面这个日期串改一次，强制所有客户端取新文件；开发期刷新即可（服务端已发 no-cache）。 -->
+<link rel="stylesheet" href="css/tokens.css?v=20261104b">
+<link rel="stylesheet" href="css/app.css?v=20261104b">
 </head>
 <body>
 
@@ -93,6 +98,6 @@
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
-<script type="module" src="js/main.js"></script>
+<script type="module" src="js/main.js?v=20261104b"></script>
 </body>
 </html>

@@ -28,6 +28,7 @@ const NAV = [
       //   人会先看到一堆 0 和空状态，以为工具没做事。
       { key: 'create', label: '创作', ico: 'spark' },
       { key: 'skills', label: 'Skill 中心', ico: 'layers' },
+      { key: 'canvas', label: '剧集画布', ico: 'canvas' },
       { key: 'overview', label: '项目详情', ico: 'workbench' },
       { key: 'pipeline', label: '流水线', ico: 'terminal' },
       { key: 'assets', label: '资产中心', ico: 'image' },
@@ -39,13 +40,14 @@ const NAV = [
   { label: '系统', items: [{ key: 'settings', label: '系统设置', ico: 'settings' }] }
 ];
 
-const PROJECT_ROUTES = ['create', 'skills', 'overview', 'pipeline', 'assets', 'storyboard', 'post', 'release'];
+const PROJECT_ROUTES = ['create', 'skills', 'canvas', 'overview', 'pipeline', 'assets', 'storyboard', 'post', 'release'];
 
 const VIEWS = {
   workbench: () => import('./views/workbench.js'),
   projects: () => import('./views/projects.js'),
   create: () => import('./views/create.js'),
   skills: () => import('./views/skills.js'),
+  canvas: () => import('./views/canvas.js'),
   overview: () => import('./views/overview.js'),
   pipeline: () => import('./views/pipeline.js'),
   assets: () => import('./views/assets.js'),

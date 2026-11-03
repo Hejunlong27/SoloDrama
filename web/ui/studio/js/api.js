@@ -163,6 +163,9 @@ export const api = {
   setup: (ws) => get('/api/studio/setup', { ws }),
   shots: (ws, ep) => get('/api/studio/shots', { ws, ep }),
   episodes: (ws) => get('/api/studio/episodes', { ws }),
+  /* 剧集画布：不加 TTL —— 它表达的是「磁盘上现在有什么」，缓存会让人以为刚出完的片没出来 */
+  canvasSeries: (ws) => get('/api/canvas/series', { ws }),
+  canvasShot: (ws, ep, shot) => get('/api/canvas/shot', { ws, ep, shot }),
   cost: (ws) => get('/api/studio/cost', { ws }),
   releaseStatus: (ws) => get('/api/studio/release', { ws }),
   releaseExportPreview: (ws) => get('/api/studio/release/export-preview', { ws }),

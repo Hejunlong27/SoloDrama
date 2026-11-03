@@ -91,10 +91,11 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 工作台     | 项目数/产出/花费、待处理事项、运行中任务、**接入状态**（LLM 提供商与用途就绪数、出图/出片通道、工作流 API、ComfyUI 体检按钮） | `/api/workspaces`、`/api/jobs`、`/api/studio/workflow`、`/api/studio/setup`、`/api/llm/providers`、`/api/llm/purposes`、`/api/run`(`diag.comfy`) |
 | 项目管理    | 登记、扫描本机、搜索/筛选/排序、打开、**新建项目**（调 `creation.py scaffold`，建完自动登记）、**失效目录提示与一键清理**（只清注册表，不碰磁盘） | `/api/workspaces*`、`/api/workspaces/prune`、`/api/projects/create`                                                                          |
 | 项目详情    | **7 环节 / 23 节点**判据（`drama nodes --json`）、集数规划、产物目录、开工前置、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
+| 剧集画布    | **横向镜号 × 纵向集号的一屏格子**（P1 只读）：一格 = 一镜，状态只认磁盘（出片绿 / 有分镜图青点 / 待出片虚线 / 无此镜淡格）；表头下常驻「每列还有几集没出片」缺口行；左列每集 5/8 + 进度条；点一格开四段链抽屉（参考图缩略 → 提示词原文 → 时长/画幅 → 成片可播）；筛选（全部 / 有缺口 / 已完成）+ 隐藏无制作包的集 | `/api/canvas/series`、`/api/canvas/shot`（只读，扫描 `06-提示词/<ep>/shots.json` + `04-资产/boards/<ep>/` + `07-成片/*/<shot>/final.mp4` + `09-发行/剧集/`） |
 | 创作中心    | 前 5 个环节完成度（research / script / asset / board / prompt，取自节点状态）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
-| 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI ￥0 占 GPU / 云端 RH ★计费，均走作业队列）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
+| 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI，￥0，只占 GPU 时间；**不调任何云端 API**）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
 | 流水线 | **7 个环节、23 个节点串成一条可执行的线**：连跑 / 逐步确认两种模式、预算内自动放行、遇「前置未齐 / 需人工 / 计费估不出来」停下并说明原因；**每行一个可点的大按钮**（运行此步 `only=` 只跑这一条 / 打开对应页面） | `/api/pipeline/plan`（只读计划）、`/api/pipeline/run`（执行，默认 dry_run） |
-| 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**出片**（计费五步）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
+| 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**本地出片**（￥0，只占 GPU 时间；确认单 + 续跑批次号）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
 | 发行中心    | 发布版剧集/封面/文案/发布清单/版权资料的存在性核对                                                | `/api/artifacts`、`/api/file`、`release_check`（未接入，见 §7）                                                                                     |
 | 任务中心    | 排队/运行/成功/失败/待确认、日志 SSE、退出码语义、安全重试、取消                                       | `/api/jobs*`、`/api/jobs/{id}/stream`、`/api/jobs/{id}/cancel`                                                                               |
@@ -790,3 +791,39 @@ ComfyUI Desktop 是 Electron 外壳，真正提供服务的是它 spawn 的 `pyt
 * **不能拿「pid 还活着」当所有权**：Windows 会复用 PID。判据改成「它是这个端口的监听者」。
 * **同步等待会掐死界面**：单进程 uvicorn 下一个 90 秒的请求会让整页刷不出来，所以界面走异步 + 轮询。
 * **`generators.py` 硬编码 8188**：连接中心改了地址它不认，界面说「未启动」而实际能出图。已改为读连接配置。
+
+---
+
+## 16. 剧集画布（2026-11-04 · P1 只读）
+
+真源 `web/core/canvas.py`；页面 `#/canvas`（项目级）；方案与分期见 `docs/CANVAS-PLAN.md`。
+
+### 16.1 它替代了哪四个目录
+
+「30 集做到哪了」原本要翻 `06-提示词/<ep>/shots.json`（几镜）、`04-资产/boards/<ep>/`
+（有没有分镜图）、`07-成片/<批次>/<shot>/final.mp4`（有没有出片）、`09-发行/剧集/`（发没发）。
+现在压成一屏：**横向镜号，纵向集号，一格一镜**。
+
+### 16.2 四条口径（不许放宽）
+
+1. **状态只认磁盘，不认台账**：`done` = 段文件存在且 > 2KB；`board` = 分镜图存在；
+   其余 `todo`。不用 `summary.json` 的 `video_status` —— 续跑/换批次/人工换过文件之后，
+   台账会过期，磁盘不会。
+2. **镜数与镜序只认 `shots.json`**（制作包导入写成的契约）。没有它就退化为「按分镜图与段
+   目录的名字列举」，并标 `no_pack` —— 那个顺序不是契约给的，不能假装是。
+3. **集号轴按目标集数补齐**（`drama.json` / `blueprint.json` 的 `total_ep`）：
+   只画「已经有制作包的集」，就等于又把「哪 27 集还没动」丢回目录里。
+4. **缺口行放在表头下面**，不是表格末尾：30 行时末尾那行永远看不见，而
+   「卡在哪一镜」正是这张图最该一眼回答的问题。
+
+### 16.3 只读是刻意的
+
+P1 不做编辑。改时长/参考图顺序要**成套**回写 `shots.json` 与提示词里的 `{{Mixed n}}` 图号，
+不是拖一根线；先让人判断「这个空间结构对不对」，改结构比改交互便宜十倍（见 `docs/CANVAS-PLAN.md` §六）。
+
+### 16.4 顺带修：静态资源缓存
+
+`StaticFiles` 不发 `Cache-Control`，Chrome 会按「(现在 − Last-Modified) 的 10%」做启发式缓存。
+本项目零构建、直接改源文件，后果是**改完刷新看到的还是旧样式**（画布写完一个格子都不显示，
+排查半小时）。两处已改：`app.py` 的 `_FreshStatic` 统一发 `no-cache`（ETag 命中仍是 304）；
+`index.html` 的三个资源引用带 `?v=` 日期串，发布时改一次即可强制客户端取新文件。
