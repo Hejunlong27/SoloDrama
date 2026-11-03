@@ -1,4 +1,5 @@
-/* 时间中心（原「成本中心」）：本仓库出图出片全在本机，唯一的成本是 GPU 时间。
+/* 用时（原「时间中心 / 成本中心」）：本仓库出图出片全在本机，唯一的成本是 GPU 时间。
+   ★ 2026-11-04：从全局导航移进项目（它是项目属性）；全局耗时汇总在工作台首屏。 */
    ★ 2026-11-04：整页口径从「钱」换成「时间」。
    为什么必须换：平台费用恒为 0，一个永远显示 ¥0 的页面不只是没用 ——
    它会让人以为「计费没接上」，然后去排查一个不存在的问题。
@@ -60,7 +61,7 @@ export async function render(ctx) {
   const confText = est.confidence === 'measured' ? '已用实测校准' : '经验系数';
 
   const html = ''
-    + '<div class="page-head"><div><h1 class="page-title">时间中心</h1>'
+    + '<div class="page-head"><div><h1 class="page-title">用时</h1>'
     + '<div class="page-sub">口径：只算本机 GPU 实际占用。<b>平台费用恒为 0</b>'
     + '（出图出片全在本机，没有任何按次计费的通道）。</div></div>'
     + '<div class="page-actions">' + badge(srcTone, d.source === 'ledger' ? '来自耗时台账'

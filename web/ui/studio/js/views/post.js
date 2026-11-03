@@ -47,7 +47,7 @@ export async function render(ctx) {
     + '<div class="page-head"><div>'
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>'
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
-    + '<h1 class="page-title">后期制作</h1>'
+    + '<h1 class="page-title">剪辑</h1>'
     + '<div class="page-sub">产物按真实文件名判定（<span class="mono">_master</span> / '
     + '<span class="mono">_master_WxH</span> / <span class="mono">_subbed*</span>）· '
     + 'BGM 已混在母版里，不再单独出 <span class="mono">_mix</span> 文件</div></div>'

@@ -69,7 +69,7 @@ export async function render(ctx) {
     + '<div class="page-head"><div>'
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>'
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
-    + '<h1 class="page-title">资产中心</h1>'
+    + '<h1 class="page-title">资产</h1>'
     + '<div class="page-sub">缺口由引擎按资产卡节号判定；图片直接读工作区（不复制、不转码）</div></div>'
     + '<div class="page-actions">'
     + '<button class="btn quiet" id="btnAssetCheck">' + icon('cpu', 14) + ' 出图器体检</button>'

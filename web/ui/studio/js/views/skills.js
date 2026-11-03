@@ -9,11 +9,14 @@ const CARD = 'border:1px solid var(--line);border-radius:var(--r-lg);background:
   + 'padding:12px 14px';
 
 function head(d, n) {
-  return '<div class="page-head"><div><h1 class="page-title">Skill 中心</h1>'
-    + '<div class="page-sub">创作模板：题材套路、阶段划分、人物关系由它定；'
-    + '<b style="color:var(--create)">画风仍由本项目的 style_lock 决定</b></div></div>'
+  return '<div class="page-head"><div><h1 class="page-title">创作模板</h1>'
+    + '<div class="page-sub">题材套路、阶段划分、人物关系由它定；'
+    + '<b style="color:var(--create)">画风仍由本项目的 style_lock 决定</b>。'
+    + '模板是纯 Markdown（给模型看的说明），装载 = 复制 + 登记，不执行任何代码。</div></div>'
     + '<div class="page-actions">' + badge('outline', '可用 ' + (d.count || 0) + ' 份')
-    + (n ? ' ' + badge('ok', '本项目已装 ' + n + ' 份') : '') + '</div></div>';
+    + (n ? ' ' + badge('ok', '本项目已装 ' + n + ' 份') : '')
+    + '<button class="btn quiet" id="btnUpload">' + icon('upload', 14) + ' 上传模板</button>'
+    + '</div></div>';
 }
 
 function card(it, installedSet) {
@@ -21,7 +24,8 @@ function card(it, installedSet) {
   return '<div style="' + CARD + ';display:flex;flex-direction:column;gap:8px">'
     + '<div class="row" style="align-items:baseline;gap:8px">'
     + '<b style="font-size:var(--fs-13)">' + esc(it.title) + '</b>'
-    + (on ? badge('ok', '已装载') : '') + '</div>'
+    + (on ? badge('ok', '已装载') : '')
+    + (it.origin ? badge(it.bundled ? 'muted' : 'live', it.origin) : '') + '</div>'
     + '<div class="mono tiny dim">' + esc(it.id) + ' · ' + it.chars + ' 字</div>'
     + '<div class="tiny" style="color:var(--txt-2);line-height:1.5;flex:1">'
     + esc((it.desc || '').slice(0, 110)) + ((it.desc || '').length > 110 ? '…' : '') + '</div>'
@@ -81,6 +85,8 @@ export async function render(ctx) {
     html,
     mount: (root) => {
       paintIcons(root);
+      const up = root.querySelector('#btnUpload');
+      if (up) up.onclick = () => uploadModal(ctx);
       const grid = root.querySelector('#skGrid');
       const filter = root.querySelector('#skFilter');
       if (filter) {
@@ -136,4 +142,70 @@ export async function render(ctx) {
       });
     }
   };
+}
+
+/* ---------- 上传自己的模板 ----------
+   两种入口都要能用：选文件（多数人是下载/整理好的 .md）与直接粘贴（多数人从别处复制）。
+   校验只做最低限度：有 frontmatter、有 name、有正文。其余交给模型自己读 ——
+   这不是代码，不需要「沙箱」，但也不能让一个空文件伪装成模板装进项目。 */
+function uploadModal(ctx) {
+  openModal({
+    title: '上传创作模板',
+    icon: 'upload',
+    html: '<div class="stack">'
+      + '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+      + '模板是给模型看的 Markdown 说明，<b>不会被执行</b>。文件开头必须有：<br>'
+      + '<span class="mono tiny">---</span><br><span class="mono tiny">name: my-template</span><br>'
+      + '<span class="mono tiny">description: 一句话说明它适合什么题材</span><br>'
+      + '<span class="mono tiny">---</span><br>后面跟正文（越具体越好：阶段划分、每批字数、禁止项）。</div></div>'
+      + '<div class="field"><label class="tiny dim">从文件读入（.md / .txt）</label>'
+      + '<input type="file" id="upFile" accept=".md,.markdown,.txt" class="input" style="padding:6px">'
+      + '<div class="help">选文件只是把内容填进下面的输入框，点「上传」才会写盘。</div></div>'
+      + '<div class="field"><label class="tiny dim">或直接粘贴</label>'
+      + '<textarea class="textarea mono" id="upText" rows="12" spellcheck="false" '
+      + 'style="font-size:var(--fs-11);line-height:1.6" placeholder="---&#10;name: my-template&#10;description: ...&#10;---&#10;&#10;# 我的模板"></textarea></div>'
+      + '<label class="chk"><input type="checkbox" id="upOver">'
+      + '<span>同名模板已存在时覆盖（会替换 web/var/skills-user/&lt;id&gt;/SKILL.md）</span></label>'
+      + '<div id="upResult"></div></div>',
+    foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+      + '<button class="btn primary" id="upOk">上传</button>',
+    mount: (m) => {
+      const file = m.querySelector('#upFile');
+      const text = m.querySelector('#upText');
+      file.onchange = () => {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        const r = new FileReader();
+        r.onload = () => { text.value = String(r.result || ''); };
+        r.onerror = () => { m.querySelector('#upResult').innerHTML =
+          '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14) + '</span><div>读不了这个文件</div></div>'; };
+        r.readAsText(f, 'utf-8');
+      };
+      m.querySelector('#upOk').onclick = async () => {
+        const btn = m.querySelector('#upOk');
+        const box = m.querySelector('#upResult');
+        const fname = (file.files && file.files[0] && file.files[0].name) || '';
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>上传中';
+        try {
+          const r = await api.skillUpload(text.value, fname, m.querySelector('#upOver').checked);
+          if (r.ok) {
+            box.innerHTML = '<div class="alert ok"><span class="nav-ico">' + icon('check', 14) + '</span><div>'
+              + esc(r.detail || '已上传') + '</div></div>';
+            toast('模板已加入库');
+            setTimeout(() => { ctx.refresh(); }, 900);
+          } else {
+            box.innerHTML = '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+              + esc(r.detail || '上传失败') + '</div></div>';
+          }
+        } catch (e) {
+          box.innerHTML = '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+            + esc(e.detail || e.message) + '</div></div>';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '上传';
+        }
+      };
+    }
+  });
 }

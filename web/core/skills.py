@@ -52,11 +52,21 @@ SKILL_SUBDIR = "skills"
 # 来源
 # ---------------------------------------------------------------------------
 DEFAULT_SOURCES = [
-    # 用户给的那包 21 个题材模板
-    r"D:/整合包/ai-manju-skills-main/skills",
-    # 仓库内自带（如果有）
+    # ★ 2026-11-04：内置模板（随仓库分发，21 份）排第一，换机器也是同一套
     "stages/creation/skills",
+    # 用户自己上传的（「Skill 中心 → 上传」，落 web/var/skills-user/）
+    None,                                   # 见 user_dir()，运行时才算
+    # 用户给的那包 21 个题材模板（外部整合包，作为兜底）
+    r"D:/整合包/ai-manju-skills-main/skills",
 ]
+
+# 模板 id 的形状：小写字母/数字/连字符。上传的目录名要用它做文件名，不能带路径分隔符。
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,48}$")
+
+
+def user_dir() -> Path:
+    """用户上传的模板落点（`web/var/skills-user/`，不进仓库）。"""
+    return paths.WEB_DIR / "var" / "skills-user"
 
 
 def sources() -> list:
@@ -77,6 +87,11 @@ def sources() -> list:
             if x.strip():
                 cand.append(("env", x.strip()))
     for x in DEFAULT_SOURCES:
+        if x is None:
+            p = user_dir()
+            if p.is_dir():
+                cand.append(("user", str(p)))
+            continue
         cand.append(("default", x))
 
     out, seen = [], set()
@@ -92,7 +107,13 @@ def sources() -> list:
             continue
         seen.add(key)
         n = len([d for d in p.iterdir() if (d / "SKILL.md").is_file()]) if p.is_dir() else 0
-        out.append({"path": str(p), "kind": kind, "count": n})
+        # 「内置」的判据是**物理位置**（在仓库里），不是「来自哪个配置项」：
+        # 内置目录也会被写进 configs/skills-sources.json，按 kind 判会把内置当成外部目录。
+        try:
+            bundled = str(p.resolve()).lower().startswith(str(paths.REPO_ROOT.resolve()).lower())
+        except OSError:
+            bundled = False
+        out.append({"path": str(p), "kind": kind, "count": n, "bundled": bundled})
     return out
 
 
@@ -160,6 +181,12 @@ def scan() -> dict:
                 "path": str(f),
                 "source": src["path"],
                 "source_kind": src["kind"],
+                # 界面上要能一眼分清「随仓库来的」与「我自己传的」：
+                # 内置的被项目引用后不会随用户改动，用户上传的可以覆盖重传。
+                "origin": ("我上传的" if src["kind"] == "user"
+                           else "内置" if src.get("bundled")
+                           else "外部目录"),
+                "bundled": bool(src.get("bundled")),
                 "chars": len(body),
                 "sha": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
             }
@@ -283,7 +310,7 @@ def compose_prompt(ws, *, style_lock: str = "", stage: str = "",
     ws = Path(str(ws))
     reg = installed(ws)
     if not reg["items"]:
-        raise ValueError("本项目还没装载任何 Skill：先到「Skill 中心」装一个题材模板")
+        raise ValueError("本项目还没装载任何 Skill：先到「创作模板」页装一个题材模板")
 
     parts = []
     for it in reg["items"]:
@@ -300,6 +327,71 @@ def compose_prompt(ws, *, style_lock: str = "", stage: str = "",
     if extra.strip():
         parts.append(extra.strip())
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# 项目模板：内置清单 / 用户上传 / 批量装载
+# ---------------------------------------------------------------------------
+def presets() -> dict:
+    """新建项目时能「一键选」的模板清单（内置 + 用户上传）。
+
+    与 `scan()` 的差别：这里只列**随仓库或用户库**来的，不列外部整合包 ——
+    新建项目时给出一个 21 项的清单就够了；外部路径可能不存在（换机器），
+    把它列进来会让人选中一个装不上的模板。
+    """
+    items = []
+    for it in scan()["items"]:
+        if it.get("bundled") or it.get("source_kind") == "user":
+            items.append({**it, "origin": it.get("origin") or ("内置" if it.get("bundled") else "我上传的")})
+    return {"items": items, "count": len(items),
+            "user_dir": str(user_dir())}
+
+
+def upload(text: str, filename: str = "", *, overwrite: bool = False) -> dict:
+    """用户上传一份 SKILL.md。
+
+    只做三件事：**校验是 Skill、写进用户库、登记来源**。
+    不执行、不 import、不读它引用的任何文件 —— 它只是给模型看的文本。
+    拒绝的情况都要说清原因，因为「上传了个不能被识别的东西」最容易让人以为界面坏了。
+    """
+    raw = str(text or "")
+    if len(raw.strip()) < 40:
+        return {"ok": False, "detail": "文件太短，不像一份 SKILL.md（至少要有 frontmatter 与一段正文）"}
+    meta, body = parse(raw)
+    if not meta:
+        return {"ok": False,
+                "detail": "缺 frontmatter：文件开头要有 `---` / `name:` / `description:` / `---` 三行结构"}
+    raw_id = str(meta.get("name") or Path(str(filename or "")).stem or "").strip().lower()
+    raw_id = re.sub(r"[^a-z0-9_-]+", "-", raw_id).strip("-")
+    if not ID_RE.match(raw_id or ""):
+        return {"ok": False, "detail": "模板 id 只能用 2-48 位小写字母/数字/连字符（来自 frontmatter 的 name）"}
+    if not body.strip():
+        return {"ok": False, "detail": "frontmatter 之后没有正文"}
+
+    d = user_dir() / raw_id
+    f = d / "SKILL.md"
+    if f.is_file() and not overwrite:
+        return {"ok": True, "already": True, "id": raw_id,
+                "detail": "同名模板已存在（%s）。要覆盖请勾选「覆盖」" % raw_id}
+    d.mkdir(parents=True, exist_ok=True)
+    f.write_text(raw, encoding="utf-8", newline="")
+    return {"ok": True, "id": raw_id, "path": str(f),
+            "title": _guess_title(body, raw_id),
+            "detail": "已加入模板库「%s」。新建项目或 Skill 中心都能选到它" % _guess_title(body, raw_id)}
+
+
+def install_many(ws, ids, *, replace: bool = False) -> dict:
+    """新建项目时一次装多份（模板 + 用户上传都可能混在一起）。"""
+    ok, fails = [], []
+    for i in (ids or []):
+        try:
+            r = install(ws, i, replace=replace)
+            (ok if r.get("ok") else fails).append({"id": i, "detail": r.get("detail")})
+        except Exception as exc:                              # noqa: BLE001
+            fails.append({"id": i, "detail": "%s: %s" % (type(exc).__name__, exc)})
+    return {"ok": not fails, "installed": ok, "failed": fails,
+            "detail": ("已装载 %d 份模板" % len(ok)) if ok else "一份都没装上",
+            "failed_text": "；".join("%s（%s）" % (x["id"], x["detail"]) for x in fails)}
 
 
 # ---------------------------------------------------------------------------

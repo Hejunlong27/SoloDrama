@@ -477,6 +477,11 @@ def _attempts(ws):
     return rows
 
 
+def attempts(ws):
+    """公开的台账读取（跨项目汇总用；内部逻辑仍是 `_attempts`）。"""
+    return _attempts(ws)
+
+
 def _human_sec(sec: float) -> str:
     """秒 → 「1 小时 16 分」；与 stages/production/scripts/time_model.py 同一口径。"""
     try:

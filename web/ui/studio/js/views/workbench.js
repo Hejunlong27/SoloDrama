@@ -1,34 +1,40 @@
-/* 工作台：全局视图（不依赖当前项目也可用） */
+/* ============================================================
+   workbench.js —— 工作台（全局唯一入口）
+
+   ★ 2026-11-04 合并（用户要求）：原来「工作台」和「项目管理」是两页，
+     内容重叠 80%（同一批项目、同一份注册表）。分成两页的实际后果是：
+     在工作台找不到搜索/新建，在项目管理看不到待办。
+     现在一页装三块：**这台机器在干什么（待办/运行中/通道）**、
+     **有哪些剧（项目清单）**、**时间花在哪（全局 GPU 时长）**。
+
+   成本口径：本项目全本机出图出片，平台费用恒为 0 —— 一屏「¥0」不是信息。
+   所以这里只报**时间**：总共占了多少 GPU、哪几部最费、哪个环节最吃时间。
+   ============================================================ */
 import { api } from '../api.js';
 import { S, loadRunning } from '../store.js';
-import { esc, icon, stateEl, dot, money, badge, stamp, emptyBox, toast, ago } from '../ui.js';
+import { esc, icon, dot, stamp, toast } from '../ui.js';
+import { projectList } from './project-list.js';
 
-function kpi(label, value, note) {
+function kpi(label, value, note, tone) {
   return '<div class="kpi"><div class="kpi-k">' + esc(label) + '</div>'
-    + '<div class="kpi-v">' + value + '</div>'
+    + '<div class="kpi-v"' + (tone ? ' style="color:' + tone + '"' : '') + '>' + value + '</div>'
     + (note ? '<div class="kpi-n">' + note + '</div>' : '') + '</div>';
 }
 
 export async function render(ctx) {
-  const [wsList, jobs, wf, setup, llmProv, llmPurp, conn] = await Promise.all([
-    api.workspaces().catch(() => ({ items: [] })),
+  const [jobs, wf, conn, timing, list] = await Promise.all([
     api.jobs(ctx.ws, 20).catch(() => ({ items: [] })),
     ctx.ws ? api.workflow(ctx.ws).catch(() => null) : Promise.resolve(null),
-    ctx.ws ? api.setup(ctx.ws).catch(() => null) : Promise.resolve(null),
-    api.llmProviders().catch(() => ({ items: [] })),
-    api.llmPurposes().catch(() => ({ items: [] })),
-    api.connections().catch(() => null)
+    api.connections().catch(() => null),
+    api.timeGlobal(ctx.ws).catch(() => null),
+    projectList(ctx)
   ]);
-  const providers = llmProv.items || [];
-  const purposes = llmPurp.items || [];
-
-  const projects = (wsList.items || []).filter((p) => p.exists);
-  const withOutput = projects.filter((p) => p.has_output);
+  const projects = (S.projects || []);
   const running = (jobs.items || []).filter((j) => j.status === 'running' || j.status === 'queued');
   const waiting = (jobs.items || []).filter((j) => j.status === 'confirm');
   const failed = (jobs.items || []).filter((j) => ['failed', 'gate', 'fuse', 'interrupted'].indexOf(j.status) >= 0);
-  const totalYuan = projects.reduce((a, p) => a + (Number(p.yuan) || 0), 0);
 
+  /* ---- 待处理 ---- */
   const problems = [];
   if (wf && wf.ok && wf.current) {
     const st = (wf.stages || []).find((s) => s.id === wf.current);
@@ -38,87 +44,99 @@ export async function render(ctx) {
         tone: 'warn',
         title: '《' + (ctx.project ? ctx.project.title || ctx.project.path : '当前项目') + '》下一步：' + st.id + ' ' + st.name,
         detail: miss.length ? '缺：' + miss.map((m) => m.label + ' ' + m.found + '/' + m.need).join('、') : (st.what || ''),
-        route: 'overview'
+        route: 'graph'
       });
     }
   }
   if (failed.length) {
     problems.push({
-      tone: 'bad',
-      title: failed.length + ' 个任务失败或中断',
-      detail: failed.slice(0, 3).map((j) => j.title).join('；'),
-      route: 'tasks'
+      tone: 'bad', title: failed.length + ' 个任务失败或中断',
+      detail: failed.slice(0, 3).map((j) => j.title).join('；'), route: 'tasks'
     });
   }
   if (waiting.length) {
     problems.push({
-      tone: 'warn',
-      title: waiting.length + ' 个任务在等你确认',
-      detail: '引擎停在「等待确认」状态（例如要不要花钱），不会自己继续。',
-      route: 'tasks'
+      tone: 'warn', title: waiting.length + ' 个任务在等你确认',
+      detail: '引擎停在「等待确认」状态，不会自己继续。', route: 'tasks'
     });
   }
-  const overRefs = projects.filter((p) => false);   /* 参考图超限是项目级信息，见项目详情 */
-
-  /* 连接状态进「待处理」：通道没接通时，用户点任何出图/出片都会失败，
-     与其等他撞墙，不如在工作台就把「缺哪一路」摆出来。 */
   const connItems = (conn && conn.items) || [];
-  const connOk = connItems.filter((i) => i.last_ok === true).length;
   const connMissing = connItems.filter((i) => i.last_ok !== true).map((i) => i.label);
   if (connItems.length && connMissing.length) {
     problems.push({
       tone: 'warn',
-      title: '外部通道未接通（' + connOk + '/' + connItems.length + '）',
+      title: '外部通道未接通（' + (connItems.length - connMissing.length) + '/' + connItems.length + '）',
       detail: '缺：' + connMissing.join('、') + '。这些环节会停在「未接通」，不影响已完成的工序。',
-      route: 'connections'
+      route: 'system'
     });
   }
   if (!problems.length) {
-    problems.push({ tone: 'ok', title: '没有需要你处理的事', detail: '所有任务都已结束；下一步在项目详情里看阶段。', route: 'projects' });
+    problems.push({ tone: 'ok', title: '没有需要你处理的事', detail: '所有任务都已结束；下一步在画布或项目详情里看。', route: 'graph' });
   }
 
-  const rows = projects.map((p) => (
-    '<tr class="clickable" data-open="' + esc(p.path) + '">'
-    + '<td><div class="row gap8">' + dot(p.has_output ? 'done' : 'todo')
-    + '<span>' + esc(p.title || p.path) + '</span></div>'
-    + '<div class="row-sub mono">' + esc(p.path) + '</div></td>'
-    /* 图片数 = 已归档 + 散图：与项目卡片、资产页「散图」同口径。
-       只数 images 会让「图都在根目录」的真实项目在这里显示 0。 */
-    + '<td class="num">' + ((Number(p.images) || 0) + (Number(p.loose) || 0)) + '</td>'
-    + '<td class="num">' + (p.yuan ? money(p.yuan) : '—') + '</td>'
-    + '<td class="small dim">' + esc(p.updated_text || '—') + '</td>'
-    + '<td class="right"><button class="btn quiet sm" data-open="' + esc(p.path) + '">打开</button></td></tr>'
-  )).join('');
+  /* ---- 全局时间 ---- */
+  const t = (timing && timing.totals) || {};
+  const tops = ((timing && timing.projects) || []).slice(0, 5);
+  const maxSec = tops.length ? Math.max(...tops.map((p) => p.sec)) : 1;
+  const stageRows = ((timing && timing.by_stage) || []).slice(0, 6);
+  const stageMax = stageRows.length ? Math.max(...stageRows.map((s) => s.sec)) : 1;
+
+  const timeCard = '<section class="card"><div class="card-h"><h3>全局时间</h3>'
+    + '<span class="card-sub">本机出图出片，费用恒为 0；真正稀缺的是 GPU 时间</span>'
+    + '<span class="spacer"></span><span class="tiny dim">' + esc((timing && timing.source) || '') + '</span></div>'
+    + '<div class="card-b">'
+    + '<div class="row" style="gap:18px;flex-wrap:wrap;margin-bottom:12px">'
+    + '<div><div class="kpi-k">累计占用</div><div class="kpi-v" style="font-size:var(--fs-20)">'
+    + esc((t.human || '0 分')) + '</div></div>'
+    + '<div><div class="kpi-k">成功段数</div><div class="kpi-v" style="font-size:var(--fs-20)">'
+    + esc(String(t.success || 0)) + '</div></div>'
+    + '<div><div class="kpi-k">平均每段</div><div class="kpi-v" style="font-size:var(--fs-20)">'
+    + esc(t.avg_shot_sec ? t.avg_shot_sec + 's' : '—') + '</div></div>'
+    + '<div><div class="kpi-k">失败尝试</div><div class="kpi-v" style="font-size:var(--fs-20)">'
+    + esc(String(t.failed || 0)) + '</div></div></div>'
+    + (tops.length
+      ? '<div class="tiny dim" style="margin-bottom:6px">最费时间的项目</div>'
+        + tops.map((p) => '<div class="bar-row" style="grid-template-columns:minmax(0,1fr) 1fr 76px">'
+          + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(p.title) + '</span>'
+          + '<span class="bar-track"><i class="bar-fill" style="width:'
+          + Math.max(2, Math.round(p.sec / maxSec * 100)) + '%"></i></span>'
+          + '<span class="mono right">' + esc(p.human) + '</span></div>').join('')
+      : '<div class="empty"><div class="empty-t">还没有可统计的耗时</div>'
+        + '<div class="empty-h">跑过一次出图或出片之后，这里会出现按项目与环节的分解。</div></div>')
+    + (stageRows.length
+      ? '<div class="tiny dim" style="margin:12px 0 6px">时间花在哪个环节</div>'
+        + stageRows.map((s) => '<div class="bar-row" style="grid-template-columns:96px 1fr 76px">'
+          + '<span class="mono">' + esc(s.stage) + '</span>'
+          + '<span class="bar-track"><i class="bar-fill" style="width:'
+          + Math.max(2, Math.round(s.sec / stageMax * 100)) + '%"></i></span>'
+          + '<span class="mono right">' + esc(s.human) + '</span></div>').join('')
+      : '')
+    + '</div></section>';
 
   const html = ''
     + '<div class="page-head"><div><h1 class="page-title">工作台</h1>'
-    + '<div class="page-sub">本机已登记 ' + projects.length + ' 部剧 · 数据来自本地注册表与作业库</div></div>'
+    + '<div class="page-sub">本机已登记 ' + projects.length + ' 部剧 · '
+    + '项目清单、待办、时间账都在这页（不再分「项目管理」）</div></div>'
     + '<div class="page-actions">'
-    + '<button class="btn quiet" id="btnDiscoverWb">' + icon('search', 14) + ' 扫描本机项目</button>'
-    + '<button class="btn primary" data-go="projects">' + icon('plus', 14) + ' 登记 / 新建</button>'
+    + '<button class="btn quiet" id="btnRefreshWb">' + icon('refresh', 14) + ' 刷新</button>'
+    + '<button class="btn primary" id="btnNewWb">' + icon('plus', 14) + ' 新建项目</button>'
     + '</div></div>'
 
     + '<div class="grid g4" style="margin-bottom:16px">'
-    + kpi('已登记项目', String(projects.length), withOutput.length + ' 部有产出')
-    + kpi('运行中任务', String(running.length), running.length ? '可在任务中心查看日志' : '当前没有排队任务')
-    + kpi('累计花费', totalYuan ? money(totalYuan) : '—',
-      totalYuan ? '<span class="mono">按注入台账汇总</span>'
-        : '<span class="mono">台账无可读记录（不是 0 花费）</span>')
-    + kpi('环境', S.health ? '在线' : '未知', S.health ? '引擎 ' + esc(String(S.health.python || '').split(/[\\/]/).pop()) : '未取到 /api/health')
+    + kpi('已登记项目', String(projects.length),
+      projects.filter((p) => p.has_output).length + ' 部有产出')
+    + kpi('运行中任务', String(running.length), running.length ? '任务中心看实时日志' : '当前没有排队任务')
+    + kpi('累计 GPU 时间', esc(t.human || '—'), esc(t.success ? t.success + ' 段成功' : '台账暂无记录'))
+    + kpi('环境', S.health ? '在线' : '未知',
+      S.health ? '引擎 ' + esc(String(S.health.python || '').split(/[\\/]/).pop()) : '未取到 /api/health',
+      S.health ? 'var(--ok)' : 'var(--accent)')
     + '</div>'
 
     + '<div class="grid g21" style="margin-bottom:16px">'
-    + '<section class="card"><div class="card-h"><h3>项目</h3><span class="card-sub">按产出与最近活动排序</span>'
-    + '<span class="spacer"></span><button class="btn ghost sm" data-go="projects">全部</button></div>'
-    + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
-    + '<th style="width:44%">剧名 / 路径</th><th class="num" style="width:88px">图片</th>'
-    + '<th class="num" style="width:100px">花费</th><th style="width:110px">更新</th><th></th>'
-    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="5">' + emptyBox('还没有项目', '扫描本机目录或登记一个已有的剧项目目录。') + '</td></tr>')
-    + '</tbody></table></div></div>'
-    + '<div class="card-foot">' + stamp('本地项目注册表 · 扫描结果缓存 90 秒') + '</div></section>'
-
-    + '<section class="card"><div class="card-h"><h3>待处理</h3><span class="badge ' + (problems[0].tone === 'ok' ? 'ok' : 'warn') + '">'
-    + problems.length + '</span></div><div class="card-b">'
+    + '<section class="card"><div class="card-h"><h3>待处理</h3>'
+    + '<span class="badge ' + (problems[0].tone === 'ok' ? 'ok' : 'warn') + '">' + problems.length + '</span>'
+    + '<span class="spacer"></span><button class="btn ghost sm" data-go="tasks">任务中心</button></div>'
+    + '<div class="card-b">'
     + problems.map((p) => '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'
       + '<div class="row gap8">'
       + '<span class="nav-ico" style="color:'
@@ -128,12 +146,10 @@ export async function render(ctx) {
       + '<div class="tiny dim">' + esc(p.detail) + '</div></div>'
       + '<button class="btn quiet sm" data-go="' + esc(p.route) + '">查看</button>'
       + '</div></div>').join('')
-    + '</div></section></div>'
+    + '</div></section>'
 
     + '<section class="card"><div class="card-h"><h3>正在运行</h3>'
-    + '<span class="card-sub">作业在服务端执行，刷新浏览器不受影响</span>'
-    + '<span class="spacer"></span><button class="btn ghost sm" data-go="tasks">任务中心</button></div>'
-    + '<div class="card-b">'
+    + '<span class="card-sub">服务端执行，刷新浏览器不受影响</span></div><div class="card-b">'
     + (running.length ? running.map((j) => '<div style="margin-bottom:12px">'
       + '<div class="row gap8" style="margin-bottom:6px">' + dot('doing')
       + '<span class="small">' + esc(j.title) + '</span><span class="spacer"></span>'
@@ -142,126 +158,43 @@ export async function render(ctx) {
       + '<div class="row" style="margin-top:5px"><span class="tiny dim">' + esc(j.estimate || '') + '</span>'
       + '<span class="spacer"></span><button class="btn ghost sm" data-go="tasks">查看日志</button></div></div>').join('')
       : '<div class="empty"><div class="empty-t">当前没有运行中的任务</div>'
-      + '<div class="empty-h">出片、放大、字幕这类长任务会出现在这里。</div>'
-      + '<button class="btn quiet" data-go="tasks">打开任务中心</button></div>')
-    + '</div></section>'
+      + '<div class="empty-h">出片、放大、字幕这类长任务会出现在这里。</div></div>')
+    + '</div></section></div>'
 
-    + channelCard(ctx, setup, providers, purposes, conn)
-    + (overRefs.length ? '' : '');
+    + timeCard
+
+    + '<section class="card" style="margin-top:16px"><div class="card-h"><h3>项目</h3>'
+    + '<span class="card-sub">点卡片打开；新建时选创作模板</span>'
+    + '<span class="spacer"></span><button class="btn ghost sm" data-go="projects">单独打开</button></div>'
+    + '<div class="card-b"><div id="wbProjects">' + list.html + '</div></div>'
+    + '<div class="card-foot">' + stamp('注册表 + 台账 · 扫描结果缓存 90 秒') + '</div></section>';
 
   return {
     html,
     mount: (root) => {
+      list.mount(root);
       root.querySelectorAll('[data-go]').forEach((b) => {
         b.onclick = () => ctx.navigate(b.dataset.go);
       });
-      root.querySelectorAll('[data-open]').forEach((b) => {
-        b.onclick = (e) => {
-          e.stopPropagation();
-          const p = projects.find((x) => x.path === b.dataset.open);
-          if (!p) return;
-          import('../store.js').then((m) => {
-            m.setWs(p.path, { pushUrl: true });
-            ctx.navigate('overview');
-            ctx.refresh();
-          });
-        };
-      });
-      /* 检测走「连接中心」同一条只读探测（读 system_stats，0 费用）。
-         以前这里跑 diag.comfy 拿原始日志，和工作台的接入状态是两套口径：
-         同一个 ComfyUI，卡片说「未确认」、抽屉说「在线」，用户没法判断。
-         现在只有一条链路，结果直接写进后端（last_test / last_detail），刷新即显示。 */
-      root.querySelectorAll('[data-probe]').forEach((b) => {
-        b.onclick = async () => {
-          const kind = b.dataset.probe;
-          b.disabled = true;
-          b.innerHTML = '<span class="spinner"></span>';
+      const rf = root.querySelector('#btnRefreshWb');
+      if (rf) {
+        rf.onclick = async () => {
+          rf.disabled = true;
           try {
-            const r = await api.testConnection(kind);
-            toast(r.ok ? '已连接：' + (r.detail || '') : ((r.detail || '探测失败') + (r.next ? ' · ' + r.next : '')),
-              r.ok ? 'ok' : 'bad');
+            await api.refresh(ctx.ws);
+            await loadRunning();
             ctx.refresh();
-          } catch (e) {
-            toast('探测失败：' + (e.detail || e.message), 'bad');
-            b.disabled = false;
-            b.textContent = '检测';
-          }
+            toast('已重新读取');
+          } catch (e) { toast('刷新失败：' + (e.detail || e.message), 'bad'); }
+          finally { rf.disabled = false; }
         };
-      });
-
-      const d = root.querySelector('#btnDiscoverWb');
-      if (d) d.onclick = async () => {
-        d.disabled = true; d.innerHTML = '<span class="spinner"></span> 扫描中';
-        try {
-          const res = await api.discover(true);
-          toast('扫描完成：发现 ' + (res.items || []).length + ' 个候选（已登记的不重复）');
-          await loadRunning();
-          ctx.refresh();
-        } catch (e) {
-          toast('扫描失败：' + (e.detail || e.message), 'bad');
-        } finally { d.disabled = false; d.innerHTML = icon('search', 14) + ' 扫描本机项目'; }
+      }
+      const nw = root.querySelector('#btnNewWb');
+      if (nw) nw.onclick = () => {
+        const btn = root.querySelector('#btnNew');
+        if (btn) { btn.click(); return; }
+        ctx.navigate('projects');
       };
     }
   };
-}
-
-/* ---------- 接入状态（LLM / 本地出图 / 云端出片） ----------
-   只报「配置状态 + 已做过的检测结果」，不在打开页面时主动联网探测：
-   探测要有明确触发（点「检测」跑 diag.comfy，0 费用；控制台不自动发任何请求）。 */
-function channelCard(ctx, setup, providers, purposes, conn) {
-  /* 口径统一：机器级通道（大模型 / 本地出图 / 云端出片）只认「连接中心」，
-     项目级要求（工作流 API）才认 G-0。以前两套各算一套，会出现
-     「连接中心显示已连接、工作台显示未确认」的自相矛盾，用户不知道该信哪个。 */
-  const items = (setup && setup.items) || [];
-  const wfApi = items.find((x) => x.key === 'workflow_api') || {};
-  const byKind = {};
-  ((conn && conn.items) || []).forEach((i) => { byKind[i.kind] = i; });
-
-  const on = (providers || []).filter((p) => p.enabled !== false);
-  const ready = (purposes || []).filter((p) => p.ready).length;
-  const llmExtra = on.length
-    ? (on.length + ' 个提供商 · ' + ready + '/' + (purposes || []).length + ' 用途就绪')
-    : ((providers || []).length ? '已配置但全部停用' : '还没有配置任何模型端点');
-
-  const row = (tone, name, text, action) => '<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line)">'
-    + '<i class="dot ' + tone + '"></i><span class="small" style="width:88px;flex:none">' + esc(name) + '</span>'
-    + '<span class="tiny muted flex1">' + text + '</span>'
-    + (action || '') + '</div>';
-
-  /* 机器级通道：三态分明。未探测 ≠ 不可用，所以文案不能写成「失败」。 */
-  const chan = (kind, name, fallback, action) => {
-    const it = byKind[kind] || {};
-    const ok = it.last_ok === true;
-    const bad = it.last_ok === false;
-    const tone = ok ? 'done' : bad ? 'fail' : 'todo';
-    let text;
-    if (ok) {
-      text = esc(it.last_detail || '已连接')
-        + (it.last_test ? ' <span class="dim">· ' + esc(ago(it.last_test)) + '前</span>' : '');
-    } else if (bad) {
-      text = esc(it.last_detail || '探测失败')
-        + (it.last_next ? ' <span class="dim">· ' + esc(it.last_next) + '</span>' : '');
-    } else {
-      text = esc(fallback) + ' <span class="dim">· 未探测，去连接中心点一次测试</span>';
-    }
-    return row(tone, name, text, action);
-  };
-
-  return '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>接入状态</h3>'
-    + '<span class="card-sub">机器级通道看「连接中心」，项目级要求看 G-0</span>'
-    + '<span class="spacer"></span><button class="btn ghost sm" data-go="connections">连接中心</button></div>'
-    + '<div class="card-b">'
-    + chan('llm', '大模型', llmExtra,
-      '<button class="btn quiet sm" data-go="' + (on.length ? 'connections' : 'models') + '">'
-      + (on.length ? '连接中心' : '去配置') + '</button>')
-    + chan('comfyui', '本地出图', 'ComfyUI 未验证', '<button class="btn quiet sm" data-probe="comfyui">检测</button>')
-    + (ctx.ws
-      ? row(wfApi.ok ? 'done' : 'todo', '工作流 API',
-        esc((wfApi.detail && wfApi.detail.ref) || '未确认（项目级要求）'),
-        '<button class="btn quiet sm" data-go="settings">系统设置</button>')
-      : row('todo', '工作流 API', '未选项目 <span class="dim">· 工作流 ID 是项目级配置</span>',
-        '<button class="btn quiet sm" data-go="projects">选项目</button>'))
-    + '</div>'
-    + '<div class="card-foot"><span class="tiny dim">探测一律只读：ComfyUI 读 system_stats，'
-    + '不产生任务、不花钱。</span></div></section>';
 }

@@ -166,6 +166,22 @@ export const api = {
   /* 剧集画布：不加 TTL —— 它表达的是「磁盘上现在有什么」，缓存会让人以为刚出完的片没出来 */
   canvasSeries: (ws) => get('/api/canvas/series', { ws }),
   canvasShot: (ws, ep, shot) => get('/api/canvas/shot', { ws, ep, shot }),
+
+  /* 节点画布：一张图两种模式（流水线自动排布 / 精细化自己拖、自己连） */
+  graph: (ws, ep) => get('/api/graph', { ws, ep }),
+  graphLayout: (body) => post('/api/graph/layout', body),
+  graphEdge: (body) => post('/api/graph/edge', body),
+  graphReset: (ws) => post('/api/graph/reset', { ws }),
+
+  /* 模板库（内置 21 份 + 用户上传） */
+  skillPresets: () => get('/api/skills/presets'),
+  skillUpload: (text, filename, overwrite) => post('/api/skills/upload', { text, filename, overwrite: !!overwrite }),
+
+  /* 全局时间账 + 系统中心（一键下载 / 一键更新） */
+  timeGlobal: (ws) => get('/api/time/global', { ws }),
+  systemStatus: () => get('/api/system/status'),
+  systemDownload: (ws) => post('/api/system/download', { ws }),
+  systemUpdate: (ws) => post('/api/system/update', { ws, pip: true }),
   cost: (ws) => get('/api/studio/cost', { ws }),
   releaseStatus: (ws) => get('/api/studio/release', { ws }),
   releaseExportPreview: (ws) => get('/api/studio/release/export-preview', { ws }),

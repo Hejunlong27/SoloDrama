@@ -40,7 +40,7 @@ export async function render(ctx) {
     + '<div class="page-head"><div>'
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>'
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
-    + '<h1 class="page-title">发行中心</h1>'
+    + '<h1 class="page-title">发行</h1>'
     + '<div class="page-sub">发布版命名必须 <span class="mono">EpisodeNN.mp4</span>，落 '
     + '<span class="mono">09-发行/剧集/</span></div></div>'
     + '<div class="page-actions"><span class="badge ' + g9tone + '" title="'

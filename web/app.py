@@ -26,7 +26,8 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from core import (adapters, artifacts, canvas, comfy_launcher, comfy_probe, comfy_store,
-                  creation, skills as SKILLS, commands as CMD,
+                  creation, graph, timing, updater,
+                  skills as SKILLS, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
                     studio, styles, ux)
@@ -345,6 +346,9 @@ def project_create(payload: dict = Body(...)):
     style_id = str(payload.get("style") or "").strip()
     track = str(payload.get("track") or "").strip()
     resolution = str(payload.get("resolution") or "").strip()
+    aspect = str(payload.get("aspect") or "9:16").strip()
+    if not re.match(r"^\d{1,2}:\d{1,2}$", aspect):
+        raise HTTPException(status_code=400, detail="画幅要写成 W:H，例如 9:16")
     if resolution and not re.match(r"^[0-9]{3,5}x[0-9]{3,5}$", resolution):
         raise HTTPException(status_code=400, detail="分辨率要写成 WxH，例如 1080x1920")
     if style_id and not track:
@@ -358,8 +362,13 @@ def project_create(payload: dict = Body(...)):
                 break
 
     cmd = CMD.get("project.scaffold")
+    if cmd is None:
+        raise HTTPException(status_code=500,
+                            detail="缺少 project.scaffold 命令定义（commands.py 未注册）")
     values = {"target": str(p), "slug": slug, "title": title,
-              "platform": platform, "ep": ep, "sec": sec}
+              "platform": platform, "ep": ep, "sec": sec,
+              # 画风 / 画幅 / 分辨率在**建档时**一次写入（此后改画风要重新确认 G-1）
+              "track": track, "look": style_id, "aspect": aspect, "resolution": resolution}
     argv = cmd.build_argv(values, None)
     res = runner.run_stream(argv, ws=None, timeout=180)
     ok = res["rc"] == 0
@@ -378,31 +387,38 @@ def project_create(payload: dict = Body(...)):
     jobs.record_audit(str(p), "project.scaffold", ["--workspace", str(p), "--slug", slug],
                       res["rc"], note=title, actor="studio")
 
-    # 建档后把「画风 + 交付分辨率」写进项目（走引擎自己的 setup/style 命令，不直接改文件）
+    # 建档结果一律**回读文件**验真，不信退出码：
+    # `init_project.py` 在「模板已存在」时是 rc=0 + 跳过，而 G-0 类检查会用 rc=4 表示
+    # 「等待确认」但文件其实已经写了。只看退出码会得出相反结论。
     profile = {"style": None, "resolution": None, "warnings": []}
     if ok and p.is_dir():
-        if style_id and track:
-            a2 = [paths.engine_python(), str(CMD.SCRIPTS["drama"]), "style", "set", track,
-                  "--sub-mode", style_id, "--workspace", str(p)]
-            r2 = runner.run_stream(a2, ws=None, timeout=120)
-            # ★ 不拿退出码当结论：`project_setup` / `drama` 在「其它 G-0 项没填」时会用
-            #   rc=4 表示「等待确认」，但文件其实已经写了。所以一律**回读文件**验真。
-            plan = paths.read_json(p / "style-plan.json", default={}) or {}
-            st = plan.get("style") or {}
-            if st.get("confirmed") and st.get("sub_mode") == style_id:
-                profile["style"] = {"track": track, "id": style_id,
-                                    "name": st.get("style_name") or ""}
-            else:
-                profile["warnings"].append("画风没写上：%s" % "\n".join(r2["lines"][-3:]))
+        dj = paths.read_json(p / "drama.json", default={}) or {}
+        fmt = dj.get("format") or {}
+        if fmt.get("track") or fmt.get("look"):
+            profile["style"] = {"track": fmt.get("track") or "",
+                                "id": fmt.get("look") or "",
+                                "name": ""}
+        elif style_id or track:
+            profile["warnings"].append("画风没写上：drama.json 里没有 format.track / look")
+        cfg = paths.read_json(p / "project-setup.json", default={}) or {}
+        got_res = str((cfg.get("resolution") or {}).get("deliver") or "")
         if resolution:
-            a3 = [paths.engine_python(), str(CMD.SCRIPTS["setup"]), "set",
-                  "--workspace", str(p), "--resolution", resolution]
-            r3 = runner.run_stream(a3, ws=None, timeout=120)
-            cfg = paths.read_json(p / "project-setup.json", default={}) or {}
-            if str((cfg.get("resolution") or {}).get("deliver") or "") == resolution:
+            if got_res == resolution:
                 profile["resolution"] = resolution
             else:
-                profile["warnings"].append("分辨率没写上：%s" % "\n".join(r3["lines"][-3:]))
+                profile["warnings"].append(
+                    "分辨率没写上（期望 %s，读到 %r）" % (resolution, got_res or ""))
+
+    # ---- 项目预配置：把选中的题材模板一次装进新项目 ----
+    # 为什么在建档时做而不是让用户回头去「Skill 中心」点：新建项目时的语境是完整的
+    # （题材、画风、集数一起定），隔一天再回来选模板，人多半已经不记得当初想用哪套。
+    # 装载失败**不推翻建档** —— 目录已经建好了，模板可以稍后补装。
+    skills_res = {"installed": [], "failed": [], "detail": ""}
+    pick = payload.get("skills")
+    if ok and p.is_dir() and isinstance(pick, list) and pick:
+        skills_res = SKILLS.install_many(str(p), [str(x) for x in pick if str(x).strip()][:6])
+        if skills_res.get("failed"):
+            profile["warnings"].append("模板没全装上：%s" % (skills_res.get("failed_text") or ""))
 
     return {
         "ok": ok, "rc": res["rc"], "elapsed": res["elapsed"],
@@ -411,6 +427,7 @@ def project_create(payload: dict = Body(...)):
         "friendly": None if ok else ux.friendly_error(res["rc"], text),
         "target": str(p), "title": title, "registered": registered,
         "profile": profile,
+        "skills": skills_res,
     }
 
 
@@ -829,6 +846,89 @@ def canvas_series(ws: str = Query(...)):
 @app.get("/api/canvas/shot")
 def canvas_shot(ws: str = Query(...), ep: str = Query(...), shot: str = Query(...)):
     return canvas.shot(str(_require_ws(ws)), ep, shot)
+
+
+# ---------------------------------------------------------------------------
+# 节点画布：一张图两种模式（流水线 = 自动排布；精细化 = 自己拖、自己连）
+#   实线是引擎依赖（带锁、不可删），虚线是用户的编排意图（不影响执行顺序）。
+# ---------------------------------------------------------------------------
+@app.get("/api/graph")
+def graph_state(ws: str = Query(...), ep: str = Query(default="")):
+    return graph.state(str(_require_ws(ws)), ep)
+
+
+@app.post("/api/graph/layout")
+def graph_layout(payload: dict = Body(...)):
+    _write_guard()
+    ws = str(_require_ws(payload.get("ws")))
+    return graph.save_layout(ws, pos=payload.get("pos"), view=payload.get("view"))
+
+
+@app.post("/api/graph/reset")
+def graph_reset(payload: dict = Body(...)):
+    _write_guard()
+    return graph.reset_layout(str(_require_ws(payload.get("ws"))))
+
+
+@app.post("/api/graph/edge")
+def graph_edge(payload: dict = Body(...)):
+    """加/删一条编排连线。删依赖边会被拒（locked），这是刻意的。"""
+    _write_guard()
+    ws = str(_require_ws(payload.get("ws")))
+    action = str(payload.get("action") or "add")
+    src = str(payload.get("from") or "")
+    dst = str(payload.get("to") or "")
+    if action == "remove":
+        return graph.remove_edge(ws, src, dst, locked=bool(payload.get("locked")))
+    return graph.add_edge(ws, src, dst)
+
+
+# ---------------------------------------------------------------------------
+# 模板库：内置 21 份 + 用户上传
+# ---------------------------------------------------------------------------
+@app.get("/api/skills/presets")
+def skills_presets():
+    return SKILLS.presets()
+
+
+@app.post("/api/skills/upload")
+def skills_upload(payload: dict = Body(...)):
+    """上传一份 SKILL.md 到用户模板库。只写盘、不执行（Skill 是数据）。"""
+    _write_guard()
+    return SKILLS.upload(str(payload.get("text") or ""),
+                         str(payload.get("filename") or ""),
+                         overwrite=bool(payload.get("overwrite")))
+
+
+# ---------------------------------------------------------------------------
+# 全局时间账（工作台）：只扫台账，不起子进程、不做预估
+# ---------------------------------------------------------------------------
+@app.get("/api/time/global")
+def time_global(ws: str = Query(default="")):
+    return timing.summary(ws=ws)
+
+
+# ---------------------------------------------------------------------------
+# 系统中心：一键下载（补齐依赖）/ 一键更新（拉代码 + 补依赖 + 复检）
+#   都走线程池，避免 pip install 的几分钟把单进程 uvicorn 掐死（同一时刻页面点不动）。
+# ---------------------------------------------------------------------------
+@app.get("/api/system/status")
+def system_status():
+    return updater.status()
+
+
+@app.post("/api/system/download")
+async def system_download(payload: dict = Body(default={})):
+    _write_guard()
+    ws = payload.get("ws") or None
+    return await asyncio.to_thread(updater.download_all, ws)
+
+
+@app.post("/api/system/update")
+async def system_update(payload: dict = Body(default={})):
+    _write_guard()
+    ws = payload.get("ws") or None
+    return await asyncio.to_thread(updater.update, ws, pip=bool(payload.get("pip", True)))
 
 
 # ---------------------------------------------------------------------------

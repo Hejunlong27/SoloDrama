@@ -9,45 +9,52 @@ import {
   setWs, initialWs, initialCollapsed, setCollapsed, loadProjects as reloadProjects
 } from './store.js';
 
+/* ---------- 侧栏 ----------
+   ★ 2026-11-04 重排（用户要求）：
+     · 工作台与项目管理合并成一个「工作台」——两者本来就是「本机有哪些剧」的两个视图，
+       分成两页只会让人在两页之间来回找同一个项目；
+     · AI 模型中心 / 连接中心 / 环境体检合并成「系统中心」——它们回答的都是
+       「这台机器现在能不能干活」，分成三页时，用户配完模型找不到体检；
+     · 时间中心从全局移进项目（它是项目属性），全局耗时放工作台首屏；
+     · 项目内的顺序改成真实创作顺序：项目详情 → 画布 → 创作 → 资产 → 分镜 → 视频 → 剪辑 → 发行。
+       画布排在前面，是因为「这一部现在长什么样」比「第几步」更常用。 */
 const NAV = [
   {
     label: '全局', items: [
       { key: 'workbench', label: '工作台', ico: 'workbench' },
-      { key: 'projects', label: '项目管理', ico: 'folder' },
       { key: 'tasks', label: '任务中心', ico: 'list' },
-      { key: 'cost', label: '时间中心', ico: 'clock' },
-      { key: 'models', label: 'AI 模型中心', ico: 'cpu' },
-      { key: 'connections', label: '连接中心', ico: 'plug' },
-      { key: 'health', label: '环境体检', ico: 'check' }
+      { key: 'system', label: '系统中心', ico: 'cpu' },
+      { key: 'settings', label: '系统设置', ico: 'settings' }
     ]
   },
   {
     label: '当前项目', project: true, items: [
-      // ★ 2026-11-04：创作链放在最前 —— 它是流水线的起点。
-      //   先有灵感和剧本，才有资产、分镜、出片；把它们排在「项目详情」后面，
-      //   人会先看到一堆 0 和空状态，以为工具没做事。
-      { key: 'create', label: '创作', ico: 'spark' },
-      { key: 'skills', label: 'Skill 中心', ico: 'layers' },
-      { key: 'canvas', label: '剧集画布', ico: 'canvas' },
       { key: 'overview', label: '项目详情', ico: 'workbench' },
-      { key: 'pipeline', label: '流水线', ico: 'terminal' },
-      { key: 'assets', label: '资产中心', ico: 'image' },
-      { key: 'storyboard', label: '镜头与出片', ico: 'film' },
-      { key: 'post', label: '后期制作', ico: 'scissors' },
-      { key: 'release', label: '发行中心', ico: 'upload' }
+      { key: 'graph', label: '画布', ico: 'canvas' },
+      { key: 'create', label: '创作', ico: 'spark' },
+      { key: 'skills', label: '创作模板', ico: 'layers' },
+      { key: 'assets', label: '资产', ico: 'image' },
+      { key: 'boards', label: '分镜', ico: 'board' },
+      { key: 'storyboard', label: '视频', ico: 'film' },
+      { key: 'post', label: '剪辑', ico: 'scissors' },
+      { key: 'release', label: '发行', ico: 'upload' },
+      { key: 'cost', label: '用时', ico: 'clock' }
     ]
-  },
-  { label: '系统', items: [{ key: 'settings', label: '系统设置', ico: 'settings' }] }
+  }
 ];
 
-const PROJECT_ROUTES = ['create', 'skills', 'canvas', 'overview', 'pipeline', 'assets', 'storyboard', 'post', 'release'];
+const PROJECT_ROUTES = ['overview', 'graph', 'create', 'skills', 'assets', 'boards',
+  'storyboard', 'post', 'release', 'cost', 'pipeline'];
 
 const VIEWS = {
   workbench: () => import('./views/workbench.js'),
   projects: () => import('./views/projects.js'),
   create: () => import('./views/create.js'),
   skills: () => import('./views/skills.js'),
+  graph: () => import('./views/graph.js'),
   canvas: () => import('./views/canvas.js'),
+  boards: () => import('./views/boards.js'),
+  system: () => import('./views/system.js'),
   overview: () => import('./views/overview.js'),
   pipeline: () => import('./views/pipeline.js'),
   assets: () => import('./views/assets.js'),

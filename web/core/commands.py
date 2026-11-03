@@ -40,6 +40,8 @@ SCRIPTS = {
     "gen_local": paths.PROD_SCRIPTS / "gen_assets_local.py",
     "gen_boards": paths.PROD_SCRIPTS / "gen_boards.py",
     "nodes": paths.PROD_SCRIPTS / "nodes.py",
+    # ★ 2026-11-04：新建项目（结构 + 空模板）
+    "init_project": paths.PROD_SCRIPTS / "init_project.py",
     "env_check": paths.TOOLS_DIR / "env_check.py",
 }
 
@@ -308,6 +310,25 @@ _add(_c("layout.show", "0 项目", "布局与目录落点", "layout",
         params=[Param("ws", "工作区（留空用当前）", "str")],
         help="打印引擎根 / 输入目录 / 输出目录与各阶段目录是否存在。",
         agent="指出哪些阶段目录还缺失（那是还没开始的环节）。"))
+
+# ★ 2026-11-04：新建项目终于有命令了。
+#   此前 `project_create` 引用的 spec 在本分支里**根本不存在**（创作层移出仓库时一起没了），
+#   于是「新建项目」按钮 100% 抛 500。这里指向 `stages/production/scripts/init_project.py`，
+#   它调的仍是布局真源 `_layout.scaffold()`，不另写一套建目录逻辑。
+_add(_c("project.scaffold", "0 项目", "新建剧项目（结构 + 空模板）", "init_project",
+        argv=[], mode="sync", danger=WRITE,
+        flags={"--workspace": "target", "--title": "title", "--platform": "platform",
+               "--episodes": "ep", "--ep-seconds": "sec",
+               "--track": "track", "--look": "look", "--aspect": "aspect",
+               "--resolution": "resolution"},
+        params=[Param("target", "目标目录（绝对路径）", "str", required=True,
+                      placeholder="D:/剧本/我的新剧"),
+                Param("title", "剧名", "str", required=True),
+                Param("platform", "目标平台", "str"),
+                Param("ep", "集数", "int", default=30),
+                Param("sec", "单集秒数", "int", default=60)],
+        help="建 9 个阶段目录 + layout.json + 引擎配置；模板是空的（不是范例）。",
+        agent="建完汇报：目录数量、layout 是否写好、下一步该写企划案还是导入制作包。"))
 
 # ===== 制作包：新分支的唯一输入入口 ========================================
 # 为什么把「导入」放在第一位：创作已经移出引擎（选题/剧本/资产设计/导演/分镜/提示词

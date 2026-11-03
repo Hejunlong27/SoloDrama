@@ -63,7 +63,7 @@ export async function render(ctx) {
     + '<div class="page-head"><div>'
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>'
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
-    + '<h1 class="page-title">分镜与视频</h1>'
+    + '<h1 class="page-title">视频</h1>'
     + '<div class="page-sub">逐镜状态来自 <span class="mono">07-成片/&lt;批次&gt;/summary.json</span>'
     + '（跨批次按镜头去重）· 最近批次 <span class="mono">' + esc(data.latest_batch || '无') + '</span></div></div>'
     + '<div class="page-actions">'

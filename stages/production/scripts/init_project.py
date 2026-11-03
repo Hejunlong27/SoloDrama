@@ -266,6 +266,9 @@ def main(argv=None) -> int:
     ap.add_argument("--look", default="", help="视觉 look id（不给就留空，待确认）")
     ap.add_argument("--narrative", default="dialogue", choices=["dialogue", "narration"])
     ap.add_argument("--aspect", default="9:16")
+    # ★ 2026-11-04：交付分辨率（如 1080x1920）。写进 project-setup.json，
+    #   这是 `drama_profile.py` 唯一会去读分辨率的地方；不写就等于「没定」。
+    ap.add_argument("--resolution", default="", help="交付分辨率 WxH（可选）")
     ap.add_argument("--world", default="")
     ap.add_argument("--region", default="east_asian",
                     choices=["east_asian", "western", "south_asian", "latin"])
@@ -317,6 +320,11 @@ def main(argv=None) -> int:
             title=a.title, episodes=a.episodes, platform=a.platform or "（待填）"),
         "05-分镜/ep01_storyboard.md": STORYBOARD_TMPL.format(title=a.title, track=a.track),
     }
+    if a.resolution:
+        files["project-setup.json"] = json.dumps(
+            {"resolution": {"deliver": a.resolution},
+             "_note": "交付分辨率；出片后按 delivery_spec 归一化到这个尺寸（crop-to-fill，不补边）"},
+            ensure_ascii=False, indent=2)
     print("\n[模板]")
     wrote = skipped = 0
     for rel, text in files.items():

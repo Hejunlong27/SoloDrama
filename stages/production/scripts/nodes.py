@@ -731,6 +731,12 @@ def evaluate(ctx: Ctx) -> dict:
     for n in NODES:
         r = dict(node_state(ctx, n, memo))
         r["stage"] = n["stage"]
+        # ★ 2026-11-04：把图的**结构**一起给出来（reads / output / ep），
+        #   让 Studio 的节点画布不必再抄一份依赖表。抄一份的下场是漂移：
+        #   这里加一个上游，画布上还连着旧的，运行顺序与看到的图不一致。
+        r["reads"] = list(n.get("reads") or [])
+        r["output"] = n.get("output") or ""
+        r["ep"] = bool(n.get("ep"))
         rows.append(r)
     return {"ws": str(ctx.ws), "ep": ctx.ep, "nodes": rows,
             "stages": [{"id": s["id"], "name": s["name"], "why": s.get("why", "")}
