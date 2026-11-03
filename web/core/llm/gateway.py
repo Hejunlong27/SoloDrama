@@ -65,6 +65,22 @@ def _cost_of(usage) -> dict:
     return {"usd": None, "source": "unknown"}
 
 
+def want_json_mode(spec: dict, tspec: dict) -> bool:
+    """该用途要不要 `response_format=json_object`？
+
+    ★ 2026-11-04：判据只取**模板自己**的输出类型，不取提供商「声明了 json 能力」。
+      原实现是「提供商有 json 能力就开」，于是写企划案/剧本这类长文也被塞了
+      json_object —— DeepSeek 直接返回 content=""（finish_reason=stop、token 用掉几千），
+      界面表现是「模型没反应」。这个函数单独出来就是为了能被测试钉住。
+    """
+    spec = spec or {}
+    tspec = tspec or {}
+    if spec.get("schema_id") or tspec.get("schema_id"):
+        return True
+    return (str(tspec.get("output") or "").lower() == "json"
+            or str(tspec.get("format") or "").lower() == "json")
+
+
 class Gateway:
     def __init__(self, factory=None):
         # 工厂可注入，测试里替换成 Mock
@@ -285,8 +301,17 @@ class Gateway:
                         usage={"input_tokens": None, "output_tokens": None, "total_tokens": None, "raw": None},
                         raw_status=200)
                 else:
+                    # ★ 2026-11-04：**只有 JSON 类用途才开 json_mode**。
+                    #   原来写的是「提供商有 json 能力就开」——于是写企划案/剧本这类
+                    #   长文用途也被塞了 response_format=json_object，DeepSeek 直接返回
+                    #   content=""（finish_reason=stop，token 却用掉几千），
+                    #   界面表现是「模型没反应 / 生成失败」，看起来像没接通。
+                    #   判据取模板自己的输出类型（text / json），不取提供商的能力广告。
+                    tspec = templates.TEMPLATE_MAP.get(tid) or {}
+                    want_json = want_json_mode(spec, tspec)
                     res = p.chat(messages, model=base["model"], temperature=temp, max_tokens=mtok,
-                                 json_mode=(prov.get("kind") in ("openai", "ollama") and "json" in have),
+                                 json_mode=bool(want_json and prov.get("kind") in ("openai", "ollama")
+                                                and "json" in have),
                                  timeout_s=timeout_s, cancel=cancel)
                 break
             except LLMError as exc:

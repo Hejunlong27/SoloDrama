@@ -301,6 +301,10 @@ def upsert_provider(payload: dict) -> dict:
         "env_var": env_var,
         # 云端默认走系统代理，本地服务默认直连（详见 providers.BaseProvider 的注释）
         "trust_env": bool(payload.get("trust_env", not local)),
+        # ★ 2026-11-04：混合推理模型（V4 / flash 系）可显式关思考。
+        #   思考计入 max_tokens，长文写作时会把额度吃光、content 返回空（表现像「模型没反应」）。
+        #   取值：disabled / enabled / 空（跟随模型默认）
+        "thinking": str(payload.get("thinking") or "").strip().lower(),
         "enabled": bool(payload.get("enabled", True)),
         "updated_at": time.time(),
     }

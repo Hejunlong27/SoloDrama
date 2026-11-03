@@ -233,8 +233,13 @@ def installed(ws) -> dict:
             "note": "装载只是「复制 + 登记」，不改 Skill 本身，也不执行任何代码"}
 
 
-def install(ws, id_or_name: str, *, replace: bool = False) -> dict:
-    """把一份 Skill 装进本项目：复制到 `<ws>/skills/<id>.md` 并登记。"""
+def install(ws, id_or_name: str, *, replace: bool = False, exclusive: bool = True) -> dict:
+    """把一份 Skill 装进本项目：复制到 `<ws>/skills/<id>.md` 并登记。
+
+    ★ 2026-11-04：**一个项目只用一个模板**（`exclusive=True`）。
+      多份模板的正文会互相打架（都要「每批 15 集」「先写资产再写剧本」），模型会来回摇摆，
+      而 prompt 成本还翻倍。真要并存，调用方显式传 `exclusive=False`。
+    """
     ws = Path(str(ws))
     src = detail(id_or_name)
     reg = installed(ws)
@@ -242,13 +247,26 @@ def install(ws, id_or_name: str, *, replace: bool = False) -> dict:
         return {"ok": True, "already": True, "id": src["id"],
                 "detail": "这个 Skill 已经在项目里了（%s）" % src["id"]}
 
+    dropped = []
+    if exclusive:
+        for x in reg["items"]:
+            if x.get("id") == src["id"]:
+                continue
+            f = ws / SKILL_SUBDIR / ("%s.md" % x.get("id"))
+            if f.is_file():
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            dropped.append(x.get("id"))
+
     dst_dir = ws / SKILL_SUBDIR
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / ("%s.md" % src["id"])
     dst.write_text(Path(src["path"]).read_text(encoding="utf-8", errors="replace"),
                    encoding="utf-8", newline="")
 
-    items = [x for x in reg["items"] if x.get("id") != src["id"]]
+    items = [] if exclusive else [x for x in reg["items"] if x.get("id") != src["id"]]
     items.append({
         "id": src["id"], "name": src["name"], "title": src["title"],
         "desc": src["desc"], "sha": src["sha"], "chars": src["chars"],
@@ -257,9 +275,10 @@ def install(ws, id_or_name: str, *, replace: bool = False) -> dict:
     })
     paths.write_json(_reg_path(ws), {"version": 1, "items": items,
                                     "updated_at": time.time()})
-    return {"ok": True, "id": src["id"], "file": str(dst),
-            "detail": "已装载「%s」。创作环节会用它的叙事套路，画风仍由本项目 style_lock 决定"
-                      % src["title"]}
+    tail = ("（替换了 %s）" % "、".join(dropped)) if dropped else ""
+    return {"ok": True, "id": src["id"], "file": str(dst), "dropped": dropped,
+            "detail": "已装载「%s」%s。创作环节会用它的叙事套路，画风仍由本项目 style_lock 决定"
+                      % (src["title"], tail)}
 
 
 def uninstall(ws, id_or_name: str) -> dict:
@@ -383,14 +402,17 @@ def upload(text: str, filename: str = "", *, overwrite: bool = False) -> dict:
 def install_many(ws, ids, *, replace: bool = False) -> dict:
     """新建项目时一次装多份（模板 + 用户上传都可能混在一起）。"""
     ok, fails = [], []
-    for i in (ids or []):
+    picks = [str(x) for x in (ids or []) if str(x).strip()][:1]      # 单选：只认第一个
+    ignored = [str(x) for x in (ids or [])[1:] if str(x).strip()]
+    for i in picks:
         try:
             r = install(ws, i, replace=replace)
             (ok if r.get("ok") else fails).append({"id": i, "detail": r.get("detail")})
         except Exception as exc:                              # noqa: BLE001
             fails.append({"id": i, "detail": "%s: %s" % (type(exc).__name__, exc)})
-    return {"ok": not fails, "installed": ok, "failed": fails,
-            "detail": ("已装载 %d 份模板" % len(ok)) if ok else "一份都没装上",
+    return {"ok": not fails, "installed": ok, "failed": fails, "ignored": ignored,
+            "detail": (("已装载模板：" + (ok[0]["id"] if ok else "")) if ok else "一份都没装上")
+                      + ("（单选，忽略 %s）" % "、".join(ignored) if ignored else ""),
             "failed_text": "；".join("%s（%s）" % (x["id"], x["detail"]) for x in fails)}
 
 

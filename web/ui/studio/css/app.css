@@ -974,3 +974,37 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .bd-miss b { font-weight: 400; color: var(--tk-3, var(--txt-3)); }
 .bd-card figcaption { display: flex; align-items: center; gap: 6px; margin-top: 4px;
   font-size: var(--fs-11); color: var(--txt-2); }
+
+/* ---------- 制片助手 ---------- */
+.ag-wrap { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
+.ag-chat { display: flex; flex-direction: column; min-height: min(70vh, 720px); }
+.ag-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.ag-row { display: flex; }
+.ag-row.me { justify-content: flex-end; }
+.ag-b {
+  max-width: 84%; padding: 9px 12px; border-radius: var(--r-md);
+  background: var(--bg-inset); border: 1px solid var(--line);
+  font-size: var(--fs-13); line-height: 1.62; white-space: pre-wrap; word-break: break-word;
+}
+.ag-b.me { background: var(--accent-tint); border-color: var(--accent-line); }
+.ag-trace {
+  margin: 2px 0 6px 2px; padding: 8px 10px;
+  border-left: 2px solid var(--create-line); background: rgba(139, 127, 245, .05);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ag-step { font-size: var(--fs-11); }
+.ag-input { flex: none; display: flex; gap: 8px; align-items: stretch; padding: 12px; border-top: 1px solid var(--line); }
+.ag-input .textarea { flex: 1; min-height: 64px; resize: vertical; }
+.ag-empty { padding: 26px 8px; text-align: center; }
+.ag-empty-t { font-size: var(--fs-14); color: var(--txt); margin-bottom: 6px; }
+.ag-empty-h { font-size: var(--fs-12); color: var(--txt-3); line-height: 1.7; max-width: 520px; margin: 0 auto 16px; }
+.ag-starters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.ag-chip {
+  padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--line-strong); background: var(--bg-hover); color: var(--txt-2);
+  font-size: var(--fs-12); text-align: left;
+  transition: border-color var(--dur-1), color var(--dur-1), background var(--dur-1);
+}
+.ag-chip:hover { border-color: var(--create-line); color: var(--txt); background: var(--create-tint); }
+@media (max-width: 1240px) { .ag-wrap { grid-template-columns: minmax(0, 1fr); } }

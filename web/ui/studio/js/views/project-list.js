@@ -278,11 +278,15 @@ async function newProjectModal(ctx) {
     : '<option value="">（画风目录读不到，可先建项目后补）</option>';
 
   const tpl = (presets.items || []);
+  /* 创作模板是**单选**：一个项目一套叙事套路。多份模板的正文会互相打架
+     （都要「每批 15 集」「先写资产再写剧本」），模型来回摇摆，prompt 成本还翻倍。 */
   const tplList = tpl.length
     ? tpl.map((t) => '<label class="sk-chip" data-tpl="' + esc(t.id) + '">'
-      + '<input type="checkbox" value="' + esc(t.id) + '">'
+      + '<input type="radio" name="pSkill" value="' + esc(t.id) + '">'
       + '<span class="sk-n">' + esc(t.title || t.id) + '</span>'
       + '<span class="sk-o">' + esc(t.origin || '') + '</span></label>').join('')
+      + '<label class="sk-chip" data-tpl=""><input type="radio" name="pSkill" value="" checked>'
+      + '<span class="sk-n">先不选（稍后再定）</span></label>'
     : '<div class="tiny dim">没找到模板库。可以直接建项目，稍后到「创作模板」页上传或装载。</div>';
 
   openModal({
@@ -330,7 +334,7 @@ async function newProjectModal(ctx) {
       + '<select class="select" id="pStyle">' + styleOpts + '</select>'
       + '<div class="tiny dim" id="pStyleHint" style="margin-top:5px"></div></div>'
 
-      + '<div class="field"><label class="tiny dim">创作模板（项目预配置，可多选，最多 6 个）</label>'
+      + '<div class="field"><label class="tiny dim">创作模板（项目预配置，单选）</label>'
       + '<div class="sk-list" id="pSkills">' + tplList + '</div>'
       + '<div class="tiny dim" style="margin-top:5px">模板定叙事套路；<b>画风仍由上面选的画风锁决定</b>。'
       + '上传自己的模板：创作模板页 →「上传」。</div></div>'
@@ -368,15 +372,9 @@ async function newProjectModal(ctx) {
       fillRes();
       paintStyle();
 
-      /* 模板多选：最多 6 个（超过 6 份正文会让提示词自己打架，也让上下文变贵） */
-      const boxes = () => Array.from(m.querySelectorAll('#pSkills input[type=checkbox]'));
+      const boxes = () => Array.from(m.querySelectorAll('#pSkills input[type=radio]'));
       boxes().forEach((b) => {
         b.onchange = () => {
-          const on = boxes().filter((x) => x.checked);
-          if (on.length > 6) {
-            b.checked = false;
-            toast('最多选 6 个模板；多份模板的叙事要求会互相打架', 'warn');
-          }
           boxes().forEach((x) => {
             const lab = x.closest('.sk-chip');
             if (lab) lab.classList.toggle('on', x.checked);
@@ -422,7 +420,7 @@ async function newProjectModal(ctx) {
           return;
         }
         const picked = styles.find((s) => s.id === styleEl.value) || {};
-        const skills = boxes().filter((x) => x.checked).map((x) => x.value);
+        const skills = boxes().filter((x) => x.checked && x.value).map((x) => x.value);
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span>创建中';
         box.innerHTML = '';

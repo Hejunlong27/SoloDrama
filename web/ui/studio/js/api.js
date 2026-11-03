@@ -173,6 +173,10 @@ export const api = {
   graphEdge: (body) => post('/api/graph/edge', body),
   graphReset: (ws) => post('/api/graph/reset', { ws }),
 
+  /* 制片助手：对话 → 工具 → 引擎 */
+  agentTools: () => get('/api/agent/tools'),
+  agentChat: (body) => post('/api/agent/chat', body),
+
   /* 模板库（内置 21 份 + 用户上传） */
   skillPresets: () => get('/api/skills/presets'),
   skillUpload: (text, filename, overwrite) => post('/api/skills/upload', { text, filename, overwrite: !!overwrite }),

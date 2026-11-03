@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, canvas, comfy_launcher, comfy_probe, comfy_store,
+from core import (adapters, agent, artifacts, canvas, comfy_launcher, comfy_probe, comfy_store,
                   creation, graph, timing, updater,
                   skills as SKILLS, commands as CMD,
                     connections, generators,
@@ -906,6 +906,32 @@ def skills_upload(payload: dict = Body(...)):
 @app.get("/api/time/global")
 def time_global(ws: str = Query(default="")):
     return timing.summary(ws=ws)
+
+
+# ---------------------------------------------------------------------------
+# 制片助手（对话 → 工具 → 引擎）
+#   一次请求跑「模型 → 一个工具 → 回填 → 再问」，最多 MAX_STEPS 轮。
+#   写盘只到创作层；06-提示词 契约不在工具集里；占 GPU 的命令要 allow_gpu 才提交。
+# ---------------------------------------------------------------------------
+@app.get("/api/agent/tools")
+def agent_tools():
+    return agent.tools_doc()
+
+
+@app.post("/api/agent/chat")
+def agent_chat(payload: dict = Body(...)):
+    _write_guard()
+    ws = str(_require_ws(str(payload.get("ws") or "")))
+    msgs = payload.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        raise HTTPException(status_code=400, detail="messages 不能为空")
+    try:
+        return agent.run(ws, msgs,
+                         auto=bool(payload.get("auto")),
+                         allow_gpu=bool(payload.get("allow_gpu")),
+                         model=(str(payload.get("model") or "") or None))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail="%s：%s" % (exc.kind, exc.text)) from None
 
 
 # ---------------------------------------------------------------------------

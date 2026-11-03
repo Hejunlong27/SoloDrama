@@ -938,3 +938,83 @@ P1 不做编辑。改时长/参考图顺序要**成套**回写 `shots.json` 与�
 
 这条边界是刻意的：出片稳定 = 提示词逐字搬运 + 契约校验。让模型直接改 `06-提示词/`
 等于把随机性塞进计费链路 —— 一条时长写错，要等出片跑完 20 分钟才发现。
+
+---
+
+## 20. 制片助手（2026-11-04）
+
+真源 `web/core/agent.py`；页面 `#/agent`（项目级，排在项目列表第一个）。
+
+### 20.1 它是什么
+
+一条**对话 → 工具 → 引擎**的闭环：模型每轮只回一个 JSON（`tool` + `args`，或 `done`），
+服务端执行、把结果回填、再让它决定下一步。最多 12 轮。
+
+工具白名单（`agent.TOOL_DOC`）：
+
+| 工具 | 作用 | 边界 |
+|---|---|---|
+| `state` | 读项目状态（灵感/文档/制作包/节点/每集进度/ComfyUI 在线） | 只读 |
+| `read_doc` / `write_doc` | 读写创作层 md | 走 `creation.write`：有备份、阶段白名单 |
+| `generate` | 调大模型生成企划/资产/剧本/导演手册 | 复用 `/api/create/generate` 同一条链 |
+| `run` | 执行引擎命令 | 白名单 + 参数校验；`project.scaffold` 等禁止；**占 GPU 要 allow_gpu** |
+| `job` | 查后台作业进度与末几行输出 | 只读 |
+| `episodes` / `boards` | 每集进度 / 某集缺哪几镜 | 只读 |
+| `skills` / `install_skill` | 看与装题材模板 | 单选，会替换 |
+| `set_idea` / `set_style` | 写一句话灵感 / 画风锁 | 只写创作层需要的字段 |
+| `commands` | 列可用命令（含是否占 GPU） | 只读 |
+
+**没有 shell、没有任意路径写、没有 06-提示词 契约的写入口。** 出片稳定性不交给模型的自觉。
+
+### 20.2 三个刻意的设计
+
+1. **一轮一动作**。比「一次吐一大段计划」可靠：错了能立刻停，人能看清哪一步偏了。
+2. **解析只认第一个括号配平的 JSON**。模型经常在 JSON 后面继续自问自答；实测它编过
+   一段「工具返回：{一部根本不存在的剧}」——贪婪正则会把两段粘成非法 JSON，
+   整轮退化成收尾发言，而那段假数据看起来像真的。`_first_json()` 就是为这件事存在的。
+3. **占 GPU 要人点头**。`run` 遇到 `billing=GPU` 且未授权时返回 `need_confirm`，
+   不提交。这是本项目唯一会造成真实损失的操作。
+
+### 20.3 为什么没有直接套 deepseek-harness
+
+本机装的是 `anywhere-labs/deepseek-harness-desktop`（Electron + Cordis 插件体系，606MB，无源码）。
+套壳的代价是把整个后端换成 Node/TS，现有 Python 引擎（出图/出片/剪辑/字幕/门禁）要重写一遍，
+而收益只是「UI 长得像」——助手能力的本质是「能不能安全地调引擎」，不是界面。
+
+所以按它的形态自己实现了一层：同样是「对话 + 工具调用」，但工具直接落在现有引擎上。
+要换前端随时可以：`agent.run()` 是纯函数式的 `(ws, messages) → {steps, reply}`，
+任何前端（包括 DSH 风格的 Electron 壳）都能接。
+
+---
+
+## 21. 大模型接入的两个真坑（2026-11-04 实测）
+
+### 21.1 长文用途被塞了 `response_format=json_object`
+
+`gateway` 原来按「提供商声明了 json 能力」就开 json_mode。DeepSeek 两条线上模型收到
+`json_object` + 一份「写企划案」的长提示词时，直接返回 `content=""`
+（`finish_reason=stop`，completion_tokens 却是几千）。
+
+界面表现：点「生成」没反应 / 生成失败 —— 看起来像没接通大模型。
+真因是请求形态错了，与网络、Key、模型都无关。
+
+判据改成「看模板自己的输出类型（`output` / `format`）」后，企划案 22 秒写出 5110 字。
+`gateway.want_json_mode(spec, tspec)` 是这条判据的唯一实现，`test_llm_modes.py` 钉着它。
+
+### 21.2 混合推理模型的「思考」计入 `max_tokens`
+
+`deepseek-flash` / V4 系是混合推理模型：思考过程也计入输出额度。
+给 8000 写企划案，思考把额度吃光，`content` 是空的；重试一次 5318 tokens 仍然空。
+
+两条处置：
+
+* 提供商配置加 `"thinking": "disabled"`（发 `{"thinking":{"type":"disabled"}}`，DeepSeek 已支持）；
+* **长文写作用非推理模型**（`deepseek-chat`）。本项目已把四个创作用途绑到 `deepseek-chat`。
+
+### 21.3 三个模型 id 的区别（同一把 Key）
+
+| 模型 | 思考 | 适合 |
+|---|---|---|
+| `deepseek-chat` | 无 | 企划 / 剧本 / 资产库 / 导演手册（长文） |
+| `deepseek-flash` | 有（可关） | 短判断、结构化抽取 |
+| `deepseek-v4-pro` | 有 | 复杂推理，成本更高 |

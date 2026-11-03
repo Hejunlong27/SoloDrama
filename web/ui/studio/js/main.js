@@ -29,6 +29,8 @@ const NAV = [
   },
   {
     label: '当前项目', project: true, items: [
+      // ★ 助手排第一：它是「不想一页页点」时的入口，藏到列表末尾就等于没有
+      { key: 'agent', label: '助手', ico: 'spark' },
       { key: 'overview', label: '项目详情', ico: 'workbench' },
       { key: 'graph', label: '画布', ico: 'canvas' },
       { key: 'create', label: '创作', ico: 'spark' },
@@ -43,7 +45,7 @@ const NAV = [
   }
 ];
 
-const PROJECT_ROUTES = ['overview', 'graph', 'create', 'skills', 'assets', 'boards',
+const PROJECT_ROUTES = ['agent', 'overview', 'graph', 'create', 'skills', 'assets', 'boards',
   'storyboard', 'post', 'release', 'cost', 'pipeline'];
 
 const VIEWS = {
@@ -51,6 +53,7 @@ const VIEWS = {
   projects: () => import('./views/projects.js'),
   create: () => import('./views/create.js'),
   skills: () => import('./views/skills.js'),
+  agent: () => import('./views/agent.js'),
   graph: () => import('./views/graph.js'),
   canvas: () => import('./views/canvas.js'),
   boards: () => import('./views/boards.js'),

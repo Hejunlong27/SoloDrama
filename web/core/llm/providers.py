@@ -123,6 +123,17 @@ class OpenAICompatible(BaseProvider):
             payload["max_tokens"] = int(max_tokens)
         if json_mode and "json" in self.caps:
             payload["response_format"] = {"type": "json_object"}
+        # ★ 2026-11-04：混合推理模型（如 deepseek-flash / V4 系）的**思考也计入 max_tokens**。
+        #   实测：max_tokens=8000 写企划案，思考把 8000 吃完，content 是空的；
+        #   重试一次 5279 tokens 仍然 content=""（finish_reason=stop）——
+        #   表现就是「模型没反应 / 返回为空」，而它其实一直在想。
+        #   提供商配置里写 `"thinking": "disabled"` 即可关掉思考（DeepSeek 官方已支持），
+        #   长文写作场景应当关：省 token、快一倍、输出全部落在正文上。
+        th = str(self.cfg.get("thinking") or "").strip().lower()
+        if th in ("disabled", "off", "none"):
+            payload["thinking"] = {"type": "disabled"}
+        elif th in ("enabled", "on"):
+            payload["thinking"] = {"type": "enabled"}
 
         url = self.base + "/chat/completions"
         try:

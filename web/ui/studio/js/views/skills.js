@@ -31,7 +31,7 @@ function card(it, installedSet) {
     + esc((it.desc || '').slice(0, 110)) + ((it.desc || '').length > 110 ? '…' : '') + '</div>'
     + '<div class="row" style="gap:6px;margin-top:2px">'
     + '<button class="btn primary sm" data-install="' + esc(it.id) + '"' + (on ? ' disabled' : '') + '>'
-    + (on ? '已装载' : '装载到本项目') + '</button>'
+    + (on ? '已装载' : '换成这个') + '</button>'
     + '<button class="btn quiet sm" data-view="' + esc(it.id) + '">看全文</button>'
     + '</div></div>';
 }
@@ -54,8 +54,8 @@ export async function render(ctx) {
   const mineSet = new Set(mine.map((x) => x.id));
 
   const installedBlock = mine.length
-    ? '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>本项目在用</h3>'
-      + '<span class="card-sub">生成时会把它的正文一起给模型</span></div><div class="card-b" style="display:grid;gap:8px">'
+    ? '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>本项目在用（单选）</h3>'
+      + '<span class="card-sub">生成时会把它的正文一起给模型；换一个会替换掉现有的</span></div><div class="card-b" style="display:grid;gap:8px">'
       + mine.map((x) => '<div class="row" style="gap:10px;align-items:center;padding:8px 10px;'
         + 'border:1px solid var(--create-line);border-radius:var(--r-md);background:var(--create-tint)">'
         + '<div style="flex:1"><div><b>' + esc(x.title || x.id) + '</b> '
