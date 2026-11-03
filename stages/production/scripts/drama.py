@@ -773,6 +773,7 @@ def cmd_style(args) -> int:
 # ---------------------------------------------------------------------------
 LOCAL_ASSETS_PY = SCRIPTS / 'gen_assets_local.py'
 IMPORT_PY = _PROJECT_ROOT / 'stages' / 'import'    # ★ 制作包导入层（pack_import / preset_apply）
+COMFY_BATCH_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_batch_video.py'
 
 
 def cmd_pack(args) -> int:
@@ -976,7 +977,57 @@ def cmd_video_plan(args) -> int:
     return 0
 
 
+def cmd_video_local(args) -> int:
+    """本地 ComfyUI 批量出片（￥0，占 GPU）。
+
+    与 RH 通道的区别只有三处：不传 --concurrency（单卡并发只能是 1）、
+    不需要 RunningHub Key、产物落同一个 `07-成片/<ep>/<shot>/final.mp4`。
+    后续 video.audit / 剪辑读的是同一个落点，所以两条通道可以混用：
+    哪一镜本地跑糊了，可以单独用云端重跑那一镜。
+    """
+    ep = getattr(args, 'ep', None) or 'ep01'
+    if not args.yes:
+        print('[闸门] 这会真的占本机 GPU 出片（不花钱，但电脑会忙）。确认后加 --yes：')
+        print('       drama video run --engine local --ep %s --yes' % ep)
+        cmd = [sys.executable, str(COMFY_BATCH_PY), '--ep', ep]
+        if args.limit:
+            cmd += ['--limit', str(args.limit)]
+        if args.only:
+            cmd += ['--only', args.only]
+        return run_cmd(cmd, 'video_local_dry', quiet_ok=False)[0]
+
+    rc = _model_gate('video', expected_engine='local')
+    if rc:
+        return rc
+    cmd = [sys.executable, str(COMFY_BATCH_PY), '--ep', ep, '--submit']
+    if args.limit:
+        cmd += ['--limit', str(args.limit)]
+    if args.only:
+        cmd += ['--only', args.only]
+    if getattr(args, 'force', False):
+        cmd += ['--force']
+    if getattr(args, 'timeout_min', None):
+        cmd += ['--timeout-min', str(args.timeout_min)]
+    from _lock import single_instance
+    try:
+        with single_instance('video_run', WS):
+            rc, log, dt = run_cmd(cmd, 'video_local', quiet_ok=False)
+    except SystemExit:
+        print('（已由单例锁拦下，未提交任何任务）')
+        raise
+    print('\n本地出片退出码 %s（耗时 %.1fs）；日志：%s' % (rc, dt, log))
+    if rc == 3:
+        print('★ 退出码 3 = 批次有缺口（不是失败）。直接重跑同一条命令即可补缺，')
+        print('  不要改提示词 —— 缺的那几镜通常只是显存不足或 ComfyUI 队列被打断。')
+    return rc
+
+
 def cmd_video_run(args) -> int:
+    # ★ 2026-11-04：出片默认走本地（￥0）。`--engine workflow` 显式切回 RunningHub。
+    #   默认值改本地不是「省钱优先」，而是这条链现在的定位：创作在 Skill、执行在引擎，
+    #   执行层不该默认产生平台费用。要算钱的通道必须被显式选中。
+    if (getattr(args, 'engine', None) or 'local') == 'local':
+        return cmd_video_local(args)
     if not args.yes:
         print('[闸门] 这会真实提交任务并计费。确认无误后加 --yes 重跑：')
         print('       python scripts/drama.py video run --yes%s%s'
@@ -1344,7 +1395,7 @@ def main() -> int:
 
     q = pk.add_parser('preset', help='把项目预配置（出图/出片/放大通道）落到工作区')
     _add_ws_arg(q)
-    q.add_argument('--preset', default='local-comfyui-rh', help='预配置卡 id（默认 local-comfyui-rh）')
+    q.add_argument('--preset', default='local-comfyui-all', help='预配置卡 id（默认 local-comfyui-all：全本地 ￥0）')
     q.add_argument('--list', action='store_true', help='列出可用预配置卡')
     q.add_argument('--apply', action='store_true', help='真写（默认干跑）')
     q.add_argument('--json', action='store_true')
@@ -1449,9 +1500,15 @@ def main() -> int:
     q.add_argument('--save-calibration', dest='save_calibration', action='store_true',
                    help='把校准结果写入 <工作区>/cost-model.json（样本不足则不写）')
     q.set_defaults(fn=cmd_video_plan)
-    q = vs.add_parser('run', help='真跑出片（★计费，需 --yes）')
+    q = vs.add_parser('run', help='真跑出片（本地 ￥0 / 云端 ★计费；都需 --yes）')
     _add_ws_arg(q)
-    q.add_argument('--yes', action='store_true', help='确认计费闸门')
+    q.add_argument('--engine', choices=('local', 'workflow'), default='local',
+                   help='出片通道：local=本机 ComfyUI（￥0，默认）｜workflow=RunningHub（★计费）')
+    q.add_argument('--ep', default=None, help='集号（local 通道必填；ep01 / 1）')
+    q.add_argument('--force', action='store_true', help='local：已有产物也重跑')
+    q.add_argument('--timeout-min', dest='timeout_min', type=float, default=None,
+                   help='local：单镜轮询超时（分钟，默认 20）')
+    q.add_argument('--yes', action='store_true', help='确认执行闸门（计费通道同时是计费闸门）')
     q.add_argument('--limit', type=int)
     q.add_argument('--only')
     q.add_argument('--resume', metavar='BATCH_ID')

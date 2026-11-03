@@ -156,7 +156,10 @@ NODES: list = [
      "trigger": "drama do video.batch --ep ep01 --yes",
      "reads": ["video.resolve"], "output": "07-成片/<ep>/",
      "check": "segments", "next": "video.audit", "reflow": ["video.resolve"],
-     "ws_kind": "engine", "run": "python stages/video/workflow/scripts/run.py --video-only"},
+     "ws_kind": "engine",
+     # ★ 2026-11-04：默认走本地 ComfyUI（￥0）。云端通道改成显式 `--engine workflow`，
+     #   理由与 drama.cmd_video_run 一致：执行层不该默认产生平台费用。
+     "run": "python stages/production/scripts/drama.py video run --engine local"},
     {"id": "video.audit", "stage": "video", "ep": True,
      "trigger": "drama do video.audit --ep ep01",
      "reads": ["video.batch"], "output": "_done/video.audit.<ep>.json",

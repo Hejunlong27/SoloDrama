@@ -271,6 +271,9 @@ def test_build_files_shape():
         "ratio": "9:16",
         "crop": {"rows": 1, "cols": 1},
         "board_ref": "board_ep01_shot_001",
+        # cast 是**完整有序**的参考图列表（2026-11-04 新增）：本地通道按它顺序提交，
+        # 与提示词里的 {{Mixed n}} 逐位对应。分表（character_refs / scene_refs）保留给引擎兼容。
+        "cast": ["P01@LOOK-A", "P02@LOOK-A", "S01", "D01"],
         "character_refs": ["P01@LOOK-A", "P02@LOOK-A", "D01"],
         "scene_refs": ["S01"],
     }

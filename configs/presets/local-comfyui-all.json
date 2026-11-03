@@ -1,0 +1,42 @@
+{
+  "_comment": "全本地预配置：出图、出片、放大全部走本机 ComfyUI，零平台费用、数据不出局域网。用 `python stages/import/preset_apply.py --preset local-comfyui-all --workspace <ws> --apply` 落地。",
+  "id": "local-comfyui-all",
+  "label": "全本地 ComfyUI（出图 + 出片 + 放大，￥0）",
+  "version": 1,
+
+  "style_lock": "美式复古影视风格",
+  "delivery": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "episode_count": 30,
+    "target_duration": 60
+  },
+
+  "image": {
+    "engine": "local_comfyui",
+    "choice": "local_comfyui",
+    "capability": "comfy.qwen21_t2i_hq.v1",
+    "comfy_url": "http://127.0.0.1:8188",
+    "workflows": {
+      "t2i": "stages/assets/comfyui/workflow_qwen21_t2i_hq.json",
+      "edit": "stages/assets/comfyui/workflow_qwen21_edit.json"
+    },
+    "_note": "文生图 / 图生图两份工作流按 Owner 提供的 API 导出件入库（文生图 cfg=1 / multiple=8 / megapixels=2）。画幅由 manifest 的 aspect 覆盖，不受工作流默认 3:4 影响。"
+  },
+
+  "video": {
+    "engine": "local_comfyui",
+    "choice": "local_comfyui",
+    "capability": "comfy.h3.minimax_canvas.v1",
+    "workflow": "stages/video/comfyui/workflow_h3_minimax_canvas.json",
+    "map": "stages/video/comfyui/workflow_h3_minimax_canvas.map.json",
+    "concurrency": 1,
+    "_note": "Minimax H3 六参考槽 + 8 步 turbo LoRA。并发只能是 1：单卡 8G，第二个任务进来就 OOM。步数由固定 sigmas 决定（10 段），改 steps 无效 —— 见 map 的 _steps_note。"
+  },
+
+  "upscale": {
+    "backend": "off",
+    "_note": "H3 出片已是 1344×1792 量级，交付 1080×1920 用 crop-to-fill 即可，不需要超分。要超分时把 backend 改 topaz（本地）或 rh（计费）。"
+  }
+}

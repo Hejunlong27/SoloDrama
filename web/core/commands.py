@@ -330,7 +330,7 @@ _add(_c("pack.preset", "1 导入", "应用项目预配置（出图/出片/放大
         argv=["--apply"], danger=WRITE,
         flags={"--preset": "preset"},
         params=[Param("preset", "预配置卡", "enum", required=True,
-                      choices=["local-comfyui-rh"])],
+                      choices=["local-comfyui-all", "local-comfyui-rh"])],
         help="一次性写 model-plan.json / config.local.json / config.upscale.json，并回读校验。",
         agent="确认三条通道分别是什么、并发多少、放大目标尺寸多少。"))
 

@@ -90,7 +90,7 @@ def _merge_json(p: pathlib.Path, patch: dict, apply: bool) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="项目预配置卡 → 工作区（出图/出片/放大）")
     ap.add_argument("--list", action="store_true", help="列出可用预配置卡")
-    ap.add_argument("--preset", default="local-comfyui-rh")
+    ap.add_argument("--preset", default="local-comfyui-all")
     ap.add_argument("--workspace", default=None)
     ap.add_argument("--apply", action="store_true", help="真写（默认干跑）")
     ap.add_argument("--json", action="store_true")

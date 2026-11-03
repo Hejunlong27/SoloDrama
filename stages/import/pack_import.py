@@ -183,6 +183,12 @@ def build_episode_files(pack: dict, assets: dict, ep: dict,
             "ratio": s["ratio"],
             "crop": {"rows": 1, "cols": 1},          # 九宫格链已下线；字段保留给引擎兼容
             "board_ref": bref,
+            # ★ 2026-11-04：`cast` 是**完整且有序**的参考图列表，与制作包里的顺序逐位一致。
+            #   为什么必须单独存：`character_refs` / `scene_refs` 是两张分表（老引擎按
+            #   「角色在前、场景在后」拼），一旦 cast 里道具排在场景前面，拼出来的顺序
+            #   就和提示词里的 `{{Mixed n}}` 对不上 —— 出片时才会发现「第 4 张图应该是场景，
+            #   实际喂的是道具」。本地 ComfyUI 通道直接按 cast 顺序提交，不受分表影响。
+            "cast": [c["key"] for c in s["cast"]],
             "character_refs": ch_refs,
             "scene_refs": sc_refs,
         })

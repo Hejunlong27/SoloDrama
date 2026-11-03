@@ -1,0 +1,36 @@
+{
+  "id": "comfy.h3.minimax_canvas.v1",
+  "stage": "video",
+  "engine": "local_comfyui",
+  "label": "本地 ComfyUI · Minimax H3 无损融合单采（六参考槽 / 8 步 turbo）",
+  "workflow": "stages/video/comfyui/workflow_h3_minimax_canvas.json",
+  "map": "stages/video/comfyui/workflow_h3_minimax_canvas.map.json",
+  "source_ui": "D:/文件备份/谷歌下载文件/【Minimax+H3】无损融合单采【满血API画布级工作流】 (1).json",
+  "converted_by": "stages/video/comfyui/workflow_ui2api.py（界面 64 节点 → API 30 节点）",
+  "slots": {
+    "total": 6,
+    "ref_images": [
+      "ref_images.ref_image_0",
+      "ref_images.ref_image_1",
+      "ref_images.ref_image_2",
+      "ref_images.ref_image_3",
+      "ref_images.ref_image_4",
+      "ref_images.ref_image_5"
+    ],
+    "spare": ["ref_images.ref_image_6"],
+    "note": "第 1 张建议放分镜图（与 RH 通道的 <Picture 1> 同位）。顺序 = shots.json 的 cast，逐位对应提示词里的 {{Mixed n}}。第 7 槽未接，多余槽位会重复最后一张图。"
+  },
+  "hard_limits": {
+    "concurrency": 1,
+    "max_seconds": 12,
+    "note": "单卡 8G：两个任务并发必 OOM，所以并发固定 1。时长上限由显存决定，12 秒已是 1080 量级的边界。"
+  },
+  "measured": {},
+  "preflight": ["comfy_reachable", "object_info_nodes", "model_files"],
+  "known_issues": [
+    "步数由节点 147 的固定 sigmas（10 段）决定，改 BasicScheduler(160).steps 无效 —— map 里有 _steps_ineffective 标记，引擎会打印告警。要改步数必须重写 147 的 sigmas 字符串。",
+    "画布上 136.length 与 150.preview_frames 原本指向一个空的 SetNode『时长』，转换后帧数被写死 1008。已在 map 的 _rewire 接回 224（秒 × 24 吸附到 17 的倍数），改 seconds 才生效。",
+    "模型文件名与本机不一致的三处（8step LoRA / video VAE / qwen3vl-32b）已在 map 的 _substitute 做等价替换（comfyui 版 / int8 / int4）。换机器先跑 --check。",
+    "首次在 8G 卡上跑 12 秒会非常慢（10 分钟级），先用 --seconds 4 验证链路。"
+  ]
+}

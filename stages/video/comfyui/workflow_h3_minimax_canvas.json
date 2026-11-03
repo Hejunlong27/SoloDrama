@@ -1,0 +1,435 @@
+{
+  "189": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "4568fb19c8672fa7dbb155c0d1214d1045d18fd1c04d0e2825a72b0ed5262c1b.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "190": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "cb412b0286bd5af14cb44739b7f55f869d2831bc248e0ec40f9810b10492b20d.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "191": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "cb412b0286bd5af14cb44739b7f55f869d2831bc248e0ec40f9810b10492b20d.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "192": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "cb412b0286bd5af14cb44739b7f55f869d2831bc248e0ec40f9810b10492b20d.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "145": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "127",
+        0
+      ],
+      "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_768p_lightx2v_bf16.safetensors",
+      "strength_model": 0.75
+    },
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "125": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "129",
+        0
+      ],
+      "guider": [
+        "126",
+        0
+      ],
+      "sampler": [
+        "123",
+        0
+      ],
+      "sigmas": [
+        "147",
+        0
+      ],
+      "latent_image": [
+        "136",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "123": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "er_sde"
+    },
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "129": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 466913591088309
+    },
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "200": {
+    "class_type": "忽略多组孤海",
+    "inputs": {
+      "_w0": ""
+    },
+    "_meta": {
+      "title": "忽略多组孤海"
+    }
+  },
+  "224": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "values.a": [
+        "227",
+        0
+      ],
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17"
+    },
+    "_meta": {
+      "title": "ComfyMathExpression"
+    }
+  },
+  "121": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "125",
+        0
+      ],
+      "vae": [
+        "235",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecodeAudio"
+    }
+  },
+  "122": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "125",
+        0
+      ],
+      "vae": [
+        "234",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "156": {
+    "class_type": "ModelAttentionBackend",
+    "inputs": {
+      "model": [
+        "248",
+        0
+      ],
+      "attention": "comfy kitchen attention"
+    },
+    "_meta": {
+      "title": "ModelAttentionBackend"
+    }
+  },
+  "234": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "165": {
+    "class_type": "BlockSparseAttention",
+    "inputs": {
+      "model": [
+        "156",
+        0
+      ],
+      "selection": "sol-attn",
+      "selection.tau": 1.3,
+      "start_percent": 0.2,
+      "end_percent": 1,
+      "dense_blocks": "",
+      "min_tokens": 12288,
+      "extra_tokens": 256,
+      "sink_conditioning": "exact_kv_and_rows",
+      "verbose": true
+    },
+    "_meta": {
+      "title": "BlockSparseAttention"
+    }
+  },
+  "136": {
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "inputs": {
+      "clip": [
+        "232",
+        0
+      ],
+      "vae": [
+        "234",
+        0
+      ],
+      "audio_vae": [
+        "235",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "199",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "188",
+        0
+      ],
+      "ref_images.ref_image_2": [
+        "189",
+        0
+      ],
+      "prompt": [
+        "238",
+        0
+      ],
+      "width": [
+        "228",
+        0
+      ],
+      "height": [
+        "228",
+        1
+      ],
+      "length": 1008,
+      "ref_image_size": "match",
+      "ref_images.ref_image_3": [
+        "190",
+        0
+      ],
+      "ref_images.ref_image_4": [
+        "191",
+        0
+      ],
+      "ref_images.ref_image_5": [
+        "192",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "MiniMaxH3ReferenceToVideo"
+    }
+  },
+  "235": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "127": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "Cobijada_H3_Hybrid_Uncensored_pruned_hybrid_int8_convrot_pruned.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "150": {
+    "class_type": "ModelPreviewOverrideKJ",
+    "inputs": {
+      "model": [
+        "165",
+        0
+      ],
+      "max_resolution": 1024,
+      "jpeg_quality": 80,
+      "suppress_default_preview": true,
+      "preview_frames": 48,
+      "preview_fps": 8,
+      "tiny_vae": "taeh3.safetensors"
+    },
+    "_meta": {
+      "title": "ModelPreviewOverrideKJ"
+    }
+  },
+  "232": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_bf16.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "148": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": [
+        "122",
+        0
+      ],
+      "audio": [
+        "121",
+        0
+      ],
+      "save_output": true,
+      "filename_prefix": "LQ-",
+      "loop_count": 0,
+      "pix_fmt": "yuv420p",
+      "save_metadata": true,
+      "crf": 19,
+      "trim_to_audio": false,
+      "format": "video/h264-mp4",
+      "no_preview": false,
+      "frame_rate": 24,
+      "pingpong": false
+    },
+    "_meta": {
+      "title": "VHS_VideoCombine"
+    }
+  },
+  "227": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 10
+    },
+    "_meta": {
+      "title": "视频时长（秒）"
+    }
+  },
+  "228": {
+    "class_type": "ResolutionSelector",
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 1.1,
+      "multiple": 32
+    },
+    "_meta": {
+      "title": "ResolutionSelector"
+    }
+  },
+  "160": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "150",
+        0
+      ],
+      "scheduler": "beta",
+      "steps": 33,
+      "denoise": 1
+    },
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "126": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "150",
+        0
+      ],
+      "conditioning": [
+        "136",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "BasicGuider"
+    }
+  },
+  "147": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1, .9882, .973, .9524, .9231, .878, .8, .6316, .4737, .1579, 0 "
+    },
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "199": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "3d58e90be25a309ecd5105db809cc344205dbf62046fb70ba1e2d3c4a97e3323.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "188": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "9cdbd9bb3058d63bb1998e36eb510457615075b47c881924b504399ca09e8942.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "238": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": "subject_definitions:\n<Subject 1>: A young female warrior, matching Picture 1. She wears a dark blue cross-collar short jacket, a grey-brown sleeveless vest, a brown cloth belt, dark grey tapered trousers, and grey cloth shoes. Her hair is tied back in a neat ponytail. She holds a katana with both hands.\n<Subject 2>: A young male warrior, matching Picture 2. He wears a dark blue cross-collar inner robe, a dark grey haori, brown-grey hakama, white socks, and wooden sandals. His hair is tied in a traditional topknot. He holds a katana in his right hand.\n<Picture 4>: The exact last frame of the previous video clip. It anchors the starting state: a medium-wide shot showing Subject 1 standing on the left courtyard edge and Subject 2 standing on the right wooden veranda, separated by three steps, both with their blades lowered in a standoff.\n\nsummary:\n[reference generation + keyframe completion] The final 10-second decisive clash. Starting from the standoff in Picture 4, Subject 2 initiates a heavy overhead strike. Subject 1 dodges by stepping inward and counters with a rising slash. Subject 2 blocks, but Subject 1 uses a forceful blade bind to disarm him and ends the fight with her blade pointed at his throat.\n\nretention_analysis:\n<Subject 1>: fully_preserved. Keep her identity, clothing, ponytail, and weapon.\n<Subject 2>: fully_preserved. Keep his identity, clothing, topknot, white socks, wooden sandals, and weapon.\n<Picture 4>: fully_preserved. The first frame of this video must perfectly match the composition, lighting, character distance, and exact poses shown in Picture 4.\n\ndetailed_description:\nCinematic, realistic wuxia aesthetic, dramatic lighting with a slight lens flare from the top right, high contrast shadows, dynamic action choreography, 35mm lens, slow-motion effect at the climax. \n[Shot 1] The video begins exactly with the composition of <Picture 4>. <Subject 1> (left) and <Subject 2> (right) are in a deadlock. \nAt the 1st second, <Subject 2> raises his katana high above his head and takes a massive step forward, slamming the blade down towards <Subject 1> with crushing force. \nAt the 3rd second, <Subject 1> does not retreat. Instead, she rapidly steps forward and to her left, slipping past the trajectory of the heavy downward strike. The camera follows her movement, panning slightly left to capture her evasion. \nAt the 5th second, using the rotational momentum of her dodge, <Subject 1> swings her katana in a powerful rising diagonal slash from bottom-left to top-right. \nAt the 6th second, <Subject 2> hastily pulls his weapon back and holds it horizontally to block her rising attack. A loud spark bursts between the crossed blades. \nAt the 8th second, <Subject 1> twists her wrist sharply, sliding her blade against his and striking his guard with her tsuba (handguard). The impact is so strong that <Subject 2>'s katana is violently knocked outward to his right, leaving his chest and neck completely exposed. \nAt the 9th second, <Subject 1> lunges forward and extends her katana. The blade stops precisely three inches from <Subject 2>'s throat. \nThe video ends at the 10th second with a dramatic freeze-frame. <Subject 1> holds the offensive stance, her blade steady at his neck, her breathing heavy but controlled. <Subject 2> is frozen in shock, his weapon deflected wide, realizing he has been defeated. The camera slowly pushes in on the tip of the blade near his throat. Wind blows through the courtyard.\n\noverall_soundscape:\nThe heavy thud of Subject 2's wooden sandal stepping onto the dirt. The terrifying \"whoosh\" of a heavy blade cutting air. The sharp metallic clang of the first block, followed by the distinct, harsh scraping sound of steel grinding against steel (blade bind). A final, sharp \"clack\" as the guard is struck. Absolute silence for the last second, save for the ambient wind and their heavy breathing.\n\nnon_diegetic_music:\nA dramatic, fast-paced orchestral piece with a prominent erhu and taiko drums. The music swells rapidly during the rising slash and blade bind, reaching a peak crescendo at the moment the tsuba is struck. The music instantly cuts to a single, sustained, high-pitched string note as the blade stops at the throat, fading out into silence."
+    },
+    "_meta": {
+      "title": "Input Text (Prompt)"
+    }
+  },
+  "248": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "145",
+        0
+      ],
+      "lora_name": "VBVR_H3_attn_only.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  }
+}

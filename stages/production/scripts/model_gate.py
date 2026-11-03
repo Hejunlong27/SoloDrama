@@ -124,13 +124,15 @@ MODEL_OPTIONS = {
             "id": "local_comfyui",
             "label": "本地 ComfyUI（￥0）",
             "cost": "￥0（占本机 GPU/电费）",
-            "desc": "本机 ComfyUI 跑视频工作流（如 Wan / Hunyuan 等本地视频模型）；零计费、数据不出网。"
-                    "★ 引擎**暂无本地视频执行器**（只有 runninghub_client），确认了也跑不了 —— "
-                    "详见 feedback P1-1。",
-            "engine_arg": None,
-            "executor": None,
-            "requires": ["comfy_workflow"],
-            "optional": ["comfy_url"],
+            "desc": "本机 ComfyUI 跑视频工作流（默认 Minimax H3 六参考槽 8 步 turbo）；"
+                    "零计费、数据不出网、不需要 RunningHub Key。"
+                    "★ 2026-11-04 起**有执行器了**：stages/video/comfyui/comfy_local_video.py。",
+            "engine_arg": "local",
+            "executor": "stages/video/comfyui/comfy_local_video.py",
+            # 工作流已随仓库交付（workflow_h3_minimax_canvas.json + 同名 map），
+            # 不再要求用户提供 `comfy_workflow` —— 那条要求是「引擎没有默认工作流」时代的遗留。
+            "requires": [],
+            "optional": ["comfy_workflow", "comfy_url"],
         },
         {
             "id": "cloud_comfyui",

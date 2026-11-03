@@ -65,8 +65,12 @@ except Exception:  # noqa: BLE001
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
+# ★ 2026-11-04：默认工作流换成 Owner 指定的「Minimax+H3 无损融合单采（满血 API 画布级）」。
+#   它是界面格式，由 `workflow_ui2api.py` 转成这里的 API 格式（64 → 30 节点），
+#   映射与两处断链修补见同名 sidecar `workflow_h3_minimax_canvas.map.json`。
+#   旧的 `workflow_h3_multiref6.json` 仍在，`--workflow` 可随时切回。
 DEFAULT_WORKFLOW = os.environ.get(
-    "COMFYUI_VIDEO_WORKFLOW", os.path.join(HERE, "workflow_h3_multiref6.json"))
+    "COMFYUI_VIDEO_WORKFLOW", os.path.join(HERE, "workflow_h3_minimax_canvas.json"))
 
 # ---------------------------------------------------------------------------
 # 节点映射的角色表
@@ -133,6 +137,14 @@ def load_map(workflow_path: str, map_path: str = "") -> tuple:
         # 允许只写部分 role，其余落回内置
         base = _builtin_map()
         base.update({k: v for k, v in d.items() if k in MAP_KEYS})
+        # ★ 2026-11-04：`_rewire` 是「连线修补」段，不属于角色映射，单独透传。
+        #   为什么需要：从 ComfyUI 界面格式转来的工作流常带**静默断链** ——
+        #   画布上看着连着，实际 SetNode 的输入是空的，于是「秒数」根本没接到
+        #   `length`（帧数）上，改成 5 秒仍然出 10 秒。这类断链不报错、不改就永远发现不了。
+        if isinstance(d.get("_rewire"), dict):
+            base["_rewire"] = d["_rewire"]
+        if isinstance(d.get("_substitute"), dict):
+            base["_substitute"] = d["_substitute"]
         return base, "%s（%s）" % (path, why)
     env_used = any(os.environ.get(s["env"]) for s in MAP_ROLES.values())
     return _builtin_map(), ("环境变量 COMFYUI_VIDEO_NODE_*" if env_used else "脚本内置默认")
@@ -315,6 +327,9 @@ def check(workflow_path: str = "", map_path: str = "") -> int:
 
     wf = load_workflow(workflow_path)
     m, src = load_map(workflow_path, map_path)
+    # ★ 体检的口径必须与真跑一致（模型替换 / 连线修补都要先应用），
+    #   否则会报一堆「缺模型」而实际能跑，告警就失去信用。
+    wf = apply_map_patches(json.loads(json.dumps(wf)), m)
     print("工作流  : %s（%d 节点）" % (workflow_path or DEFAULT_WORKFLOW, len(wf)))
     print("映射    : %s" % src)
 
@@ -391,9 +406,34 @@ def _roles(m: dict, role: str) -> list:
     return [str(x) for x in (raw if isinstance(raw, list) else [raw]) if str(x).strip()]
 
 
+def apply_map_patches(wf: dict, m: dict) -> dict:
+    """把 map 里的「模型替换」与「连线修补」应用到工作流（原地改，调用方负责深拷贝）。
+
+    ★ 2026-11-04：这两件事必须在**体检和真跑两处用同一份逻辑**。
+      此前只有真跑应用替换，体检读的是原始工作流 —— 于是体检报「缺模型」，
+      而实际跑起来是通的，人就会去删那三条告警，然后真的缺模型时也不管了。
+    """
+    for tid, patch in (m.get("_substitute") or {}).items():
+        if tid not in wf or not isinstance(patch, dict):
+            continue
+        ins = wf[tid].setdefault("inputs", {})
+        for k, v in patch.items():
+            if k in ins:
+                ins[k] = v
+    for tid, patch in (m.get("_rewire") or {}).items():
+        if tid not in wf or not isinstance(patch, dict):
+            continue
+        ins = wf[tid].setdefault("inputs", {})
+        for inp, val in patch.items():
+            ins[inp] = val
+    return wf
+
+
 def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, steps: int,
                 seed: int, aspect: str, mp, prefix: str) -> dict:
     wf = json.loads(json.dumps(wf))          # 深拷贝，避免污染模板
+
+    apply_map_patches(wf, m)
 
     ids = _roles(m, "prompt")
     if ids and ids[0] in wf:
@@ -422,9 +462,18 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
         wf[ids[0]]["inputs"]["value"] = float(seconds)
 
     ids = _roles(m, "steps")
-    if ids and ids[0] in wf:
+    # `steps is None` = 沿用工作流原值。批处理里没有「步数」这个概念，
+    # 传 None 比传一个猜出来的数字安全：猜大了慢，猜小了糊，而且都不报错。
+    if ids and ids[0] in wf and steps is not None:
         ins = wf[ids[0]]["inputs"]
         ins["steps" if "steps" in ins else "value"] = int(steps)
+        # ★ 2026-11-04：有些工作流的步数不是由采样器节点决定，而是由一串**手写的 sigmas**
+        #   决定（Minimax H3 画布版就是）。改 steps 会改到一个没被引用的节点上 ——
+        #   静默无效。宁可吵一次，也不让人以为「设了 8 步」。
+        if m.get("_steps_ineffective"):
+            print("  [WARN] 本工作流的实际步数由固定 sigmas 决定，steps=%s 不生效。" % steps)
+            if m.get("_steps_note"):
+                print("         %s" % m["_steps_note"])
 
     ids = _roles(m, "seed")
     if ids and ids[0] in wf:

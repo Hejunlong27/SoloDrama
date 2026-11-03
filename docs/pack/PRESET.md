@@ -8,7 +8,14 @@
 
 | ID | 出图 | 出片 | 并发 | 放大 |
 |---|---|---|---|---|
-| `local-comfyui-rh` | 本地 ComfyUI · Qwen Image 2.1 turbo（￥0） | RunningHub 工作流 `2113319585146560513`（8 步 / 0.8MP） | 5 | RunningHub `2100177270433476609` → 1080×1920 |
+| `local-comfyui-all` | 本地 ComfyUI · Qwen Image 2.1 turbo（￥0） | 本地 ComfyUI · Minimax H3 六参考槽（￥0） | 1 | 关闭（H3 输出已够，靠 crop-to-fill） |
+| `local-comfyui-rh` | 本地 ComfyUI（￥0） | RunningHub 工作流 `2113319585146560513` | 5 | RunningHub `2100177270433476609` → 1080×1920 |
+
+**默认是 `local-comfyui-all`**：出图、出片、放大全在本机，零平台费用、数据不出局域网、不需要 RunningHub Key。
+`local-comfyui-rh` 留着是因为「本地跑糊的那几镜用云端补」比整集重跑便宜。
+
+> 全本地通道的并发固定 **1**：单卡 8G，第二个任务进来就 OOM。
+> 提速不能靠并发，只能靠「减少重跑」—— 所以先小样后全量这条规则必须守着。
 
 ```bash
 # 看有哪些
