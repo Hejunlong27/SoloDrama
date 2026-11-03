@@ -35,7 +35,10 @@ const ICONS = {
   play2: 'M8 5l11 7-11 7z',
   plus: 'M12 5v14M5 12h14',
   external: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5',
-  plug: 'M9 3v6M15 3v6M7 9h10v3a5 5 0 01-10 0zM12 17v4'
+  plug: 'M9 3v6M15 3v6M7 9h10v3a5 5 0 01-10 0zM12 17v4',
+  /* 浮窗控制（2026-11-04）：square=最大化，restore=还原 */
+  square: 'M5 5h14v14H5z',
+  restore: 'M8 8h11v11H8zM5 16V5h11'
 };
 
 export function icon(name, size) {

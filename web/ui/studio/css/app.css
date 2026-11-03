@@ -975,14 +975,12 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .bd-card figcaption { display: flex; align-items: center; gap: 6px; margin-top: 4px;
   font-size: var(--fs-11); color: var(--txt-2); }
 
-/* ---------- 制片助手 ---------- */
-.ag-wrap { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
-.ag-chat { display: flex; flex-direction: column; min-height: min(70vh, 720px); }
-.ag-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+/* ---------- 制片助手（浮窗形态，2026-11-04） ---------- */
+.ag-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
 .ag-row { display: flex; }
 .ag-row.me { justify-content: flex-end; }
 .ag-b {
-  max-width: 84%; padding: 9px 12px; border-radius: var(--r-md);
+  max-width: 86%; padding: 9px 12px; border-radius: var(--r-md);
   background: var(--bg-inset); border: 1px solid var(--line);
   font-size: var(--fs-13); line-height: 1.62; white-space: pre-wrap; word-break: break-word;
 }
@@ -994,11 +992,13 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   display: flex; flex-direction: column; gap: 8px;
 }
 .ag-step { font-size: var(--fs-11); }
-.ag-input { flex: none; display: flex; gap: 8px; align-items: stretch; padding: 12px; border-top: 1px solid var(--line); }
-.ag-input .textarea { flex: 1; min-height: 64px; resize: vertical; }
-.ag-empty { padding: 26px 8px; text-align: center; }
+.ag-input { flex: none; display: flex; gap: 8px; align-items: stretch; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+/* ★ 不让人手动拉输入框：浮窗自身的缩放已经改高度了，两个叠加会把布局顶破。
+   min-width:0 是必须的 —— textarea 默认 min-width:auto，窗口拉到 360 时它会撑破整行。 */
+.ag-input .textarea { flex: 1; min-width: 0; min-height: 58px; max-height: 120px; resize: none; }
+.ag-empty { padding: 22px 6px; text-align: center; }
 .ag-empty-t { font-size: var(--fs-14); color: var(--txt); margin-bottom: 6px; }
-.ag-empty-h { font-size: var(--fs-12); color: var(--txt-3); line-height: 1.7; max-width: 520px; margin: 0 auto 16px; }
+.ag-empty-h { font-size: var(--fs-12); color: var(--txt-3); line-height: 1.7; max-width: 460px; margin: 0 auto 14px; }
 .ag-starters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .ag-chip {
   padding: 7px 12px; border-radius: 999px;
@@ -1007,4 +1007,103 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   transition: border-color var(--dur-1), color var(--dur-1), background var(--dur-1);
 }
 .ag-chip:hover { border-color: var(--create-line); color: var(--txt); background: var(--create-tint); }
-@media (max-width: 1240px) { .ag-wrap { grid-template-columns: minmax(0, 1fr); } }
+
+/* 浮窗顶部工具条：两个授权开关 + 新对话。宽度可以到 360，所以必须能换行 */
+.ag-fbar {
+  flex: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--bg-card);
+}
+.ag-fbar .chip { font-size: var(--fs-11); padding: 3px 9px; }
+.ag-fbar .btn.sm { padding: 3px 9px; font-size: var(--fs-11); }
+
+/* ---------- 浮窗（js/float.js） ----------
+   层级 34：在内容之上、抽屉(41)与遮罩(40)之下。抽屉打开时浮窗让位，
+   这符合预期 —— 抽屉是「临时看一眼」，浮窗是「一直在这儿」。
+   圆角与面板一致；不做半透明/发光，浮窗是工具不是装饰。 */
+.fw {
+  position: fixed; z-index: 34;
+  display: flex; flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .46), 0 0 0 1px rgba(255, 255, 255, .03) inset;
+  overflow: hidden;
+  animation: fwIn 180ms var(--ease-out);
+}
+.fw.hide { display: none; }
+.fw.max { border-radius: 0; }
+.fw.drag { box-shadow: 0 22px 56px rgba(0, 0, 0, .58); transition: none; }
+.fw.hot { border-color: var(--accent-line); }
+@keyframes fwIn {
+  from { opacity: 0; transform: translateY(6px) scale(.995); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .fw { animation: none; } }
+
+.fw-h {
+  flex: none; height: 38px; display: flex; align-items: center; gap: 8px;
+  padding: 0 6px 0 10px;
+  background: var(--bg-card); border-bottom: 1px solid var(--line);
+  cursor: grab; user-select: none; touch-action: none;
+}
+.fw.drag .fw-h { cursor: grabbing; }
+.fw.max .fw-h { cursor: default; }
+.fw-ic { display: flex; color: var(--create); flex: none; }
+.fw-t { font-size: var(--fs-12); font-weight: 500; color: var(--txt); white-space: nowrap; }
+.fw-sub {
+  font-size: var(--fs-11); color: var(--txt-3);
+  max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fw-b {
+  width: 26px; height: 26px; flex: none; border-radius: var(--r-xs);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--txt-3); background: transparent; border: 1px solid transparent;
+  transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast);
+}
+.fw-b:hover { color: var(--txt); background: var(--bg-hover); border-color: var(--line); }
+.fw-b[data-fw-close]:hover { color: #fff; background: rgba(214, 92, 92, .82); border-color: transparent; }
+
+.fw-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 八向缩放手柄：细边 + 四个角。角上画三条斜线，让人看得出「这里能拉」 */
+.fw-rz { position: absolute; z-index: 3; }
+.fw-rz[data-rz="n"] { left: 12px; right: 12px; top: -2px; height: 6px; cursor: ns-resize; }
+.fw-rz[data-rz="s"] { left: 12px; right: 12px; bottom: -2px; height: 6px; cursor: ns-resize; }
+.fw-rz[data-rz="w"] { top: 12px; bottom: 12px; left: -2px; width: 6px; cursor: ew-resize; }
+.fw-rz[data-rz="e"] { top: 12px; bottom: 12px; right: -2px; width: 6px; cursor: ew-resize; }
+.fw-rz[data-rz="nw"] { left: -2px; top: -2px; width: 12px; height: 12px; cursor: nwse-resize; }
+.fw-rz[data-rz="ne"] { right: -2px; top: -2px; width: 12px; height: 12px; cursor: nesw-resize; }
+.fw-rz[data-rz="sw"] { left: -2px; bottom: -2px; width: 12px; height: 12px; cursor: nesw-resize; }
+.fw-rz[data-rz="se"] { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.fw-rz[data-rz="se"]::after {
+  content: ""; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px;
+  border-right: 1.5px solid var(--line-strong); border-bottom: 1.5px solid var(--line-strong);
+  border-radius: 0 0 2px 0; opacity: .8;
+}
+.fw-rz[data-rz="se"]:hover::after { border-color: var(--accent); opacity: 1; }
+
+/* ---------- 助手引导页（#/agent） ---------- */
+.ag-intro { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--sp-4); align-items: start; }
+.ag-intro > .card:first-child { grid-column: 1 / -1; }
+.ag-intro-b { display: flex; gap: 14px; align-items: flex-start; }
+.ag-intro-ico {
+  width: 44px; height: 44px; flex: none; border-radius: var(--r-md);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--create); background: var(--create-tint); border: 1px solid var(--create-line);
+}
+.ag-intro-t { font-size: var(--fs-15, 15px); color: var(--txt); margin-bottom: 6px; }
+.ag-intro-d { font-size: var(--fs-12); color: var(--txt-2); line-height: 1.75; }
+.ag-say { display: flex; flex-direction: column; gap: 8px; }
+.ag-say-i {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 8px 11px; border-radius: var(--r-sm);
+  background: var(--bg-inset); border: 1px solid var(--line);
+  font-size: var(--fs-12); color: var(--txt-2); line-height: 1.6;
+}
+@media (max-width: 900px) { .ag-intro { grid-template-columns: minmax(0, 1fr); } }
+
+/* 窄屏：浮窗铺满内容区（拖来拖去没有意义，还会挡住唯一的信息区） */
+@media (max-width: 720px) {
+  .fw:not(.hide) { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; border-radius: 0; }
+  .fw-rz { display: none; }
+}

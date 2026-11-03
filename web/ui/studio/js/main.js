@@ -4,6 +4,7 @@
    ============================================================ */
 import { api, clearCache } from './api.js';
 import { esc, icon, paintIcons, errorCard, openDrawer, closeDrawer, closeModal, skeleton, toast } from './ui.js';
+import { toggleAgent, agentOpen, restoreAgent, syncAgent, openAgent } from './agent-panel.js';
 import {
   S, loadProjects, loadCaps, loadHealth, loadRunning, project as currentProject,
   setWs, initialWs, initialCollapsed, setCollapsed, loadProjects as reloadProjects
@@ -29,8 +30,10 @@ const NAV = [
   },
   {
     label: '当前项目', project: true, items: [
-      // ★ 助手排第一：它是「不想一页页点」时的入口，藏到列表末尾就等于没有
-      { key: 'agent', label: '助手', ico: 'spark' },
+      // ★ 助手排第一：它是「不想一页页点」时的入口，藏到列表末尾就等于没有。
+      //   ★ 2026-11-04：它不是一页，是一个浮窗 —— 点它是就地开/关，
+      //     否则「打开助手」会把当前页面顶掉，正好毁了「同时看两个界面」这个诉求。
+      { key: 'agent', label: '助手', ico: 'spark', float: true },
       { key: 'overview', label: '项目详情', ico: 'workbench' },
       { key: 'graph', label: '画布', ico: 'canvas' },
       { key: 'create', label: '创作', ico: 'spark' },
@@ -164,11 +167,16 @@ function renderNav(route) {
   box.innerHTML = NAV.map((g) => {
     const disabled = g.project && !S.ws;
     const items = g.items.map((it) => {
-      const active = it.key === route;
+      /* 浮窗类入口（助手）的高亮看窗口开没开 —— 它可以在任何页面上开着。
+         但站在它的落地页（#/agent）时也要亮：那时「你就在这一块里」，
+         不亮会让人以为点错了。 */
+      const active = it.float ? (agentOpen() || it.key === route) : (it.key === route);
       let badge = '';
       if (it.key === 'tasks' && S.running > 0) badge = '<span class="nav-badge warn">' + S.running + '</span>';
       return '<button class="nav-item' + (active ? ' active' : '') + (disabled ? ' disabled' : '') + '"'
-        + ' data-nav="' + it.key + '"' + (disabled ? ' disabled title="先打开一个项目"' : '') + '>'
+        + ' data-nav="' + it.key + '"' + (it.float ? ' data-float="1"' : '')
+        + (disabled ? ' disabled title="先打开一个项目"' : '')
+        + (it.float ? ' title="打开/收起助手浮窗（不切页）"' : '') + '>'
         + '<span class="nav-ico">' + icon(it.ico, 16) + '</span>'
         + '<span class="nav-text">' + esc(it.label) + '</span>' + badge + '</button>';
     }).join('');
@@ -176,7 +184,11 @@ function renderNav(route) {
     return '<div class="nav-group"><div class="nav-label">' + esc(g.label) + '</div>' + items + hint + '</div>';
   }).join('');
   box.querySelectorAll('[data-nav]').forEach((b) => {
-    b.onclick = () => { if (!b.disabled) navigate(b.dataset.nav); };
+    b.onclick = () => {
+      if (b.disabled) return;
+      if (b.dataset.float) { toggleAgent(); return; }   /* 就地开/关，不 navigate */
+      navigate(b.dataset.nav);
+    };
   });
 }
 
@@ -227,6 +239,7 @@ async function render(force) {
     bindNoProject(view);
     renderNav(route);
     renderTop();
+    syncAgent();
     return;
   }
 
@@ -260,6 +273,7 @@ async function render(force) {
     if (seq === renderSeq) loadEnd();
   }
   renderTop();
+  syncAgent();      /* 切项目后浮窗标题跟着变；换项目时对话会被清掉（见 agent-panel） */
 }
 
 function noProject(route) {
@@ -400,7 +414,15 @@ async function boot() {
     return;
   }
   if (!location.hash) location.hash = '#/workbench';
-  render().then(() => prefetch(S.ws));
+  render().then(() => {
+    prefetch(S.ws);
+    /* 上次关浏览器时浮窗是开着的 → 还开着。人主动关掉时记为关，不自作聪明。
+       必须等 render() 之后：浮窗按内容区矩形定位，view 还没铺开时会量到整屏。
+       `?agent=1` 可强制打开（分享「画布 + 助手」这种组合视图时用）。 */
+    const want = new URLSearchParams(location.search).get('agent');
+    if (want === '1') openAgent();
+    else restoreAgent();
+  });
 }
 
 boot();
