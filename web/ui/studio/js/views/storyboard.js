@@ -161,12 +161,12 @@ export async function render(ctx) {
             html: '<div class="cost-line"><span class="k">镜头</span><span class="v mono">' + esc(s.shot_id) + '</span></div>'
               + '<div class="cost-line"><span class="k">批次</span><span class="v mono">' + esc(s.batch || '—') + '</span></div>'
               + '<div class="cost-line"><span class="k">动作</span><span class="v">复用批次续跑，不重提已成功段</span></div>'
-              + '<div class="cost-line"><span class="k">费用</span><span class="v">★ 按平台实际用量结算（估不出来，先看余额）</span></div>'
+              + '<div class="cost-line"><span class="k">费用</span><span class="v">￥0（本机 ComfyUI，只占 GPU 时间）</span></div>'
               + '<label class="chk" style="margin-top:10px"><input type="checkbox" id="rsYes">'
-              + '<span>我确认要提交这一段（会扣 RH 币）</span></label>'
+              + '<span>我确认要重新生成这一段（占用本机 GPU，不产生平台费用）</span></label>'
               + '<div class="alert warn" style="margin-top:10px"><span class="nav-ico">' + icon('alert', 14)
-              + '</span><div>续跑会向云端**重新提交失败的那一段**；已成功的段不会重提。'
-              + '提交后不可撤回。</div></div>',
+              + '</span><div>续跑会在本机重新生成失败的那一段；已成功的段不会重做。'
+              + '单镜约占 GPU 数分钟，期间其它出图/出片任务要排队。</div></div>',
             foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
               + '<button class="btn primary" id="rsGo" disabled>续跑这一段</button>',
             mount: (m) => {
