@@ -35,12 +35,21 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
+def _key(p) -> str:
+    """路径归一：斜杠方向与大小写不敏感。
+
+    ★ 注册表里存的是 `D:\\剧本\\...`（反斜杠），而页面深链传的是 `D:/剧本/...`。
+    只做字符串相等比较时，同一个项目会被算成两个 —— 总时长直接翻倍（实测 24h32m 变 49h5m）。
+    """
+    return str(p or "").replace("\\", "/").rstrip("/").lower()
+
+
 def _build(ws: str = "") -> dict:
     reg = paths.read_json(paths.REGISTRY_FILE, default={}) or {}
     items = [dict(it) for it in (reg.get("items") or [])]
     # 当前打开的项目也要算进来：它可能只是深链打开、还没登记进注册表。
     # 「我看着这部片，却看不到它的耗时」是最容易让人以为统计坏了的场景。
-    if ws and Path(ws).is_dir() and not any(str(it.get("path")) == str(ws) for it in items):
+    if ws and Path(ws).is_dir() and not any(_key(it.get("path")) == _key(ws) for it in items):
         items.insert(0, {"path": str(ws), "title": Path(ws).name})
     rows, by_stage = [], {}
     total = {"sec": 0.0, "attempts": 0, "success": 0, "failed": 0, "projects": 0}
