@@ -70,7 +70,17 @@ function liveHtml(s) {
       + esc((t.lines && t.lines.length ? t.lines[t.lines.length - 1] : '') || '正在拉起后台实例')
       + '</div>';
   } else if (on) {
+    /* ★ 2026-11-04：把「好不好用」也报出来。
+       只写「在线」不够 —— 8G 卡在跑长任务时 /system_stats 会变慢，
+       延迟突然从 20ms 涨到 800ms 就是「它快撑不住了」的早期信号。 */
+    const pr = s.probe || {};
+    const q = s.queue || {};
+    const bits = [];
+    if (pr.latency_ms != null) bits.push('延迟 ' + pr.latency_ms + 'ms');
+    if (q.ok) bits.push('队列 ' + (q.running_count || 0) + ' 跑 / ' + (q.pending_count || 0) + ' 等');
+    if (pr.vram_free_gb != null) bits.push('空闲 ' + pr.vram_free_gb + 'G');
     head = esc(s.detail || 'ComfyUI 在线')
+      + (bits.length ? '<div class="tiny mono" style="margin-top:4px;opacity:.85">' + esc(bits.join('　·　')) + '</div>' : '')
       + (s.owned ? '<div class="tiny" style="margin-top:4px;opacity:.8">这个实例由 Studio 启动'
         + (s.started_iso ? '（' + esc(s.started_iso) + '）' : '') + '</div>'
         : '<div class="tiny" style="margin-top:4px;opacity:.8">正在复用你已打开的实例，不会另起一个</div>');
@@ -83,9 +93,13 @@ function liveHtml(s) {
   const btns = starting
     ? '<button class="btn quiet sm" disabled><span class="spinner"></span> 启动中</button>'
     : (on
-      ? (s.owned
-        ? '<button class="btn quiet sm" id="cStop">' + icon('close', 12) + ' 停止</button>'
-        : '')
+      ? ('<button class="btn quiet sm" id="cFresh">' + icon('refresh', 12) + ' 重新检测</button>'
+        + (s.queue && (s.queue.running_count || 0) > 0
+          ? '<button class="btn quiet sm" id="cFree" title="释放显存（会中断当前任务）">' + icon('cpu', 12) + ' 释放显存</button>'
+          : '')
+        + (s.owned
+          ? '<button class="btn quiet sm" id="cStop">' + icon('close', 12) + ' 停止</button>'
+          : ''))
       : (s.can_start ? '<button class="btn quiet sm" id="cStart">' + icon('play', 12) + ' 现在启动</button>' : ''));
   return '<div class="alert ' + tone + '"><span class="nav-ico">'
     + icon(on || starting ? 'check' : 'alert', 14) + '</span><div style="flex:1">' + head + '</div>'
@@ -304,6 +318,40 @@ function bindLive(ctx, root, poll) {
     } catch (e) { toast('停止失败：' + (e.detail || e.message), 'bad'); }
     ctx.refresh();
   };
+
+  /* ★ 2026-11-04：两个新动作。
+     「重新检测」绕开 3 秒缓存 —— 用户点了按钮就该看到此刻的真实状态，
+     而不是 2 秒前的缓存值（那会让人以为按钮没生效）。
+     「释放显存」只在队列里有任务时出现：8G 卡换工作流前调一次，能避免
+     「明明没任务却 OOM」—— 模型还占着显存，ComfyUI 自己不会主动退。 */
+  const fresh = root.querySelector('#cFresh');
+  if (fresh) fresh.onclick = async () => {
+    fresh.disabled = true;
+    const old = fresh.innerHTML;
+    fresh.innerHTML = '<span class="spinner"></span> 检测中';
+    try {
+      const s = await api.comfyStatus(true);
+      const box = root.querySelector('#cLive');
+      if (s && box) { box.innerHTML = liveHtml(s); paintIcons(box); bindLive(ctx, root, poll); }
+      toast(s && s.online ? '在线 · ' + (s.latency_ms == null ? '' : s.latency_ms + 'ms') : '仍不在线', s && s.online ? 'ok' : 'bad');
+    } catch (e) {
+      toast('检测失败：' + (e.detail || e.message), 'bad');
+    } finally {
+      // 重绘后节点已换新，这里只兜底恢复（节点若被替换，改的是旧节点，无害）
+      fresh.innerHTML = old;
+      fresh.disabled = false;
+    }
+  };
+  const freeB = root.querySelector('#cFree');
+  if (freeB) freeB.onclick = async () => {
+    if (!confirm('释放显存会中断 ComfyUI 当前正在跑的任务。确定？')) return;
+    freeB.disabled = true;
+    try {
+      const r = await api.comfyFree();
+      toast(r.ok ? (r.detail || '已请求释放') : (r.reason || '失败'), r.ok ? 'ok' : 'bad');
+    } catch (e) { toast('释放失败：' + (e.detail || e.message), 'bad'); }
+    finally { freeB.disabled = false; }
+  };
 }
 
 /* ============================================================
@@ -315,7 +363,7 @@ function bindLive(ctx, root, poll) {
 const TABS = [
   { key: 'channels', label: '通道配置', sub: '大模型 / ComfyUI' },
   { key: 'generators', label: '生成通道', sub: '图像与视频各条通道的真实状态' },
-  { key: 'workflows', label: '出片工作流', sub: '换一份 ComfyUI 工作流并自动识别端口' }
+  { key: 'workflows', label: '出片工作流', sub: '改参数 / 改映射 / 校验 / 回滚' }
 ];
 
 function tabBar(active) {
@@ -339,40 +387,64 @@ function bindTabs(root) {
   });
 }
 
-/* ---------- 出片工作流：上传 / 切换 / 看端口 ---------- */
-function wfRow(it) {
-  const mapTone = it.has_map ? 'ok' : 'warn';
-  return '<tr>'
-    + '<td><div class="row gap8"><span>' + esc(it.name) + '</span>'
-    + (it.builtin ? badge('outline', '内置') : '') + '</div>'
-    + '<div class="row-sub mono">' + esc(it.path) + '</div></td>'
-    + '<td class="num">' + (it.node_count || 0) + '</td>'
-    + '<td>' + badge(it.capacity ? 'info' : 'muted', (it.capacity || 0) + ' 张参考图') + '</td>'
-    + '<td>' + badge(mapTone, it.has_map ? '已生成映射' : '缺映射') + '</td>'
-    + '<td class="right">'
-    + (it.current ? badge('ok', '当前使用')
-      : '<button class="btn quiet sm" data-wf-use="' + esc(it.id) + '">设为当前</button>')
-    + ' <button class="btn quiet sm" data-wf-ports="' + esc(it.id) + '">看端口</button>'
-    + '</td></tr>';
+/* ---------- 出片工作流：上传 / 切换 / 看端口 / 改参数 / 改映射 / 校验 / 回滚 ---------- */
+function wfCard(it) {
+  /* 为什么是卡片而不是表格：Studio 常在窄面板里用（浏览器侧栏、分屏）。
+     表格的操作列在最右边，窄屏会被裁掉 —— 用户看到的是一份「没有按钮」的清单，
+     然后以为功能没做。卡片让按钮跟在内容后面自然换行，多窄都能点到。 */
+  const acts = [];
+  if (!it.current) acts.push('<button class="btn quiet sm" data-wf-use="' + esc(it.id) + '">设为当前</button>');
+  else acts.push(badge('ok', '当前使用'));
+  acts.push('<button class="btn quiet sm" data-wf-edit="' + esc(it.id) + '">改参数</button>');
+  acts.push('<button class="btn quiet sm" data-wf-map="' + esc(it.id) + '">改映射</button>');
+  acts.push('<button class="btn quiet sm" data-wf-more="' + esc(it.id) + '">更多</button>');
+  return '<div class="wf-card" style="border:1px solid var(--line,#2a2f3a);border-radius:8px;'
+    + 'padding:10px 12px;margin-bottom:8px">'
+    + '<div class="row gap8" style="align-items:center;flex-wrap:wrap">'
+    + '<b>' + esc(it.name) + '</b>'
+    + (it.builtin ? badge('outline', '内置 · 只读') : '')
+    + badge(it.has_map ? 'ok' : 'warn', it.has_map ? '有映射' : '缺映射')
+    + '<span class="tiny dim">' + (it.node_count || 0) + ' 节点 · ' + (it.capacity || 0) + ' 张参考图</span>'
+    + '</div>'
+    + '<div class="row-sub mono tiny dim" style="margin:4px 0 8px;word-break:break-all">'
+    + esc(it.path) + '</div>'
+    + '<div class="row" style="gap:6px;flex-wrap:wrap">' + acts.join('') + '</div></div>';
 }
 
 async function workflowsPanel(ctx) {
-  const d = await api.comfyWorkflows().catch((e) => ({ error: String((e && e.detail) || e) }));
+  const [d, cs] = await Promise.all([
+    api.comfyWorkflows().catch((e) => ({ error: String((e && e.detail) || e) })),
+    api.comfyStatus().catch(() => null)
+  ]);
   if (d.error) return { html: pageHead('workflows') + '<div class="alert bad">读不到工作流：' + esc(d.error) + '</div>', mount: bindTabs };
   const items = d.items || [];
+  const pr = (cs && cs.probe) || {};
+  const q = (cs && cs.queue) || {};
+  const online = !!(cs && cs.online);
+  const live = online
+    ? '<span class="dot ok"></span>在线 v' + esc(pr.version || '?')
+      + '　延迟 ' + (pr.latency_ms == null ? '—' : pr.latency_ms + 'ms')
+      + '　队列 ' + (q.running_count || 0) + ' 跑 / ' + (q.pending_count || 0) + ' 等'
+      + '　空闲 ' + (pr.vram_free_gb == null ? '—' : pr.vram_free_gb + 'G')
+    : '<span class="dot bad"></span>未在线 —— 改参数照常可用，但「校验」只能做静态检查';
+
   const html = pageHead('workflows')
-    + '<div class="alert info" style="margin-bottom:14px"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-    + '上传件存在 <span class="mono">' + esc(d.dir) + '</span>，<b>不会覆盖仓库里的内置工作流</b>；'
-    + '同名再上传会把旧文件挪成 <span class="mono">.bak_时间戳</span>。'
-    + '保存时会自动识别端口并生成映射，识别不出的角色会明确列出来让你补。</div></div>'
+    + '<div class="alert ' + (online ? 'info' : 'warn') + '" style="margin-bottom:14px">'
+    + '<span class="nav-ico">' + icon(online ? 'cpu' : 'alert', 14) + '</span><div style="flex:1">'
+    + '<div class="small mono">' + live + '</div>'
+    + '<div class="tiny dim" style="margin-top:4px">'
+    + '改的是<b>参数与映射</b>，不是节点图：步数 / cfg / 尺寸 / 帧数 / 种子 / 模型文件，'
+    + '以及「哪个节点收提示词、哪几个收参考图」。拖节点加节点请回 ComfyUI 画布，'
+    + '改完用「导出（API）」再传上来。</div>'
+    + '</div><button class="btn quiet sm" id="wfRefresh">' + icon('refresh', 12) + ' 刷新状态</button></div>'
+
     + '<section class="card" style="margin-bottom:14px"><div class="card-h"><h3>现有工作流</h3>'
-    + '<span class="card-sub">' + items.length + ' 份</span></div>'
-    + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
-    + '<th>名称 / 路径</th><th class="num" style="width:88px">节点</th>'
-    + '<th style="width:120px">容量</th><th style="width:110px">映射</th>'
-    + '<th class="right" style="width:210px">操作</th></tr></thead><tbody>'
-    + (items.map(wfRow).join('') || '<tr><td colspan="5" class="dim">还没有工作流</td></tr>')
-    + '</tbody></table></div></div></section>'
+    + '<span class="card-sub">' + items.length + ' 份 · 上传件存 <span class="mono">web/var/comfy/workflows/</span></span></div>'
+    + '<div class="card-b">'
+    + (items.map(wfCard).join('') || '<div class="dim small">还没有工作流</div>')
+    + '</div>'
+    + '<div class="card-foot"><span class="tiny dim">「改参数 / 改映射」对内置那份是禁用的 —— '
+    + '内置是仓库文件，改了下次更新就没了。先「复制」再改副本。</span></div></section>'
 
     + '<section class="card"><div class="card-h"><h3>上传 / 粘贴新工作流</h3>'
     + '<span class="card-sub">必须是 ComfyUI「导出 API 格式」的 JSON</span></div>'
@@ -384,7 +456,7 @@ async function workflowsPanel(ctx) {
     + '<div class="field"><label class="tiny dim">或直接粘贴 JSON</label>'
     + '<textarea class="textarea" id="wfJson" rows="7" placeholder=\'{"1": {"class_type": "...", "inputs": {}}}\'></textarea></div>'
     + '<div class="row"><button class="btn primary" id="wfSave">' + icon('check', 14) + ' 校验并保存</button>'
-    + '<span class="tiny dim">校验不过不会留半成品；保存后可回到这里「设为当前」</span></div>'
+    + '<span class="tiny dim">校验不过不会留半成品；保存后回到上面的表里「设为当前」</span></div>'
     + '<div id="wfOut" style="margin-top:10px"></div></div></section>';
 
   return {
@@ -392,16 +464,62 @@ async function workflowsPanel(ctx) {
     mount: (root) => {
       bindTabs(root);
       const out = root.querySelector('#wfOut');
+      const rf = root.querySelector('#wfRefresh');
+      if (rf) rf.onclick = () => ctx.refresh();
+
       root.querySelectorAll('[data-wf-use]').forEach((b) => {
         b.onclick = async () => {
           try { await api.setComfyWorkflow(b.dataset.wfUse); toast('已切换，出片默认用它'); ctx.refresh(); }
           catch (e) { toast('切换失败：' + ((e.detail) || e.message), 'bad'); }
         };
       });
-      root.querySelectorAll('[data-wf-ports]').forEach((b) => {
-        b.onclick = async () => {
+      root.querySelectorAll('[data-wf-edit]').forEach((b) => {
+        b.onclick = () => openParams(ctx, b.dataset.wfEdit).catch((e) => toast(String(e.message || e), 'bad'));
+      });
+      root.querySelectorAll('[data-wf-map]').forEach((b) => {
+        b.onclick = () => openMap(ctx, b.dataset.wfMap).catch((e) => toast(String(e.message || e), 'bad'));
+      });
+      /* 「⋯」= 低频动作：校验 / 端口 / 复制 / 备份。用一个弹窗收纳，
+         顺便把「这些是什么」写清 —— 三个裸按钮比一句解释更容易被误点。 */
+      root.querySelectorAll('[data-wf-more]').forEach((b) => {
+        b.onclick = () => {
+          const id = b.dataset.wfMore;
+          openModal({
+            title: '更多 · ' + id,
+            icon: 'layers',
+            html: '<div class="small muted" style="margin-bottom:10px">这三个都是只读或不改工作流的动作。</div>'
+              + '<div class="col" style="display:grid;gap:8px">'
+              + '<button class="btn quiet" data-m="check">校验 —— 节点类、模型文件、必需输入</button>'
+              + '<button class="btn quiet" data-m="ports">端口 —— 这份工作流能接几张参考图</button>'
+              + '<button class="btn quiet" data-m="dup">复制副本 —— 内置只读，改之前先复制</button>'
+              + '<button class="btn quiet" data-m="bak">备份与回滚</button></div>',
+            foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>',
+            mount: (m) => {
+              m.querySelectorAll('[data-m]').forEach((x) => {
+                x.onclick = async () => {
+                  const what = x.dataset.m;
+                  closeModal();
+                  try {
+                    if (what === 'check') return await openValidate(ctx, id);
+                    if (what === 'bak') return await openBackups(ctx, id);
+                    if (what === 'ports') return await showPorts(id);
+                    const name = prompt('副本名称（决定文件名）', id + '-copy');
+                    if (name === null) return;
+                    const r = await api.wfDuplicate(id, name);
+                    toast(r.detail || '已复制');
+                    ctx.refresh();
+                  } catch (e) { toast('操作失败：' + ((e.detail) || e.message), 'bad'); }
+                };
+              });
+            }
+          });
+        };
+      });
+
+      const showPorts = async (id) => {
+        {
           try {
-            const it = await api.comfyWorkflow(b.dataset.wfPorts);
+            const it = await api.comfyWorkflow(id);
             const rows = (it.ports || []).map((p) => '<tr><td class="mono">' + esc(p.node) + '</td>'
               + '<td class="mono small">' + esc(p.class_type) + '</td><td class="mono small">' + esc(p.field) + '</td>'
               + '<td>' + badge('info', esc(p.role)) + '</td>'
@@ -417,8 +535,8 @@ async function workflowsPanel(ctx) {
               foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>'
             });
           } catch (e) { toast('读端口失败：' + ((e.detail) || e.message), 'bad'); }
-        };
-      });
+        }
+      };
 
       const fileEl = root.querySelector('#wfFile');
       const jsonEl = root.querySelector('#wfJson');
@@ -441,7 +559,7 @@ async function workflowsPanel(ctx) {
             + '已保存 <b>' + esc(r.id) + '</b>：' + r.node_count + ' 个节点，参考图容量 <b>' + r.capacity + '</b>。'
             + '<div class="tiny dim" style="margin-top:4px">自动映射：' + esc(JSON.stringify(r.map))
             + (r.missing_roles && r.missing_roles.length
-              ? '<br>缺角色：' + esc(r.missing_roles.join('、')) + '（需要在映射文件里手动指定）' : '')
+              ? '<br>缺角色：' + esc(r.missing_roles.join('、')) + '（用「改映射」补上）' : '')
             + '</div></div></div>';
           toast('工作流已保存');
           ctx.refresh();
@@ -452,6 +570,230 @@ async function workflowsPanel(ctx) {
       };
     }
   };
+}
+
+/* ---------- 改参数 ---------- */
+async function openParams(ctx, id) {
+  const d = await api.wfParams(id);
+  const editable = (d.items || []).filter((x) => x.editable);
+  const blocked = (d.items || []).filter((x) => !x.editable);
+
+  /* 两列而不是三列：Studio 常在窄面板里跑，第三列（原因）会被裁掉 ——
+     而「为什么改不了」正是这个弹窗存在的理由，被裁掉等于白做。
+     原因并进第一列的第二行，多窄都看得到。 */
+  const rowHtml = (it) => {
+    const title = it.label + (it.role ? ' · ' + it.role : '');
+    if (!it.editable) {
+      const why = it.blocked_by === 'link' ? '由上游连线决定'
+        : it.blocked_by === 'map' ? '被映射覆盖'
+        : it.blocked_by === 'builtin' ? '内置只读' : '';
+      return '<tr class="dim"><td><div>' + esc(title) + ' '
+        + '<span class="badge muted">' + esc(why) + '</span></div>'
+        + '<div class="row-sub mono">节点 ' + esc(it.node) + ' · ' + esc(it.class_type || '') + '</div>'
+        + (it.reason ? '<div class="tiny dim" style="margin-top:2px;word-break:break-word">'
+          + esc(it.reason) + '</div>' : '') + '</td>'
+        + '<td class="mono tiny" style="vertical-align:top">'
+        + (it.type === 'link' ? '← ' + esc(it.upstream) : esc(String(it.value))) + '</td></tr>';
+    }
+    const v = it.value == null ? '' : String(it.value);
+    const input = it.type === 'int' || it.type === 'float'
+      ? '<input class="input mono" data-p="' + esc(it.node) + '|' + esc(it.field) + '" value="' + esc(v)
+        + '" inputmode="decimal" style="max-width:160px">'
+      : '<input class="input mono" data-p="' + esc(it.node) + '|' + esc(it.field) + '" value="' + esc(v)
+        + '" spellcheck="false" style="max-width:100%">';
+    const rng = (it.min != null && it.max != null)
+      ? '<div class="tiny dim">范围 ' + it.min + ' – ' + it.max + '</div>' : '';
+    return '<tr><td><div>' + esc(title) + ' <span class="tiny dim">' + esc(it.type) + '</span></div>'
+      + '<div class="row-sub mono">节点 ' + esc(it.node) + ' · ' + esc(it.class_type || '') + '</div></td>'
+      + '<td>' + input + rng + '</td></tr>';
+  };
+
+  const html = '<div class="alert ' + (d.builtin ? 'warn' : 'info') + '" style="margin-bottom:12px">'
+    + '<span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+    + (d.builtin
+      ? '这是<b>内置工作流</b>，只读。要改先回列表点「复制」生成副本，再改副本。'
+      : '改完立刻生效：下一次出片/出图就用新值。写盘前会留一份 <span class="mono">.bak_时间戳</span> 备份。')
+    + '</div></div>'
+    /* 不用 tab：这两个区块不是「二选一」，而是「先看能改的，再看为什么别的改不了」。
+       做成 tab 会有两个问题 —— 第二个 tab 隐藏着最重要的一句话（改了没用），
+       而且 tab 看起来可点、点不动（它只是 span），比不做还糟。 */
+    + '<div class="row" style="margin:2px 0 8px;align-items:baseline;gap:8px">'
+    + '<b class="small">可调 ' + editable.length + ' 项</b>'
+    + '<span class="tiny dim">改完立刻生效，写盘前自动备份</span></div>'
+
+    + (editable.length
+      ? '<div class="table-wrap" style="max-height:340px;overflow:auto"><table class="tb"><thead><tr>'
+        + '<th>参数</th><th style="width:42%">当前值</th></tr></thead><tbody>'
+        + editable.map(rowHtml).join('') + '</tbody></table></div>'
+      : '<div class="empty"><div class="empty-t">没有可改的参数</div>'
+        + '<div class="empty-h">' + (d.builtin ? '内置工作流只读，先复制副本。' : '这份工作流里没有识别到可调参数。') + '</div></div>')
+
+    + (blocked.length
+      ? '<div class="row" style="margin:14px 0 6px;align-items:baseline;gap:8px">'
+        + '<b class="small">改不了 ' + blocked.length + ' 项</b>'
+        + '<span class="tiny dim">提前说清，比让你改完发现没用要好</span></div>'
+        + '<div class="table-wrap" style="max-height:240px;overflow:auto"><table class="tb"><thead><tr>'
+        + '<th>参数 / 为什么改不了</th><th style="width:34%">值</th></tr></thead><tbody>'
+        + blocked.map(rowHtml).join('') + '</tbody></table></div>'
+      : '');
+
+  openModal({
+    title: '参数 · ' + id,
+    icon: 'settings',
+    html,
+    foot: '<span class="spacer"></span>'
+      + '<button class="btn quiet" data-close="modal">关闭</button>'
+      + (d.builtin ? '' : '<button class="btn primary" id="pSave">保存</button>'),
+    mount: (m) => {
+      const save = m.querySelector('#pSave');
+      if (!save) return;
+      save.onclick = async () => {
+        const changes = [];
+        m.querySelectorAll('[data-p]').forEach((el) => {
+          const [node, field] = el.dataset.p.split('|');
+          const it = (d.items || []).find((x) => x.node === node && x.field === field);
+          if (!it || String(it.value) === String(el.value)) return;
+          changes.push({ node, field, value: el.value });
+        });
+        if (!changes.length) { toast('没有改动'); return; }
+        save.disabled = true;
+        try {
+          const r = await api.wfSetParams(id, changes);
+          if (!r.ok) {
+            toast((r.detail || '未写入') + '：' + (r.rejected || []).map((x) => x.why).join('；'), 'bad');
+          } else {
+            toast(r.detail || '已保存');
+            closeModal();
+            ctx.refresh();
+          }
+        } catch (e) {
+          toast('保存失败：' + ((e.detail) || e.message), 'bad');
+        } finally { save.disabled = false; }
+      };
+    }
+  });
+}
+
+/* ---------- 改映射 ---------- */
+async function openMap(ctx, id) {
+  const d = await api.wfMap(id);
+  const it = await api.comfyWorkflow(id).catch(() => ({ ports: [] }));
+  const ports = it.ports || [];
+  const roles = ['prompt', 'images', 'seconds', 'steps', 'seed', 'aspect', 'prefix', 'duration'];
+  const LABEL = { prompt: '提示词写进哪个节点', images: '参考图铺到哪几个节点（逗号分隔）',
+    seconds: '时长（秒）', steps: '步数', seed: '种子', aspect: '画幅', prefix: '输出文件名前缀',
+    duration: '时长节点' };
+  const cur = d.map || {};
+
+  const row = (role) => {
+    const val = cur[role];
+    const shown = Array.isArray(val) ? val.join(',') : (val == null ? '' : String(val));
+    const hint = ports.filter((p) => p.role === role).map((p) => p.node).join(',');
+    return '<tr><td><div>' + esc(LABEL[role] || role) + '</div>'
+      + '<div class="row-sub mono">' + esc(role) + '</div></td>'
+      + '<td><input class="input mono" data-role="' + esc(role) + '" value="' + esc(shown)
+      + '" placeholder="' + esc(hint || '节点 id') + '" spellcheck="false"></td>'
+      + '<td class="tiny dim">' + (hint ? '自动识别：' + esc(hint) : '没识别到，手工填') + '</td></tr>';
+  };
+
+  openModal({
+    title: '映射 · ' + id,
+    icon: 'layers',
+    html: '<div class="alert ' + (d.source.indexOf('保存') === 0 ? 'info' : 'warn') + '" style="margin-bottom:12px">'
+      + '<span class="nav-ico">' + icon('alert', 14) + '</span><div>' + esc(d.note || '')
+      + '<div class="tiny dim" style="margin-top:4px">当前来源：' + esc(d.source) + '</div>'
+      + (d.missing_roles && d.missing_roles.length
+        ? '<div class="tiny" style="margin-top:4px">缺角色：' + esc(d.missing_roles.join('、')) + '</div>' : '')
+      + '</div></div>'
+      + '<div class="table-wrap" style="max-height:400px;overflow:auto"><table class="tb"><thead><tr>'
+      + '<th style="width:40%">角色</th><th style="width:32%">节点 id</th><th>说明</th></tr></thead><tbody>'
+      + roles.map(row).join('') + '</tbody></table></div>',
+    foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>'
+      + '<button class="btn primary" id="mSave">保存</button>',
+    mount: (m) => {
+      m.querySelector('#mSave').onclick = async () => {
+        const map = {};
+        m.querySelectorAll('[data-role]').forEach((el) => {
+          const v = String(el.value || '').trim();
+          if (!v) return;
+          map[el.dataset.role] = el.dataset.role === 'images'
+            ? v.split(',').map((s) => s.trim()).filter(Boolean) : v;
+        });
+        try {
+          const r = await api.wfSetMap(id, map);
+          if (!r.ok) {
+            toast('未写入：' + (r.rejected || []).map((x) => x.why + (x.value ? '(' + x.value + ')' : '')).join('；'), 'bad');
+            return;
+          }
+          toast(r.detail || '映射已保存');
+          closeModal();
+          ctx.refresh();
+        } catch (e) { toast('保存失败：' + ((e.detail) || e.message), 'bad'); }
+      };
+    }
+  });
+}
+
+/* ---------- 校验 ---------- */
+async function openValidate(ctx, id) {
+  toast('正在校验（会读 ComfyUI 的节点表）…');
+  const v = await api.wfValidate(id);
+  const ok = v.ok;
+  const list = (arr, cls) => (arr || []).map((s) => '<div class="small" style="margin:4px 0">'
+    + '<span class="badge ' + cls + '">' + (cls === 'bad' ? '必须修' : '注意') + '</span> ' + esc(s) + '</div>').join('');
+  openModal({
+    title: '校验 · ' + id,
+    icon: ok ? 'check' : 'alert',
+    html: '<div class="alert ' + (ok ? 'ok' : 'bad') + '"><span class="nav-ico">'
+      + icon(ok ? 'check' : 'alert', 14) + '</span><div>'
+      + (ok ? '这份工作流现在可以提交' : '这份工作流提交会失败')
+      + (v.online ? '' : '（ComfyUI 没连上，只做了静态检查）')
+      + '<div class="tiny" style="margin-top:4px">节点 ' + (v.node_count || 0)
+      + ' 个 · 参考图容量 ' + (v.capacity || 0) + ' 张'
+      + (v.has_map ? ' · 已带映射' : ' · 无映射') + '</div></div></div>'
+      + list(v.errors, 'bad') + list(v.warns, 'warn')
+      + (ok && !(v.warns || []).length ? '<div class="small muted">没有发现问题。</div>' : ''),
+    foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>'
+      + (v.ok ? '' : '<button class="btn quiet" id="vBak">看备份</button>'),
+    mount: (m) => {
+      const b = m.querySelector('#vBak');
+      if (b) b.onclick = () => { closeModal(); openBackups(ctx, id).catch((e) => toast(String(e.message || e), 'bad')); };
+    }
+  });
+}
+
+/* ---------- 备份与回滚 ---------- */
+async function openBackups(ctx, id) {
+  const d = await api.wfBackups(id);
+  const rows = (d.items || []).map((b) => '<tr><td class="mono tiny">' + esc(b.file) + '</td>'
+    + '<td class="small">' + esc(b.when || '') + '</td>'
+    + '<td class="num tiny">' + Math.round((b.size || 0) / 1024) + ' KB</td>'
+    + '<td class="right"><button class="btn quiet sm" data-bak="' + esc(b.file) + '">回到这一版</button></td></tr>').join('');
+  openModal({
+    title: '备份 · ' + id,
+    icon: 'layers',
+    html: (rows
+      ? '<div class="small muted" style="margin-bottom:8px">每次改参数/改映射前都会自动留一份。回滚本身也会先备份当前版本，所以回滚也能反悔。</div>'
+        + '<div class="table-wrap" style="max-height:420px;overflow:auto"><table class="tb"><thead><tr>'
+        + '<th>文件</th><th style="width:150px">时间</th><th class="num" style="width:80px">大小</th>'
+        + '<th class="right" style="width:110px"></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : '<div class="empty"><div class="empty-t">还没有备份</div>'
+        + '<div class="empty-h">改过一次参数或映射之后，这里就会出现可回滚的版本。</div></div>'),
+    foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>',
+    mount: (m) => {
+      m.querySelectorAll('[data-bak]').forEach((b) => {
+        b.onclick = async () => {
+          if (!confirm('回到 ' + b.dataset.bak + '？当前版本会先备份。')) return;
+          try {
+            const r = await api.wfRestore(id, b.dataset.bak);
+            toast(r.detail || '已回滚');
+            closeModal();
+            ctx.refresh();
+          } catch (e) { toast('回滚失败：' + ((e.detail) || e.message), 'bad'); }
+        };
+      });
+    }
+  });
 }
 
 export async function render(ctx) {

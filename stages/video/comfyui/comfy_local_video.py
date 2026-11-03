@@ -64,6 +64,24 @@ except Exception:  # noqa: BLE001
     pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# ★ 2026-11-04：HTTP 全部走共享层 `stages/_comfy_http.py`（重试 / 错误分类 / 原子下载）。
+#   原来这个文件自己写了一版 urllib 调用，零重试 —— 8G 卡长任务偶发 ConnectionReset
+#   就作废一整镜（5–10 分钟）。两套实现还会让「ComfyUI 没开」在两处显示成两种原因。
+def _load_comfy_http():
+    import importlib.util as _ilu
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "..", "..", "_comfy_http.py"),
+                 os.path.join(here, "..", "..", "..", "stages", "_comfy_http.py")):
+        cand = os.path.normpath(cand)
+        if os.path.isfile(cand):
+            spec = _ilu.spec_from_file_location("_comfy_http", cand)
+            mod = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    raise SystemExit("[FAIL] 找不到 stages/_comfy_http.py（HTTP 共享层）")
+
+
+Q = _load_comfy_http()
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 
 
@@ -178,14 +196,19 @@ def load_map(workflow_path: str, map_path: str = "") -> tuple:
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
-def http_json(url: str, payload=None, timeout=30):
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
-                                 headers={"Content-Type": "application/json"})
-    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 本机服务，绕开系统代理
-    with op.open(req, timeout=timeout) as r:
-        body = r.read()
-    return json.loads(body.decode("utf-8")) if body else {}
+def http_json(url: str, payload=None, timeout=30, retries: int = 3):
+    """兼容旧调用点：把完整 URL 拆成 path 交给共享层（重试/分类都在那里）。
+
+    ★ POST 默认 `retries=0`：重发 `/prompt` 会真的再出一遍视频。
+      GET（history / queue / object_info）默认重试 3 次，抖动自己吸收掉。
+    """
+    if url.startswith(COMFY):
+        path = url[len(COMFY):] or "/"
+    else:
+        path = url
+    if payload is None:
+        return Q.get_json(path, timeout=timeout, retries=retries, tag=path)
+    return Q.post_json(path, payload, timeout=timeout, retries=retries, tag=path)
 
 
 def upload_image(path: str) -> str:
@@ -202,11 +225,8 @@ def upload_image(path: str) -> str:
         b'Content-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n',
         ("--%s--\r\n" % boundary).encode(),
     ])
-    req = urllib.request.Request(COMFY + "/upload/image", data=body, method="POST",
-                                 headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
-    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with op.open(req, timeout=120) as r:
-        d = json.loads(r.read().decode("utf-8"))
+    # 上传可重试（同一张图重复上传只是覆盖，不会产生副作用）
+    d = Q.post_multipart("/upload/image", body, boundary, timeout=180, tag="upload")
     return d.get("name") or name
 
 
@@ -526,49 +546,115 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
 # 提交 + 轮询 + 落盘
 # ---------------------------------------------------------------------------
 def submit_and_wait(wf: dict, *, timeout_min: float) -> dict:
+    """提交并等到产物就绪。
+
+    ★ 2026-11-04 重写，三处稳定性改动：
+
+    1. **提交前看队列**。本地出片一镜 5–10 分钟，如果队列里还有别人的任务，
+       你会以为「我这镜特别慢」。先说清楚前面有几项，比事后解释便宜。
+    2. **轮询自适应**：前 30 秒 1 秒一次（短任务能立刻拿到），之后 3 秒一次
+       （长任务不必刷屏）。原来的固定 3 秒会让 4 秒的小样白等两轮。
+    3. **任务丢失检测**：ComfyUI 重启或队列被手工清空后，`/history/<pid>` 会永远
+       空着 —— 旧实现会死等到 20 分钟超时才报「超时」，而真正原因是「任务没了」。
+       现在同时查 `/queue`：既不在历史也不在队列，连续两次就立刻判定丢失。
+    """
+    # —— 提交前：队列状况 ——
+    try:
+        q = Q.queue_state()
+        if q["running_count"] or q["pending_count"]:
+            print("  [队列] 已有 %d 项在跑 / %d 项排队 —— 这一镜会在后面等"
+                  % (q["running_count"], q["pending_count"]))
+    except Q.ComfyError as exc:
+        print("  [队列] 读不到（%s），继续提交" % str(exc).splitlines()[0][:80])
+
     cid = uuid.uuid4().hex
-    r = http_json(COMFY + "/prompt", {"prompt": wf, "client_id": cid}, timeout=120)
+    # retries=0：重发 /prompt 会真的再出一遍视频
+    r = Q.post_json("/prompt", {"prompt": wf, "client_id": cid}, timeout=180, retries=0, tag="prompt")
     pid = r.get("prompt_id")
     if not pid:
         raise SystemExit("[FAIL] 提交未返回 prompt_id：%s" % json.dumps(r, ensure_ascii=False)[:400])
+    if r.get("node_errors"):
+        raise SystemExit("[FAIL] 工作流校验未通过：%s"
+                         % json.dumps(r["node_errors"], ensure_ascii=False)[:600])
     print("prompt_id: %s（开始轮询 /history）" % pid)
 
     t0, last = time.time(), ""
     deadline = t0 + max(60.0, timeout_min * 60)
+    read_fail = 0          # 连续读失败次数
+    gone = 0               # 连续「历史没有 + 队列没有」次数
+    next_tick = 0.0
+
     while time.time() < deadline:
-        time.sleep(3)
+        elapsed = time.time() - t0
+        # 自适应间隔：前 30 秒密一点，之后疏一点
+        time.sleep(1.0 if elapsed < 30 else 3.0)
+
         try:
-            h = http_json(COMFY + "/history/" + pid, timeout=30)
-        except Exception as exc:  # noqa: BLE001
-            last = "%s" % type(exc).__name__
+            h = Q.get_json("/history/" + pid, timeout=30, retries=2, tag="history")
+            read_fail = 0
+        except Q.ComfyError as exc:
+            # 单次读失败多半是服务端忙；连续 3 次才算真出问题
+            read_fail += 1
+            last = str(exc).splitlines()[0][:120]
+            if read_fail >= 3:
+                raise SystemExit(
+                    "[FAIL] 连续 %d 次读不到 /history（最后错误：%s）\n"
+                    "       ComfyUI 可能已退出或端口变了；产物若已生成可在 output 目录找到，"
+                    "补下载用：comfy_local_video.py --list?" % (read_fail, last))
             continue
+
         item = h.get(pid) or {}
         outs = item.get("outputs") or {}
-        if outs:
-            for node_out in outs.values():
-                for key in ("gifs", "videos", "images"):
-                    for f in (node_out.get(key) or []):
-                        if str(f.get("filename", "")).lower().endswith((".mp4", ".webm", ".webp", ".gif")):
-                            return {"files": node_out.get(key), "elapsed": time.time() - t0,
-                                    "status": (item.get("status") or {}).get("status_str", "")}
+        for node_out in outs.values():
+            for key in ("gifs", "videos", "images"):
+                for f in (node_out.get(key) or []):
+                    if str(f.get("filename", "")).lower().endswith((".mp4", ".webm", ".webp", ".gif")):
+                        return {"files": node_out.get(key), "elapsed": time.time() - t0,
+                                "status": (item.get("status") or {}).get("status_str", "")}
         stt = (item.get("status") or {}).get("status_str")
         if stt in ("error", "failed"):
-            raise SystemExit("[FAIL] 任务失败：%s" % json.dumps(item.get("status"), ensure_ascii=False)[:500])
-        if int(time.time() - t0) % 30 < 4:
-            print("  已等 %ds…" % int(time.time() - t0))
-    raise SystemExit("[FAIL] 超时（最后错误：%s；可先在 ComfyUI 队列面板看是否卡住）"
-                     % (last or "无"))
+            raise SystemExit("[FAIL] 任务失败：%s"
+                             % json.dumps(item.get("status"), ensure_ascii=False)[:500])
+
+        # —— 任务丢失检测 ——
+        # 刚提交的头 20 秒不判（队列可能还没登记），之后才查
+        if not outs and elapsed > 20:
+            try:
+                if not Q.pid_running(pid):
+                    gone += 1
+                    if gone >= 2:
+                        raise SystemExit(
+                            "[FAIL] 任务从 ComfyUI 消失：%s 既不在 /history 也不在 /queue。\n"
+                            "       常见原因：ComfyUI 重启、队列被手工清空、显存不足被丢弃。\n"
+                            "       处理：重跑同一条命令即可（已经完成的镜会自动跳过）。" % pid)
+                else:
+                    gone = 0
+            except Q.ComfyError:
+                pass                              # 查不到队列就先不判，别误杀
+        else:
+            gone = 0
+
+        if time.time() >= next_tick:
+            print("  已等 %ds…（队列中）" % int(elapsed))
+            next_tick = time.time() + 30
+
+    raise SystemExit("[FAIL] 轮询超时 %d 分钟（最后错误：%s）\n"
+                     "       · 先开 ComfyUI 队列面板看是否还在跑\n"
+                     "       · 若已跑完只是没回写，产物在 ComfyUI 的 output 目录\n"
+                     "       · 加大超时：--timeout-min %d"
+                     % (timeout_min, last or "无", int(timeout_min * 2)))
 
 
 def download(f: dict, out_dir: str, name: str) -> str:
+    """把产物从 ComfyUI 的 output 目录下到本地。返回落地路径。
+
+    走共享层：先写 `name.part` 再改名 —— 中断不会留下一个冒充完整产物的半截 mp4。
+    """
     qs = urllib.parse.urlencode({"filename": f["filename"],
                                  "subfolder": f.get("subfolder", ""),
                                  "type": f.get("type", "output")})
-    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    os.makedirs(out_dir, exist_ok=True)
     dst = os.path.join(out_dir, name)
-    with op.open(COMFY + "/view?" + qs, timeout=180) as r, open(dst, "wb") as fh:
-        fh.write(r.read())
+    Q.download("/view?" + qs, dst, timeout=300, retries=3)
     return dst
 
 

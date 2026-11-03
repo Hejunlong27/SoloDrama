@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, comfy_launcher, comfy_store, commands as CMD,
+from core import (adapters, artifacts, comfy_launcher, comfy_probe, comfy_store, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
                     studio, styles, ux)
@@ -852,15 +852,44 @@ def connections_test(kind: str):
 #     同步等待会把一个请求挂一分半，uvicorn 单进程下整个界面都刷不出来；
 #   * 停止只停 Studio 自己启动的那个实例（引擎侧核对「pid 是否正在监听该端口」）。
 # ---------------------------------------------------------------------------
+# 探活缓存放在这一层，不放 launcher：launcher 的语义是「问一次就真问一次」（体检要用），
+# 而状态面板是**被轮询的**。ComfyUI 跑长任务时 /system_stats 自己就会变慢，
+# 不缓存的话看板越刷越卡，最后像是界面挂了，其实是自己把服务问累了。
+_COMFY_STATUS_TTL = 3.0
+_COMFY_STATUS_CACHE: dict = {"at": 0.0, "data": {}}
+
+
 @app.get("/api/comfy/status")
-def comfy_status():
-    return comfy_launcher.status()
+def comfy_status(fresh: int = 0, with_queue: int = 1):
+    """ComfyUI 连通状态。默认 3 秒内复用上一次结果；`?fresh=1` 强制重新探测。"""
+    now = time.time()
+    if not fresh and _COMFY_STATUS_CACHE["data"] and (now - _COMFY_STATUS_CACHE["at"]) < _COMFY_STATUS_TTL:
+        d = dict(_COMFY_STATUS_CACHE["data"])
+        d["cached"] = True
+        d["age_s"] = round(now - _COMFY_STATUS_CACHE["at"], 1)
+        return d
+
+    d = comfy_launcher.status()
+    pr = comfy_probe.probe(fresh=bool(fresh))
+    # master 是「服务在不在」，probe 是「好不好用」—— 两者可能不同：
+    # 进程在但模型没加载完时 probe 会慢，这时不要把在线的实例说成离线。
+    d["probe"] = pr
+    d["latency_ms"] = pr.get("latency_ms")
+    d["online"] = bool(pr.get("online")) or bool(d.get("online"))
+    if with_queue and d["online"]:
+        d["queue"] = comfy_probe.queue()
+    d["checked_at"] = now
+    d["cached"] = False
+    _COMFY_STATUS_CACHE.update({"at": now, "data": d})
+    return d
 
 
 @app.post("/api/comfy/start")
 def comfy_start():
     if READONLY_MODE:
         raise HTTPException(status_code=403, detail="只读模式（demo）：不能启动本机服务")
+    _COMFY_STATUS_CACHE.update({"at": 0.0, "data": {}})
+    comfy_probe.invalidate()
     return comfy_launcher.start_async()
 
 
@@ -868,7 +897,23 @@ def comfy_start():
 def comfy_stop():
     if READONLY_MODE:
         raise HTTPException(status_code=403, detail="只读模式（demo）：不能停止本机服务")
+    _COMFY_STATUS_CACHE.update({"at": 0.0, "data": {}})
+    comfy_probe.invalidate()
     return comfy_launcher.stop()
+
+
+@app.post("/api/comfy/interrupt")
+def comfy_interrupt():
+    """打断当前任务（队列里其余项不受影响）。"""
+    _write_guard()
+    return comfy_probe.interrupt()
+
+
+@app.post("/api/comfy/free")
+def comfy_free():
+    """释放显存。8G 卡换工作流/换模型前调一次，能避免「没任务却 OOM」。"""
+    _write_guard()
+    return comfy_probe.free_memory()
 
 
 @app.get("/api/studio/asset-md")
@@ -996,6 +1041,103 @@ def api_comfy_workflow_current(payload: dict = Body(...)):
         return comfy_store.set_current(wf_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+
+
+# ---------------------------------------------------------------------------
+# 工作流「改参数 / 改映射 / 在线校验 / 回滚」
+# 范围：改的是参数与映射，不是节点图。理由见 comfy_store.params 的注释。
+# ---------------------------------------------------------------------------
+@app.get("/api/comfy/workflows/{wf_id}/params")
+def api_wf_params(wf_id: str):
+    """可调参数清单。连线字段与「被映射覆盖」的字段也会列出，但标为不可编辑。"""
+    try:
+        return comfy_store.params(wf_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+
+
+@app.post("/api/comfy/workflows/{wf_id}/params")
+def api_wf_params_set(wf_id: str, payload: dict = Body(...)):
+    """写参数。任何一项不合法就整体拒绝 —— 不留「改了一半」的工作流。"""
+    _write_guard()
+    changes = payload.get("changes") or []
+    if not isinstance(changes, list) or not changes:
+        raise HTTPException(status_code=400, detail="changes 为空")
+    try:
+        return comfy_store.set_params(wf_id, changes)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/api/comfy/workflows/{wf_id}/map")
+def api_wf_map(wf_id: str):
+    """角色 → 节点的映射（哪个节点收提示词、哪几个收参考图）。"""
+    try:
+        return comfy_store.map_of(wf_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+
+
+@app.post("/api/comfy/workflows/{wf_id}/map")
+def api_wf_map_set(wf_id: str, payload: dict = Body(...)):
+    _write_guard()
+    try:
+        return comfy_store.set_map(wf_id, payload.get("map") or {})
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.post("/api/comfy/workflows/{wf_id}/validate")
+def api_wf_validate(wf_id: str, payload: dict = Body(default={})):
+    """在线校验：节点类是否齐全、模型文件本机有没有、必需输入缺不缺。
+
+    离线时会返回 `online=False` + 一条 warn，而不是报错 —— 状态面板要能显示
+    「ComfyUI 没开，所以只能做静态校验」。
+    """
+    try:
+        it = comfy_store.get(wf_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+    # 带上同名 map：校验要用「运行时的样子」，不是文件原值（详见 comfy_probe.apply_map_patches）
+    return comfy_probe.validate_path(it["path"])
+
+
+@app.post("/api/comfy/workflows/{wf_id}/duplicate")
+def api_wf_duplicate(wf_id: str, payload: dict = Body(default={})):
+    """复制副本（内置工作流只读，要改先复制）。"""
+    _write_guard()
+    try:
+        return comfy_store.duplicate(wf_id, str(payload.get("name") or ""))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/api/comfy/workflows/{wf_id}/backups")
+def api_wf_backups(wf_id: str):
+    try:
+        return comfy_store.backups(wf_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+
+
+@app.post("/api/comfy/workflows/{wf_id}/restore")
+def api_wf_restore(wf_id: str, payload: dict = Body(...)):
+    _write_guard()
+    bak = str(payload.get("file") or "").strip()
+    if not bak:
+        raise HTTPException(status_code=400, detail="缺少 file")
+    try:
+        return comfy_store.restore(wf_id, bak)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个工作流：%s" % wf_id) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @app.get("/api/styles")

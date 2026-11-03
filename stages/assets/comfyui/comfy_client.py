@@ -159,17 +159,39 @@ def set_follow_ref_ratio(on: bool) -> None:
     MODE_WHEN_REFS = not bool(on)
 
 
-# ★ 本客户端只连**本机 / 局域网的 ComfyUI**，必须**绕开系统代理**：
-#   实测环境里存在 HTTP_PROXY/HTTPS_PROXY（如 http://127.0.0.1:49724），urllib 会连
-#   `http://127.0.0.1:8188` 也塞进代理，返回 `HTTP Error 502: Bad Gateway`。
-#   这里显式用「空代理」的 opener，与系统代理环境变量彻底解耦。
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# ★ 2026-11-04：HTTP 全部走共享层 `stages/_comfy_http.py`。
+#   原来这里自己维护一个「空代理 opener」，与出片客户端各写一套 —— 两边超时/重试/错误文案
+#   都不一样，同一件「ComfyUI 没开」在两处显示成两种原因，用户要分别排查。
+#   共享层做了三件这里原本没有的事：幂等重试、错误分类、原子下载。
+def _load_comfy_http():
+    import importlib.util as _ilu
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "..", "..", "_comfy_http.py"),
+                 os.path.join(here, "..", "..", "..", "stages", "_comfy_http.py")):
+        cand = os.path.normpath(cand)
+        if os.path.isfile(cand):
+            spec = _ilu.spec_from_file_location("_comfy_http", cand)
+            mod = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    raise SystemExit("[FAIL] 找不到 stages/_comfy_http.py（HTTP 共享层）")
 
 
-def _req(url, data=None, headers=None, timeout=60):
-    req = urllib.request.Request(url, data=data, headers=headers or {})
-    with _OPENER.open(req, timeout=timeout) as r:
-        return r.read()
+Q = _load_comfy_http()
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 保留：兼容旧调用
+
+
+def _req(url, data=None, headers=None, timeout=60, retries=None):
+    """发请求返回 body 字节。
+
+    ★ 重试口径：GET（data is None）默认重试 3 次 —— 抖动自己吸收掉；
+      **POST 默认不重试** —— 重发 `/prompt` 会真的再出一遍图。
+      上传是例外（重复上传只是覆盖），调用方显式传 `retries=1`。
+    """
+    path = url[len(COMFY):] if url.startswith(COMFY) else url
+    n = (3 if data is None else 0) if retries is None else int(retries)
+    return Q.request(Q.base_url() + path, data=data, headers=headers or {},
+                     timeout=timeout, retries=n, tag=path)
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +226,7 @@ def upload_image(path: str) -> str:
     body = b"".join(parts)
     raw = _req(COMFY + "/upload/image", data=body,
                headers={"Content-Type": "multipart/form-data; boundary=" + boundary},
-               timeout=180)
+               timeout=180, retries=1)      # 覆盖式上传：重发无副作用
     res = json.loads(raw.decode("utf-8"))
     got = res.get("name") or name
     sub = (res.get("subfolder") or "").strip()
@@ -315,11 +337,29 @@ def check_required_inputs(workflow: dict) -> list:
         return []
 
 
-def wait(pid, timeout=1200, poll=2.0):
-    end = time.time() + timeout
+def wait(pid, timeout=1200, poll=1.5):
+    """等到该 prompt 出结果。返回 history 条目。
+
+    ★ 2026-11-04 加「任务丢失」判定：出图通常 20–60 秒，但如果 ComfyUI 重启、
+      队列被清空，`/history/<pid>` 会永远空着 —— 旧实现会死等到 20 分钟超时，
+      而真正原因是任务没了。现在同时查 `/queue`：两边都没有，连续两次就判定丢失。
+    """
+    t0 = time.time()
+    end = t0 + timeout
+    gone = 0
+    fail = 0
     while time.time() < end:
-        raw = _req("{}/history/{}".format(COMFY, pid), timeout=30)
-        h = json.loads(raw.decode("utf-8"))
+        try:
+            h = json.loads(_req("{}/history/{}".format(COMFY, pid), timeout=30).decode("utf-8"))
+            fail = 0
+        except Exception as exc:                                  # noqa: BLE001
+            # 单次读失败不算失败；连续 3 次说明服务端出问题了
+            fail += 1
+            if fail >= 3:
+                raise RuntimeError("读 /history 连续失败（%s）" % type(exc).__name__) from exc
+            time.sleep(poll)
+            continue
+
         if pid in h:
             entry = h[pid]
             status = entry.get("status", {})
@@ -327,6 +367,22 @@ def wait(pid, timeout=1200, poll=2.0):
                 return entry
             if status.get("status_str") == "error":
                 raise RuntimeError("workflow error: " + json.dumps(status, ensure_ascii=False)[:600])
+
+        # 任务丢失检测：提交后 15 秒起判（队列可能还没登记）
+        if time.time() - t0 > 15:
+            try:
+                if not Q.pid_running(pid):
+                    gone += 1
+                    if gone >= 2:
+                        raise RuntimeError(
+                            "任务从 ComfyUI 消失：%s 既不在 /history 也不在 /queue\n"
+                            "  常见原因：ComfyUI 重启、队列被清空、显存不足被丢弃。\n"
+                            "  处理：重跑同一条命令（已生成的图会按指纹跳过）。" % pid)
+                else:
+                    gone = 0
+            except Exception as exc:                              # noqa: BLE001
+                if isinstance(exc, RuntimeError) and "消失" in str(exc):
+                    raise
         time.sleep(poll)
     raise TimeoutError("timeout waiting for prompt " + pid)
 

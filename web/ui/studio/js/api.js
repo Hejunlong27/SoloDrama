@@ -125,6 +125,17 @@ export const api = {
   comfyWorkflow: (id) => get('/api/comfy/workflows/' + encodeURIComponent(id)),
   saveComfyWorkflow: (body) => post('/api/comfy/workflows', body),
   setComfyWorkflow: (id) => post('/api/comfy/workflows/current', { id }),
+  // ★ 2026-11-04：改工作流（参数 / 映射）与在线校验、备份回滚
+  wfParams: (id) => get('/api/comfy/workflows/' + encodeURIComponent(id) + '/params'),
+  wfSetParams: (id, changes) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/params', { changes }),
+  wfMap: (id) => get('/api/comfy/workflows/' + encodeURIComponent(id) + '/map'),
+  wfSetMap: (id, map) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/map', { map }),
+  wfValidate: (id) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/validate', {}),
+  wfDuplicate: (id, name) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/duplicate', { name }),
+  wfBackups: (id) => get('/api/comfy/workflows/' + encodeURIComponent(id) + '/backups'),
+  wfRestore: (id, file) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/restore', { file }),
+  comfyInterrupt: () => post('/api/comfy/interrupt', {}),
+  comfyFree: () => post('/api/comfy/free', {}),
 
   /* 画风目录：3 条轨道 + 系统默认风格 + 画幅/分辨率预设 */
   styles: () => get('/api/styles'),
@@ -155,7 +166,7 @@ export const api = {
   saveConnection: (kind, body) => post('/api/connections/' + encodeURIComponent(kind), body),
   testConnection: (kind) => post('/api/connections/' + encodeURIComponent(kind) + '/test', {}),
   /* 本机 ComfyUI：按需启动（异步，30–90 秒）。status 要轮询，绝不能进 TTL 缓存。 */
-  comfyStatus: () => get('/api/comfy/status'),
+  comfyStatus: (fresh) => get('/api/comfy/status' + (fresh ? '?fresh=1' : '')),
   startComfy: () => post('/api/comfy/start', {}),
   stopComfy: () => post('/api/comfy/stop', {}),
 
