@@ -83,6 +83,7 @@ const TTL = {
   '/api/artifacts': 8000,
   '/api/artifacts/loose': 8000,
   '/api/studio/cost': 8000,
+  '/api/create/generate': 300000,   // 一份企划案 30–60 秒，给足余量
   '/api/studio/capabilities': 60000,
   '/api/llm/providers': 12000,
   '/api/llm/purposes': 12000,
@@ -134,6 +135,18 @@ export const api = {
   wfDuplicate: (id, name) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/duplicate', { name }),
   wfBackups: (id) => get('/api/comfy/workflows/' + encodeURIComponent(id) + '/backups'),
   wfRestore: (id, file) => post('/api/comfy/workflows/' + encodeURIComponent(id) + '/restore', { file }),
+  // ★ 2026-11-04 创作链
+  skills: () => get('/api/skills'),
+  skillsInstalled: (ws) => get('/api/skills/installed', { ws }),
+  skillDetail: (id) => get('/api/skills/' + encodeURIComponent(id)),
+  skillInstall: (ws, id) => post('/api/skills/install', { ws, id }),
+  skillUninstall: (ws, id) => post('/api/skills/uninstall', { ws, id }),
+  skillPrompt: (ws) => get('/api/skills/prompt', { ws }),
+  createState: (ws) => get('/api/create/state', { ws }),
+  createRead: (ws, stage) => get('/api/create/read', { ws, stage }),
+  createIdea: (body) => post('/api/create/idea', body),
+  createWrite: (body) => post('/api/create/write', body),
+  createGenerate: (body) => post('/api/create/generate', body),
   comfyInterrupt: () => post('/api/comfy/interrupt', {}),
   comfyFree: () => post('/api/comfy/free', {}),
 

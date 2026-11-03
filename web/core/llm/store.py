@@ -123,11 +123,35 @@ def default_config() -> dict:
     }
 
 
+def _norm_caps(prov: dict) -> dict:
+    """补齐「聊天类提供商本来就有」的能力。
+
+    ★ 2026-11-04：创作类用途要求 `text`（产出是正文，不是 JSON），而存量的 mock /
+      openai / ollama 提供商只声明了 `json`。于是「生成企划案」被网关拦在
+      「未声明能力 text」——这条判定本身没错，错的是能力表少写了一项：
+      JSON 是**额外**能力（json_mode），纯文本是任何 chat 接口的基础能力。
+
+    只补 text，不删不改已有能力 —— 配置里写的东西一律尊重。
+    """
+    kind = str(prov.get("kind") or "")
+    if kind not in ("mock", "openai", "ollama"):
+        return prov
+    caps = prov.get("capabilities")
+    caps = list(caps) if isinstance(caps, list) else []
+    if "text" not in caps:
+        caps.insert(0, "text")
+    prov["capabilities"] = caps
+    return prov
+
+
 def load_config() -> dict:
     cfg = _read(CONFIG_FILE, None)
     if not isinstance(cfg, dict) or "providers" not in cfg:
         return default_config()
     cfg.setdefault("purposes", {})
+    for p in (cfg.get("providers") or []):
+        if isinstance(p, dict):
+            _norm_caps(p)
     return cfg
 
 

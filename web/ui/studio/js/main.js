@@ -23,7 +23,12 @@ const NAV = [
   },
   {
     label: '当前项目', project: true, items: [
-      { key: 'overview', label: '项目详情', ico: 'layers' },
+      // ★ 2026-11-04：创作链放在最前 —— 它是流水线的起点。
+      //   先有灵感和剧本，才有资产、分镜、出片；把它们排在「项目详情」后面，
+      //   人会先看到一堆 0 和空状态，以为工具没做事。
+      { key: 'create', label: '创作', ico: 'spark' },
+      { key: 'skills', label: 'Skill 中心', ico: 'layers' },
+      { key: 'overview', label: '项目详情', ico: 'workbench' },
       { key: 'pipeline', label: '流水线', ico: 'terminal' },
       { key: 'assets', label: '资产中心', ico: 'image' },
       { key: 'storyboard', label: '镜头与出片', ico: 'film' },
@@ -34,11 +39,13 @@ const NAV = [
   { label: '系统', items: [{ key: 'settings', label: '系统设置', ico: 'settings' }] }
 ];
 
-const PROJECT_ROUTES = ['overview', 'pipeline', 'assets', 'storyboard', 'post', 'release'];
+const PROJECT_ROUTES = ['create', 'skills', 'overview', 'pipeline', 'assets', 'storyboard', 'post', 'release'];
 
 const VIEWS = {
   workbench: () => import('./views/workbench.js'),
   projects: () => import('./views/projects.js'),
+  create: () => import('./views/create.js'),
+  skills: () => import('./views/skills.js'),
   overview: () => import('./views/overview.js'),
   pipeline: () => import('./views/pipeline.js'),
   assets: () => import('./views/assets.js'),

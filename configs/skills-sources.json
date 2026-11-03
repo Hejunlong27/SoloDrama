@@ -1,0 +1,8 @@
+{
+  "_comment": "创作 Skill 的搜索目录。装在这里的每一份 <目录>/SKILL.md 都会出现在「Skill 中心」里，可以按项目装载。",
+  "_priority": "顺序即优先级：同名 Skill 先出现的赢。环境变量 SOLODRAMA_SKILLS_DIR 优先级高于本文件（分号分隔多个）。",
+  "sources": [
+    "D:/整合包/ai-manju-skills-main/skills"
+  ],
+  "_note": "Skill 是给模型看的创作说明（Markdown），不是可执行代码。装载只是复制到 <工作区>/skills/ 并登记，不 import、不运行。"
+}

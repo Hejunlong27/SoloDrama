@@ -25,7 +25,8 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, artifacts, comfy_launcher, comfy_probe, comfy_store, commands as CMD,
+from core import (adapters, artifacts, comfy_launcher, comfy_probe, comfy_store,
+                  creation, skills as SKILLS, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
                     studio, styles, ux)
@@ -1140,6 +1141,180 @@ def api_wf_restore(wf_id: str, payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
+# ---------------------------------------------------------------------------
+# 创作 Skill：发现 / 装载 / 组装指令
+# 为什么放在 Web 层而不是引擎：Skill 是「给人看、给模型读」的文本，装载是项目级登记。
+# 引擎只认执行契约（data/ 五文件），不需要知道创作模板的存在。
+# ---------------------------------------------------------------------------
+@app.get("/api/skills")
+def api_skills():
+    """列出磁盘上所有可装载的创作 Skill（跨来源去重）。"""
+    return SKILLS.scan()
+
+
+@app.get("/api/skills/installed")
+def api_skills_installed(ws: str = Query(...)):
+    return SKILLS.installed(str(_require_ws(ws)))
+
+
+@app.get("/api/skills/prompt")
+def api_skills_prompt(ws: str = Query(...), stage: str = ""):
+    """预览「模型将收到的完整指令」——含已装载 Skill、项目画风锁、输出要求。
+
+    这一层必须可查：用户有权知道模型到底被喂了什么。否则「为什么产出的风格不对」
+    只能靠猜。
+    """
+    ws = str(_require_ws(ws))
+    try:
+        text = SKILLS.compose_prompt(ws, style_lock=_style_lock(ws), stage=stage)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"ok": True, "chars": len(text), "text": text}
+
+
+@app.post("/api/skills/install")
+def api_skills_install(payload: dict = Body(...)):
+    _write_guard()
+    ws = str(_require_ws(str(payload.get("ws") or "")))
+    sid = str(payload.get("id") or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="缺少 id")
+    try:
+        return SKILLS.install(ws, sid, replace=bool(payload.get("replace")))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个 Skill：%s" % sid) from None
+
+
+@app.post("/api/skills/uninstall")
+def api_skills_uninstall(payload: dict = Body(...)):
+    _write_guard()
+    ws = str(_require_ws(str(payload.get("ws") or "")))
+    return SKILLS.uninstall(ws, str(payload.get("id") or ""))
+
+
+@app.get("/api/skills/{sid}")
+def api_skill_detail(sid: str):
+    try:
+        return SKILLS.detail(sid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个 Skill：%s" % sid) from None
+
+
+def _style_lock(ws: str) -> str:
+    """取本项目的画风锁（project.json 优先，style-plan.json 兜底）。
+
+    为什么画风从这里取：Skill 正文里通常写死了风格（"现代精致国漫"），
+    而本项目的画风由 style_lock 决定。两者必须有个先后 —— 这里定了：style_lock 赢。
+    """
+    p = Path(ws)
+    try:
+        pj = paths.read_json(p / "project.json", default=None) or {}
+        v = ((pj.get("meta") or {}).get("style_lock") or "").strip()
+        if v:
+            return v
+    except Exception:                                    # noqa: BLE001
+        pass
+    try:
+        sp = paths.read_json(p / "style-plan.json", default=None) or {}
+        st = sp.get("style") or {}
+        return str(st.get("style_prompt") or st.get("visual_style_lock") or "").strip()
+    except Exception:                                    # noqa: BLE001
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# 创作链：灵感 → 企划案 → 资产库 → 剧本 → 导演手册
+# 产物落 <ws>/00-创作/（人写的、模型写的都在这里，可改可推翻）；
+# 引擎只读 06-提示词/ 的 JSON 契约。转换那一步负责把 Markdown 变成契约。
+# ---------------------------------------------------------------------------
+@app.get("/api/create/state")
+def api_create_state(ws: str = Query(...)):
+    return creation.state(str(_require_ws(ws)))
+
+
+@app.get("/api/create/read")
+def api_create_read(ws: str = Query(...), stage: str = Query(...)):
+    try:
+        return creation.read(str(_require_ws(ws)), stage)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个环节：%s" % stage) from None
+
+
+@app.post("/api/create/idea")
+def api_create_idea(payload: dict = Body(...)):
+    """保存灵感（一句话 + 市场 + 集数）。这是整条链的起点。"""
+    _write_guard()
+    ws = str(_require_ws(str(payload.get("ws") or "")))
+    return creation.save_idea(ws, payload)
+
+
+@app.post("/api/create/write")
+def api_create_write(payload: dict = Body(...)):
+    """手动写入/修正某一段产物（人改稿的入口）。"""
+    _write_guard()
+    ws = str(_require_ws(str(payload.get("ws") or "")))
+    stage = str(payload.get("stage") or "")
+    try:
+        return creation.write(ws, stage, str(payload.get("text") or ""),
+                              name=str(payload.get("name") or ""))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个环节：%s" % stage) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.post("/api/create/generate")
+def api_create_generate(payload: dict = Body(...)):
+    """调大模型生成某一段产物，成功后直接落盘。
+
+    ★ 同步执行（一份企划案 30–60 秒）。不走后台任务，因为：
+      生成失败要能立刻把原因（缺 Key / 连不上 / 被守卫拦）返回到按钮上，
+      异步任务只能让用户去翻日志。
+    ★ 远端出站需要 SOLODRAMA_ALLOW_REMOTE=1 —— 守卫默认只许本机。
+      被拦时这里会把原话贴出来，不吞成「生成失败」。
+    """
+    _write_guard()
+    ws = str(_require_ws(str(payload.get("ws") or "")))
+    purpose = str(payload.get("purpose") or "")
+    stage = str(payload.get("stage") or "")
+    if purpose not in ("create.plan", "create.assets", "create.script", "create.director"):
+        raise HTTPException(status_code=400, detail="不支持的用途：%s" % purpose)
+
+    extra = {k: payload.get(k) for k in
+             ("idea", "episodes", "seconds", "episodes_range", "script_ep") if payload.get(k)}
+    try:
+        variables = creation.vars_for(ws, purpose, extra)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    # gateway 是类不是模块：必须走单例（`llm_gateway.complete` 会 AttributeError → 500）
+    res = llm_gateway.get_gateway().complete(purpose, variables, project=ws)
+    if not res.get("ok"):
+        err = res.get("error") or {}
+        msg = err.get("message") or "生成失败"
+        if "RemoteForbidden" in str(msg) or "守卫" in str(msg):
+            msg += "\n（这是网络出口守卫拦的：要让大模型出网，启动服务时加 SOLODRAMA_ALLOW_REMOTE=1）"
+        raise HTTPException(status_code=502, detail=msg)
+    text = res.get("text") or res.get("content") or ""
+    if not text.strip():
+        raise HTTPException(status_code=502,
+                            detail="模型返回为空（%s）：检查 max_tokens 是否太小"
+                                   % (res.get("finish_reason") or "未知"))
+    try:
+        saved = creation.write(ws, stage or _stage_of(purpose), text,
+                               name=str(payload.get("name") or ""))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"ok": True, "saved": saved, "usage": res.get("usage"),
+            "provider": res.get("provider_name") or res.get("provider"),
+            "chars": len(text), "detail": saved.get("detail")}
+
+
+def _stage_of(purpose: str) -> str:
+    return {"create.plan": "plan", "create.assets": "assets",
+            "create.script": "script", "create.director": "director"}.get(purpose, "")
+
+
 @app.get("/api/styles")
 def api_styles():
     """画风目录：3 条轨道（生产规格）+ 系统默认风格（提示词）+ 画幅/分辨率预设。
@@ -1259,8 +1434,12 @@ def llm_meta():
         "presets": llm_store.PRESETS,
         "store_dir": str(llm_store.LLM_DIR),
         "provider_count": len(cfg.get("providers") or []),
+        # ★ 2026-11-04 修：原来读 `llm_templates.TEMPLATES`，而 templates.py 重写后
+        #   只保留 TEMPLATE_MAP（模板清单的真源）。属性不存在 ⇒ 这个接口 500，
+        #   前端 4 个请求里挂一个 ⇒ 「AI 模型中心」整页刷不出来，而报错只说
+        #   "Internal Server Error"。用存在的那份，别再按记忆写变量名。
         "purpose_count": len(llm_templates.PURPOSES),
-        "template_count": len(llm_templates.TEMPLATES),
+        "template_count": len(llm_templates.all_templates()),
         "readonly": READONLY_MODE,
         "note": "Key 只存在后端：环境变量优先，其次本机保险箱；接口只回打码状态",
     }

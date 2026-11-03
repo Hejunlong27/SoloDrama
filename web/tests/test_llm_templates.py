@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""test_llm_templates.py —— 提示词模板注册表（只剩 pack.convert）
+"""test_llm_templates.py —— 提示词模板注册表（导入 1 条 + 创作 4 条）
 
 为什么这个测试还在
 ------------------
@@ -48,8 +48,17 @@ def test_prompt_file_present():
 def test_purposes_shrunk():
     print("\n[B] 用途表")
     ids = [p["id"] for p in T.PURPOSES]
-    check(ids == ["pack.convert"], "只剩 pack.convert：%s" % ids)
+    # ★ 2026-11-04：新增创作链 4 条。顺序是**流水线顺序**，不是字母序 ——
+    #   界面按这张表的顺序摆按钮，顺序错了「下一步该点哪个」就得靠猜。
+    check(ids == ["pack.convert", "create.plan", "create.assets",
+                  "create.script", "create.director"],
+          "用途表应为 导入 + 创作四步：%s" % ids)
     check(T.PURPOSE_MAP.get("pack.convert"), "PURPOSE_MAP 可查")
+    # 创作类必须 output=text：写文件是 pack.convert 的事
+    for pid in ("create.plan", "create.assets", "create.script", "create.director"):
+        tid = T.PURPOSE_MAP[pid]["template_id"]
+        check(T.TEMPLATE_MAP[tid].get("output") == "text",
+              "%s 的输出类型应是 text（实际 %r）" % (tid, T.TEMPLATE_MAP[tid].get("output")))
     check(not T.SCHEMAS, "Schema 留空（结构校验在 pack_spec 里做，不重复）")
 
 
