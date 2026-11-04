@@ -410,7 +410,7 @@ a7a516eaf82f5b9fdb8c17599d2b95422a23b464a8e987dcbf4ba54ce498fd88  *web/ui/studio
 ff644c0a729e14feb993e23ad646c1b8f7b798e853ec878622fc50dd5999e0cf  *web/ui/studio/js/views/canvas.js
 d92526ef3b52ba5b18c03bc3b26b4ddba8e99644f01985a3cd804c0a8d5e6058  *web/ui/studio/js/views/connections.js
 2ab001f3206d55bbdef7c37c06399211ff91cc767113a703b62b9304a7cec197  *web/ui/studio/js/views/cost.js
-9bc891e831b86d89dfc1b22ba9108994ef4f7d1776f67cf122110d5753a63ce3  *web/ui/studio/js/views/create.js
+10c0dfb8f0a002268d284c01db6ed72226bb5d3a26bb86b766e43fee1321d9e5  *web/ui/studio/js/views/create.js
 644db022365b1dd45b97df48d67e8872a7a04a06415bac76a89f5d21dac9c64f  *web/ui/studio/js/views/generators.js
 c520468a896913346c45f974db13a03ff7cac868409388db2da595d6d5b647f9  *web/ui/studio/js/views/graph.js
 ee51771ca24e8011a5197cc0ffc89e2810911da254a482f818fcd16b7e794ff7  *web/ui/studio/js/views/health.js

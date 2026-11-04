@@ -6,6 +6,7 @@
 
    画风纪律：Skill 定叙事套路，style_lock 定画风。这条在页面上写死，不靠人记。 */
 import { api } from '../api.js';
+import { runAction } from '../action.js';
 import { esc, icon, badge, toast, openModal, closeModal, paintIcons } from '../ui.js';
 
 const PIPE = [
@@ -144,6 +145,27 @@ export async function render(ctx) {
     + '<div style="color:var(--create);margin:6px 0 2px;font-size:var(--fs-13)">' + esc(next.label || '—') + '</div>'
     + '<div class="tiny dim" style="line-height:1.5">' + esc(next.why || '') + '</div></div>';
 
+  /* 制作包：创作与引擎之间那道闸。
+     没有它，导演手册写得再好也只是 Markdown —— 引擎读的是 06-提示词/<ep>/shots.json。
+     卡片放在「下一步」下面而不是塞进阶段列表：它不是第五个创作产物，
+     是一次转换，产物在引擎那边。 */
+  const packDone = st.pack.state === 'done';
+  const sidePack = '<div style="border:1px solid ' + (packDone ? 'var(--line-strong)' : 'var(--line)')
+    + ';border-radius:var(--r-md);padding:10px 12px;margin-top:10px">'
+    + '<div class="small"><b>制作包</b>'
+    + (packDone ? ' ' + badge('ok', '已导入 ' + st.pack.episodes.length + ' 集') : '') + '</div>'
+    + '<div class="tiny dim" style="margin-top:6px;line-height:1.6">'
+    + (packDone
+      ? '引擎读的是 <span class="mono">' + esc(st.pack.dir) + '</span>。改了导演手册之后要再来一次，否则改动不生效。'
+      : '引擎读 JSON 契约，不读 Markdown。这一步把导演手册转成 '
+        + '<span class="mono">' + esc(st.pack.dir) + '</span>。')
+    + '</div>'
+    + '<div class="row" style="gap:6px;margin-top:8px">'
+    + '<button class="btn primary sm" id="cvPack">'
+    + (packDone ? '重新导入' : '转制作包') + '</button>'
+    + (packDone ? '<button class="btn quiet sm" data-go="boards">去分镜</button>' : '')
+    + '</div></div>';
+
   const engine = st.engine;
   const sideEngine = '<div style="border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;margin-top:10px">'
     + '<div class="small"><b>引擎产物</b></div>'
@@ -164,7 +186,7 @@ export async function render(ctx) {
     + '<div>' + ideaCard(st)
     + (st.stages || []).map((s) => stageCard(s, ctx, st)).join('')
     + '</div>'
-    + '<div>' + sideSkill + sideStyle + sideNext + sideEngine
+    + '<div>' + sideSkill + sideStyle + sideNext + sidePack + sideEngine
     + '<div style="margin-top:10px"><button class="btn quiet sm" id="cvPrompt" style="width:100%">'
     + '看模型将收到的指令</button></div>'
     + '<div class="tiny dim" style="margin-top:10px;line-height:1.6">'
@@ -177,6 +199,26 @@ export async function render(ctx) {
       const go = (k) => { if (ctx.navigate) ctx.navigate(k); };
 
       root.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => go(b.dataset.go); });
+
+      /* 转制作包：写盘动作，走 runAction（有作业结果弹窗）。
+         失败时按钮必须恢复 —— 否则一次报错之后这个按钮就永远点不动了。 */
+      const packBtn = root.querySelector('#cvPack');
+      if (packBtn) packBtn.onclick = async () => {
+        packBtn.disabled = true;
+        const old = packBtn.textContent;
+        packBtn.innerHTML = '<span class="spinner"></span> 导入中';
+        try {
+          await runAction(ctx, {
+            specId: 'pack.import',
+            title: '转制作包（引擎契约）',
+            params: {},
+            onDone: () => setTimeout(() => ctx.refresh(), 1200)
+          });
+        } finally {
+          packBtn.disabled = false;
+          packBtn.textContent = old;
+        }
+      };
 
       const ideaEl = root.querySelector('#ciIdea');
       const saveIdea = async () => {
