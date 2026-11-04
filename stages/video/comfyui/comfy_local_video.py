@@ -504,6 +504,16 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
     if ids and ids[0] in wf and seconds is not None:
         wf[ids[0]]["inputs"]["value"] = float(seconds)
 
+    # ★ 2026-11-04：帧数（`length`）在 H3 上要 **INT**，而 ComfyMathExpression 输出 FLOAT ——
+    #   ComfyUI 提交前的类型校验会以 `return_type_mismatch` 直接拒掉整张图。
+    #   所以帧数不进连线：由 Python 侧按 frames_for(seconds) 算好，直接写成字面量。
+    #   判据只认 map 里显式声明的 `_length_node`，不猜节点，猜错会改到别的时间参数上。
+    lid = str(m.get("_length_node") or "")
+    if lid and lid in wf and seconds is not None:
+        ins = wf[lid].setdefault("inputs", {})
+        if "length" in ins:
+            ins["length"] = frames_for(seconds)
+
     ids = _roles(m, "steps")
     # `steps is None` = 沿用工作流原值。批处理里没有「步数」这个概念，
     # 传 None 比传一个猜出来的数字安全：猜大了慢，猜小了糊，而且都不报错。

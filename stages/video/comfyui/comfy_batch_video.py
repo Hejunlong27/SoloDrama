@@ -166,6 +166,10 @@ def main(argv=None) -> int:
     ap.add_argument("--force", action="store_true", help="已有产物也重跑")
     ap.add_argument("--submit", action="store_true", help="真的提交（占 GPU，不花钱）")
     ap.add_argument("--timeout-min", type=float, default=20.0)
+    ap.add_argument("--aspect", default=None,
+                    help="画幅，如 \"9:16 (Portrait Widescreen)\"；不传 = 用工作流默认")
+    ap.add_argument("--mp", type=float, default=None,
+                    help="目标兆像素（0.25 约 384x672）；8G 卡跑 100+ 帧建议 <=0.3")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
 
@@ -269,7 +273,7 @@ def main(argv=None) -> int:
                                 prompt=p["prompt"], ref_names=names,
                                 seconds=p["seconds"], steps=None,
                                 seed=int(time.time()) % 2_000_000_000,
-                                aspect=None, mp=None, prefix="h3_%s" % sid)
+                                aspect=a.aspect, mp=a.mp, prefix="h3_%s" % sid)
             res = V.submit_and_wait(wf2, timeout_min=a.timeout_min)
             files = res.get("files") or []
             if not files:

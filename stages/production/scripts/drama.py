@@ -172,6 +172,9 @@ _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]   # .../SoloDrama
 # ★ 2026-11-04：`SKILL` / `RUN_PY` / `CHECK_BILLING` 三个常量已删 —— 它们指向
 #   本地出片的入口是 stages/video/comfyui/comfy_batch_video.py。
 COMFY_VIDEO_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_local_video.py'
+# 批量出片的入口。★ 2026-11-04：这个常量一直没定义（删 RH 通道时漏了），
+#   `video run` 一调就 NameError —— 本地出片这条路径此前从未真正跑过。
+COMFY_BATCH_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_batch_video.py'
 MODEL_GATE_PY = SCRIPTS / 'model_gate.py'      # ★ 首次生图/出片前的模型选择门禁
 LOG_DIR = OUT / 'logs'
 
@@ -986,6 +989,10 @@ def cmd_video_local(args) -> int:
         cmd += ['--force']
     if getattr(args, 'timeout_min', None):
         cmd += ['--timeout-min', str(args.timeout_min)]
+    if getattr(args, 'mp', None):
+        cmd += ['--mp', str(args.mp)]
+    if getattr(args, 'aspect', None):
+        cmd += ['--aspect', str(args.aspect)]
     from _lock import single_instance
     try:
         with single_instance('video_run', WS):
@@ -1357,6 +1364,10 @@ def main() -> int:
     q.add_argument('--timeout-min', dest='timeout_min', type=float, default=None,
                    help='local：单镜轮询超时（分钟，默认 20）')
     q.add_argument('--yes', action='store_true', help='确认执行闸门（计费通道同时是计费闸门）')
+    q.add_argument('--mp', type=float, default=None,
+                   help='local：目标兆像素；8G 卡跑 100+ 帧建议 ≤0.3（0.25 约 384x672）')
+    q.add_argument('--aspect', default=None,
+                   help='local：画幅，如 "9:16 (Portrait Widescreen)"')
     q.add_argument('--limit', type=int)
     q.add_argument('--only')
     q.add_argument('--resume', metavar='BATCH_ID')
