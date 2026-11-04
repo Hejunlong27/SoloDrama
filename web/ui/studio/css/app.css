@@ -1191,3 +1191,65 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .mn-line.ok { stroke: var(--ok); }
 .mn-line.warn { stroke: var(--accent); }
 .mn-line.bad { stroke: #d65c5c; }
+
+/* ==========================================================================
+   剧集画布 P3：单镜编辑（2026-11-04）
+   参考图顺序用列表 + 上下移，不用拖拽：抽屉只有 560px 宽，3–6 项的列表
+   用两个按钮就够，拖拽在这个尺寸里是「更炫但更容易错」。
+   ========================================================================== */
+.cv-ord { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cv-ord-i {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--bg-inset);
+}
+.cv-ord-i.lock { border-color: var(--line-strong); background: var(--bg-hover); }
+.cv-ord-i .n { font-size: 10px; color: var(--txt-3); min-width: 52px; }
+.cv-ord-i .th {
+  width: 30px; height: 30px; flex: none; border-radius: var(--r-xs);
+  overflow: hidden; background: var(--bg-active);
+  display: flex; align-items: center; justify-content: center;
+}
+.cv-ord-i .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cv-ord-i .th .ph { font-size: 9px; color: var(--txt-3); }
+.cv-ord-i .lab {
+  font-size: var(--fs-12); color: var(--txt);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cv-ord-i .btn.xs { padding: 2px 6px; font-size: 11px; }
+/* chevron 的默认朝向是「∨」，所以上移按钮要转 180°。
+   原来只给 down 加了旋转，结果两个按钮的箭头都是反的 —— 看截图才发现。 */
+.cv-ord-i .btn.xs[data-up] svg { transform: rotate(180deg); }
+.cv-ord-i .btn.xs[data-down] svg { transform: none; }
+
+/* 保存条：放在正常流里，**不用 sticky**。
+   试过 sticky bottom:0，它会压在内容上 —— 滚动到底时最后一项（Mixed 4）被盖掉半行，
+   而那一行恰恰是要核对的对象。抽屉总共一屏多，滚到底点保存并不费力。 */
+.cv-save {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: var(--r-md);
+  border: 1px solid var(--line-strong); background: var(--bg-card);
+  margin-top: 4px;
+}
+.cv-errs { margin: 0; padding-left: 18px; font-size: var(--fs-12); line-height: 1.8; }
+.cv-errs.warn li { color: var(--accent); }
+.cv-errs li { color: var(--txt-2); }
+
+/* ---------- 剧集画布：多选与批量重跑 ---------- */
+.cv-cell.sel {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  z-index: 2;
+}
+/* 浮动操作条：只在有选中时出现。用 fixed 而不是贴在表格里 ——
+   30 集时要滚到第 25 行才看见「已选 3 镜」，那这个提示等于没有。 */
+.cv-selbar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 22px; z-index: 30;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; border-radius: 999px;
+  background: var(--bg-card); border: 1px solid var(--line-strong);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .5);
+}
+.cv-selbar b { font-family: var(--font-mono); font-size: 15px; color: var(--accent); }
+.cv-selbar .warn { color: var(--accent); }

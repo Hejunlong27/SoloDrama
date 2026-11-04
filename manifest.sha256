@@ -28,7 +28,7 @@ b023d976e2bd0d8d5e5ec8342fc32d9b7a6f37b7e7aa735467292ec79bc8b1ff  *configs/skill
 bef4d3ea3c9f6068c18decadb2f4dade13a61150d4777dcd6e38ca0ede029541  *docs/AGENT-PLAN.md
 e788bd7bf6629b31bab90dc66f13cdd2f791d3acb0588cddf32f1373851a6414  *docs/Agent项目技术文档.md
 cc6dade5e8936ae907366179bab866c4a8ad05887feb793ed6861ef8893caec8  *docs/BRANCH-ENGINE.md
-5c61756c43afbeda3b9687bc17e883bf967d261a2ea98e17addd0b6f56e46f7e  *docs/CANVAS-PLAN.md
+5708c3ae04ad7ccc236e3d6fdfc3c2de1558132be2b4893e9288116d8711530d  *docs/CANVAS-PLAN.md
 8056b7fb3e46df985ef446861ac225eb37e76ea16b835dda83d34344df75313a  *docs/CREATION.md
 f6ad54272a1c9890a151b4d18514cd83d053ee75e7fdd5d7d4d1f4f2c372389d  *docs/可行性检查报告.md
 578b4cd22914ad8fe1ec8c70647e8dcc4f27a29f999ac611610b7f59b45c1ede  *docs/待修清单.md
@@ -308,13 +308,13 @@ d5492c0d61b6cd93d8f9467002f25f19b227c53245030c50094436318513bb74  *start.cmd
 f1047e25bde6868ab9d74c68ef003d3334dd8504bb334d7e478e8b88c46aadaa  *tools/tests/test_escape_corruption.py
 4eb95559483409251b596432b5c64835751ab3b4fd88b0cf7705b9d93830c6c8  *tools/tests/test_repo_paths.py
 c65d6e549ddd70742a01d794312d3f1448a711db610759cc2b1502fc16c5e616  *web/README.md
-afa434a758011bd58189670f0f7d7633f01410b6d89d48a5ae4ab42401325212  *web/STUDIO.md
-825edf97f2ec460ede2e10b6b3c6e491d69cfd3bea41ac18e4007f6a5c04e58b  *web/app.py
+32114a67353dbf001430016caeac93b0e7c9387ffca1b738146c6dd82752e748  *web/STUDIO.md
+a509dd95eb3223cf60927c760aeb94c026489af7220dd985cf62fd3af53a0d4a  *web/app.py
 5908ab054edcebd70f66c9e1761453a8109abc745080a394cf91681b305bc7d3  *web/core/__init__.py
 d440d869dd0f4da33a49ca3c4fa5d00dd0ba75af962c704906d2db1e67f59ae0  *web/core/adapters.py
 a5a284d5660b419dac18fb2e90e926fc8fcf75b7e844baeac214e46dea8c22b1  *web/core/agent.py
 88aa25060b81326fe8ee52020064313b0b41b12d7a952512a0d3f710980b9dc5  *web/core/artifacts.py
-93f7deb9270b767c1c0df5bb6b2ae3de79d274add59596a41ade19e352209b4f  *web/core/canvas.py
+c4c90b80f192b21db7977aff9d9b3b5d9e53369f70f9a5a45ec6f6f10e736a55  *web/core/canvas.py
 29922623a98fc0b4717104e1017a358cd5d4237d726fdc5b6197136f15d29a64  *web/core/comfy_launcher.py
 6f221b4282ca499ddcb17ee71795ad15f613134d6e6f47d974128c122ee2e887  *web/core/comfy_ports.py
 74016ab6194c9574fbd955853174c2cc3ca66e4f9195a7bddbb21e2555bf03e3  *web/core/comfy_probe.py
@@ -354,6 +354,7 @@ e54fbd29a72395333b58e8b7f79a785fc5c6256cd57b53efff5c6bf1e10ea142  *web/run_conso
 bfed2d1cef127cf01ec2819196e6bad170eae4c0e782aceb21dfd870c83179bf  *web/tests/test_agent.py
 12e8e367d3bfd1cbd5005409ca9d69e4b83bc803515bbe028d5363a834828091  *web/tests/test_assets_page.py
 69f108cd21f485b237a829417b006ec2b9788e8a6f3af2f5cdca57af973c5e59  *web/tests/test_canvas.py
+78a724af90a0a7be17e5ce78f94af7b1922c28edd478b7d95eb550ed38243c3d  *web/tests/test_canvas_edit.py
 bb431bb3bb617847175760b3ee796b0c870a7bb2f9e7d8f48b0e140207b230a1  *web/tests/test_comfy_boot.py
 a0e315e690385ea695ad3690588b3ee77a8b142b8b1fde57f205fdfb3d766de6  *web/tests/test_commands.py
 0e93f0cd9c97a7a3b5b0d83f05215222f4170a92a383a76cb1bf44553812e468  *web/tests/test_connections.py
@@ -381,7 +382,7 @@ d031354eae415a04f263c847098f8f50a798ee65d389c65fe463b7309bd408df  *web/tests/tes
 f25a24eb21f207429c1ab3a93c5c39d3ef3aed54690b02aefbced6a8e7066014  *web/ui/app.js
 a1f6a848bd4f2d15e2f8c9e93311d29252ffc2f9c706e8fe41f7c05dbd21e677  *web/ui/home.js
 9de55acd984002734b83a26bdf0c9894eeab48521042257af8d4bb81907b7db0  *web/ui/index.html
-30a7e570438b45a73b1e2dcf2bed8c2ab4928aee38d7cf54ec9f24228e2216a8  *web/ui/studio/css/app.css
+3ba229d2f67528b89c32591872dfa7e1e331ba2f75b9c0dce65a7fd6c72d1f17  *web/ui/studio/css/app.css
 19091f1ace8bef9ae8e8375084fcf22446598ceaa5d3ea1f648395af53ee6eaf  *web/ui/studio/css/tokens.css
 f20915cfe96f6a14201d9e0df9858cb48eac996a7c962873f6632f693a5af9b1  *web/ui/studio/img/apple-touch-icon.png
 0b59ae36b3e3b1f503b2b42d5c11c14c9e98d0d139fab7ec2696d4bce471b0cf  *web/ui/studio/img/favicon-16.png
@@ -395,10 +396,10 @@ f84c907bf6675ad68a91259a47dc0a64cfc039ef8b46531a2b0baf8b7f36d164  *web/ui/studio
 31834a720ae4f5bf368a47fe435b77b5ad1111fea0e049100dea43fd45852783  *web/ui/studio/img/logo-maskable.svg
 f6696ff4ca37b9b92a26b09dab6a470218781e5da9c141c6962adcb36a727fa5  *web/ui/studio/img/logo-square.svg
 e84c2de31e6e3e869948c78ab469edd5d1b48c6ac72120a54acc934efeaaeef4  *web/ui/studio/img/logo.svg
-9a988cbaeb043cd83dac47965eb0b0cb5b08ad80d7e395219c4554f50b5e2609  *web/ui/studio/index.html
+1c559589a1bed96a1fedf045cc14b8adce7b20e3b480905cd4e26a6d6e458463  *web/ui/studio/index.html
 42b9153e14e48ce2289d76a99f201e4ee461a9a24652a745bc273c16d1438b45  *web/ui/studio/js/action.js
 99a3aff40de07f7742cd39bce84f635c4f3b1e658b916ec9fd0af648aec98f94  *web/ui/studio/js/agent-panel.js
-4f2cef8ae04db5bb1cfc8423b207aa82c47a0c4d8a7821ec9b07f1e1c965d701  *web/ui/studio/js/api.js
+57f9c351b45e8de2221c09d9b82d8b0cc88388017edf562cc330d4c6821ee021  *web/ui/studio/js/api.js
 46dcaaeb2c1aad426e7acc50a3bce2991fc3f4dc12dbd5c956211ed8c68badc7  *web/ui/studio/js/float.js
 8858a206c7213060d21c18c731071531dc7c3144010bb96343e2677d493b1d5f  *web/ui/studio/js/main.js
 a1be53aef77ce0242fe22ff072090bc7d2dfcff9d3bee1af76142f3834e3ab0a  *web/ui/studio/js/monitor.js
@@ -407,7 +408,7 @@ b8189a17b11a67e82da9319a9dfc7c22ad50d07335caac49de9fe69cb082edaa  *web/ui/studio
 e8bba1b6ab333f1f15e20b312e044fd75b2889b2db4f68a48c3a451f2db2cf44  *web/ui/studio/js/views/agent.js
 a7a516eaf82f5b9fdb8c17599d2b95422a23b464a8e987dcbf4ba54ce498fd88  *web/ui/studio/js/views/assets.js
 77a0e0299981af87b4b5ceed99c1391fc1a735428330e1453a22e0b0025e5d9b  *web/ui/studio/js/views/boards.js
-ff644c0a729e14feb993e23ad646c1b8f7b798e853ec878622fc50dd5999e0cf  *web/ui/studio/js/views/canvas.js
+8a90f19b780f61062e9efcc56c1e0b5cadab03c8960319f314d015035e0a9e68  *web/ui/studio/js/views/canvas.js
 d92526ef3b52ba5b18c03bc3b26b4ddba8e99644f01985a3cd804c0a8d5e6058  *web/ui/studio/js/views/connections.js
 2ab001f3206d55bbdef7c37c06399211ff91cc767113a703b62b9304a7cec197  *web/ui/studio/js/views/cost.js
 10c0dfb8f0a002268d284c01db6ed72226bb5d3a26bb86b766e43fee1321d9e5  *web/ui/studio/js/views/create.js

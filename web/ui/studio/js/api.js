@@ -168,6 +168,8 @@ export const api = {
   /* 剧集画布：不加 TTL —— 它表达的是「磁盘上现在有什么」，缓存会让人以为刚出完的片没出来 */
   canvasSeries: (ws) => get('/api/canvas/series', { ws }),
   canvasShot: (ws, ep, shot) => get('/api/canvas/shot', { ws, ep, shot }),
+  /* 写回一镜（P3）。不带缓存：保存完立刻要读新值 */
+  canvasSaveShot: (body) => post('/api/canvas/shot', body),
 
   /* 节点画布：一张图两种模式（流水线自动排布 / 精细化自己拖、自己连） */
   graph: (ws, ep) => get('/api/graph', { ws, ep }),

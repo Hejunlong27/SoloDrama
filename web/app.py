@@ -866,6 +866,32 @@ def canvas_shot(ws: str = Query(...), ep: str = Query(...), shot: str = Query(..
     return canvas.shot(str(_require_ws(ws)), ep, shot)
 
 
+@app.post("/api/canvas/shot")
+def canvas_shot_save(payload: dict = Body(...)):
+    """写回一镜（P3）：时长 / 提示词 / 参考图顺序。
+
+    ★ 为什么不用 `confirm=true` 那道闸：这不是计费动作，也不是跑引擎，
+      是**改配置**。它已经有更强的保护 —— 写前备份、写前自检、出错整体不写。
+      再叠一层确认只会让人随手点「确认」，反而把「这里会改磁盘上的提示词」
+      这件事变成一次无意识的点击。
+
+    函数名不能叫 `canvas_shot` 的同名变体（路由重名会静默覆盖 GET）。
+    """
+    _write_guard()
+    ws = str(_require_ws(payload.get("ws")))
+    ep = str(payload.get("ep") or "")
+    shot = str(payload.get("shot") or "")
+    order = payload.get("order")
+    if order is not None and not isinstance(order, list):
+        return {"ok": False, "errors": ["order 必须是数组（完整的上传顺序标签）"]}
+    return canvas.save_shot(
+        ws, ep, shot,
+        duration=payload.get("duration"),
+        prompt=payload.get("prompt"),
+        order=order,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 节点画布：一张图两种模式（流水线 = 自动排布；精细化 = 自己拖、自己连）
 #   实线是引擎依赖（带锁、不可删），虚线是用户的编排意图（不影响执行顺序）。

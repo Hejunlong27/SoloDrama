@@ -11,11 +11,16 @@
    为什么只读：先让人判断「这个空间结构对不对」。改结构比改交互便宜十倍。
    ============================================================ */
 import { api, mediaUrl } from '../api.js';
-import { esc, icon, badge, toast, openDrawer, bytes } from '../ui.js';
+import { runAction } from '../action.js';
+import { esc, icon, badge, toast, openDrawer, openModal, bytes } from '../ui.js';
 
 /* 模块级状态：切页回来还保持筛选（否则每次都要重选「只看缺口」） */
 let filter = 'all';        // all | gap | done
 let hideEmpty = false;
+/* 多选：`ep|shot`。放模块级 —— 切页回来还在，和 filter 一致。 */
+let picked = new Set();
+let anchorKey = '';        // Shift 范围选择的起点
+let deepDone = false;      // `?shot=ep01/shot_002` 只消费一次
 
 const STATE_CN = { done: '已出片', board: '有分镜图', todo: '待出片' };
 
@@ -185,8 +190,16 @@ export async function render(ctx) {
     <div class="card-foot">
       <span class="stamp"><i class="dot todo"></i>${num(t.with_pack)} 集有制作包${t.expected_ep ? ' · 目标 ' + num(t.expected_ep) + ' 集' : ''}</span>
       <span class="spacer"></span>
-      <span class="tiny dim">只读 · 画布不写磁盘</span>
-    </div></div>`;
+      <span class="tiny dim">Ctrl/⌘ 点选多镜 · Shift 选连续一段</span>
+    </div></div>
+
+    <div class="cv-selbar hide" id="cvSelBar">
+      <b id="cvSelN">0</b><span class="tiny dim">镜已选</span>
+      <span class="tiny dim" id="cvSelHint"></span>
+      <span class="spacer"></span>
+      <button class="btn quiet sm" id="cvSelClear">清空</button>
+      <button class="btn primary sm" id="cvSelRun">重跑选中的镜</button>
+    </div>`;
 
   return {
     html,
@@ -221,9 +234,89 @@ export async function render(ctx) {
       const rf = root.querySelector('#cvRefresh');
       if (rf) rf.onclick = () => ctx.refresh();
 
-      root.querySelectorAll('.cv-cell').forEach((b) => {
-        b.onclick = () => openShot(ctx, b.dataset.ep, b.dataset.shot);
+      /* ---- 选中与批量重跑 ---- */
+      const bar = root.querySelector('#cvSelBar');
+      const barN = root.querySelector('#cvSelN');
+      const barHint = root.querySelector('#cvSelHint');
+      const barRun = root.querySelector('#cvSelRun');
+      const allCells = [...root.querySelectorAll('.cv-cell')];
+      const keyOf = (b) => b.dataset.ep + '|' + b.dataset.shot;
+
+      const syncSel = () => {
+        allCells.forEach((b) => b.classList.toggle('sel', picked.has(keyOf(b))));
+        const n = picked.size;
+        if (bar) bar.classList.toggle('hide', n === 0);
+        if (barN) barN.textContent = n;
+        /* 出片是按集跑的（`drama video run --ep <集> --only ...`），跨集一次跑不了。
+           这里先拦并说清为什么 —— 让人点了按钮才被告知，比按钮灰着更烦。 */
+        const eps = new Set([...picked].map((k) => k.split('|')[0]));
+        const cross = eps.size > 1;
+        if (barRun) {
+          barRun.disabled = cross;
+          barRun.textContent = cross ? '重跑（需同一集）' : '重跑选中的镜';
+        }
+        if (barHint) {
+          barHint.textContent = cross
+            ? '选了 ' + eps.size + ' 集 —— 出片按集跑，一次只能重跑同一集的镜头'
+            : (eps.size ? '集 ' + [...eps][0] : '');
+          barHint.classList.toggle('warn', cross);
+        }
+      };
+
+      allCells.forEach((b) => {
+        b.classList.toggle('sel', picked.has(keyOf(b)));   // 切页回来恢复选中
+        b.onclick = (e) => {
+          const k = keyOf(b);
+          if (e.ctrlKey || e.metaKey) {
+            if (picked.has(k)) picked.delete(k); else picked.add(k);
+            anchorKey = k;
+            syncSel();
+            return;
+          }
+          if (e.shiftKey && anchorKey) {
+            const a = allCells.findIndex((x) => keyOf(x) === anchorKey);
+            const z = allCells.indexOf(b);
+            if (a >= 0 && z >= 0) {
+              const [lo, hi] = a < z ? [a, z] : [z, a];
+              for (let i = lo; i <= hi; i += 1) picked.add(keyOf(allCells[i]));
+              syncSel();
+            }
+            return;
+          }
+          anchorKey = k;
+          openShot(ctx, b.dataset.ep, b.dataset.shot);
+        };
       });
+
+      const clr = root.querySelector('#cvSelClear');
+      if (clr) clr.onclick = () => { picked.clear(); anchorKey = ''; syncSel(); };
+
+      if (barRun) barRun.onclick = () => {
+        const eps = new Set([...picked].map((k) => k.split('|')[0]));
+        if (eps.size !== 1) { toast('一次只能重跑同一集的镜头', 'warn'); return; }
+        const ep = [...eps][0];
+        const shots = [...picked].map((k) => k.split('|')[1]);
+        runAction(ctx, {
+          specId: 'video.run',
+          title: '重跑 ' + shots.length + ' 镜（' + ep + '）',
+          params: { ep, only: shots.join(','), yes: true, force: true },
+          onDone: () => setTimeout(() => { picked.clear(); ctx.refresh(); }, 800)
+        });
+      };
+      syncSel();
+
+      /* `?shot=ep01/shot_002` 直接打开这一镜。两个用处：
+         ① 从别处（聊天/文档）贴一个链接就能定位到具体镜头；
+         ② 只消费一次 —— 保存后 ctx.refresh() 会重跑 mount，不清标记会一直重开。 */
+      if (!deepDone) {
+        const want = new URLSearchParams(location.search).get('shot') || '';
+        if (want.includes('/')) {
+          deepDone = true;
+          const i = want.indexOf('/');
+          openShot(ctx, want.slice(0, i), want.slice(i + 1));
+        }
+      }
+
       applyFilter();
     }
   };
@@ -312,31 +405,204 @@ async function openShot(ctx, ep, shotId) {
     + '<dt>数据目录</dt><dd class="mono small">' + esc(d.files) + '</dd>'
     + '</dl>';
 
-  const prompt = (d.prompt && d.prompt.text)
-    ? '<pre class="log" style="max-height:240px">' + esc(d.prompt.text) + '</pre>'
-      + '<div class="row" style="margin-top:8px"><button class="btn quiet sm" id="cvCopy">'
-      + icon('copy', 12) + ' 复制提示词</button>'
-      + '<span class="tiny dim">只读：提示词由制作包给定，改它要回制作包</span></div>'
-    : '<div class="alert warn"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-      + '这一镜没有提示词（<span class="mono">h3_prompts.json</span> 里没有这条）。</div></div>';
+  /* 提示词直接可编辑。原来这里是 <pre> + 复制按钮，理由是「提示词由制作包给定」——
+     但实测最常改的就是它：一句话不通顺、时间轴写错、画面描述和分镜图不一致。
+     逼人回制作包改再重新导入，等于让一个小改动走三步。 */
 
   body.innerHTML = '<div class="stack">'
     + '<div class="row" style="flex-wrap:wrap">' + meta.join('') + '</div>'
     + chainHtml(d)
     + media
     + kv
-    + '<div><div class="card-h" style="padding:0 0 6px;border:0"><h3>参考图</h3>'
-    + '<span class="card-sub">顺序 = 提示词里的 {{Mixed n}} 图号，不能单独换</span></div>'
-    + castHtml(d.cast, ctx.ws) + '</div>'
+    + '<div><div class="card-h" style="padding:0 0 6px;border:0"><h3>参考图顺序</h3>'
+    + '<span class="card-sub">第 1 张固定是分镜图；其余就是提示词里的 {{Mixed n}}</span></div>'
+    + orderEditor(d, ctx.ws) + '</div>'
     + '<div><div class="card-h" style="padding:0 0 6px;border:0"><h3>提示词</h3>'
-    + '<span class="card-sub">六段式</span></div>' + prompt + '</div>'
-    + '</div>';
+    + '<span class="card-sub">六段式 · 改完要保存</span></div>' + promptEditor(d) + '</div>'
+    + saveBar(d) + '</div>';
 
+  mountEditor(body, ctx, d, ep, shotId);
+}
+
+
+/* ---------- 参考图顺序（P3 可编辑） ---------- */
+function orderEditor(d, ws) {
+  const order = d.order || [];
+  const cast = d.cast || [];
+  if (!order.length) {
+    /* 没有「上传顺序」行时**不给**调顺序的界面。这不是偷懒：
+       没有那一行就不知道第 2 张是 P02 还是 S01，调了只能靠猜，
+       而猜错的表现是成片里人物换了脸 —— 到那时已经花掉 GPU 时间了。 */
+    return '<div class="alert warn"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+      + '这一镜的提示词里没有可用的「上传顺序」行，所以不知道第几张是哪个参考图，顺序不能调。'
+      + '<div class="tiny" style="margin-top:4px;opacity:.85">要调就先在下面的提示词里补一行，'
+      + '格式：<span class="mono">上传顺序：Mixed 1＝F01 分镜图｜Mixed 2＝P01 LOOK-A｜Mixed 3＝S01</span>'
+      + '</div></div>' + castHtml(d.cast, ws);
+  }
+  const rows = order.map((lab, i) => {
+    const isBoard = i === 0;
+    const c = cast[i - 1] || {};
+    const thumb = isBoard
+      ? (d.board && d.board.rel
+        ? '<img src="' + esc(mediaUrl(ws, d.board.rel)) + '" alt="">'
+        : '<span class="ph">分镜</span>')
+      : (c.rel ? '<img src="' + esc(mediaUrl(ws, c.rel)) + '" alt="">' : '<span class="ph">缺图</span>');
+    return '<li class="cv-ord-i' + (isBoard ? ' lock' : '') + '" data-label="' + esc(lab) + '">'
+      + '<span class="n mono">Mixed ' + (i + 1) + '</span>'
+      + '<span class="th">' + thumb + '</span>'
+      + '<span class="lab">' + esc(lab)
+      + (isBoard ? ' <span class="dim">· 固定第 1</span>'
+        : (c.missing ? ' <span class="dim">· 资产表里没登记</span>' : '')) + '</span>'
+      + '<span class="spacer"></span>'
+      + (isBoard ? '<span class="tiny dim">锁</span>'
+        : '<button class="btn quiet xs" data-up="1" title="上移">' + icon('chevron', 12) + '</button>'
+          + '<button class="btn quiet xs down" data-down="1" title="下移">' + icon('chevron', 12) + '</button>')
+      + '</li>';
+  }).join('');
+  return '<ul class="cv-ord" id="cvOrder">' + rows + '</ul>'
+    + '<div class="tiny dim" style="margin-top:6px;line-height:1.6">'
+    + '顺序变了，提示词里的图号会跟着重排（<span class="mono">{{Mixed 2}}</span> 这类引用），'
+    + '其余文字一个字不动。保存前会给对照。</div>';
+}
+
+function promptEditor(d) {
+  const t = (d.prompt && d.prompt.text) || '';
+  if (!t) {
+    return '<div class="alert warn"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+      + '这一镜没有提示词（<span class="mono">h3_prompts.json</span> 里没有这条）。'
+      + '可以在下面直接写，保存后会建上。</div></div>'
+      + '<textarea class="textarea mono" id="cvPrompt" rows="10" spellcheck="false"'
+      + ' style="font-size:12px;line-height:1.6"></textarea>';
+  }
+  return '<textarea class="textarea mono" id="cvPrompt" rows="14" spellcheck="false"'
+    + ' style="font-size:12px;line-height:1.6">' + esc(t) + '</textarea>'
+    + '<div class="row" style="margin-top:6px;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn quiet xs" id="cvCopy">' + icon('copy', 12) + ' 复制</button>'
+    + '<span class="tiny dim" id="cvStat">' + t.length + ' 字</span>'
+    + '<span class="tiny dim">保存会先备份，最多留 5 份</span></div>';
+}
+
+function saveBar(d) {
+  const dur = (d.prompt && d.prompt.duration) || '';
+  return '<div class="cv-save">'
+    + '<label class="tiny dim">时长（秒）'
+    + '<input class="input mono" id="cvDur" type="number" min="4" max="15" step="1"'
+    + ' value="' + esc(dur) + '" style="width:74px;margin-left:6px"></label>'
+    + '<span class="tiny dim" id="cvDurHint">H3 单段 4–15 秒</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn quiet" id="cvReset">重置</button>'
+    + '<button class="btn primary" id="cvSave">' + icon('check', 14) + ' 保存修改</button>'
+    + '</div>';
+}
+
+/* ---------- 编辑器交互 ---------- */
+function mountEditor(body, ctx, d, ep, shotId) {
+  const ul = body.querySelector('#cvOrder');
+  const ta = body.querySelector('#cvPrompt');
+  const durEl = body.querySelector('#cvDur');
+  const stat = body.querySelector('#cvStat');
+
+  const baseline = {
+    order: ul ? [...ul.querySelectorAll('.cv-ord-i')].map((li) => li.dataset.label) : [],
+    prompt: ta ? ta.value : '',
+    duration: durEl ? durEl.value : '',
+  };
+
+  const renumber = () => {
+    if (!ul) return;
+    [...ul.querySelectorAll('.cv-ord-i')].forEach((li, i) => {
+      const n = li.querySelector('.n');
+      if (n) n.textContent = 'Mixed ' + (i + 1);
+    });
+  };
+
+  const move = (btn, dir) => {
+    const li = btn.closest('.cv-ord-i');
+    if (!li || li.classList.contains('lock')) return;
+    if (dir < 0) {
+      const prev = li.previousElementSibling;
+      /* 第 1 项是分镜图，它固定在第一个槽位 —— 不让它被越过。
+         越过它改的是「分镜图还是不是第 1 张」，那不是顺序问题，是换槽位。 */
+      if (!prev || prev.classList.contains('lock')) return;
+      ul.insertBefore(li, prev);
+    } else {
+      const next = li.nextElementSibling;
+      if (!next) return;
+      ul.insertBefore(next, li);
+    }
+    renumber();
+  };
+  if (ul) {
+    ul.querySelectorAll('[data-up]').forEach((b) => { b.onclick = () => move(b, -1); });
+    ul.querySelectorAll('[data-down]').forEach((b) => { b.onclick = () => move(b, 1); });
+  }
+
+  if (ta && stat) {
+    ta.oninput = () => { stat.textContent = ta.value.length + ' 字'; };
+  }
   const cp = body.querySelector('#cvCopy');
   if (cp) {
     cp.onclick = async () => {
-      try { await navigator.clipboard.writeText(d.prompt.text); toast('已复制'); }
+      try { await navigator.clipboard.writeText(ta.value); toast('已复制'); }
       catch (e) { toast('复制失败（浏览器限制）', 'warn'); }
     };
   }
+
+  const reset = () => {
+    if (ta) { ta.value = baseline.prompt; if (stat) stat.textContent = ta.value.length + ' 字'; }
+    if (durEl) durEl.value = baseline.duration;
+    if (ul && baseline.order.length) {
+      const byLabel = {};
+      [...ul.querySelectorAll('.cv-ord-i')].forEach((li) => { byLabel[li.dataset.label] = li; });
+      baseline.order.forEach((lab) => { if (byLabel[lab]) ul.appendChild(byLabel[lab]); });
+      renumber();
+    }
+    toast('已回到打开时的状态');
+  };
+  const rb = body.querySelector('#cvReset');
+  if (rb) rb.onclick = reset;
+
+  const save = async () => {
+    const btn = body.querySelector('#cvSave');
+    const old = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 保存中';
+    try {
+      const payload = { ws: ctx.ws, ep, shot: shotId };
+      if (ul) payload.order = [...ul.querySelectorAll('.cv-ord-i')].map((li) => li.dataset.label);
+      if (ta) payload.prompt = ta.value;
+      if (durEl && durEl.value !== '') payload.duration = Number(durEl.value);
+      const r = await api.canvasSaveShot(payload);
+      if (!r || !r.ok) {
+        openModal({
+          title: '没有保存', icon: 'alert', tone: 'bad',
+          html: (r && r.errors && r.errors.length)
+            ? '<ul class="cv-errs">' + r.errors.map((e) => '<li>' + esc(e) + '</li>').join('') + '</ul>'
+            : '<div class="small">保存失败，引擎没有给出原因。</div>',
+          foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">关闭</button>'
+        });
+        return;
+      }
+      const changed = (r.changed || []).join('；') || '没有实际改动';
+      toast('已保存：' + changed, r.warnings && r.warnings.length ? 'warn' : 'ok');
+      if (r.warnings && r.warnings.length) {
+        openModal({
+          title: '保存了，但有一处要你确认', icon: 'alert',
+          html: '<ul class="cv-errs warn">' + r.warnings.map((w) => '<li>' + esc(w) + '</li>').join('') + '</ul>',
+          foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">知道了</button>'
+        });
+      }
+      ctx.refresh();
+      /* 重开抽屉：时长/图号/字数都变了，就地改 DOM 容易和真实数据不一致。
+         重拉一次是最便宜的一致做法（单镜接口几毫秒）。 */
+      setTimeout(() => openShot(ctx, ep, shotId), 260);
+    } catch (e) {
+      toast('保存失败：' + (e.detail || e.message), 'bad');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = old;
+    }
+  };
+  const sb = body.querySelector('#cvSave');
+  if (sb) sb.onclick = save;
 }
