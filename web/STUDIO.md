@@ -98,7 +98,7 @@ web/var/llm/usage.jsonl    每次调用：用途 / 模型 / token / 金额 / 耗
 | 项目详情    | **7 环节 / 23 节点**判据（`drama nodes --json`）、集数规划、产物目录、开工前置、阶段推进                                              | `/api/studio/workflow`、`/api/studio/setup`、`/api/episodes`、`/api/artifacts`                                                                |
 | 剧集画布    | **横向镜号 × 纵向集号的一屏格子**（P1 只读）：一格 = 一镜，状态只认磁盘（出片绿 / 有分镜图青点 / 待出片虚线 / 无此镜淡格）；表头下常驻「每列还有几集没出片」缺口行；左列每集 5/8 + 进度条；点一格开四段链抽屉（参考图缩略 → 提示词原文 → 时长/画幅 → 成片可播）；筛选（全部 / 有缺口 / 已完成）+ 隐藏无制作包的集 | `/api/canvas/series`、`/api/canvas/shot`（只读，扫描 `06-提示词/<ep>/shots.json` + `04-资产/boards/<ep>/` + `07-成片/*/<shot>/final.mp4` + `09-发行/剧集/`） |
 | 创作中心    | 前 5 个环节完成度（research / script / asset / board / prompt，取自节点状态）、5 个免费校验、**AI 剧本正文闭环**（预览提示词 → 生成草稿 → 编辑 → 确认落盘）       | `/api/studio/workflow`、`/api/run`、`/api/studio/script/*`、`/api/llm/preview`                                                                |
-| 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI，￥0，只占 GPU 时间；**不调任何云端 API**）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
+| 资产中心 | 角色/场景/道具/参考图浏览（缩略图 + 原图抽屉）、**散图**（标准目录之外、只读扫描）、缺口清单、**真实出图**（本地 ComfyUI，￥0，只占 GPU 时间）、出图器体检、参考图体检 | `/api/artifacts`、`/api/artifacts/loose`、`/media`、`/api/studio/asset-md`、`/api/run`（`assets.*` `refs.*`） |
 | 流水线 | **7 个环节、23 个节点串成一条可执行的线**：连跑 / 逐步确认两种模式、预算内自动放行、遇「前置未齐 / 需人工 / 计费估不出来」停下并说明原因；**每行一个可点的大按钮**（运行此步 `only=` 只跑这一条 / 打开对应页面） | `/api/pipeline/plan`（只读计划）、`/api/pipeline/run`（执行，默认 dry_run） |
 | 分镜与视频   | 镜头表（跨批次按镜头去重）、提示词抽屉、产物预览、**本地出片**（￥0，只占 GPU 时间；确认单 + 续跑批次号）                                      | `/api/studio/shots`、`/api/studio/prompt`、`/media`、`/api/run`（428 确认单 + 续跑批次号）                                                              |
 | 后期制作    | 拼接/放大/字幕的现状与产物、G6「要不要加字幕」停点                                                | `/api/studio/shots`、`/api/run`（`upscale.*` `subtitle.*`）                                                                                   |
@@ -306,8 +306,8 @@ python web/tools/verify_llm_loop.py
 
 - **端口**：默认 8788（`web/run_console.py` 的约定值），不是 8000。
 - **Windows 上 `.js` 的 MIME**：`app.py` 已显式钉住，避免注册表把 `.js` 报成 `text/plain` 导致 module 加载失败。
-- **ComfyUI / RunningHub 的"连接状态"**：页面只显示**配置状态**（来自 G-0 九项）；  
-  真正的连通性要显式点「检测」（ComfyUI，0 费用）或在「分镜与视频」跑「小样 1 段」（RunningHub，计费）。  
+- **ComfyUI 的"连接状态"**：页面只显示**配置状态**（来自 G-0 九项）；  
+  真正的连通性要显式点「检测」（0 费用）。  
   打开页面时**不会**自动联网探测。
 - **`store.public_provider()` 会把 `key_status` 摊平到顶层**：它做的是
   `out.update(key_status(prov))`，所以 `has_key` 在**顶层**，`p["key_status"]["has_key"]` 恒为 None。
@@ -362,10 +362,7 @@ python web/tools/verify_llm_loop.py
 | --- | --- | --- | --- | --- |
 | `image.local.t2i` | 本地 ComfyUI | 文生图 | `stages/assets/comfyui/workflow_qwen_image21.json`（Qwen-Image 2.1 int8 + 4step turbo） | ￥0 |
 | `image.local.i2i` | 本地 ComfyUI | 图生图 | **未内置**（现用工作流是纯文生图，没有加载图像节点） | ￥0 |
-| `image.rh.t2i` | RH 工作流 | 文生图 | `image_providers[active].id` + `nodes.prompt.nodeId` | 按点数 |
-| `image.rh.i2i` | RH 工作流 | 图生图 | `image_providers[active].id_i2i` + `nodes.image.nodeId` | 按点数 |
 | `video.local.i2v` | 本地 ComfyUI | 图生视频 | `stages/video/comfyui/workflow_h3_local.json`（MiniMax H3 多参 · 4 步） | ￥0 |
-| `video.rh.workflow` | RH 工作流 | 图生视频 | `h3.id` + `h3.nodes` | 27 RH币/任务 + 1 币/秒 |
 
 ### 9.1 为什么文生图与图生图必须分成两条
 
@@ -375,9 +372,6 @@ python web/tools/verify_llm_loop.py
 * 两个 id 各取各的（`id` / `id_i2i`），**互不兜底**；
 * 图生图必须先上传参考图，把返回的**平台文件名**写进 `nodes.image` 指定的节点；
 * 缺 `nodes.image.nodeId` 时状态直接判「待配置」，不允许提交。
-
-界面「生成通道」页有「配置云端工作流」按钮，四个输入框写进项目配置，**写前自动备份**，
-只改 `image_providers` 这一条，其余键原样保留。
 
 ### 9.2 本地出片（H3）的实测口径
 
@@ -421,8 +415,8 @@ python comfy_local_video.py --workflow 新工作流.json --check         # ④ �
 
 ### 9.4 已知限制
 
-* **第三方加速节点会随版本变签名**。本机 `SolAttnMiniMax` 的 `execute()` 比云端版本多一个必填
-  `selection` 参数，拿云端导出的工作流直接跑会在该节点 `TypeError`。`--check` 只能核对「节点存不存在」，
+* **第三方加速节点会随版本变签名**。本机 `SolAttnMiniMax` 的 `execute()` 多一个必填
+  `selection` 参数，拿别处导出的工作流直接跑会在该节点 `TypeError`。`--check` 只能核对「节点存不存在」，
   **签名兼容性只能运行时发现** —— 所以第一次跑新工作流先用最短时长 + 最低分辨率试。
 * 8G 卡跑 H3 时显存会很紧（实测空闲 0.6G 也能出，但慢）；`--mp` 降到 0.3–0.4 可快一些。
 * 本地图生图（Qwen-Image）尚未内置：需要一份带 `LoadImage` 的图生图工作流，放到
@@ -647,10 +641,7 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
   再按输出节点做可达性剪枝。实测把 6 槽工作流裁到 2 槽：删 4 个加载器 + 1 个孤立节点，**零悬空引用**。
 
 为什么必须真删而不是「不传值」：本地提交的是整张图，多余的 `LoadImage` 会带着上次的文件名照样执行
-（串景 + 白占显存）；云端的 `nodeInfoList` 是覆盖表，没发的节点沿用保存值 —— 这两条都踩过。
-
-**云端的边界**：RunningHub 只能覆盖节点值，**不能删节点**。所以那边做的是「按张数决定喂哪几个槽 +
-多余的按策略处理」，界面上会如实写清楚，而不是假装关掉了。
+（串景 + 白占显存）—— 这条踩过。
 
 ### 14.2 画风库：6 个官方风格进了系统默认
 
@@ -735,7 +726,7 @@ python web/tests/test_studio_assets.py   # ③ 契约测试会校验「引用不
 | --- | --- |
 | （打开抽屉） | 「《2、母亲之路》已完成 0/7，停在 调研」+ 三条 chips + 页脚「模型：DeepSeek（云端）」 |
 | 点「现在卡在哪一步？」 | 报 0/7 + research + 建议生成调研模板；下方「去创作中心（卡在「调研」）」 |
-| 「帮我直接出片，云端跑」 | 拒绝并说明「0/7、出片节点没有输入、27 币/任务 + 1 币/秒」，指回创作中心，**不给 run** |
+| 「帮我直接出片，全量跑」 | 拒绝并说明「0/7、出片节点没有输入」，指回创作中心，**不给 run** |
 | 「出片大概要花多少钱？」 | 说清按段计费与「段数定不下来，总价算不出」，`navigate cost` |
 | 无项目「我想做一部海外短剧，从哪开始？」 | 讲新建时要选路径/画幅/分辨率/画风，`navigate projects` |
 

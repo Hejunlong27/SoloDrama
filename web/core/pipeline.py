@@ -28,7 +28,6 @@ from . import adapters, commands as CMD, paths, runner, studio
 # ---------------------------------------------------------------------------
 # 环节 → 命令（只登记**确实存在且语义等价**的；没登记的按人工处理）
 # ---------------------------------------------------------------------------
-# mode: job=入队(长任务) / sync=直接执行；est: 每步预估 RH 币（None = 估不出来，必须停下来问）
 # 七环节 → 该环节「能自动跑的那一条命令」。
 # ★ 2026-11-01：原来按 S1–S11 映射，而 S1–S11 的判据脚本（workflow.py）已删；
 #   现在环节 id 与 `nodes.STAGES` 一致，同一环节下的节点由 `drama do <node>` 推进，
@@ -128,10 +127,10 @@ def plan(ws: str, *, budget: float = 0.0) -> dict:
             if est is None:
                 verdict, why = "ask", "这一步会计费但估不出金额 —— 需要你确认后再跑"
             elif spent + est > budget:
-                verdict, why = "ask", ("累计 %.0f + 本步 %.0f 超过预算 %.0f RH币"
+                verdict, why = "ask", ("累计 %.0f + 本步 %.0f 超过上限 %.0f"
                                        % (spent, est, budget))
             else:
-                verdict, why = "auto", "预算内（本步 %.0f RH币）" % est
+                verdict, why = "auto", "在上限内（本步 %.0f）" % est
                 spent += est
         else:
             verdict, why = "auto", ("￥0" if meta["billing"] == "gpu" else "免费")

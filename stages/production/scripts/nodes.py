@@ -87,7 +87,7 @@ EXIT_OK, EXIT_FAIL, EXIT_NOINPUT, EXIT_HUMAN, EXIT_STUCK, EXIT_TODO = 0, 2, 3, 4
 # ===========================================================================
 STAGES = [
     {"id": "import", "name": "导入", "why": "把创作 Skill 的制作包翻译成 data/ 契约；引擎不读创作文档，也不改一个字提示词"},
-    {"id": "asset", "name": "资产", "why": "批量出资产图（人/场/道）；本地通道 ￥0，云端逐张计费"},
+    {"id": "asset", "name": "资产", "why": "批量出资产图（人/场/道）；本地通道 ￥0"},
     {"id": "board", "name": "分镜图", "why": "每镜一张 9:16 首帧；它是出片的第一张参考图，不是可选装饰"},
     {"id": "video", "name": "出片", "why": "★计费。分镜图 + 角色 + 场景三参；退出码 3 是批次缺口，--resume 而不是重写提示词"},
     {"id": "edit", "name": "剪辑", "why": "母版拼接（帧数校验）→ 高清放大 → 字幕 → 交付规格 → 发布版"},
@@ -157,7 +157,6 @@ NODES: list = [
      "reads": ["video.resolve"], "output": "07-成片/<ep>/",
      "check": "segments", "next": "video.audit", "reflow": ["video.resolve"],
      "ws_kind": "engine",
-     # ★ 2026-11-04：默认走本地 ComfyUI（￥0）。云端通道改成显式 `--engine workflow`，
      #   理由与 drama.cmd_video_run 一致：执行层不该默认产生平台费用。
      "run": "python stages/production/scripts/drama.py video run --engine local"},
     {"id": "video.audit", "stage": "video", "ep": True,

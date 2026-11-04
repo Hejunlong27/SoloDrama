@@ -81,7 +81,6 @@ SoloDrama/
 │   ├── gates.py                      # 关卡确认点：计费双确认、字幕停点（免费步骤默认、计费必确认）
 │   ├── scheduler.py                  # 段级并发调度：≤5/账号、重试上限+冷却、批次对账
 │   └── adapters/
-│       └── channel_rh.py             # RunningHub 标准通道适配（AI 应用 + 工作流）
 │       └── media.py                  # ffmpeg / Topaz 调用包装（含 TVAI_* 探测）
 │
 ├── stages/                           # ★ 环节脚本（收编 + 少量新增）
@@ -97,7 +96,6 @@ SoloDrama/
 ├── tools/                            # 收编自 ai-drama-creator：cli.py + core/（确定性工具链，零依赖）
 ├── configs/
 │   ├── settings.example.json         # 全局配置模板（复制为 settings.json 使用）
-│   └── channel.rh.example.json        # RunningHub 标准通道：工作流/AI 应用 ID 与节点映射（对应 config.local.json 内容）
 │   ├── subtitle.example.json         # = 原 config.subtitle.example.json（样式不动）
 │   ├── upscale.example.json          # = 原 config.upscale.example.json（Topaz 参数不动）
 │   └── guards.example.json           # 道具身份守卫表模板（guards.<项目>.json）
@@ -129,7 +127,7 @@ SoloDrama/
 | `stages/assets/scripts/asset_md.py` | 🆕 资产提示词 md → 本地 ComfyUI 资产清单（`manifest.json`）；纯标准库、零网络，`--list/--diff` 预览 | 新增（补「创作产物 → 引擎输入」断点） | 🆕 v1.0.0（2026-10-10），19 例离线测试 |
 | `stages/assets/comfyui/` | **本地出图引擎**：`comfy_client.py`（提交 `/prompt` → 轮询 `/history` → 取 `/view`，断点续跑）+ 示例工作流 + 节点表/适配清单 | WorkBuddy Skill `comfyui-local-imagegen` | ✅ 原样收编（2026-10-10；节点 id 与工作流路径改环境变量可覆盖） |
 | `stages/production/scripts/gen_assets_local.py` | 🆕 本地出图薄桥：md → 清单 → 调本地引擎 → 产物清单 + 零成本台账（`route=local`） | 新增 | 🆕 v1.0.0（2026-10-10） |
-| `stages/production/scripts/model_gate.py` | 🆕 **模型选择门禁**（前置条件）：首次生图/出片前确认模型（本地 ComfyUI / RunningHub / 闭源模型）；确认单落 `<工作区>/model-plan.json`，含通道一致性校验 | 新增 | 🆕 v1.0.0（2026-10-12），19 例离线测试 |
+| `stages/production/scripts/model_gate.py` | 🆕 **模型选择门禁**（前置条件）：首次生图/出片前确认模型（本地 ComfyUI）；确认单落 `<工作区>/model-plan.json`，含通道一致性校验 | 新增 | 🆕 v1.0.0（2026-10-12），19 例离线测试 |
 | `stages/creation/` | 🆕 **西语漫剧创作链路（四部分）**：① 榜单调研与对比 → ② 爆款拆解 → ③ 选题定位 → ④ 剧本改写；确定性脚本 + 4 个 LLM 提示词 + 参考库 | 新增 | 🆕 v1.0.0（2026-10-12），49 例离线测试 |
 | `stages/refs/` | 参考图落位接线（`<Picture N>` ↔ `character_refs` 顺序） | short-drama-production | ✅ 原样收编 |
 | `stages/qa/` | 字幕像素级验收、安全区自测、集级前置体检 | short-drama-production / drama-subtitle-pipeline | ✅ 原样收编 |
@@ -176,7 +174,7 @@ WorkBuddy 创作会话
 #### 2.5.1 模型选择门禁（前置条件）
 
 **规则**：每个项目，在**首次生图**与**首次生成视频**前，必须**先向用户确认模型选择**；
-选项为 **本地 ComfyUI（￥0）/ RunningHub（★计费）/ 闭源模型（★计费）**；经确认后方可执行。
+选项为 **本地 ComfyUI（￥0）**；经确认后方可执行。
 
 | 项 | 说明 |
 |---|---|
@@ -232,14 +230,11 @@ WorkBuddy 创作会话
 | ctc-forced-aligner | 独立 venv `C:/Users/15274/align-env`（GitHub 源码安装，勿用 PyPI） | 字幕强制对齐；需 `PYTHONUTF8=1` + `--romanize` |
 | whisper.cpp | `C:/Users/15274/whisper-cli/Release/whisper-cli.exe` + `ggml-base.bin` | 逐字时间戳真值/兜底、声学覆盖检查（只吃 16k 单声道 WAV） |
 | Topaz Video | 自带 tvai ffmpeg；需 `TVAI_MODEL_DIR` / `TVAI_MODEL_DATA_DIR`（权重在 D 盘，upscale.py 自动探测） | 2K AI 超分 |
-| RunningHub 账号 | 双 Key：消费级（工作流/AI 应用，出图出片）+ 企业级-共享（标准模型 API，如场景空镜文生图） | 云端出图/出片 |
 
 ### 3.3 环境变量清单
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `RUNNINGHUB_API_KEY` / `RUNNINGHUB_API_KEY_2` | 出图/收费通道 | 消费级；**AI 应用通道禁止用企业级 Key** |
-| `RUNNINGHUB_ENT_API_KEY` | 标准模型 API（如场景空镜文生图） | 企业级-共享 |
 | `SOLODRAMA_WORKSPACE` | 建议 | 默认工作区（`--workspace` 参数优先） |
 | `PYTHONUTF8=1` | 必须 | 中文文本处理（对齐器硬要求） |
 | `TVAI_MODEL_DIR` / `TVAI_MODEL_DATA_DIR` | 放大时 | Topaz 模型定位（可写进 configs/upscale.json 兜底） |
@@ -271,13 +266,6 @@ WorkBuddy 创作会话
     "whisper_cli": "C:/Users/15274/whisper-cli/Release/whisper-cli.exe",
     "whisper_model": "C:/Users/15274/whisper-models/ggml-base.bin",
     "ffmpeg": "ffmpeg"
-  },
-  "runninghub": {
-    "base_url": "https://www.runninghub.ai",
-    "channel": "workflow",
-    "concurrency": 5,
-    "submit_gap_seconds": 2,
-    "fuse": 3
   },
   "video": {
     "resolution_default": "1080p",
@@ -328,9 +316,9 @@ planned → scripted(创作层) → ingested(门禁过) → converted(data/ 就�
 | ① 门禁 | `drama ingest --ep N` | 不过即停，列明缺陷（缺 `<d>` / 槽位超 6 / duration 不一致） | 免费 |
 | ② 转换 | `drama convert --ep N` | 生成 `data/` 四文件；`--diff` 预览不落盘 | 免费 |
 | ③ 体检 | `drama doctor` → `drama plan --ep N` | G0/G1：环境体检 + 干跑（将提交 N / 跳过 M / 缺哪些资产） | 免费 |
-| ④ 补资产 | **默认本地**：`drama assets --engine local`（干跑）→ `--submit` 出图，￥0；**云端**：`drama assets --engine rh --kind char\|scene --only <名单>` → `--submit` | local：无计费关卡（仍需 `--submit` 表示真跑）；rh：G1 计费确认（清单+单价+合计） | ★计费（仅 rh） |
+| ④ 补资产 | `drama assets --engine local`（干跑）→ `--submit` 出图，￥0 | 仍需 `--submit` 表示真跑 | ￥0 |
 | ⑤ 接线 | `drama refs --ep N --apply` → 复跑 ③ 复检 | 悬空槽/串位清零 | 免费 |
-| ⑥ 小样 | `drama smoke --ep N --only <段>` | G4：单段跑通、final.mp4>0 字节、**用户看过成片** | ★计费（1–2 次调用） |
+| ⑥ 小样 | `drama smoke --ep N --only <段>` | G4：单段跑通、final.mp4>0 字节、**用户看过成片** | ￥0（只占 GPU 时间） |
 | ⑦ 全量 | `drama render --ep N`（默认 `--resume <batch>`） | G5 计费确认②后执行；并发≤5；熔断即停 | ★计费 |
 | ⑧ 拼接+放大 | `drama assemble --ep N` | 拼接母版 → Topaz 2K → **跑完即停** | 免费（GPU 独占） |
 | ⑨ 字幕 | `drama subtitle --ep N --stage render` | **问过用户才做**；不要 → 交付 2K 无字幕母版 | 免费 |
@@ -484,10 +472,6 @@ drama run-episode --workspace "D:/剧/新剧A" --ep 3
 
 | 症状 | 根因 | 处置 |
 |---|---|---|
-| `未设置 RUNNINGHUB_API_KEY` | 绕开 `drama.py assets` 直跑了生成脚本（shell 继承不到用户级环境变量） | 资产一律走 `drama assets`（内部 winreg 读取注入） |
-| 上传报 `code=1 API Key不存在` | 站点错（本账号在国际站） | 确认 settings.json `base_url=https://www.runninghub.ai` |
-| `errorCode 1014` | 标准模型 API 用了消费级 Key | 改企业级 `RUNNINGHUB_ENT_API_KEY` |
-| `errorCode 1520 并发已达上限` | 前序任务槽位未释放 | 引擎退避重试；仍失败降并发到 1 |
 | `[FAIL] <段> :`（错误信息为空） | 传输层异常 | v1.3.0 已加固（退避+类型标注）；批量保持 `--submit-gap 2` |
 | 成片镜头节奏与分镜不符 | `--duration` 与提示词时间戳总时长不一致 | 门禁会拦；确已入库则让 `--duration` 对齐提示词总时长 |
 | 体检报「悬空图槽 / 超 6 槽」 | `<Picture N>` 缺位或超上限 | 补资产→`drama refs --apply` 重排；超 6 槽必须改提示词（删槽位改纯文字），**别只改 refs** |
@@ -507,7 +491,7 @@ drama run-episode --workspace "D:/剧/新剧A" --ep 3
 | 阶段 | 扩展 | 说明 |
 |---|---|---|
 | Phase 2 | **创作层 API 化** | 接 OpenAI 兼容端点（含本地 DeepSeek，数据不出局域网）：把 3d-short-drama-studio 的 16 角色 / ai-drama-creator 各步的技能提示词固化为 `role_prompt` 模板 + JSON Schema 输出校验；集间并行；质量用现有 E001–E011 与 ingest 门禁兜底 |
-| Phase 2 | 引擎插件化 | `channel_*` 适配器接口已统一，可加可灵 / Seedance 直连等新通道，不动上游。**✅ 首个落地（2026-10-10）：本地 ComfyUI 出图通道** —— `drama.py assets --engine local`（￥0，见 `stages/assets/comfyui/`）；资产出图自此为「本地优先 + 云端并存」 |
+| Phase 2 | 引擎插件化 | `channel_*` 适配器接口已统一，可加可灵 / Seedance 直连等新通道，不动上游。**✅ 首个落地（2026-10-10）：本地 ComfyUI 出图通道** —— `drama.py assets --engine local`（￥0，见 `stages/assets/comfyui/`）；资产出图自此全部走本地 |
 | Phase 3 | 4K 放大 | CLI 路径实测后再开（8GB 显存压力大）；先在 Topaz GUI 验证 |
 | Phase 3 | Web 面板 | `progress.json` + `ledger.jsonl` 已结构化，套一层只读看板即可（FastAPI/静态页），不碰引擎 |
 | Phase 3 | 选题→全链自动化 | short-drama-hit-topics 接入创作层 API 化后，实现「题材→成片」整夜无人值守（计费关卡保留人工） |

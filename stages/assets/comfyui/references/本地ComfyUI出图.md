@@ -15,8 +15,6 @@
 | 通道 | 命令 | 引擎 | 成本 | 适用 |
 |---|---|---|---|---|
 | **本地 ComfyUI**（本通道） | `drama.py assets --engine local` | 本目录 `comfy_client.py` | **￥0**（本机电费） | 批量铺量、预算敏感、隐私敏感；要求本机有 GPU + ComfyUI |
-| RunningHub AI 应用 | `drama.py assets --engine rh --submit` | `gen_char_assets.py` | 人物 17–27 RH币/张 | 需要云端高质量定妆板、无本地 GPU |
-| RunningHub 模型 API | `drama.py assets --engine rh --submit --kind scene` | `gen_scene_assets.py` | 场景 ≈￥0.07/张 | 场景空镜、无本地 GPU |
 
 > **本地优先**：默认 `--engine local`。本地通道**零费用**，所以 `--submit` 对它只是「真的执行」的闸门，不涉及计费。
 
@@ -84,7 +82,7 @@ GET  /view?filename=&subfolder=&type=output  → 图片二进制
 ```
 
 输出目录按 `kind` 自动分：`char → characters/`、`scene → scenes/`、`prop → props/`。
-`id` 与既有云端通道同口径（`char_01` / `scene_01`），文件名形如 `char_01_陆鸣_00.png`。
+`id` 与既有通道同口径（`char_01` / `scene_01`），文件名形如 `char_01_陆鸣_00.png`。
 
 ---
 
@@ -138,7 +136,7 @@ python stages/production/scripts/drama.py assets --engine local --submit   # 真
 1. **Git Bash 环境可能损坏**（`dirname`/`mkdir` 缺失）→ 文件操作用 **PowerShell**。
 2. **PowerShell 工具不回显 stdout** → 命令输出重定向到日志文件，再用 Read 读取。
 3. ComfyUI 输出目录示例：`D:\Comfy-Desktop\ComfyUI-Shared\output`；输入：`...\ComfyUI-Shared\input`（**本机特有，不应写进仓库**）。
-4. 脚本零第三方依赖，**managed python 直接可跑**，不需要 venv，也不需要 `RUNNINGHUB_*` 任何 Key。
+4. 脚本零第三方依赖，**managed python 直接可跑**，不需要 venv，也不需要任何 Key。
 
 ---
 

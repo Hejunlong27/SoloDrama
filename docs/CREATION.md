@@ -113,7 +113,6 @@ SOLODRAMA_ALLOW_REMOTE=1 python -m uvicorn app:app --port 8788
 ```
 
 被拦时错误会原样贴出「这是网络出口守卫拦的」，不吞成「生成失败」。
-RunningHub 无论开不开这个变量都不可达 —— 那是一条独立的、永久的禁令。
 
 ## 八、当前状态（2026-11-04）
 

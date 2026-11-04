@@ -142,8 +142,6 @@ def from_legacy(ws) -> dict:
         d["channel"]["image"]["engine"] = str(img["choice"])
 
     # 视频通道：旧三份里没有（model-plan 只登记了 image），真源在引擎侧。
-    # ★ 2026-11-04：改判据。以前「h3.id 存在」= 走 RunningHub 云端；
-    #   现在本仓库没有云端通道，h3.id 这种遗留字段只记录在 workflow_id_note 里，
     #   engine 一律写 local_comfyui —— 迁移后的档案不能指回一条无法执行的通道。
     eng = _read(ws / "video-pipeline" / "config.local.json")
     h3 = eng.get("h3") or {}
@@ -156,9 +154,8 @@ def from_legacy(ws) -> dict:
     if comfy_url:
         d["channel"]["video"]["comfy_url"] = comfy_url
     if legacy_id:
-        # 老项目留下的云端工作流 ID：保留事实、标清楚它已不生效，不做静默丢弃。
         d["channel"]["video"]["workflow_id_note"] = (
-            "旧档案里的云端工作流 ID %s（2026-11-04 起不再使用）" % legacy_id)
+            "旧档案里的工作流 ID %s（2026-11-04 起不再使用）" % legacy_id)
     return d
 
 

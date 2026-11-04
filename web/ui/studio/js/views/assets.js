@@ -58,7 +58,7 @@ export async function render(ctx) {
     + '<div class="tiny dim" style="margin-top:8px">'
     + (tab === 'loose'
       ? '把图移到 <span class="mono">04-资产/characters|scenes|props</span> 就会出现在对应分页里。'
-      : '用右上角「出图…」生成（本地￥0 / 云端计费）。')
+      : '用右上角「出图…」生成（本地 ￥0）。')
     + '</div></div>';
 
   const missChars = (a.missing_characters || []).slice(0, 24);
@@ -257,7 +257,7 @@ function openGenPanel(ctx, md) {
       + '<input class="input" id="gOnly" placeholder="char_01,char_02"></div></div>'
 
       + '<label class="chk"><input type="checkbox" id="gForce">'
-      + '<span>已生成的也重跑（云端会重复计费）</span></label>'
+      + '<span>已生成的也重跑（会重复占 GPU）</span></label>'
 
       + '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
       + '两条通道都是<b>后台作业</b>：提交后到「任务中心」看实时日志。'

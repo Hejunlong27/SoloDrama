@@ -4,7 +4,7 @@
 
 为什么有这个脚本
 ----------------
-云端通道（`gen_assets_rh_workflow.py`）与本脚本解析同一份资产提示词 md，
+各通道解析同一份资产提示词 md，
 但引擎吃的是「直接提交给 ComfyUI 的请求体」。本地通道吃的是另一种输入
 （`comfy_client.py --spec` 的 manifest），因此需要一个**确定性转换器**把创作层产物
 转成引擎输入 —— 这正是本脚本的职责，属设计文档里的「转换器补断点」一类。
@@ -52,7 +52,6 @@ try:                                      # Windows 控制台 GBK → 强制 UTF
 except Exception:                                                # noqa: BLE001
     pass
 
-# ── 章节与条目正则（与既有云端脚本同口径）────────────────────────────────────
 SEC_CHAR_RE = re.compile(r'^##\s+(\d+)\.\s*(.+?)\s*$', re.M)
 SEC_SCENE_RE = re.compile(r'^##\s+场景\s*(\d+)\s*[·.、]\s*(.+?)\s*$', re.M)
 # 道具节无既有约定，取宽松式：`## 1. 名字` / `## 道具 1 · 名字` / `## 道具1 名字`
@@ -152,7 +151,7 @@ def to_assets(entries: list, variant_label: str = '基础造型',
     assets = []
     for e in entries:
         kind, no = e['kind'], e['section']
-        base = '%s_%02d' % (kind, no)     # char_01 / scene_01 / prop_01（与云端通道同口径）
+        base = '%s_%02d' % (kind, no)     # char_01 / scene_01 / prop_01（同口径）
         picks = e['variants'] if all_variants else \
             [next((v for v in e['variants'] if variant_label in v['label']), e['variants'][0])]
         for k, v in enumerate(picks):

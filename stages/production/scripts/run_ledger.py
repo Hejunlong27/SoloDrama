@@ -15,9 +15,9 @@
 
 换算层（★ 用户要求：每个任务的执行时长与消耗都要有换算过程）
 ------------------------------------------------------------
-原始数字（RH币、秒、字节）本身不能横向比较，必须换算成**单位经济指标**：
+原始数字（秒、字节、张数）本身不能横向比较，必须换算成**单位经济指标**：
 
-    rh_per_frame            每帧多少 RH币      → 判断时长档位是否划算
+    sec_per_frame           每帧多少秒         → 判断时长档位是否划算
     cny_per_video_second    每秒成片多少钱     → 跨模型/跨路线比价
     wall_s_per_frame        每帧墙钟多少秒     → 判断是否被排队拖慢
     frames_per_min          每分钟产出多少帧   → 吞吐效率
@@ -34,7 +34,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# 历史字段：RH币 -> 人民币。本仓库已无平台计费，保留只为能读旧台账。
 DEFAULT_CNY_PER_RH_COIN = 0.0025
 
 

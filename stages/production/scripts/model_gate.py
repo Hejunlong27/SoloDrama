@@ -4,20 +4,20 @@
 
 为什么有这个脚本
 ----------------
-本项目此前默认「资产出图走本地 ComfyUI、出片走云端工作流」，通道选择散落在
+本项目此前默认「资产出图走本地 ComfyUI、出片走平台工作流」，通道选择散落在
 各命令的 `--engine` / `--channel` 参数里，**没有任何一处记录「这个项目到底打算用哪个模型」**。
 后果：
 
 * 换一部剧、换一个同事，谁都不知道上一部剧用的是哪条通道；
 * 闭源模型（可灵/即梦/Veo/Sora/Midjourney 等）无法表达——它们既不是本地 ComfyUI，
-  也不是云端工作流，只能人工导出后落盘，但流程里没有位置声明它；
+  也不是平台工作流，只能人工导出后落盘，但流程里没有位置声明它；
 * 计费动作发生在「第一次生图 / 第一次出片」，而这两处此前只校验「有没有 Key」，
   不校验「用户是否已经决定用哪个模型」——等于替用户做了花钱的决定。
 
 本脚本把「模型选择」变成一个**显式、留痕、可拦截**的前置条件：
 
     每个项目，在**首次生图**与**首次生成视频**之前，必须先向用户确认模型选择，
-    选项为「本地 ComfyUI / 云端 ComfyUI」，确认结果写入 <工作区>/model-plan.json；
+    选项为「本地 ComfyUI / 远程 ComfyUI」，确认结果写入 <工作区>/model-plan.json；
     `drama.py assets --submit` 与 `drama.py video run --yes` 会先查这份确认单，未确认即停。
 
 设计约定
@@ -62,11 +62,10 @@ GATE_VERSION = 2
 #   key       存进 model-plan.json 的 models.<kind>.detail[key]
 #   label     给人看的说明
 #   kind      'file' = 必须是存在的文件路径；'text' = 非空文本（地址/ID）
-# 为什么强制：只确认「用云端 ComfyUI」而不给工作流 API 文件 = 跑不起来；
 # 只确认「用 RH AI 应用」而不给应用地址 = 不知道该提交到哪。这两类信息只能由用户提供。
 REQUIRES = {
     "comfy_workflow": {"label": "ComfyUI 工作流 API 文件（在 ComfyUI 里「导出（API）」得到的 json）", "kind": "file"},
-    "comfy_url":      {"label": "ComfyUI 服务地址（如 http://127.0.0.1:8188 或云端 https://...）", "kind": "text"},
+    "comfy_url":      {"label": "ComfyUI 服务地址（如 http://127.0.0.1:8188 或远程 https://...）", "kind": "text"},
 }
 
 MODEL_OPTIONS = {
@@ -83,11 +82,11 @@ MODEL_OPTIONS = {
         },
         {
             "id": "cloud_comfyui",
-            "label": "云端 ComfyUI（★计费/自建）",
+            "label": "远程 ComfyUI（★计费/自建）",
             "cost": "按云主机/平台计费（自建或租用）",
-            "desc": "把工作流提交到**云端** ComfyUI 服务（自建 GPU 主机或云 ComfyUI 平台）。",
+            "desc": "把工作流提交到**远程** ComfyUI 服务（自建 GPU 主机或托管平台）。",
             "engine_arg": "cloud",
-            "executor": "gen_assets_local.py（同一客户端，COMFYUI_URL 指向云端）",
+            "executor": "gen_assets_local.py（同一客户端，COMFYUI_URL 指向远端）",
             "requires": ["comfy_url", "comfy_workflow"],
             "optional": [],
         },
@@ -121,10 +120,10 @@ MODEL_OPTIONS = {
         },
         {
             "id": "cloud_comfyui",
-            "label": "云端 ComfyUI（★计费/自建）",
+            "label": "远程 ComfyUI（★计费/自建）",
             "cost": "按云主机/平台计费（自建或租用）",
-            "desc": "把视频工作流提交到云端 ComfyUI 服务；适合本机显存不够或散热吃紧。"
-                    "★ 引擎**暂无云端 ComfyUI 视频执行器**（同 P1-1）。",
+            "desc": "把视频工作流提交到远程 ComfyUI 服务；适合本机显存不够或散热吃紧。"
+                    "★ 引擎**暂无远程 ComfyUI 视频执行器**（同 P1-1）。",
             "engine_arg": None,
             "executor": None,
             "requires": ["comfy_url", "comfy_workflow"],
@@ -218,7 +217,7 @@ def missing_evidence(kind: str, choice: str, detail: dict | None) -> list:
     """返回「执行依据」里还缺哪些（空列表 = 齐备）。
 
     为什么要它（2026-10-16 用户要求）：
-      只确认「用云端 ComfyUI」而不给**工作流 API 文件** = 跑到一半才发现没法提交；
+      只确认「用远程 ComfyUI」而不给**工作流 API 文件** = 跑到一半才发现没法提交；
       只确认「用 RH AI 应用」而不给**应用地址** = 不知道该把任务提交到哪。
       这两类依据只能在任务开始前由用户提供 ⇒ 缺了就不放行（退出码 4）。
     """
@@ -276,7 +275,7 @@ def require(ws: pathlib.Path, kind: str, expected_engine: str | None = None) -> 
     if not opt.get("executor") and not opt.get("manual"):
         return False, (
             "本项目确认的%s模型是「%s」，但引擎**暂无该通道的执行器**，无法开工。\n"
-            "        这不是配置问题，是能力缺口：本地/云端 ComfyUI 的视频执行器尚未实现。\n"
+            "        这不是配置问题，是能力缺口：本地/远程 ComfyUI 的视频执行器尚未实现。\n"
             "        请改选有执行器的通道：drama models set %s=local_comfyui。"
             % (KINDS[kind], opt.get("label", choice), kind))
 
@@ -299,7 +298,7 @@ def _executor_note(opt: dict) -> str:
     """返回「这个选项到底能不能跑」的一句话（反馈 P1-1）。
 
     此前 `video=local_comfyui` 在菜单里写着「￥0」，用户以为本地可出片，
-    但引擎只有本地执行器（comfy_local_video.py）；云端通道没有提交路径 ——
+    但引擎只有本地执行器（comfy_local_video.py）；远程通道没有提交路径 ——
     「声明了但跑不了」比不提供更糟。现在菜单与门禁都显式标注。
     """
     if opt.get("executor"):
@@ -438,7 +437,7 @@ def _do_set(ws: pathlib.Path, kind: str, choice: str, detail: dict | None,
         if kind == "image" and choice == "cloud_comfyui":
             print("          drama.py models set image=cloud_comfyui "
                   "--comfy-url https://... --comfy-workflow \"D:/workflows/出图.json\"")
-        elif False:      # RunningHub 通道已于 2026-11-04 整体移除（连同这段提示）
+        elif False:      # 已移除的通道（保留分支以免旧配置报错）
             pass
         else:
             print("          drama.py models set %s=%s --comfy-workflow \"D:/workflows/xxx.json\"" % (kind, choice))
@@ -565,16 +564,15 @@ def main() -> int:
     p = sub.add_parser("set", help="记录确认：set image=local_comfyui [video=local_comfyui]")
     p.add_argument("pairs", nargs="+", metavar="kind=choice")
     p.add_argument("--detail", default=None,
-                   help='附加说明（k=v,k2=v2 或整段 JSON）。本地/云端 ComfyUI 可在这里写'
+                   help='附加说明（k=v,k2=v2 或整段 JSON）。本地/远程 ComfyUI 可在这里写'
                         '节点映射：--detail \'{"comfy_nodes":{"prompt":488,"prefix":487,'
                         '"aspect":13,"latent":474}}\'；gen_assets_local.py 会把它回灌成 COMFYUI_NODE_*，'
                         '避免「确认单说用新工作流、实际跑仓库默认工作流」')
     # ★ 执行依据（2026-10-16）：选了通道就必须给出「跑得起来」的依据
     p.add_argument("--comfy-url", dest="comfy_url", default=None,
-                   help="ComfyUI 服务地址（本地/云端）")
+                   help="ComfyUI 服务地址")
     p.add_argument("--comfy-workflow", dest="comfy_workflow", default=None,
                    help="ComfyUI 工作流 API 文件路径（在 ComfyUI 里「导出（API）」得到的 json）")
-    # ★ 2026-11-04：--app-url / --app-id / --workflow-id 已删（RunningHub 通道移除）。
     p.set_defaults(fn=cmd_set)
 
     p = sub.add_parser("reset", help="清除某类确认（换模型前用）")

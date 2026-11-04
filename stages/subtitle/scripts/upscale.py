@@ -66,9 +66,7 @@ import time
 
 
 # ---------------------------------------------------------------------------
-# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
 #   这里不是「删掉调用点」，而是把出站通道收窄到本机/内网。任何试图连
-#   runninghub.* 的代码都会在 DNS 解析那一步抛 RemoteForbidden —— 包括未来
 #   某次合并里被悄悄加回来的 httpx 调用。细则见 stages/_netguard.py。
 # ---------------------------------------------------------------------------
 def _boot_netguard() -> None:
@@ -266,7 +264,7 @@ DEFAULT_CONFIG = {
     "version": 1,
     "enabled": True,
     "backend": "topaz",
-    "_backend_note": "放大后端二选一：topaz（本地 GPU，免费，慢）/ off（跳过，母版直接进字幕）。RunningHub 通道已于 2026-11-04 移除。命令行 --backend 可临时覆盖。",
+    "_backend_note": "放大后端二选一：topaz（本地 GPU，免费，慢）/ off（跳过，母版直接进字幕）。命令行 --backend 可临时覆盖。",
     "tool": {
         "_note": "留空则自动探测 Topaz Video 安装目录与模型目录；探测不到会在报错里给出可照抄的改法",
         "install_dir": "",
@@ -803,12 +801,10 @@ def run_ffmpeg(cmd, env, log_path, total_frames, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# ★ 2026-11-01：放大后端三选一 —— topaz（本地）/ rh（云端）/ off（跳过）
 # ---------------------------------------------------------------------------
 # 用户定的剪辑顺序：母版拼接（封面 + 片段 + BGM）→ **高清放大** → 字幕生成与烧录。
 # 放大这一步有两台机器能干活，能力等价、成本不同：
 #   · topaz：本地 GPU，免费，慢（整集约 3–8 分钟），画质最稳；
-#   · rh   ：云端 RH_Astra + Iris，约 35 币/集、2–3 分钟，不占本机；
 #   · off  ：不放大，母版直接进字幕（只在母版本来就是交付规格时合理）。
 # 选哪一台是**配置**（config.upscale.json 的 backend），不是代码分支的分叉。
 
@@ -906,7 +902,6 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
     result["target"] = {"width": tw, "height": th, "factor": round(factor, 4),
                         "model": cfg["model"]["name"]}
 
-    # ---- 后端分派：topaz（默认）/ rh（云端）/ off（跳过）-------------------
     backend = str(cfg.get("backend") or "topaz").strip().lower()
     result["backend"] = backend
     if backend in ("off", "none", "skip"):
@@ -919,10 +914,8 @@ def upscale_episode(ws, ep, cfg, *, force=False, dry_run=False, verify_only=Fals
             say("[i] 已按配置跳过放大（backend=off）；母版：%s" % src)
         return result
     if backend == "rh":
-        # ★ 2026-11-04：RunningHub 放大通道整体移除（本仓库只跑本地）。
-        #   明确报错而不是悄悄回落到 topaz —— 后者会让人以为「云端在跑」，
         #   实际占了本机 GPU 几个小时。
-        result["error"] = ("backend=rh 已不可用：RunningHub 已从本仓库移除。"
+        result["error"] = ("backend=rh 已不可用。"
                            "改 config.upscale.json 的 backend 为 topaz（本地）或 off（跳过）")
         return result
     if backend not in ("topaz", "local"):
@@ -1219,7 +1212,7 @@ def _print_human(r):
             % (plan["nodes"].get("video_in"), plan["nodes"].get("prefix"),
                plan["nodes"].get("short_edge"), plan["nodes"].get("long_edge"),
                plan["nodes"].get("keep_audio")))
-        say("  （--dry-run：什么都没提交。云端放大按整集计费）")
+        say("  （--dry-run：什么都没提交）")
     elif plan:
         say("  预计    耗时 %s ｜ 体积 约 %.0f MB"
             % (plan.get("estimated_human") or "?", plan.get("estimated_size_mb") or 0))

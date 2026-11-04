@@ -76,7 +76,6 @@ def t_drama_name() -> None:
     check("P0-3 brief.json 的 title 优先",
           load(PROD / "_ws.py", "_ws_t2").drama_name(ws) == "Loteria 580")
     # ★ 2026-11-04：原来这里还断言 cost_ledger.py 的 DRAMA_DEFAULT 不是硬编码字面量。
-    #   cost_ledger.py 已随云端计费口径一起删除，这条断言失去对象；
     #   `drama_name()` 本身的两条断言（目录名回落 / brief 优先）仍然有效，保留。
 
 
@@ -136,8 +135,6 @@ def t_model_gate_executor() -> None:
     #   留着旧断言等于守着一个已经修好的 bug，还会让人以为它没修。
     check("P1-1 video=local_comfyui 有执行器",
           bool(local.get("executor")) and not local.get("manual"), local)
-    # 注意：菜单里**云端 ComfyUI** 那条仍然标「暂无执行器」—— 那是真的（视频侧没有
-    # 云端提交器）。所以不能断言「整个菜单没有这五个字」，只能断言本地那条写的是执行器。
     check("P1-1 本地那条菜单写出了执行器",
           "执行器：stages/video/comfyui/comfy_local_video.py" in gate.render_menu("video"),
           gate.render_menu("video"))
@@ -195,9 +192,6 @@ def main() -> int:
     print("=" * 62)
     print("反馈单修复 · 离线回归（2026-10-20）")
     print("=" * 62)
-    # ★ 2026-11-04：删掉 6 个失效用例（被测模块已随 RunningHub 通道与创作层移除）：
-    #   t_probe_readonly(_site.py)、t_inflight_pending / t_oom_plan(云端引擎)、
-    #   t_cost_model(RH 币口径)、t_outline / t_light(剧本改写与分镜转换)。
     #   留下的都在跑真实逻辑：剧名回落、发行判定、模型门禁、字幕模板、单例锁、工作流校验。
     for fn in (t_drama_name, t_release_verdict, t_model_gate_executor,
                t_subtitle_template, t_lock, t_workflow_validate):

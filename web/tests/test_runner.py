@@ -52,7 +52,6 @@ def test_env():
     check(env["PYTHONUTF8"] == "1", "未设置 PYTHONUTF8（中文输出会乱码）")
     check("VIDEO_PIPELINE_WORKSPACE" in env, "未注入引擎目录指针")
     # ★ 2026-11-04：不再注入任何平台地址。本仓库只调本机 ComfyUI，
-    #   「兜底一个云端 base_url」现在是反指标 —— 它会让引擎以为还有云端通道。
     check("RUNNINGHUB_BASE_URL" not in env,
           "不应再注入平台站点地址：%r" % env.get("RUNNINGHUB_BASE_URL"))
 

@@ -79,7 +79,6 @@ class BaseProvider:
         # ★ 是否继承系统代理（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）。
         #   为什么不一律 trust_env=False：本机/企业环境常常**只能**经代理出网，
         #   硬绕代理会表现为「请求超时」，用户会误以为是 Key 或模型的问题。
-        #   默认：本地服务不走代理（否则 127.0.0.1 的 Ollama 会被代理劫走），云端走代理。
         te = self.cfg.get("trust_env")
         self.trust_env = (not bool(self.cfg.get("local"))) if te is None else bool(te)
 

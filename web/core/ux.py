@@ -9,7 +9,7 @@ Web 控制台有**两张脸**，本模块是「用户端」那一张的脸面层
   ─────────────────────────────    ─────────────────────────────
   「我的短剧」                      工作区 / workspace
   「今天建议做这个」                下一步命令 + 门禁代号
-  「这一步要花约 ¥36」              145 RH币/段、G5 计费闸门
+  「这一步要跑约 6 分钟」            单段耗时、G5 闸门
   「正在做：第 3 集的画面」          作业 job / 批次 batch id
   「有几处要先修好」                退出码 2
 
@@ -17,7 +17,7 @@ Web 控制台有**两张脸**，本模块是「用户端」那一张的脸面层
 ----
 1. **只翻译，不决策**：所有事实来自引擎（读文件 / 读 CLI 的 `--json`），本层只把它们换成
    用户能懂的话、并组织成「任务」。
-2. **不暴露实现细节**：不出现 argv、退出码、门禁代号、批次号、RH币、工作区路径。
+2. **不暴露实现细节**：不出现 argv、退出码、门禁代号、批次号、金额小数、工作区路径。
 3. **用户端与开发者端共用同一套后端接口**：用户端只用 `/api/home`、`/api/tasks`、
    `/api/episodes`、`/api/help`；开发者端才用 `/api/commands`、`/api/audit`、`/api/locks`。
 """
@@ -35,10 +35,9 @@ from . import reader
 # ---------------------------------------------------------------------------
 GLOSSARY = [
     ("画风", "整部剧的呈现方式（3D 漫剧 / 2D 动画 / 真人出演）。一开始就要定，之后换画风会让已做好的素材全部作废。"),
-    ("出图通道", "让电脑「画」角色和场景的方式：用你自己这台电脑（免费，但会占用电脑）或租云端（要花钱）。"),
+    ("出图通道", "让电脑「画」角色和场景的方式：用你自己这台电脑（免费，但会占用电脑）。"),
     ("镜头", "一集里的一小段画面（通常 4–15 秒）。一集通常由 5–12 个镜头拼成。"),
-    ("平台点数", "云端服务按用量扣的点数。本控制台已换算成人民币供你参考。"),
-    ("本次生成", "一次「把这些镜头交给云端做」的动作。做坏了重做通常不额外扣费。"),
+    ("本次生成", "一次「把这些镜头交给本机做」的动作。做坏了重做不额外花钱。"),
     ("发布前检查", "正式发布前必须回答的几个问题（画面里有没有不宜出现的内容等），不通过就不能发布。"),
     ("AI 标注", "用 AI 还原真实人物或场景时，平台要求明确标注，否则会被减少推荐。"),
 ]
@@ -67,7 +66,6 @@ STATE_TEXT = {
     "todo": "还没开始",
 }
 
-# 花费口径（与引擎一致：1 RH币 ≈ ¥0.0025；单段 ≈145 RH币）
 COIN_TO_CNY = 0.0025
 COIN_PER_SHOT = 145
 USD_TO_CNY = 7.2          # 仅用于把「美元钱包消耗」折算成人民币展示，界面上会注明是估算
@@ -136,7 +134,6 @@ STYLE_OPTIONS = [
 ]
 
 # 机器选项（用户语言）
-# ★ 2026-11-04：只剩「这台电脑」。云端通道（RunningHub）已整体移除，
 #   不是「隐藏」而是删掉 —— 留一个选不动的选项比没有更让人困惑。
 #   `closed_model` 也去掉了：它没有引擎执行路径，选它等于承诺一件做不到的事。
 IMAGE_MACHINE_OPTIONS = [
@@ -164,12 +161,11 @@ TASKS = [
              {"spec": "pack.import", "label": "导入并生成 data/ 契约"},
          ]}),
     Task("cast_assets", "给角色和场景定形象", "形象定好之后，每个镜头里的长相才能保持一致",
-         "先看要画哪些，再决定用哪台机器画", ["assets.check", "assets.local", "assets.rh_wf"],
-         stage="cast", cost_hint="用云端画会花钱，开始前会显示金额", after="接下来把剧本拆成分镜",
+         "先看要画哪些，再决定用哪台机器画", ["assets.check", "assets.local"],
+         stage="cast", cost_hint="用这台电脑画不花钱，只占 GPU", after="接下来把剧本拆成分镜",
          ui={"kind": "sequence", "steps": [
              {"spec": "assets.check", "label": "先检查画图工具", "free": True, "next": "清单"},
              {"spec": "assets.local", "label": "用这台电脑画（免费）", "params": {"kind": "all"}},
-             {"spec": "assets.rh_wf", "label": "用云端画（要花钱）", "params": {"kind": "all"}, "confirm": True},
          ]}),
     Task("draw_boards", "给每个镜头画一张首帧", "首帧决定这一镜的构图、站位和光线，出片时当第一张参考图",
          "一集一集画，缺哪镜会列出来", ["board.frame"], stage="boards",
@@ -178,12 +174,12 @@ TASKS = [
              {"spec": "board.frame", "label": "画这一集的分镜图", "params": {"ep": "{ep}"}},
          ]}),
     Task("make_episode", "做出这一集的画面", "这是最花时间的一步，做完就能看到活动的剧",
-         "先算清楚要花多少钱，你同意后再交给云端生成",
+         "先算清楚要跑多久，你同意后再交给本机生成",
          ["video.plan", "video.run"], stage="shoot", needs_confirm=True,
-         cost_hint="按镜头数量计费，开始前会显示金额", after="做完可以逐段预览",
+         cost_hint="按镜头数量排期，开始前会显示预计耗时", after="做完可以逐段预览",
          ui={"kind": "plan_then_run", "plan_spec": "video.plan", "run_spec": "video.run",
              "params": {"limit": None},
-             "confirm_title": "现在开始生成画面", "free_label": "先算一下要花多少钱（不花钱）"}),
+             "confirm_title": "现在开始生成画面", "free_label": "先排一下要跑多久（不占 GPU）"}),
     Task("finish_episode", "拼成完整一集（含字幕）", "把分散的镜头接成能直接看的完整一集",
          "先把镜头接起来并提升清晰度，然后问你要不要加字幕",
          # ★ 2026-11-01：剪辑已定为三步（拼接母版 → 高清放大 → 字幕），
@@ -276,12 +272,12 @@ def user_problems(ws) -> list:
                         "detail": "尺寸超过限制的图片会导致生成失败或错位，系统可以自动处理。",
                         "task": "cast_assets"})
         elif "G2 未就绪" in text or "工作流" in text:
-            out.append({"kind": "warning", "title": "云端出片还没配置好",
-                        "detail": "缺少出片工作流信息，无法把镜头交给云端生成。这属于技术配置，可点「高级工具」处理。",
+            out.append({"kind": "warning", "title": "出片环境还没配好",
+                        "detail": "缺少出片工作流文件，无法提交生成。这属于技术配置，可点「高级工具」处理。",
                         "task": ""})
         elif "段失败" in text:
             out.append({"kind": "action", "title": "有镜头没做成功，可以重做",
-                        "detail": "重做通常不额外扣费，系统只会补做失败的部分。",
+                        "detail": "重做不额外花钱，系统只会补做失败的部分。",
                         "task": "make_episode"})
     return out
 
@@ -289,9 +285,9 @@ def user_problems(ws) -> list:
 def spent_summary(ws, status_data=None) -> dict:
     """「花了多少钱」+「做了多少东西」——用户端的花费卡数据。
 
-    ★ 口径修复（2026-10-17）：只读 `ledger` 会漏掉「云端工作流出图」的用量
-      （实测《亿万丈夫的三个月合约》12 个云端任务 / 170 点未进台账 → 界面显示 ¥0）。
-      现改为 `inventory` 聚合：台账优先、云端生成记录兜底、按 taskId 去重，并标注来源。
+    ★ 口径修复（2026-10-17）：只读 `ledger` 会漏掉部分生成记录的用量
+      （实测《亿万丈夫的三个月合约》12 个任务 / 170 点未进台账 → 界面显示 ¥0）。
+      现改为 `inventory` 聚合：台账优先、生成记录兜底、按 taskId 去重，并标注来源。
     """
     inv = inventory.inventory(ws)
     sp = inv["spend"]
@@ -317,7 +313,7 @@ def spent_summary(ws, status_data=None) -> dict:
     if inv["renders"]:
         lines.append({"label": "已拼好的整集", "value": "%d 集" % inv["renders"]})
     if sp["workflow_hits"] or sp["ledger_hits"]:
-        lines.append({"label": "云端生成次数", "value": "%d 次" % (sp["ledger_hits"] + sp["workflow_hits"])})
+        lines.append({"label": "生成次数", "value": "%d 次" % (sp["ledger_hits"] + sp["workflow_hits"])})
 
     note = sp["source_text"] or ("按平台实际用量统计" if cny else "")
     if sp["usd"]:
@@ -609,7 +605,7 @@ def friendly_error(code, text: str = "") -> dict:
         return {"level": "fix", "title": "画图工具没有打开",
                 "detail": "用「这台电脑」画图需要先打开本机的画图工具（ComfyUI）。打开后重试即可。"}
     if "API Key" in txt or "并发" in txt:
-        return {"level": "fix", "title": "云端账号出了点问题",
+        return {"level": "fix", "title": "账号或并发出了点问题",
                 "detail": "可能是密钥没配好或同时在跑的任务太多。建议交给 AI 助手处理。"}
     return {"level": "error", "title": "这一步没有成功",
             "detail": "可以先看下面的详细记录；如果看不懂，点「把问题交给 AI 助手」。"}
@@ -634,9 +630,8 @@ _STEP_TEXT = {
     "project.status": "看看创作进行到哪一步了",
     "assets.check": "先确认画图工具是否可用",
     "assets.local": "用你这台电脑画（免费，会占用电脑）",
-    "assets.rh": "用云端画（要花钱，开始前会报金额）",
-    "video.plan": "先算一下这一集会花多少钱（不花钱）",
-    "video.run": "把镜头交给云端生成（按实际用量扣费）",
+    "video.plan": "先排一下这一集要跑多久（不占 GPU）",
+    "video.run": "把镜头交给本机生成（只占 GPU 时间）",
     "media.assemble": "把镜头接成完整一集并提升清晰度",
     "media.render": "在画面上加字幕",
     "report.batch": "整理这次的制作报告",

@@ -278,7 +278,7 @@ def _add(cmd: Command) -> None:
 # ===== 前置门禁 0 通道 =====================================================
 _add(_c("models.list", "0 通道", "通道清单（含执行依据要求）", "drama",
         argv=["models", "list"], mode="sync", danger=READ,
-        help="列出本地 ComfyUI / 云端 ComfyUI / RH AI 应用 / RH 工作流 / 闭源模型。",
+        help="列出本地 ComfyUI / 远程 ComfyUI / 闭源模型。",
         agent="用表格列出各通道必须提供的「执行依据」，并说明哪些是★计费。"))
 _add(_c("models.status", "0 通道", "当前通道确认状态", "drama",
         argv=["models", "status", "--json"], mode="sync", danger=READ,
@@ -295,7 +295,7 @@ _add(_c("models.set", "0 通道", "确认通道（G0）", "drama",
                 Param("app_url", "RH 应用地址", "str"),
                 Param("app_id", "RH 应用 ID", "str"),
                 Param("workflow_id", "RH 工作流 ID", "str", placeholder="2111004946442563585")],
-        help="★ 必须先确认通道；云端 ComfyUI 需地址+工作流二者齐备，否则退出码 4。",
+        help="★ 必须先确认通道；缺工作流文件时退出码 4。",
         agent="按「执行依据」齐备性检查我给的参数，缺一样就停下告诉我还缺什么，不要用默认值糊过去。"))
 _add(_c("models.reset", "0 通道", "清除通道确认", "drama",
         argv=["models", "reset", "{kind}"], danger=WRITE,
@@ -523,7 +523,7 @@ _add(_c("media.upscale", "5 剪辑", "② 高清放大（RH / Topaz / 跳过）"
                       placeholder="留空=按 config.upscale.json；topaz / rh / off"),
                 Param("force", "忽略缓存重跑", "bool", default=False)],
         resources=["GPU"],
-        help="topaz=本地（￥0）｜rh=云端（约 35 币/集）｜off=跳过。产物 _master_1080x1920.mp4。",
+        help="topaz=本地（￥0）｜off=跳过。产物 _master_1080x1920.mp4。",
         agent="RH 后端会花钱，提交前必须我确认；Topaz 只占本机 GPU（一次一集，中断要整集重跑）。"))
 _add(_c("media.render", "5 剪辑", "③ 字幕生成与烧录", "subtitle",
         argv=["--stage", "render"], gate="G6", danger=WRITE,

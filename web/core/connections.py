@@ -31,7 +31,6 @@ VAR_DIR = Path(__file__).resolve().parent.parent / "var"
 CFG_PATH = VAR_DIR / "connections.json"
 KEY_PATH = VAR_DIR / "connections.keys.json"
 
-# ★ 2026-11-04：RunningHub 通道整体移除，连接中心只剩「本机 ComfyUI」与「大模型」。
 KINDS = ("llm", "comfyui")
 
 LABELS = {
@@ -216,7 +215,6 @@ def env_for() -> dict:
     # 自动启动开关也要下发：CLI / agent 直接跑出图脚本时，判断依据必须和界面一致，
     # 否则「界面关掉了自动启动，命令行却照旧拉起一个实例」——两套口径，用户没法解释。
     out["SOLODRAMA_COMFY_AUTOSTART"] = "0" if comfy_cfg.get("autostart") is False else "1"
-    # ★ 2026-11-04：RunningHub 的 Key / 站点环境变量不再下发 —— 本仓库不调任何平台 API。
     return out
 
 
@@ -389,7 +387,6 @@ def _test_llm() -> dict:
                 "next": "在 AI 模型中心填入 Key（只进不出、不回显），再点一次测试"}
 
     # ★ 真实通道优先排队：探针有名额（_LLM_PROBE_MAX），名额不能被 Mock 占掉。
-    #   否则「配了云端 Key 但界面上写 Mock 可调用」，看起来就像没接通。
     def _rank(p):
         if (p.get("kind") or "") == "mock":
             return 2

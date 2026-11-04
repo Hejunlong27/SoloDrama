@@ -60,7 +60,6 @@ class Sandbox:
                      ("RUNNINGHUB_API_KEY", "RUNNINGHUB_BASE_URL", "COMFYUI_URL")}
         for k in self._env:
             os.environ.pop(k, None)
-        # 注册表是机器状态：本机确实存在 RUNNINGHUB_API_KEY。测试要可复现，
         # 就把「用户级环境变量」这一层屏蔽掉（真实运行时它是第三优先级兜底）。
         self._reg = CONN._reg_get
         CONN._reg_get = lambda name: ""
@@ -191,7 +190,6 @@ def test_env_injection():
 
 def test_site_and_unknown():
     section("5 未知通道")
-    # 站点校验随 RunningHub 一起移除（本仓库不再有平台站点）
     r = CONN.test("nope")
     check(r["ok"] is False and r["reason"] == "unknown_kind", "未知通道应明确报错")
 
@@ -237,7 +235,6 @@ def test_auto_provider():
         check(sb.S.auto_provider("script.generate").get("id") == "d1", "真模型应优先于 Mock")
         sb.set_enabled("d1", False)
         check(sb.S.auto_provider("script.generate").get("id") == "m1", "真模型停用后应回落到 Mock")
-        # 没有 Key 的云端不能被选中（否则「就绪」却一用就 401）
         sb.add(id="n1", name="无 Key 的云端", kind="openai",
                base_url="https://api.example.com/v1", default_model="x", enabled=True)
         sb.set_enabled("d1", False)

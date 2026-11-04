@@ -21,7 +21,7 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
                                           （本地 ComfyUI 一条通道；确认单写 model-plan.json）
     preflight                            一次性体检：Key 分级 + 引擎 doctor + check + 预演（全免费）
     assets     [--engine local|rh] [...] 缺失资产出图（默认本地 ComfyUI ￥0 且干跑）
-                                          local=本机出图（不花钱，占 GPU）；已无云端通道
+                                          local=本机出图（不花钱，占 GPU）
                                           ★首次 --submit 前会先查模型选择门禁
     refs       [--apply]                 参考图瘦身（6000px 超 H3 上限 5760 必须做）
     video plan [--limit N] [--only ids]  出片计划与成本预估（免费，不提交）
@@ -61,9 +61,7 @@ import time
 
 
 # ---------------------------------------------------------------------------
-# ★ 网络出口守卫（用户强制命令 2026-11-04：禁止调用任何 RunningHub API）
 #   这里不是「删掉调用点」，而是把出站通道收窄到本机/内网。任何试图连
-#   runninghub.* 的代码都会在 DNS 解析那一步抛 RemoteForbidden —— 包括未来
 #   某次合并里被悄悄加回来的 httpx 调用。细则见 stages/_netguard.py。
 # ---------------------------------------------------------------------------
 def _boot_netguard() -> None:
@@ -172,7 +170,6 @@ SCRIPTS = pathlib.Path(os.environ.get('SOLODRAMA_SCRIPTS_DIR')
                        or pathlib.Path(__file__).resolve().parent)
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]   # .../SoloDrama
 # ★ 2026-11-04：`SKILL` / `RUN_PY` / `CHECK_BILLING` 三个常量已删 —— 它们指向
-#   stages/video/workflow（RunningHub 出片引擎），该目录已随云端通道整体移除。
 #   本地出片的入口是 stages/video/comfyui/comfy_batch_video.py。
 COMFY_VIDEO_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_local_video.py'
 MODEL_GATE_PY = SCRIPTS / 'model_gate.py'      # ★ 首次生图/出片前的模型选择门禁
@@ -193,8 +190,6 @@ def _harden_stdio() -> None:
 
 def hydrate_env() -> None:
     # ★ 进程环境里缺的，从「用户级环境变量」补（agent 的 shell 常拿不到）。
-    #   2026-11-04：RunningHub 的 Key 已从这张表删除 —— 本仓库不调任何平台 API，
-    #   补一个用不上的 Key 只会让「引擎是不是还在走云端」这个问题重新变得可疑。
     #   SOLODRAMA_ASSET_MD 是「资产提示词 md」真源，**本地通道也要用**。
     want = ('SOLODRAMA_ASSET_MD', 'DRAMA_ASSET_MD')
     os.environ.setdefault('PYTHONUTF8', '1')
@@ -317,7 +312,6 @@ def collect_status() -> dict:
     gen_seqs = {it.get('section') for it in char_man.get('items', [])}
     gen_scene_seqs = {it.get('section') for it in scene_man.get('items', [])}
 
-    # ★ 资产是资产，不分通道：本地 ComfyUI 出图（￥0）与云端计费出图**一并**计入「已生成」，
     #   避免同一个角色本地出过了、面板还在喊缺口（通道信息保留在各自 manifest 里）。
     comfy_man = read_json(DATA / 'comfyui_assets_manifest.json', {}) or {}
     comfy_items = [it for it in comfy_man.get('items', []) if it.get('files')]
@@ -645,10 +639,7 @@ def _print_dep_report(rows) -> bool:
 def cmd_preflight(args) -> int:
     """一次过体检：依赖 → 出口守卫 → 数据契约 → ComfyUI。
 
-    ★ 2026-11-04 重写。旧版本四步里有两步跑的是 `stages/video/workflow/scripts/run.py`
-      （RunningHub 出片引擎）和 `rh_doctor.py` —— 两个文件都已随云端通道移除，
-      于是 preflight 会在第一步就 `FileNotFoundError`，比不做体检更误导。
-      新四步全部只依赖本仓库现存的东西，且每一步都能给出「怎么修」。
+    ★ 2026-11-04 重写：四步全部只依赖本仓库现存的东西，且每一步都能给出「怎么修」。
     """
     verdict = []
 
@@ -779,7 +770,6 @@ def cmd_models(args) -> int:
         cmd += ['set'] + list(args.pairs or [])
         if getattr(args, 'detail', None):
             cmd += ['--detail', args.detail]
-        # ★ 执行依据（ComfyUI 工作流 API 文件 / 云端地址 / RH 应用地址）透传
         for flag in ('comfy_url', 'comfy_workflow'):
             v = getattr(args, flag, None)
             if v:
@@ -890,13 +880,12 @@ def cmd_assets_local(args) -> int:
 def cmd_assets(args) -> int:
     """资产出图 —— **只有本地 ComfyUI 一条通道**。
 
-    ★ 2026-11-04：RunningHub 出图（`gen_assets_rh_workflow.py`）已随整个 RH 通道移除。
-      传 `--engine wf|rh` 会明确报错，而不是静默回落到本地 —— 后者会让人以为
-      「切了通道」，其实一直在跑本机。
+    ★ 2026-11-04：只有本地一条通道。传 `--engine wf|rh` 会明确报错，
+      而不是静默回落到本地 —— 后者会让人以为「切了通道」，其实一直在跑本机。
     """
     eng = getattr(args, 'engine', 'local')
     if eng != 'local':
-        print('[FAIL] 只剩本地通道：--engine=%s 已不可用（RunningHub 已从本仓库移除）' % eng)
+        print('[FAIL] 只剩本地通道：--engine=%s 已不可用' % eng)
         return 2
     return cmd_assets_local(args)
 
@@ -971,10 +960,8 @@ def cmd_video_plan(args) -> int:
 def cmd_video_local(args) -> int:
     """本地 ComfyUI 批量出片（￥0，占 GPU）。
 
-    与 RH 通道的区别只有三处：不传 --concurrency（单卡并发只能是 1）、
-    不需要 RunningHub Key、产物落同一个 `07-成片/<ep>/<shot>/final.mp4`。
-    后续 video.audit / 剪辑读的是同一个落点，所以两条通道可以混用：
-    哪一镜本地跑糊了，可以单独用云端重跑那一镜。
+    单卡并发只能是 1；产物落 `07-成片/<ep>/<shot>/final.mp4`，
+    后续 video.audit / 剪辑读的是同一个落点。
     """
     ep = getattr(args, 'ep', None) or 'ep01'
     if not args.yes:
@@ -1014,14 +1001,14 @@ def cmd_video_local(args) -> int:
 
 
 def cmd_video_run(args) -> int:
-    """出片。**只有本地 ComfyUI 一条通道**（RunningHub 已于 2026-11-04 整体移除）。
+    """出片。**只有本地 ComfyUI 一条通道**。
 
     保留 `--engine` 参数只是为了让旧命令不被 argparse 拒绝；传 `workflow` 会明确报错，
     而不是悄悄回落到本地 —— 「以为切换了通道，其实没切」比报错危险得多。
     """
     eng = getattr(args, 'engine', None) or 'local'
     if eng != 'local':
-        print('[FAIL] 只剩本地通道：--engine=%s 已不可用（RunningHub 已从本仓库移除）' % eng)
+        print('[FAIL] 只剩本地通道：--engine=%s 已不可用' % eng)
         print('       直接跑：drama video run --ep ep01 --yes')
         return 2
     return cmd_video_local(args)
@@ -1221,7 +1208,6 @@ def main() -> int:
     p.add_argument('--region', default='east_asian',
                    choices=['east_asian', 'western', 'south_asian', 'latin'])
     # ★ 2026-11-04：引擎只剩本地 ComfyUI（出图与出片同一个 ComfyUI）。
-    #   以前这里默认 `runninghub`，等于每个新项目一建出来就指向云端 ——
     #   本仓库已不允许任何 RH 调用，这个默认值必须跟着消失。
     p.add_argument('--image-engine', dest='image_engine', default='local_comfyui',
                    choices=['local_comfyui'])
@@ -1322,7 +1308,7 @@ def main() -> int:
     p.set_defaults(fn=cmd_refs)
 
     # ★ 模型选择门禁（前置条件）：首次生图 / 首次出片前必须先确认「依托哪条通道」
-    p = sub.add_parser('models', help='首次生图/出片前确认通道：本地ComfyUI / 云端ComfyUI / RH AI应用 / 闭源模型')
+    p = sub.add_parser('models', help='首次生图/出片前确认通道：本地 ComfyUI')
     _add_ws_arg(p)
     ms = p.add_subparsers(dest='models_cmd')
     q = ms.add_parser('list', help='打印可选通道清单（含各自必需的执行依据）')
@@ -1336,11 +1322,10 @@ def main() -> int:
     _add_ws_arg(q)
     q.add_argument('pairs', nargs='+', metavar='kind=choice')
     q.add_argument('--detail', default=None)
-    q.add_argument('--comfy-url', dest='comfy_url', default=None, help='ComfyUI 服务地址（本地/云端）')
+    q.add_argument('--comfy-url', dest='comfy_url', default=None, help='ComfyUI 服务地址')
     q.add_argument('--comfy-workflow', dest='comfy_workflow', default=None,
                    help='ComfyUI 工作流 API 文件路径（「导出（API）」得到的 json）')
     # ★ 2026-11-04：--app-url / --app-id / --workflow-id 已删 —— 它们只对应
-    #   RunningHub 的通道形态，本仓库没有云端通道，留着会让人以为还能填。
     q.set_defaults(fn=cmd_models)
     q = ms.add_parser('reset', help='清除某类确认（换通道前用）')
     _add_ws_arg(q)
@@ -1363,7 +1348,7 @@ def main() -> int:
     q.add_argument('--ep', default=None, help='集号（ep01）')
     q.add_argument('--json', action='store_true')
     q.set_defaults(fn=cmd_video_plan)
-    q = vs.add_parser('run', help='真跑出片（本地 ￥0 / 云端 ★计费；都需 --yes）')
+    q = vs.add_parser('run', help='真跑出片（本地 ￥0；需 --yes）')
     _add_ws_arg(q)
     q.add_argument('--engine', choices=('local',), default='local',
                    help='出片通道：只剩 local（本机 ComfyUI，￥0）')
@@ -1382,7 +1367,6 @@ def main() -> int:
     q.set_defaults(fn=cmd_video_status)
 
     # ★ 2026-11-04：成本口径改为**时间**。`report` / `balance` / `cost` 三个命令删掉：
-    #   前两个是 RunningHub 的账户与战报，后者的币口径已无意义。换成 time 的两个子命令。
     p = sub.add_parser('time', help='耗时：预计跑多久（plan）/ 已经跑了多久（report）')
     _add_ws_arg(p)
     ts = p.add_subparsers(dest='tcmd')

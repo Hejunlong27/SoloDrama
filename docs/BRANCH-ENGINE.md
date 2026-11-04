@@ -28,10 +28,8 @@
 |---|---|---|
 | 导入 | 制作包校验 → `data/` 契约 | `stages/import/pack_import.py` |
 | 资产出图 | 本地 ComfyUI 批量出图（￥0） | `gen_assets_local.py` |
-| 资产出图 | RunningHub 工作流批量出图 | `gen_assets_rh_workflow.py` |
 | 分镜图 | 每镜一张 9:16 首帧 | `gen_boards.py` |
 | 入厂门禁 | 五文件完整性 + 图实体校验 | `ingest_check.py` |
-| 视频出片 | RunningHub H3（六参考槽 + 槽位守卫） | `stages/video/workflow/` |
 | 视频出片 | 本地 ComfyUI 出片 | `stages/video/comfyui/` |
 | 剪辑 | 母版拼接（帧数校验） | `subtitle.py --stage master` |
 | 剪辑 | 高清放大（Topaz） | `upscale.py` |

@@ -4,7 +4,7 @@
 
 # SoloDrama
 
-**创作交给 Skill，执行交给引擎。**
+**免费的短剧流水线工厂**
 
 > **当前分支 `feat/pack-engine`**：引擎只负责批量出图、批量出片、剪辑交付；
 > 选题、剧本、资产设计、导演、分镜、提示词全部由可插拔的创作 Skill 完成，
@@ -16,11 +16,7 @@
 出图、出片、放大**全部在本机跑**（￥0，不联网），唯一的成本是 GPU 时间；字幕时间只认强制对齐，
 交付规格不过关就不许导出。
 
-> **硬约束：本仓库不调用任何 RunningHub API。** 这不是「默认不用」，是代码里没有：
-> `stages/_netguard.py` 在 socket 与 URL 两层拦截出站，`runninghub.*` 无论怎么配都不可达；
-> `stages/production/scripts/tests/test_no_rh_api.py` 每次跑测试都会重新验一遍。
-
-全程在一台 **RTX 4060（8G 显存）+ 16G 内存的笔记本**上开发并验证 —— 不需要工作站、服务器或云主机。
+全程在一台 **RTX 4060（8G 显存）+ 16G 内存的笔记本**上开发并验证 —— 不需要工作站或服务器。
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg) ![Python](https://img.shields.io/badge/python-3.10%2B%20\(tested%203.13\)-3776AB.svg) ![本地出图](https://img.shields.io/badge/%E6%9C%AC%E5%9C%B0%E5%87%BA%E5%9B%BE-%C2%A50-success.svg)
 
@@ -163,9 +159,6 @@ SoloDrama/
 
 | 变量                                                    | 用途                                  |
 | ----------------------------------------------------- | ----------------------------------- |
-| `RUNNINGHUB_API_KEY` / `RUNNINGHUB_BASE_URL`          | 云端出片（消费级；按账号所在站点填）                  |
-| `RUNNINGHUB_ENT_API_KEY`                              | 企业级-共享；仅标准模型 API                    |
-| `RH_CHAR_APP_ID` / `RH_SCENE_APP_ID`                  | 账号绑定的 AI 应用 ID                      |
 | `SOLODRAMA_WORKSPACE` / `SOLODRAMA_ASSET_MD`          | 默认工作区 / 资产提示词 md（旧前缀 `DRAMA_*` 仍生效） |
 | `COMFYUI_URL` / `COMFYUI_NODE_*` / `COMFYUI_WORKFLOW` | 本地出图地址与节点映射（换工作流改配置不改代码）            |
 
@@ -176,9 +169,9 @@ SoloDrama/
 | 项                | 必需                 | 说明                         |
 | ---------------- | ------------------ | -------------------------- |
 | Python 3.10+     | ✅                  | 实测 3.13                    |
-| Pillow / httpx   | Pillow ✅ · httpx ⭕ | 封面排版、图像体检 / 云端通道           |
+| Pillow / httpx   | Pillow ✅ · httpx ⭕ | 封面排版、图像体检 / 接口调用           |
 | ffmpeg / ffprobe | ✅                  | 拼接、2K、字幕烧录、像素验收            |
-| NVIDIA 独显        | ⭕                  | 有：本地出图 ￥0；无：全部走云端，照样能跑     |
+| NVIDIA 独显        | ✅                  | 出图与出片全部跑在本机 GPU 上          |
 | ComfyUI          | ⭕                  | 未启动时 Studio 会自动拉起（30–90 秒） |
 
 自检不过、或需要「装错解释器」这类高频坑的修法，见 [环境自检](docs/operations/环境自检.md)。

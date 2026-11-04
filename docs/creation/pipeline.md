@@ -87,7 +87,7 @@ $PY tools/cli.py parse --ep 1 --type storyboard
 $PY tools/cli.py reindex            # 从 Markdown 全量重建索引
 $PY tools/cli.py report             # 项目总览 + 断点状态
 $PY tools/cli.py set-anchor --code LIN_YU --anchor "新锚点" --reason "原因"
-$PY tools/cli.py gen --engine runninghub --ep 1 --shot SC-03   # stub
+$PY tools/cli.py gen --engine local --ep 1 --shot SC-03   # stub
 ```
 
 ## 常见故障

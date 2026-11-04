@@ -25,7 +25,6 @@ _STARTED = False
 _WORKERS: dict = {}          # job_id -> {"pid": int, "thread": Thread}
 _RUNNING_JOBS: dict = {}     # job_id -> runner 进程句柄（用于取消）
 
-# ★ 2026-11-04：RH_SLOTS（云端并发槽）已随 RunningHub 通道一起删掉。
 #   本机只有一个 GPU，出图与出片抢同一个显存 —— 并发只能是 1，
 #   第二个任务进来就 OOM。这不是「保守设置」，是硬约束。
 GPU_SLOTS = 1                # 本机 GPU 独占（出图/出片共用一块卡）

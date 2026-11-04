@@ -79,7 +79,6 @@ def test_asset_env_injection():
     vals = {"kind": "all", "submit": True, "asset_md": md, "only": ""}
 
     # ★ 2026-11-01：`assets.rh` / `assets.gen_char` / `assets.gen_scene` 已删（RH AI 应用通道下线）；
-    #   云端只剩 `assets.rh_wf`，它走 CLI `--md` 而不是环境变量，故不在此白名单内。
     for cid in ("assets.local", "assets.check"):
         c = CMD.get(cid)
         if not check(c is not None, "%s 应在白名单里" % cid):

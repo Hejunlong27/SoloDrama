@@ -84,7 +84,5 @@ python <skill>\scripts\episode_preflight.py 7 8 9 10
 |---|---|---|
 | 追加场景图到末尾 | 全段人物错乱 | 位置对应，追加 = 整体错位 |
 | 生成完就当接入 | 引擎报「找不到 key」 | 产出在 `output/assets/` 躺着，`characters.json` 里还没有该 key |
-| 直接跑 `gen_char_assets.py` | 报 `未设置 RUNNINGHUB_API_KEY` | Key 在用户级环境变量里，agent shell 读不到 ⇒ **必须走 `drama.py`** |
-| 以为文档说「27 RH币/张」 | 报价偏差 | 实测 **16–24 RH币/张**，按提示词复杂度浮动 |
 | 以为场景图也 2048 宽 | 尺寸预期错 | 场景空镜只出 **1376×768**（比人物图低一档） |
 | 提示词点到 `<Picture 8>` | 末尾图被丢 | H3 硬上限 6 槽 ⇒ 改提示词 |

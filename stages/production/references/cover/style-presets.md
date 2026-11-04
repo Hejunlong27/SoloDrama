@@ -89,7 +89,7 @@ python stages/production/scripts/cover_prompt.py --brief cover_brief.json --styl
   --emit comfy --out-dir ./covers
 python stages/assets/comfyui/comfy_client.py --spec ./covers/comfyui_manifest.json --out ./covers
 
-# RunningHub 工作流：先生成计划，再按 probe 到的 nodeId 组装 nodeInfoList
+# 工作流：先生成计划，再按 probe 到的 nodeId 组装 nodeInfoList
 python stages/production/scripts/cover_prompt.py --brief cover_brief.json --style revenge-cold \
   --emit rh --out-dir ./covers
 ```

@@ -64,7 +64,7 @@ export async function render(ctx) {
     + '<label class="row gap8" style="cursor:pointer"><input type="radio" name="pmode" value="step"> 逐步确认</label>'
     + '<label class="row gap8" style="cursor:pointer"><input type="radio" name="pmode" value="auto" checked> 连跑（流水线）</label>'
     + '<span class="spacer"></span>'
-    + '<span class="small">预算（RH币，只对计费环节生效）</span>'
+    + '<span class="small">预算上限（只对花钱环节生效）</span>'
     + '<input class="input mono" id="pBudget" value="' + state.budget + '" style="width:110px">'
     + '<span class="tiny dim">估不出金额的计费环节会停下来问你，不猜</span>'
     + '</div></div></div>'
@@ -78,7 +78,7 @@ export async function render(ctx) {
         + badge('bad', '被挡 ' + ((d.counts || {}).blocked || 0))
         + badge('outline', '需人工 ' + ((d.counts || {}).manual || 0))
         + '<span class="spacer"></span><span class="tiny dim">预计花费 ' + (d.est_total || 0) + ' / 预算 '
-        + (d.budget || 0) + ' RH币</span></div>'
+        + (d.budget || 0) + ' 点</span></div>'
         + '<section class="card"><div class="card-b tight"><div class="table-wrap">'
         + '<table class="tb"><thead><tr><th style="width:7%">环节</th><th style="width:17%">名称</th>'
         + '<th style="width:14%">状态</th><th>说明</th>'

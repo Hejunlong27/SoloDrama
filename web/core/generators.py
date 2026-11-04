@@ -5,7 +5,6 @@
 --------------
 到 2026-10-29 为止，生成能力散在四个地方，各有各的说法：
   * 本地出图      `stages/assets/comfyui/comfy_client.py`（Qwen-Image 2.1）
-  * 云端出图·工作流 `gen_assets_rh_workflow.py`（nodeInfoList，文生图 / 图生图）
   * 出片          `stages/video/comfyui`（本地 ComfyUI H3）
 用户在界面上根本看不出「我这部片子到底能用哪条通道、缺什么、要花多少钱」。
 更要紧的是**文生图与图生图是两个不同的工作流**（图生图多一个加载图像节点），
@@ -156,7 +155,6 @@ def channels(ws=None) -> dict:
 
     img_local_t2i = _local_wf_state(IMAGE_LOCAL_WF, info)
     vid_local = _local_wf_state(VIDEO_LOCAL_WF, info)
-    # ★ 2026-11-04：RunningHub 三条发生器已移除（本仓库只跑本地 ComfyUI）。
 
     items = [
         {"id": "image.local.t2i", "kind": "image", "engine": "local", "mode": "t2i",

@@ -6,10 +6,8 @@
 
 | 现象 | 根因 | 修法 |
 |---|---|---|
-| `[FAIL] 未设置 RUNNINGHUB_API_KEY`（明明配过） | agent 的 shell **继承不到用户级环境变量**（`setx` 写的是 `HKCU\Environment`） | **走 `drama.py`**（内部 `hydrate_env()` 用 `winreg` 补齐）；不要直接跑 `gen_*_assets.py` |
 | `找不到短剧工作区` | 没设 `SOLODRAMA_WORKSPACE`，且脚本不在 `<WS>/scripts/` 下 | 设环境变量或用 `--workspace` |
 | `subtitle.py` 报「找不到配置 `<skill>/video-pipeline/config.subtitle.json`」 | 引擎住在 Skill 包里，`__file__` 推出的是 Skill 目录 | 加 `--workspace "<WS>"` 或设 `SOLODRAMA_WORKSPACE` |
-| 上传接口报 `code=1 API Key不存在`（但 Key 是对的） | **站点用错**：上传接口在 `.cn` 会失败，账号在 `.ai` | `config.local.json` 的 `runninghub_base_url` 必须是 `https://www.runninghub.ai` |
 | 双击 .bat 后 Python 抛 `UnicodeEncodeError` | 控制台是 GBK，打印 `[OK]`/`⇒`/`￥` 崩 | .bat 用 **GBK** 保存；脚本按 `isatty()` 分流编码 |
 | 引擎 `doctor` 报 `image_providers['banana']` FAIL | 本线走 `--video-only`，不需要图片 provider | 归为**已知噪音**，不算真问题 |
 
@@ -28,7 +26,7 @@
 |---|---|---|
 | 报「工作流运行失败」 | 平台侧一次性失败（实测 9.1%，**未计费**） | `--resume <批次> --only <段>` 补跑，**别改提示词** |
 | 重复扣费 | 没带 `--resume` 就全量重跑 | 续跑必须 `--resume <批次>` |
-| 以为「1 段 55 RH币」做小样预算 | 那是 3 秒档的旧数据 | 8–14 秒档实测 **78–225**，按 145/保守 210 估 |
+| 以为「1 段 3 分钟」排期 | 那是短镜的旧数据 | 8–14 秒档实测 **5–10 分钟**，按 10 分钟估 |
 | 想调高并发加速 | 消费级 API 同时调用上限就是 **5**（平台硬限） | 不得调高，也不得多开脚本绕过 |
 
 ## D. 字幕（层 2 引擎，2026-09-20 修了 4 个真缺陷）

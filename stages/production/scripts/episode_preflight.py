@@ -30,10 +30,8 @@ from _ws import WS, DATA, ASSETS as ASSETS_ROOT  # noqa: E402  ★ 工作区解�
 VP = WS / "video-pipeline"    # 引擎技术目录
 ASSET_MD = Path((os.environ.get("SOLODRAMA_ASSET_MD") or os.environ.get("DRAMA_ASSET_MD")) or "")   # 资产提示词 md（可选：缺省时跳过资产核对）
 
-RH_PER_SEG = 180          # 第三集 13 段实测口径（均值 175，留余量）
-CNY_PER_RH = 0.0025       # 1 RH币 ≈ ¥0.0025（用户 2026-09-18）；2026-09-19 用户补：1 美元 = 2746 RH币
-RH_PER_USD = 2746         # ⇒ 1 RH币 ≈ $0.0003642；用于把美元钱包消耗并回 RH币口径
-CHAR_RH = 27              # 人物定妆图单价
+SEC_PER_SEG = 360         # 单段出片约 6 分钟（RTX 4060 8G / 8 步 / 0.8MP）
+SEC_PER_CHAR = 45         # 单张人物定妆图约 45 秒
 SCENE_USD = 0.01          # 场景空镜单价（美元钱包）
 MAX_SLOTS = 6             # H3 工作流/AI 应用的 LoadImage 槽位数（node 51/49/50/43/19/23）——硬上限
 
@@ -278,25 +276,24 @@ def main() -> int:
             print("  ★ 本集缺失角色: %s"
                   % ", ".join("%s%s" % (n, "（第%s节，%s）" % (s, disk.get("char_%02d" % s, "未生成")) if s else "（资产库无此人）")
                               for n, s in sorted(r["missing"].items(), key=lambda x: x[1] or 99)))
-        print("  成本估算: %d 段 × %d ≈ %d RH币 ≈ ¥%.2f"
-              % (r["n"], RH_PER_SEG, r["n"] * RH_PER_SEG, r["n"] * RH_PER_SEG * CNY_PER_RH))
+        print("  耗时估算: %d 段 × %d 秒 ≈ %.1f 小时"
+              % (r["n"], SEC_PER_SEG, r["n"] * SEC_PER_SEG / 3600))
 
     print("\n" + "=" * 92)
     print("汇总")
     print("=" * 92)
     print("  段数        : %d" % total)
-    print("  视频费用    : %d RH币 ≈ ¥%.2f" % (total * RH_PER_SEG, total * RH_PER_SEG * CNY_PER_RH))
+    print("  出片耗时    : %.1f 小时" % (total * SEC_PER_SEG / 3600))
     known = {n: s for n, s in all_missing.items() if s}
     unknown = [n for n, s in all_missing.items() if not s]
     if known:
         print("  需补人物    : %d 个 → %s" % (len(known), ", ".join("第%s节%s" % (s, n) for n, s in sorted(known.items(), key=lambda x: x[1]))))
-        print("  人物出图费  : %d × %d RH币 ≈ %d RH币 ≈ ¥%.2f"
-              % (len(known), CHAR_RH, len(known) * CHAR_RH, len(known) * CHAR_RH * CNY_PER_RH))
+        print("  人物出图    : %d 张 ≈ %.1f 分钟"
+              % (len(known), len(known) * SEC_PER_CHAR / 60))
     if unknown:
         print("  资产库没有  : %s  ← 需新写提示词或改为纯文字" % ", ".join(unknown))
-    print("  合计（视频+人物）≈ %d RH币 ≈ ¥%.2f"
-          % (total * RH_PER_SEG + len(known) * CHAR_RH,
-             (total * RH_PER_SEG + len(known) * CHAR_RH) * CNY_PER_RH))
+    print("  合计（出片+资产）≈ %.1f 小时"
+          % ((total * SEC_PER_SEG + len(known) * SEC_PER_CHAR) / 3600))
     return 0
 
 

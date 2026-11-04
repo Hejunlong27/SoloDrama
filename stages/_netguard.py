@@ -1,9 +1,7 @@
-"""_netguard.py —— 网络出口守卫：只许打本机，平台 API 一律拒绝。
+"""_netguard.py —— 网络出口守卫：只许打本机，外部平台 API 一律拒绝。
 
-★★★ 用户强制命令（2026-11-04）：禁止调用任何 RunningHub API。★★★
-
-为什么不能只靠「删掉调用点」：
-  删掉 runninghub_client.py 之后，代码里确实没有 RH 调用了。但这条约束靠的是
+为什么要做出口拦截，而不是只靠「删掉调用点」：
+  删掉调用点之后，代码里确实没有外部平台调用了。但这条边界靠的是
   「以后没人把它加回来」—— 而依赖习惯的约束都会在某次合并里悄悄失效。
   失效的方式特别隐蔽：不会报错，只是某天出片时镜头被上传到了一个境外域名。
 
@@ -14,10 +12,10 @@
 
 唯一合法的远端出口是**大模型网关**（创作辅助用）。它必须显式开：
   SOLODRAMA_ALLOW_REMOTE=1
-且即便开了，黑名单仍然优先 —— 放宽的是「哪些远端能连」，不是「能连 RH」。
+且即便开了，黑名单仍然优先 —— 放宽的是「哪些远端能连」，不是「什么都能连」。
 
 失败时抛 RemoteForbidden（继承 OSError）：现有 `except OSError` 的代码能接住，
-只是提示会变成「被网络出口守卫拒绝（禁止调用 RunningHub API）」，而不是难懂的 socket 错。
+只是提示会变成「被网络出口守卫拒绝」，而不是难懂的 socket 错。
 """
 
 from __future__ import annotations
@@ -27,9 +25,6 @@ import socket
 import sys
 import urllib.parse
 
-# ---- 黑名单：任何形式的 RunningHub 域名 -------------------------------------
-# 用「子串包含」而不是精确后缀匹配，是为了连 `api.runninghub.ai`、
-# `xxx.runninghub.cn`、`runninghub-proxy.internal` 这类变体一起挡住。
 # 宁可误伤一个恰好叫这名字的内网主机，也不能放过一个真实出口。
 FORBID_SUBSTRINGS = (
     "runninghub",
@@ -79,7 +74,7 @@ def check_host(host: str, *, port: int | None = None, where: str = "") -> None:
     for pat in FORBID_SUBSTRINGS:
         if pat in h:
             raise RemoteForbidden(
-                "网络出口守卫拒绝访问 %r（%s）：本仓库禁止调用任何 RunningHub API。"
+                "网络出口守卫拒绝访问 %r（%s）：出图与出片只能走本机 ComfyUI。"
                 "所有出图/出片只能走本机 ComfyUI（COMFYUI_URL，默认 http://127.0.0.1:8188）。"
                 % (h, where or "出站请求"))
     if h in _LOCAL_EXACT or h.endswith(_LOCAL_SUFFIXES):
@@ -90,8 +85,7 @@ def check_host(host: str, *, port: int | None = None, where: str = "") -> None:
         return
     raise RemoteForbidden(
         "网络出口守卫拒绝访问 %r（%s）：只允许本机与内网地址。"
-        "确需访问远端（例如大模型网关）请设 SOLODRAMA_ALLOW_REMOTE=1；"
-        "RunningHub 无论是否设该变量都不可访问。" % (h, where or "出站请求"))
+        "确需访问远端（例如大模型网关）请设 SOLODRAMA_ALLOW_REMOTE=1。" % (h, where or "出站请求"))
 
 
 def check_url(url: str, *, where: str = "") -> None:
@@ -152,7 +146,7 @@ def _patch_urllib() -> None:
     ★ 为什么 socket 层的补丁不够（2026-11-04 实测踩到）：
       很多机器设了 `HTTPS_PROXY=http://127.0.0.1:60629`（Clash / 公司代理 / 沙箱都这样）。
       此时 urlopen 真正连的是 127.0.0.1，socket 层看到的 host 是 `127.0.0.1` —— 白名单放行 ——
-      然后代理替你连到 runninghub。**只看 socket 层，守卫形同虚设。**
+      然后代理替你连到目标站点。**只看 socket 层，守卫形同虚设。**
       所以在 urlopen 入口按原始 URL 再判一次，这一层不看代理。
     """
     import urllib.request as _ur
@@ -241,9 +235,9 @@ def selfcheck() -> list:
         ("本机 127.0.0.1", lambda: check_host("127.0.0.1"), False),
         ("本机 localhost", lambda: check_host("localhost"), False),
         ("内网 192.168.1.9", lambda: check_host("192.168.1.9"), False),
-        ("RunningHub .ai", lambda: check_host("www.runninghub.ai"), True),
-        ("RunningHub .cn 子域", lambda: check_host("api.runninghub.cn"), True),
-        ("RH 变体", lambda: check_host("rh-api.runninghub.ai"), True),
+        ("黑名单 .ai", lambda: check_host("www.runninghub.ai"), True),
+        ("黑名单 .cn 子域", lambda: check_host("api.runninghub.cn"), True),
+        ("黑名单变体", lambda: check_host("rh-api.runninghub.ai"), True),
         # 普通远端：默认拦；显式开了 SOLODRAMA_ALLOW_REMOTE 才放（RH 仍然拦，见上三行）。
         ("外部站点", lambda: check_host("example.com"), not _allow_remote()),
     ):

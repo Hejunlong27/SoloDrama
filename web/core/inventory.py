@@ -4,7 +4,7 @@
 为什么单独一层
 --------------
 `drama.py status` 的 `ledger` 字段只统计**统一台账**（`video-pipeline/ledger/runs/*.json`）。
-但实测发现：资产出图走云端工作流时，用量记录落在
+但实测发现：资产出图走外部通道时，用量记录落在
 `output/assets/<kind>/_wf/result_*.json`（引擎自己的原始证据），**台账可能没有收录**。
 只读台账 ⇒ 用户端会显示「花了多少钱 = ¥0」，而实际上钱已经花了 —— 这是**统计缺陷**。
 
@@ -216,10 +216,10 @@ def _inventory(ws: Path) -> dict:
         source, source_text = "ledger", ""
     elif wf_hits and not ledger_hits:
         source = "workflow"
-        source_text = "金额来自云端生成记录，系统的账单明细里尚未收录（可能略低于实际）"
+        source_text = "金额来自生成记录，账单明细里尚未收录（可能略低于实际）"
     elif wf_hits and ledger_hits:
         source = "mixed"
-        source_text = "部分金额来自云端生成记录，系统的账单明细里尚未收录"
+        source_text = "部分金额来自生成记录，账单明细里尚未收录"
     else:
         source, source_text = "none", ""
 

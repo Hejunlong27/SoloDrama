@@ -200,7 +200,7 @@ function cancelJob(ctx, id, fromDrawer) {
     tone: 'bad',
     html: '<div class="small">将终止该任务的子进程树。已完成的产物保留，未完成的段可以之后续跑。</div>'
       + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
-      + '<div>取消不产生额外费用；已提交到云端并成功的段仍按平台用量计费。</div></div>',
+      + '<div>取消不产生额外费用；已提交并成功的段不受影响。</div></div>',
     foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">返回</button>'
       + '<button class="btn danger" id="okCancel">确认取消</button>',
     mount: () => {

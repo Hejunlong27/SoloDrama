@@ -86,7 +86,7 @@ async function loadOverview() {
     <div>参考图：<b>${(st.refs || []).length}</b> 张（超限 ${(st.refs || []).filter((r) => r.h3_over_limit).length}）</div>
     <div>缺资产：人物 <b>${(assets.missing_characters || []).length}</b> · 场景 <b>${(assets.missing_scenes || []).length}</b></div>
     <div>批次：<b>${batches.length}</b>（段 ${tot}：成功 ${ok} / 失败 ${fail}）</div>
-    <div>台账：<b>${led.files || 0}</b> 份 · 消耗 <b>${(led.rh_coins || 0).toFixed ? led.rh_coins.toFixed(0) : led.rh_coins}</b> RH币</div>
+    <div>台账：<b>${led.files || 0}</b> 份 · 消耗 <b>${(led.rh_coins || 0).toFixed ? led.rh_coins.toFixed(0) : led.rh_coins}</b> 点</div>
     <div>H3 工作流：${h3.ready ? chip('就绪', 'done') : chip('G2 未就绪', 'blocked')} <span class="muted small">${esc(h3.kind || '')} ${esc(h3.id || '')}</span></div>`;
 
   const nexts = d.next_actions || [];
@@ -360,7 +360,7 @@ function subscribeJob(id, after) {
 
 $('btnJobCancel').onclick = async () => {
   if (!state.activeJob) return;
-  if (!confirm('确认取消该作业？子进程树会被终止；已提交的云端任务请用续跑命令处理。')) return;
+  if (!confirm('确认取消该作业？子进程树会被终止；已提交的任务请用续跑命令处理。')) return;
   await api('/api/jobs/' + encodeURIComponent(state.activeJob) + '/cancel', { method: 'POST' });
   loadJobs();
 };

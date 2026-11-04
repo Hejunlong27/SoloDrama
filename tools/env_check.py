@@ -71,7 +71,6 @@ BINS = [
 #   （实测：同一个 Key 同时在「配置」与「环境快照」→ 同一 id 出现两次，
 #   `web/tests/test_health.py` 判失败）。一个变量只该有一条体检项：
 #   本组已经覆盖「有没有设」+「设了没读到」+「指向的目录还在不在」。
-# ★ 2026-11-04：RUNNINGHUB_API_KEY / RUNNINGHUB_BASE_URL 已从体检表删除 ——
 #   本仓库不调任何平台 API，留着它们只会让人以为「还需要配一个 Key」。
 SNAPSHOT_KEYS = (
     ("SOLODRAMA_WORKSPACE", "默认工作区（不设也行，命令里显式 --workspace 即可）"),
@@ -385,7 +384,6 @@ def collect() -> dict:
         })
 
     # 4) 配置（变量类的一条都不放这里，见 4.5 环境快照）
-    # ★ 2026-11-04：原「RunningHub 站点」体检项已删 —— 本仓库没有平台站点。
     items.append({
         "group": "配置", "name": "ComfyUI 本地端口",
         "ok": _port_open("127.0.0.1", 8188), "required": False,

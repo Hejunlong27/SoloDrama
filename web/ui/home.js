@@ -149,7 +149,7 @@ function renderSpend() {
   $('spendBox').innerHTML = `
     <div class="spend-big">${esc(s.text || '¥0')}</div>
     <div class="muted small">${esc(s.note || '按平台实际用量统计')}</div>
-    ${s.ledger_incomplete ? '<div class="notice-warn small">这笔钱已经花出去了，只是系统的账单明细还没收录，所以这里按云端生成记录先算给你看。</div>' : ''}
+    ${s.ledger_incomplete ? '<div class="notice-warn small">这笔钱已经花出去了，只是系统的账单明细还没收录，所以这里按生成记录先算给你看。</div>' : ''}
     <hr class="hr">
     ${lines.length ? lines.map((l) => `<div class="kv"><span class="muted">${esc(l.label)}</span><b>${esc(l.value)}</b></div>`).join('')
     : '<div class="muted">还没有开始做东西。等第一步完成，这里会显示做出来的成果和花费。</div>'}
@@ -364,7 +364,7 @@ async function runSpec(specId, params, opts) {
   // 需要花钱：先问用户（用金额与人话，不显示命令）
   if (opts.confirm) {
     $('tmBody').innerHTML = `<p>这一步要花钱，确认后就开始。</p>
-      <div class="ask-box">${esc(specId === 'video.run' ? '把这一集的镜头交给云端生成，按实际用量扣费。' : '这一步会产生费用，开始前请确认。')}</div>
+      <div class="ask-box">${esc(specId === 'video.run' ? '把这一集的镜头交给本机生成，只占 GPU 时间。' : '这一步会产生费用，开始前请确认。')}</div>
       <p class="muted small">如果你不确定要花多少，可以先去「先算一下要花多少钱」。</p>`;
     foot('<button class="btn btn-ghost" id="askNo">先不开始</button><button class="btn btn-primary" id="askYes">我确认，开始</button>');
     $('askNo').onclick = () => closeModal();
