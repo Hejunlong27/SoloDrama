@@ -1,5 +1,5 @@
 /* 用时（原「时间中心 / 成本中心」）：本仓库出图出片全在本机，唯一的成本是 GPU 时间。
-   ★ 2026-11-04：从全局导航移进项目（它是项目属性）；全局耗时汇总在工作台首屏。 */
+   ★ 2026-11-04：从全局导航移进项目（它是项目属性）；全局耗时汇总在工作台首屏。
    ★ 2026-11-04：整页口径从「钱」换成「时间」。
    为什么必须换：平台费用恒为 0，一个永远显示 ¥0 的页面不只是没用 ——
    它会让人以为「计费没接上」，然后去排查一个不存在的问题。
@@ -62,8 +62,8 @@ export async function render(ctx) {
 
   const html = ''
     + '<div class="page-head"><div><h1 class="page-title">用时</h1>'
-    + '<div class="page-sub">口径：只算本机 GPU 实际占用。<b>平台费用恒为 0</b>'
-    + '（出图出片全在本机，没有任何按次计费的通道）。</div></div>'
+    + '<div class="page-sub">默认通道跑在本机，费用 ￥0 —— 这时该看的是时间；'
+    + '显式选了平台通道（RunningHub）才会计费，那部分单独一块列出来。</div></div>'
     + '<div class="page-actions">' + badge(srcTone, d.source === 'ledger' ? '来自耗时台账'
       : d.source === 'none' ? '还没跑过' : '部分数据') + '</div></div>'
 
@@ -81,6 +81,25 @@ export async function render(ctx) {
     + esc(sum.season_human || '—') + '</div>'
     + '<div class="kpi-n">单卡并发 1，不做并行</div></div>'
     + '</div>'
+
+    // ★ 只有真花过钱才出现。纯本机跑时 coins 恒为 0，显示一块 ¥0 只会让人
+    //   怀疑「计费是不是没接上」，然后去查一个不存在的问题。
+    + ((Number(ledger.coins) || 0) > 0
+      ? '<section class="card" style="margin-bottom:16px">'
+        + '<div class="card-h"><h3>平台花费</h3>'
+        + '<span class="card-sub">来自台账里逐次尝试的 usage</span>'
+        + '<span class="spacer"></span>' + badge('warn', '★ 计费通道') + '</div>'
+        + '<div class="card-b"><div class="grid g3">'
+        + '<div class="kpi"><div class="kpi-k">RH 币</div><div class="kpi-v">'
+        + esc(ledger.coins) + '</div><div class="kpi-n">按平台 usage 累计</div></div>'
+        + '<div class="kpi"><div class="kpi-k">美元钱包</div><div class="kpi-v">'
+        + esc(ledger.usd) + '</div><div class="kpi-n">部分通道按美元结算</div></div>'
+        + '<div class="kpi"><div class="kpi-k">折人民币</div><div class="kpi-v">'
+        + '￥' + esc(ledger.cny) + '</div><div class="kpi-n">按台账汇率折算，仅供参考</div></div>'
+        + '</div></div>'
+        + '<div class="card-foot">要省钱：把通道切回本机（出图出片的默认就是它），'
+        + '或只对跑糊的那一镜单独重跑。</div></section>'
+      : '')
 
     + '<div class="grid g21" style="margin-bottom:16px">'
     + '<section class="card"><div class="card-h"><h3>时间花在哪一步</h3>'

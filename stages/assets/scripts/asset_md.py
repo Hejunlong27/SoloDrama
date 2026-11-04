@@ -4,19 +4,19 @@
 
 为什么有这个脚本
 ----------------
-各通道解析同一份资产提示词 md，
-但引擎吃的是「直接提交给 ComfyUI 的请求体」。本地通道吃的是另一种输入
+云端通道（`gen_assets_rh_workflow.py`）与本脚本解析同一份资产提示词 md，
+但引擎吃的是「直接提交给 RunningHub 的请求体」。本地 ComfyUI 通道吃的是另一种输入
 （`comfy_client.py --spec` 的 manifest），因此需要一个**确定性转换器**把创作层产物
 转成引擎输入 —— 这正是本脚本的职责，属设计文档里的「转换器补断点」一类。
 
 设计纪律
 --------
 * **纯标准库**（re / json / argparse / pathlib），**零第三方依赖、零网络、零计费**，
-  也不需要任何平台 Key —— 出站只连本机 ComfyUI。
+  也不需要 `RUNNINGHUB_*` 任何 Key —— 本地通道的用户不该被云端依赖拖累。
 * **只搬运、不发明**：解析出的提示词逐字保留，不删改、不重排、不补写。
 * **解析口径与引擎一致**：章节结构沿用 `gen_assets_rh_workflow.py` 的解析
   （`# 一、角色资产库` / `# 二、场景资产` / `# 三、道具资产`；`## N. 名字` 节内 ``` 块 = 提示词）。
-  实现独立成文件而**不 import 既有引擎**，是为了避免把 httpx 等重依赖拖进本地通道
+  实现独立成文件而**不 import 既有引擎**，是为了避免把 httpx / RunningHub 客户端拖进本地通道
   （既有引擎在 import 期就会 fail-fast 校验 Key 与工作区）。
 
 用法
@@ -52,6 +52,7 @@ try:                                      # Windows 控制台 GBK → 强制 UTF
 except Exception:                                                # noqa: BLE001
     pass
 
+# ── 章节与条目正则（与既有云端脚本同口径）────────────────────────────────────
 SEC_CHAR_RE = re.compile(r'^##\s+(\d+)\.\s*(.+?)\s*$', re.M)
 SEC_SCENE_RE = re.compile(r'^##\s+场景\s*(\d+)\s*[·.、]\s*(.+?)\s*$', re.M)
 # 道具节无既有约定，取宽松式：`## 1. 名字` / `## 道具 1 · 名字` / `## 道具1 名字`
@@ -151,7 +152,7 @@ def to_assets(entries: list, variant_label: str = '基础造型',
     assets = []
     for e in entries:
         kind, no = e['kind'], e['section']
-        base = '%s_%02d' % (kind, no)     # char_01 / scene_01 / prop_01（同口径）
+        base = '%s_%02d' % (kind, no)     # char_01 / scene_01 / prop_01（与云端通道同口径）
         picks = e['variants'] if all_variants else \
             [next((v for v in e['variants'] if variant_label in v['label']), e['variants'][0])]
         for k, v in enumerate(picks):

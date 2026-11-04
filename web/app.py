@@ -36,8 +36,11 @@ from core.llm import templates as llm_templates
 from core.llm.errors import LLMError
 
 # ---------------------------------------------------------------------------
-#   装在服务端进程上，覆盖所有出站：谁在哪个路由里偷偷加了 RH 调用都会被拦。
-#   注意：默认连普通远端也拦（只放行本机/内网）；要让大模型网关出网，
+# ★ 网络出口守卫：装在服务端进程上，覆盖所有出站。
+#   默认只放行本机与内网 —— 本地通道（默认出图出片）永远够用。
+#   平台通道（RunningHub）要显式开闸：跑 RH 命令，或连接中心点「测试」
+#   （那条路径用 platform_allowed() 即开即关，不会把常驻进程的闸一直打开）。
+#   大模型网关要 SOLODRAMA_ALLOW_REMOTE=1。
 # ---------------------------------------------------------------------------
 def _boot_netguard() -> None:
     import pathlib as _pl
@@ -51,8 +54,12 @@ def _boot_netguard() -> None:
                     import importlib as _il
                     _mod = _il.import_module("_netguard")
                     _mod.install()
-                    print("[netguard] 已启用：只许本机/内网出站%s"
-                          % ("（已放宽普通远端，RH 仍禁止）" if _mod._allow_remote() else ""))
+                    _bits = ["只许本机/内网"]
+                    if _mod._allow_remote():
+                        _bits.append("已放宽普通远端")
+                    if _mod._allow_platform():
+                        _bits.append("平台通道已开闸")
+                    print("[netguard] 已启用：%s" % "；".join(_bits))
                 except Exception as _e:      # noqa: BLE001
                     print("[netguard][WARN] 未启用：%s" % _e)
                 return

@@ -9,6 +9,13 @@
     "whisper_model": "",
     "ffmpeg": "ffmpeg"
   },
+  "runninghub": {
+    "base_url": "<按账号所在站填写，如 https://www.runninghub.ai>",
+    "channel": "workflow",
+    "concurrency": 5,
+    "submit_gap_seconds": 2,
+    "fuse": 3
+  },
   "comfyui": {
     "_desc": "本地出图通道（￥0，默认通道）。注意：引擎当前从**环境变量**读取这些值（COMFYUI_URL / COMFYUI_WORKFLOW / COMFYUI_NODE_*），本段用于声明与留档；设了环境变量即可生效。",
     "base_url": "http://127.0.0.1:8188",

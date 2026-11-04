@@ -140,7 +140,8 @@ SoloDrama/
 │   ├── import/           ★ 制作包导入：校验 → data/ 契约 ｜ 项目预配置落地
 │   ├── assets/           资产出图：提示词净化 + 本地 ComfyUI 客户端
 │   │   └── comfyui/      ★ 本地 ComfyUI 出图引擎（￥0、零第三方依赖、不出网）
-│   ├── video/comfyui/    批量出片（本地 ComfyUI · Minimax H3）
+│   ├── video/comfyui/    批量出片（本地 ComfyUI · Minimax H3）★ 默认
+│   ├── video/workflow/   批量出片（RunningHub 工作流 / AI 应用）— 可选，按次计费
 │   ├── subtitle/         字幕与成片：对齐 → ASS → 拼接 → 2K → 烧录 → 七道断言
 │   └── production/       一集总控：门禁 / 体检 / 调度 / 验收 / 成本台账 / 发行门禁
 ├── tools/                环境自检、创作层确定性工具
@@ -155,12 +156,15 @@ SoloDrama/
 
 ## 配置与密钥
 
-平台密钥一律走环境变量，代码与模板里不落任何真实 Key（本地 ComfyUI 通道不需要任何 Key）。
+平台密钥一律走环境变量，代码与模板里不落任何真实 Key。
+**本地通道不需要任何 Key**；下面三项只在选平台通道时才要。
 
 | 变量                                                    | 用途                                  |
 | ----------------------------------------------------- | ----------------------------------- |
 | `SOLODRAMA_WORKSPACE` / `SOLODRAMA_ASSET_MD`          | 默认工作区 / 资产提示词 md（旧前缀 `DRAMA_*` 仍生效） |
 | `COMFYUI_URL` / `COMFYUI_NODE_*` / `COMFYUI_WORKFLOW` | 本地出图地址与节点映射（换工作流改配置不改代码）            |
+| `RUNNINGHUB_API_KEY` / `RUNNINGHUB_ENT_API_KEY`       | 可选：平台通道（消费级 / 企业级），不设就只能走本机 |
+| `RH_CHAR_APP_ID` / `RH_SCENE_APP_ID`                  | 可选：账号绑定的 AI 应用 ID（仅 AI 应用通道）        |
 
 运行配置唯一可写文件是 `<工作区>/config.local.json`；引擎代码与剧项目数据严格分离，`data/`、`output/`、台账一律落工作区。
 
@@ -172,7 +176,7 @@ SoloDrama/
 | Pillow / httpx   | Pillow ✅ · httpx ⭕ | 封面排版、图像体检 / 接口调用           |
 | ffmpeg / ffprobe | ✅                  | 拼接、2K、字幕烧录、像素验收            |
 | NVIDIA 独显        | ✅                  | 出图与出片全部跑在本机 GPU 上          |
-| ComfyUI          | ⭕                  | 未启动时 Studio 会自动拉起（30–90 秒） |
+| ComfyUI          | ⭕                  | 未启动时 Studio 会自动拉起（30–90 秒）；只有选平台通道时才完全不需要 |
 
 自检不过、或需要「装错解释器」这类高频坑的修法，见 [环境自检](docs/operations/环境自检.md)。
 

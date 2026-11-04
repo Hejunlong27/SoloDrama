@@ -242,6 +242,8 @@ function openGenPanel(ctx, md) {
       + '<div class="row-gap">'
       + '<label class="chk"><input type="radio" name="gEng" value="local" checked>'
       + '<span>本地 ComfyUI（￥0，占 GPU 数分钟）</span></label>'
+      + '<label class="chk"><input type="radio" name="gEng" value="rh">'
+      + '<span>云端 RunningHub（<b>★计费</b>，按张结算）</span></label>'
       + '</div></div>'
 
       + '<div class="field"><label class="tiny dim">资产提示词 md（引擎只认环境变量 SOLODRAMA_ASSET_MD）</label>'
@@ -277,11 +279,13 @@ function openGenPanel(ctx, md) {
         const el = root.querySelector(sel);
         return !!(el && el.checked);
       };
-      // ★ 2026-11-04：通道只剩本地 ComfyUI，`engine()` 恒为 local。
-      //   保留这个函数是因为下面几处写的是 `engine() === 'rh'` —— 与其删判断，
-      //   不如让它永远走不到那个分支；将来真要接回第二条通道，改这里一处就够。
-      const engine = () => 'local';
-      // 资产提示词走环境变量（asset_md → SOLODRAMA_ASSET_MD）。
+      // 两条通道：本地是默认，云端要显式选（选了才知道会花钱）。
+      const engine = () => {
+        const r = root.querySelector('input[name="gEng"]:checked');
+        return r ? r.value : 'local';
+      };
+      // 资产提示词：本地走环境变量（asset_md），云端走 CLI 参数（md）。两个键都给，
+      // 多出来的会被命令校验忽略。
       const params = (submit) => {
         const md = val('#gMd');
         return {
@@ -298,8 +302,9 @@ function openGenPanel(ctx, md) {
         const p = params(false);
         closeDrawer();
         doRun(ctx, {
-          specId: 'assets.local',
-          title: '本地出图 · 干跑（列出清单，不提交）',
+          specId: engine() === 'rh' ? 'assets.rh_wf' : 'assets.local',
+          title: (engine() === 'rh' ? '云端出图' : '本地出图')
+            + ' · 干跑（列出清单，不提交）',
           params: p,
           onDone: () => setTimeout(() => ctx.refresh(), 1200)
         });
@@ -333,6 +338,26 @@ function openGenPanel(ctx, md) {
                 });
               };
             }
+          });
+        } else {
+          // ★ 云端通道：先看计费单，不直接跑。这里不是唠叨 ——
+          //   资产图一次几十张，单价乘以张数就是真金白银。
+          closeDrawer();
+          runAction(ctx, {
+            specId: 'assets.rh_wf',
+            title: '云端工作流出图（★计费）',
+            params: p,
+            costTitle: '云端出图（按张计费）',
+            cost: {
+              lines: [
+                ['通道', 'RunningHub 云端'],
+                ['类型', p.kind + (p.only ? ' · 只做 ' + p.only : '')],
+                ['计费', '按张结算（RunningHub 工作流），以平台实际用量为准'],
+                ['合计', '张数 × 平台单价；干跑会先给出清单']
+              ],
+              note: '提交后不可撤回；已生成的资产若勾了「重跑」会重复计费。'
+            },
+            onDone: () => setTimeout(() => ctx.refresh(), 1500)
           });
         }
       };

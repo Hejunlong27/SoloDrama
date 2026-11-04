@@ -1,35 +1,45 @@
-"""_netguard.py —— 网络出口守卫：只许打本机，外部平台 API 一律拒绝。
+"""_netguard.py —— 网络出口守卫：默认只打本机，出网必须被显式开启。
 
-为什么要做出口拦截，而不是只靠「删掉调用点」：
-  删掉调用点之后，代码里确实没有外部平台调用了。但这条边界靠的是
-  「以后没人把它加回来」—— 而依赖习惯的约束都会在某次合并里悄悄失效。
-  失效的方式特别隐蔽：不会报错，只是某天出片时镜头被上传到了一个境外域名。
+为什么要有这一层，而不是只靠「默认配置指向本地」：
+  「默认选本地」拦不住误操作。一个旧项目的 model-plan.json、一次复制粘贴、
+  一段从别处抄来的调用 —— 都会让某个镜头在没人注意的时候上传到外部平台。
+  配置是软的，出口是硬的。
 
-所以这里做的是**出口拦截**，不是删除：
-  · 域名黑名单   → 命中即抛 RemoteForbidden，HTTP 客户端是谁都一样
-  · 主机白名单   → 默认只放行 loopback 与 RFC1918 内网
-  · 打补丁       → socket.getaddrinfo（认域名）+ socket.create_connection（兜底）
+三个出口，默认全关：
+  · 本机与内网          → 一直放行（ComfyUI 就住在这里）
+  · 平台通道（runninghub） → 要 SOLODRAMA_ALLOW_RH=1
+  · 其他远端（大模型网关） → 要 SOLODRAMA_ALLOW_REMOTE=1
 
-唯一合法的远端出口是**大模型网关**（创作辅助用）。它必须显式开：
-  SOLODRAMA_ALLOW_REMOTE=1
-且即便开了，黑名单仍然优先 —— 放宽的是「哪些远端能连」，不是「什么都能连」。
+★ 「默认关」不等于「删掉」。平台通道是一等公民：显式选了 `--engine workflow`
+  或直接运行 RH 脚本，走的通；但任何**没有声明意图**的代码路径都出不去。
+  开闸由调用方负责，`allow_platform()` 是唯一的正规入口。
+
+为什么平台域名不并进 ALLOW_REMOTE：
+  那一个开关放行的是「除黑名单外的一切远端」。为了跑一次 RH 就把整个互联网
+  放开，等于用一个粗开关换掉一个精确边界。
 
 失败时抛 RemoteForbidden（继承 OSError）：现有 `except OSError` 的代码能接住，
-只是提示会变成「被网络出口守卫拒绝」，而不是难懂的 socket 错。
+只是提示会变成「网络出口守卫拒绝」，而不是难懂的 socket 错。
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import sys
 import urllib.parse
 
-# 宁可误伤一个恰好叫这名字的内网主机，也不能放过一个真实出口。
+# 永久黑名单：这些是「看起来像平台出口的变体」，任何情况下都不放行。
+# 平台正式域名单独放在 _PLATFORM_SUBSTRINGS 里 —— 那个可以显式开闸。
 FORBID_SUBSTRINGS = (
-    "runninghub",
     "rh-api",
     "rhapi",
+)
+
+# 平台通道域名。默认拦，`SOLODRAMA_ALLOW_RH=1` 才放行（见 allow_platform）。
+_PLATFORM_SUBSTRINGS = (
+    "runninghub",
 )
 
 # ---- 白名单：本机与内网 -----------------------------------------------------
@@ -42,9 +52,54 @@ class RemoteForbidden(OSError):
     """出站请求被守卫拒绝（非本机地址 / 命中平台黑名单）。"""
 
 
-def _allow_remote() -> bool:
-    v = (os.environ.get("SOLODRAMA_ALLOW_REMOTE") or os.environ.get("DRAMA_ALLOW_REMOTE") or "").strip()
+def _truthy(name: str, legacy: str = "") -> bool:
+    v = (os.environ.get(name) or (os.environ.get(legacy) if legacy else "") or "").strip()
     return v not in ("", "0", "false", "False", "no")
+
+
+def _allow_remote() -> bool:
+    return _truthy("SOLODRAMA_ALLOW_REMOTE", "DRAMA_ALLOW_REMOTE")
+
+
+def _allow_platform() -> bool:
+    """平台通道（RunningHub）是否已开闸。
+
+    ★ 故意不合并进 ALLOW_REMOTE：后者放行的是「除黑名单外的一切远端」。
+    """
+    return _truthy("SOLODRAMA_ALLOW_RH", "DRAMA_ALLOW_RH")
+
+
+def allow_platform() -> None:
+    """开闸：把平台出口对本进程（及子进程）打开。
+
+    只有**确实要调用平台通道**的代码才调它 —— 选 `--engine workflow`、
+    跑 rh_doctor、跑 gen_assets_rh_workflow。调用的位置本身就是意图声明，
+    所以不需要额外参数。
+
+    开闸后一直有效：长任务要 fork 子进程（run.py / 批量出片），
+    子进程继承环境变量才连得上。用完不关是刻意的 —— 关掉反而会让
+    「父进程放行、子进程被拦」变成一条极难排查的故障。
+    """
+    os.environ["SOLODRAMA_ALLOW_RH"] = "1"
+
+
+@contextlib.contextmanager
+def platform_allowed():
+    """临时开闸（只在 with 块内有效）。
+
+    给**一次性的探测**用：连接中心的「测试 RunningHub」按一下连一次，
+    连完立刻恢复关闭状态。这里不能用 allow_platform()，因为 Web 服务是
+    常驻进程 —— 一次点击把闸永久打开，之后任何代码路径都能出网。
+    """
+    prev = os.environ.get("SOLODRAMA_ALLOW_RH")
+    os.environ["SOLODRAMA_ALLOW_RH"] = "1"
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("SOLODRAMA_ALLOW_RH", None)
+        else:
+            os.environ["SOLODRAMA_ALLOW_RH"] = prev
 
 
 def _is_private_ip(host: str) -> bool:
@@ -74,13 +129,29 @@ def check_host(host: str, *, port: int | None = None, where: str = "") -> None:
     for pat in FORBID_SUBSTRINGS:
         if pat in h:
             raise RemoteForbidden(
-                "网络出口守卫拒绝访问 %r（%s）：出图与出片只能走本机 ComfyUI。"
-                "所有出图/出片只能走本机 ComfyUI（COMFYUI_URL，默认 http://127.0.0.1:8188）。"
-                % (h, where or "出站请求"))
+                "网络出口守卫拒绝访问 %r（%s）：该主机名是平台出口的变体，任何情况下都不放行。"
+                "平台通道请用正式域名（www.runninghub.ai / .cn）。" % (h, where or "出站请求"))
+
+    # ★ 平台判定放在本地白名单**之前**。
+    #   `runninghub-proxy.internal` 这种名字会被 .internal 当成内网直接放过 ——
+    #   而它恰恰是「起了个内网名字、实际朝外的中转域名」，最该拦的一类。
+    #   顺序反过来就等于给了一条绕过审核的旁路。
+    for pat in _PLATFORM_SUBSTRINGS:
+        if pat in h:
+            if _allow_platform():
+                return
+            raise RemoteForbidden(
+                "网络出口守卫拒绝访问 %r（%s）：平台通道默认关闭。\n"
+                "  要用 RunningHub：把出片改成 `drama video run --engine workflow`"
+                "（或跑 RH 专用脚本，它们会自己开闸）；\n"
+                "  临时手动放行：set SOLODRAMA_ALLOW_RH=1。\n"
+                "  默认通道是本地 ComfyUI，不需要这一步。" % (h, where or "出站请求"))
+
     if h in _LOCAL_EXACT or h.endswith(_LOCAL_SUFFIXES):
         return
     if _is_private_ip(h):
         return
+
     if _allow_remote():
         return
     raise RemoteForbidden(
@@ -235,10 +306,12 @@ def selfcheck() -> list:
         ("本机 127.0.0.1", lambda: check_host("127.0.0.1"), False),
         ("本机 localhost", lambda: check_host("localhost"), False),
         ("内网 192.168.1.9", lambda: check_host("192.168.1.9"), False),
-        ("黑名单 .ai", lambda: check_host("www.runninghub.ai"), True),
-        ("黑名单 .cn 子域", lambda: check_host("api.runninghub.cn"), True),
-        ("黑名单变体", lambda: check_host("rh-api.runninghub.ai"), True),
-        # 普通远端：默认拦；显式开了 SOLODRAMA_ALLOW_REMOTE 才放（RH 仍然拦，见上三行）。
+        # 平台通道：默认拦，开了 SOLODRAMA_ALLOW_RH 才放 —— 期望值随开关变，
+        # 否则自检会在「已经显式选了 RH」的机器上报假失败。
+        ("平台 .ai", lambda: check_host("www.runninghub.ai"), not _allow_platform()),
+        ("平台 .cn 子域", lambda: check_host("api.runninghub.cn"), not _allow_platform()),
+        # 变体永久拦：即使开了平台闸也不放行。
+        ("平台变体（永久）", lambda: check_host("rh-api.runninghub.ai"), True),
         ("外部站点", lambda: check_host("example.com"), not _allow_remote()),
     ):
         try:

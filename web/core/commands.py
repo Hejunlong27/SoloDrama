@@ -43,13 +43,16 @@ SCRIPTS = {
     # ★ 2026-11-04：新建项目（结构 + 空模板）
     "init_project": paths.PROD_SCRIPTS / "init_project.py",
     "env_check": paths.TOOLS_DIR / "env_check.py",
+    # 平台通道（RunningHub）。默认不出网，显式选 video.rh.* / assets.rh_wf 才走这里。
+    "rhdoctor": paths.PROD_SCRIPTS / "rh_doctor.py",
+    "gen_rh_wf": paths.PROD_SCRIPTS / "gen_assets_rh_workflow.py",
 }
 
 
 # 计费口径
 FREE = "free"           # 完全免费
 GPU = "gpu"             # 不花钱，但独占本机 GPU
-PAID = "paid"           # 站外计费（本仓库已无平台 API；保留给闭源模型通道）
+PAID = "paid"           # 按次/按量计费（平台通道 RunningHub / 闭源模型）
 EXTERNAL = "external"   # 站外计费（闭源模型 / 人工）
 
 BILLING_LABEL = {
@@ -388,6 +391,26 @@ _add(_c("assets.check", "2 资产", "ComfyUI 在线体检", "drama",
         env={"SOLODRAMA_ASSET_MD": "asset_md"},
         help="只体检 ComfyUI 是否在线，不出图（没启动会先自动拉起）。",
         agent="不在线就把启动失败的原因（端口被占 / 缺依赖 / 超时）说清楚；不用叫我手动开桌面版。"))
+_add(_c("assets.rh_wf", "2 资产", "云端工作流出图（★计费，非默认）", "gen_rh_wf",
+        billing=PAID, danger=DANGER,
+        flags={"--md": "md", "--only": "only", "--ratio": "ratio",
+               "--mode": "mode", "--ref": "ref"},
+        bools={"--submit": "submit", "--force": "force"},
+        params=[Param("md", "资产提示词 md", "str", required=True,
+                      placeholder="<工作区>/04-资产/资产提示词.md"),
+                Param("only", "只做这些", "str", placeholder="char_01,char_02"),
+                Param("ratio", "画幅", "str", default="16:9"),
+                Param("mode", "模式（t2i / i2i）", "enum", default="t2i", choices=["t2i", "i2i"]),
+                Param("ref", "参考图路径", "str", placeholder="i2i 必填，如 04-资产/characters/xxx.png"),
+                Param("submit", "确认提交（★计费）", "bool", default=False),
+                Param("force", "已生成的也重跑（重复计费）", "bool", default=False)],
+        resources=["RH"],
+        help="走 RunningHub「工作流」通道（nodeInfoList）。★ 文生图与图生图是两套工作流："
+             "t2i 用 image_providers[active].id，i2i 用 id_i2i 且必须给 --ref。默认干跑。"
+             "日常出图用 assets.local（￥0），这条只在需要平台模型时用。",
+        agent="先干跑列出清单与将用的工作流 ID；i2i 要确认参考图路径存在，"
+             "等我明确确认后再 --submit。",
+        env={"RUNNINGHUB_API_KEY": "key"}))
 _add(_c("board.frame", "3 分镜图", "批量出分镜图（每镜一张 9:16 首帧）", "gen_boards",
         argv=["--apply"], billing=GPU, danger=WRITE,
         flags={"--ep": "ep", "--only": "only"},
@@ -501,6 +524,35 @@ _add(_c("video.status", "4 出片", "批次进度", "drama",
         params=[Param("batch", "批次号（留空取最新）", "str")],
         help="读 summary.json / state.json。",
         agent="汇总：总数 / 成功 / 失败 / 待跑 / 消耗 / 用时，并列出失败段 id。"))
+_add(_c("video.rh", "4 出片", "云端出片（RunningHub，★计费）", "drama",
+        argv=["video", "run", "--engine", "workflow"], billing=PAID, danger=DANGER, gate="G5",
+        flags={"--limit": "limit", "--only": "only", "--resume": "resume",
+               "--concurrency": "concurrency"},
+        bools={"--yes": "yes"},
+        params=[Param("yes", "确认计费闸门", "bool", default=False),
+                Param("limit", "只跑前 N 段（小样）", "int"),
+                Param("only", "指定段", "str"),
+                Param("resume", "续跑批次号", "str", placeholder="20261017_141530"),
+                Param("concurrency", "并发（平台硬限 ≤5）", "int", default=2)],
+        resources=["RH"],
+        help="★ 不加 --resume 的全量重跑 = 重复提交、重复扣费。默认通道是本机 GPU（video.run，￥0）。",
+        agent="执行前必须报出：批次号、将提交段数、预估花费、是否续跑。等我明确确认后再执行。"))
+_add(_c("video.rh.sample", "4 出片", "云端小样 1 段（★计费）", "drama",
+        argv=["video", "run", "--engine", "workflow", "--limit", "1"],
+        billing=PAID, danger=DANGER, gate="G4",
+        flags={"--only": "only"}, bools={"--yes": "yes"},
+        params=[Param("only", "指定段（更精准）", "str"),
+                Param("yes", "确认计费", "bool", default=False)],
+        resources=["RH"], help="先出 1 段，看过成片再决定是否全量。",
+        agent="出完后提醒我：先看这一段成片，再决定是否全量。"))
+_add(_c("video.rh.resume", "4 出片", "云端续跑批次（★计费）", "drama",
+        argv=["video", "run", "--engine", "workflow"], billing=PAID, danger=DANGER, gate="G5",
+        flags={"--resume": "resume", "--only": "only"}, bools={"--yes": "yes"},
+        params=[Param("resume", "批次号", "str", required=True),
+                Param("only", "只补这些段", "str"),
+                Param("yes", "确认计费", "bool", default=False)],
+        resources=["RH"], help="复用 taskId，不重复提交已成功的段。",
+        agent="续跑前先查该批次的在途任务；告我这次补哪些段、预估花费。"))
 # ===== 环节 7 剪辑：母版拼接 → 高清放大 → 字幕 ==========================
 # ★ 2026-11-01：分组名从「11 拼接字幕」改为「7 剪辑」，并删掉 `media.assemble`
 #   —— 它的 help 写「拼接 + 2K 放大」，argv 却是 `subtitle.py --stage upscale`（受开关
@@ -611,6 +663,14 @@ _add(_c("diag.preflight", "9 诊断", "一次性体检（免费）", "drama",
         argv=["preflight"], mode="sync", danger=READ,
         help="Key 分级 + 引擎 doctor + check + 预演。",
         agent="按「环境 / 密钥 / 通道 / 数据」四类汇总问题清单，并给出可照抄的修法。"))
+_add(_c("diag.rhdoctor", "9 诊断", "RunningHub 双 Key 体检", "rhdoctor",
+        argv=["--json"], mode="sync", danger=READ, billing=FREE,
+        flags={"--check": "check"},
+        params=[Param("check", "只查一类", "enum", default="",
+                      choices=["", "workflow", "ai-app", "model", "llm"])],
+        resources=["RH"],
+        help="只读探测：消费级 Key 与企业级 Key 是否可用、站点对不对、工作流能不能取到。不提交任务、不扣费。",
+        agent="按「哪一类可用 / 不可用 + 原因 + 改法」三列报告。"))
 _add(_c("diag.comfy", "9 诊断", "本地 ComfyUI 在线体检", "comfy_check",
         argv=["--check"], mode="sync", danger=READ,
         help="零网络依赖，检查 127.0.0.1:8188。",

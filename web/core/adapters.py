@@ -27,8 +27,7 @@ from . import jsonout, paths, runner
 SCRIPTS = {
     "drama": paths.PROD_SCRIPTS / "drama.py",
     "env": paths.TOOLS_DIR / "env_check.py",
-    "time_model": paths.PROD_SCRIPTS / "time_model.py",
-    "time_report": paths.PROD_SCRIPTS / "time_report.py",
+    "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
     "release_check": paths.PROD_SCRIPTS / "release_check.py",
     "release_export": paths.PROD_SCRIPTS / "release_export.py",
 }
@@ -157,12 +156,11 @@ def env_check() -> dict:
     return run_json("env", ["--json"], None, ttl=60)
 
 
-def time_report(ws, *, ep: str = "") -> dict:
-    """耗时台账（成本口径 = 时间）。替代已删除的 cost_ledger。"""
-    args = ["--json"]
-    if ep:
-        args += ["--ep", ep]
-    return run_json("time_report", args, ws, ttl=20, timeout=120)
+def cost_ledger(ws, *, balance: bool = False) -> dict:
+    args = ["--json", "--no-write"]
+    if balance:
+        args.append("--balance")
+    return run_json("cost_ledger", args, ws, ttl=20, timeout=120)
 
 
 def continuity(ws) -> dict:

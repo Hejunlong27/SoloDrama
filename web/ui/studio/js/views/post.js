@@ -27,7 +27,7 @@ export async function render(ctx) {
     { n: 1, t: '拼接母版', ok: !!e.master, file: e.master,
       hint: '首帧封面（0.8s）+ 片段 + BGM（有 plan 才混）+ 帧数校验' },
     { n: 2, t: '高清放大', ok: !!e.upscaled, file: e.upscaled,
-      hint: 'Topaz（本机 GPU）/ 跳过；产物 _master_WxH.mp4' },
+      hint: 'Topaz（本机）/ RunningHub（计费）/ 跳过，产物 _master_WxH.mp4' },
     { n: 3, t: '字幕', ok: !!e.subbed, file: e.subbed, hint: 'G6：不问你就不烧' }
   ] : [];
 
@@ -47,7 +47,7 @@ export async function render(ctx) {
     + '<div class="page-head"><div>'
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>'
     + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
-    + '<h1 class="page-title">剪辑</h1>'
+    + '<h1 class="page-title">后期制作</h1>'
     + '<div class="page-sub">产物按真实文件名判定（<span class="mono">_master</span> / '
     + '<span class="mono">_master_WxH</span> / <span class="mono">_subbed*</span>）· '
     + 'BGM 已混在母版里，不再单独出 <span class="mono">_mix</span> 文件</div></div>'

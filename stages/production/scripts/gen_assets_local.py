@@ -7,7 +7,8 @@
 | 通道 | 脚本 | 引擎 | 成本 |
 |---|---|---|---|
 | **本地 ComfyUI**（本脚本） | `gen_assets_local.py` | `stages/assets/comfyui/comfy_client.py` | **￥0**（只花本机电与时间） |
-| 远程 ComfyUI | 同一个客户端，`COMFYUI_URL` 指向远端 | 远端机器的时间 |
+| 云端 ComfyUI | 同脚本 | `COMFYUI_URL` 指向云端 | 云主机费用 |
+| RunningHub 工作流 | `gen_assets_rh_workflow.py` | RH nodeInfoList | 按张计费 |
 
 两条**通道**，由 `drama.py assets --engine {local,wf}` 切换（默认 local）。
 ★ 2026-11-01：原来的「RH AI 应用」两个脚本（`gen_char_assets` / `gen_scene_assets`）已删 ——
@@ -15,7 +16,7 @@
 
 本脚本做什么（薄桥，不做重活）
 ------------------------------
-1. 读 `SOLODRAMA_ASSET_MD` 指向的「资产提示词 md」（**唯一真源**）；
+1. 读 `SOLODRAMA_ASSET_MD` 指向的「资产提示词 md」（**与云端两脚本同一真源**）；
 2. 调 `stages/assets/scripts/asset_md.py` 转成 ComfyUI 清单 `comfyui_manifest.json`；
 3. 调 `stages/assets/comfyui/comfy_client.py` 出图到 `<工作区>/video-pipeline/output/assets/`；
 4. 汇总产物写 `comfyui_assets_manifest.json`，并按**统一台账口径**补记 `ledger/runs/`（route=local、消耗为 0）。
@@ -26,7 +27,7 @@
 理由不是省钱（本地不花钱），而是**别在没确认风格时批量跑掉十几分钟 GPU**。
 
 依赖纪律：纯标准库 + `asset_md` + `run_ledger`（后者亦为纯标准库）。
-**不需要 httpx、不需要任何平台 Key；出站只连本机 ComfyUI。**
+**不需要 httpx、不需要 `RUNNINGHUB_*` 任何 Key。**
 """
 from __future__ import annotations
 
@@ -40,13 +41,12 @@ import sys
 import time
 
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]      # .../SoloDrama
-#   `run_ledger` 是纯标准库的耗时台账，挪到这里继续用；不再需要 ENGINE 目录。
-_SCRIPTS = pathlib.Path(__file__).resolve().parent
+ENGINE = _PROJECT_ROOT / 'stages' / 'video' / 'workflow' / 'scripts' / 'engine'
 COMFY_DIR = _PROJECT_ROOT / 'stages' / 'assets' / 'comfyui'
 COMFY_PY = COMFY_DIR / 'comfy_client.py'
 ASSETS_SCRIPTS = _PROJECT_ROOT / 'stages' / 'assets' / 'scripts'
 
-sys.path.insert(0, str(_SCRIPTS))          # run_ledger（纯标准库）
+sys.path.insert(0, str(ENGINE))            # run_ledger（纯标准库）
 sys.path.append(str(ASSETS_SCRIPTS))       # asset_md（纯标准库）
 sys.path.append(str(pathlib.Path(__file__).resolve().parent))   # _ws
 os.environ.setdefault('PYTHONUTF8', '1')
@@ -199,7 +199,7 @@ def _write_prod_manifest(items: list, manifest: dict) -> None:
     PROD_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     ok = [it for it in items if it['files']]
     PROD_MANIFEST.write_text(json.dumps({
-        '_note': '本地 ComfyUI 通道产物清单（本工具自动维护）',
+        '_note': '本地 ComfyUI 通道产物清单（本工具自动维护）；与云端 char_/scene_assets_manifest.json 并列',
         '_source': str(ASSET_MD or '(制作包)'),
         '_manifest': str(MANIFEST),
         'channel': 'comfyui-local',
@@ -213,7 +213,7 @@ def _ensure_comfy(wait_s: int = 120) -> bool:
     """确保本机 ComfyUI 在线；没启动就按需拉一个后台实例（`--no-boot` 可关）。
 
     为什么放在这一层，而不是塞进 comfy_client.py：客户端要能在「别人已经起好服务」
-    的环境里单独跑（远端地址），不该擅自在本机拉进程。这里是「出图编排」，
+    的环境里单独跑（云端地址、远程机器），不该擅自在本机拉进程。这里是「出图编排」，
     知道自己在做什么，也该为用户把「先开桌面版」这道手工步骤消掉。
 
     真源在 `stages/assets/comfyui/comfy_boot.py`：它只对 loopback 生效，已有实例一律复用。

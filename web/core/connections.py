@@ -3,8 +3,8 @@
 
 为什么要这一层
 --------------
-引擎脚本各自认环境变量（主要是 `COMFYUI_URL`），
-用户在界面上根本看不到它们；不设就得到「连不上 ComfyUI」，
+引擎脚本各自认环境变量（`COMFYUI_URL` / `RUNNINGHUB_API_KEY` / `RUNNINGHUB_BASE_URL`），
+用户在界面上根本看不到它们；不设就得到「连不上 ComfyUI」「未设置 RUNNINGHUB_API_KEY」，
 看起来像产品坏了。这里把「连接」变成一个可以配置、可以验证、可以解释的对象：
 
 * 存：`web/var/connections.json`（非密钥）+ `web/var/connections.keys.json`（密钥，0600）
@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -28,14 +29,37 @@ from pathlib import Path
 from typing import Any
 
 VAR_DIR = Path(__file__).resolve().parent.parent / "var"
+
+
+@contextlib.contextmanager
+def _platform_scope():
+    """临时打开平台出口，只覆盖本次探测。
+
+    ★ 为什么不是永久开闸：Web 服务是常驻进程。用户点一下「测试」就把
+      SOLODRAMA_ALLOW_RH 永久置 1，之后任何代码路径都能出网 —— 那等于
+      用一次点击换掉整条边界。这里退出 with 就恢复原状。
+
+    守卫本身由 web/app.py 在启动时装好；单测环境没装守卫也不该报错，
+    所以 ImportError 时直接放行（那时也没有拦截层）。
+    """
+    try:
+        import _netguard as _g    # app.py 已把 stages 放进 sys.path
+    except ImportError:
+        yield
+        return
+    with _g.platform_allowed():
+        yield
+
+
 CFG_PATH = VAR_DIR / "connections.json"
 KEY_PATH = VAR_DIR / "connections.keys.json"
 
-KINDS = ("llm", "comfyui")
+KINDS = ("llm", "comfyui", "runninghub")
 
 LABELS = {
     "llm": "大模型",
-    "comfyui": "本地出图与出片（ComfyUI）",
+    "comfyui": "本地出图（ComfyUI）",
+    "runninghub": "云端出片（RunningHub）",
 }
 
 DEFAULTS: dict[str, dict] = {
@@ -46,9 +70,12 @@ DEFAULTS: dict[str, dict] = {
     # launch：手动指定安装（python + main_py）。留空则自动读 ComfyUI Desktop 的
     # installations.json，换机器、换实例都不用改代码。
     "comfyui": {"base_url": "http://127.0.0.1:8188", "autostart": True, "launch": {}},
+    "runninghub": {"base_url": "https://www.runninghub.ai", "kind": "workflow",
+                   "workflow_id": "", "ai_app_id": ""},
 }
 
 # 站点只认 .ai / .cn —— 引擎侧同样校验，这里提前拦住，避免「Key 明明对却 401」
+RH_SITES = ("runninghub.ai", "runninghub.cn")
 
 PROBE_TIMEOUT = 5.0
 
@@ -147,7 +174,7 @@ def set_key(kind: str, key: str | None) -> None:
         pass
 
 
-ENV_NAMES = {"llm": "", "comfyui": ""}
+ENV_NAMES = {"runninghub": "RUNNINGHUB_API_KEY", "llm": "", "comfyui": ""}
 
 
 def _reg_get(name: str) -> str:
@@ -215,6 +242,13 @@ def env_for() -> dict:
     # 自动启动开关也要下发：CLI / agent 直接跑出图脚本时，判断依据必须和界面一致，
     # 否则「界面关掉了自动启动，命令行却照旧拉起一个实例」——两套口径，用户没法解释。
     out["SOLODRAMA_COMFY_AUTOSTART"] = "0" if comfy_cfg.get("autostart") is False else "1"
+    rh = cfg.get("runninghub", {}) or {}
+    key = get_key("runninghub").strip()
+    if key:
+        out["RUNNINGHUB_API_KEY"] = key
+    base = (rh.get("base_url") or "").strip()
+    if base:
+        out["RUNNINGHUB_BASE_URL"] = base
     return out
 
 
@@ -330,6 +364,164 @@ def _is_loopback(base: str) -> bool:
     return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
 
 
+def _rh_site_ok(base: str) -> bool:
+    try:
+        host = (urllib.parse.urlparse(base).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == s or host.endswith("." + s) for s in RH_SITES)
+
+
+def _engine_site() -> tuple:
+    """→ (引擎实际使用的站点, 来源说明, 被忽略的旧环境变量值)。
+
+    ★ 2026-11-01：连接中心一直让用户「选站点」并存进 `connections.json`，
+      再把 `RUNNINGHUB_BASE_URL` 注进子进程环境 —— 而引擎从 **2026-10-29** 起就不再读
+      这个环境变量了（真源是 `configs/channels.json`，见 `_site.project_site`）。
+      于是界面显示 `.ai`、引擎实际打 `.cn`，测试连的是 `.ai`、出片走的是 `.cn` ——
+      三方各说各话。现在这里直接问那个唯一真源。
+    """
+    try:
+        import sys
+        from . import paths
+        p = str(paths.PROD_SCRIPTS)
+        if p not in sys.path:
+            sys.path.insert(0, p)
+        from _site import runtime_site
+        return runtime_site()
+    except Exception as exc:                                   # noqa: BLE001
+        return ("", "站点真源读取失败（%s）" % type(exc).__name__, "")
+
+
+def _test_runninghub() -> dict:
+    """对外入口：在「平台出口临时打开」的作用域里做一次只读探测。"""
+    with _platform_scope():
+        return _probe_runninghub()
+
+
+def _probe_runninghub() -> dict:
+    cfg = load()["runninghub"]
+    stored = (cfg.get("base_url") or "").strip().rstrip("/")
+    eff, src, ignored = _engine_site()
+    # 测的必须是**引擎真正会用的**那个站点；连接中心存的那份只在引擎没有真源时兜底。
+    base = (eff or stored).strip().rstrip("/")
+    site_info = {"used": base, "source": src or ("连接中心保存的（引擎无站点配置）" if base else ""),
+                 "stored": stored, "ignored_env": ignored,
+                 "stored_ignored": bool(eff and stored and stored != eff)}
+    key = get_key("runninghub").strip()
+    if not base:
+        return {"ok": False, "reason": "no_url", "detail": "还没有可用的 RunningHub 站点",
+                "next": "在 configs/channels.json 里配 runninghub 站点，"
+                        "或在连接中心填 https://www.runninghub.cn / .ai（仅兜底）",
+                "site": site_info}
+    if not _rh_site_ok(base):
+        return {"ok": False, "reason": "bad_site",
+                "detail": "站点只支持 runninghub.ai / runninghub.cn",
+                "next": "把地址改成 https://www.runninghub.ai 或 https://www.runninghub.cn",
+                "site": site_info}
+    if not key:
+        return {"ok": False, "reason": "no_key", "detail": "还没填 API Key",
+                "next": "RunningHub 控制台 → 个人中心 → API（Key 只存本机，不会回显）"}
+
+    # 第一步：验证 Key 本身（只读，0 费用）。这一步不需要工作流 ID —— 否则用户会被
+    # 「必须先填 ID 才能测 Key」卡住，而他只是想知道 Key 对不对。
+    try:
+        status, payload = _json_post(base + "/uc/openapi/accountStatus", {"apikey": key})
+    except urllib.error.HTTPError as e:
+        return _rh_http_error(e)
+    except urllib.error.URLError as e:
+        return {"ok": False, "reason": "unreachable", "detail": "连不上站点（%s）" % str(e.reason)[:120],
+                "next": "检查网络或代理；站点选错也会连不上"}
+    except (TimeoutError, OSError):
+        return {"ok": False, "reason": "timeout", "detail": "5 秒内没有响应", "next": "稍后重试"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "reason": "not_json", "detail": "账户接口返回的不是 JSON",
+                "next": "站点地址可能不对（应指向 RunningHub 根路径）"}
+    if payload.get("code") not in (0, "0", None, ""):
+        msg = payload.get("msg") or payload.get("message") or ""
+        return {"ok": False, "reason": "bad_key",
+                "detail": "Key 无效或站点不匹配：%s" % str(msg)[:140],
+                "next": "确认 Key 与站点同属一个区（.ai 的 Key 不能用在 .cn）；重新复制一遍"}
+
+    d = payload.get("data") or {}
+    acct = {
+        "coins": d.get("remainCoins"),
+        "cash": d.get("remainMoney"),
+        "currency": d.get("currency") or "",
+        "running": d.get("currentTaskCounts"),
+        "base_url": base,
+        "site": site_info,
+    }
+
+    # 第二步：如果填了工作流/AI 应用，顺便确认它在这个账号下可读（仍然 0 费用）。
+    kind = (cfg.get("kind") or "workflow").strip().lower()
+    target = str(cfg.get("ai_app_id") if kind in ("ai-app", "ai_app", "app", "webapp")
+                 else cfg.get("workflow_id") or "").strip()
+    target_info = {"checked": False, "ok": None, "detail": ""}
+    if target:
+        got = _rh_target_probe(base, key, kind, target)
+        target_info = dict(got, checked=True)
+
+    ok = target_info["ok"] is not False
+    detail = "已连接 · 余额 %s RH币" % (acct.get("coins") if acct.get("coins") is not None else "?")
+    if acct.get("running") not in (None, 0, "0"):
+        detail += " · %s 个任务在跑" % acct.get("running")
+    if target_info["checked"]:
+        detail += " · 目标%s" % ("可读" if target_info["ok"] else "不可读")
+    return {"ok": ok, "reason": "ok" if ok else "target_bad", "detail": detail,
+            "runninghub": dict(acct, target=target_info),
+            "next": "" if ok else "工作流 ID 可能不属于这个账号，或已被删除"}
+
+
+def _rh_target_probe(base: str, key: str, kind: str, target: str) -> dict:
+    try:
+        if kind in ("ai-app", "ai_app", "app", "webapp"):
+            url = "%s/api/webapp/apiCallDemo?apiKey=%s&webappId=%s" % (
+                base, urllib.parse.quote(key), urllib.parse.quote(target))
+            _, payload = _json_get(url)
+        else:
+            _, payload = _json_post(base + "/api/openapi/getJsonApiFormat",
+                                    {"apiKey": key, "workflowId": target})
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "detail": "%s: %s" % (type(e).__name__, str(e)[:100])}
+    if not isinstance(payload, dict):
+        return {"ok": False, "detail": "目标接口返回非 JSON"}
+    if payload.get("code") not in (0, "0", None, ""):
+        msg = payload.get("msg") or payload.get("message") or ""
+        return {"ok": False, "detail": str(msg)[:140]}
+    data = payload.get("data") or {}
+    n = len(data.get("nodeInfoList") or []) if isinstance(data, dict) else 0
+    return {"ok": True, "detail": "%s 个可编辑输入" % n}
+
+
+def _rh_http_error(e: urllib.error.HTTPError) -> dict:
+    if e.code in (401, 403):
+        return {"ok": False, "reason": "bad_key",
+                "detail": "Key 无效或没有权限（HTTP %s）" % e.code,
+                "next": "重新复制 API Key；确认站点与 Key 所属站点一致（.ai 的 Key 不能用在 .cn）"}
+    return {"ok": False, "reason": "http_%s" % e.code,
+            "detail": "站点返回 HTTP %s" % e.code, "next": "稍后重试或检查站点地址"}
+
+
+def _rh_verdict(payload: Any, what: str) -> dict:
+    if not isinstance(payload, dict):
+        return {"ok": False, "reason": "not_json", "detail": "返回的不是 JSON",
+                "next": "站点地址可能不对（应指向 RunningHub 根路径）"}
+    code = payload.get("code")
+    if code in (0, "0", None, ""):
+        data = payload.get("data") or {}
+        n = len((data.get("nodeInfoList") or []) if isinstance(data, dict) else []) or \
+            len((data.get("prompt") or {})) if isinstance(data, dict) else 0
+        return {"ok": True, "reason": "ok", "detail": "Key 有效，%s 可读（%s 个可编辑输入）" % (what, n or "?"),
+                "next": ""}
+    msg = payload.get("msg") or payload.get("message") or payload.get("error") or ""
+    return {"ok": False, "reason": "biz_error", "detail": "%s 读取失败：%s" % (what, str(msg)[:160]),
+            "next": "确认工作流 ID 属于这个账号；或到 RunningHub 网页打开该工作流确认它还在"}
+
+
+# 探测只发一句 1 token 的话。它是**连通性体检**，不是内容生成：
+# 内容一律走 gateway.complete(purpose) + stages/creation/prompts/*.md 原文，
+# 这里不绕开网关做创作，只验证「地址 + Key + 模型名 + 网络」四件事能不能通。
 _LLM_PROBE_MSG = [{"role": "user", "content": "只回复：可用"}]
 _LLM_PROBE_TIMEOUT = 20.0
 _LLM_PROBE_MAX = 2          # 最多实测两个提供商：多测一个就多一次计费
@@ -387,6 +579,7 @@ def _test_llm() -> dict:
                 "next": "在 AI 模型中心填入 Key（只进不出、不回显），再点一次测试"}
 
     # ★ 真实通道优先排队：探针有名额（_LLM_PROBE_MAX），名额不能被 Mock 占掉。
+    #   否则「配了云端 Key 但界面上写 Mock 可调用」，看起来就像没接通。
     def _rank(p):
         if (p.get("kind") or "") == "mock":
             return 2
@@ -454,7 +647,7 @@ def _test_llm() -> dict:
             "providers": probes}
 
 
-TESTERS = {"comfyui": _test_comfyui, "llm": _test_llm}
+TESTERS = {"comfyui": _test_comfyui, "runninghub": _test_runninghub, "llm": _test_llm}
 
 
 def test(kind: str) -> dict:
@@ -496,8 +689,9 @@ def overview() -> dict:
             "last_next": c.get("last_next") or "",
             "doc": _DOC.get(kind, ""),
             "providers": _llm_providers() if kind == "llm" else None,
-            # 只剩下本机 ComfyUI 一个网络端点，不再有「引擎真源 vs 界面保存」的分歧
-            "effective": None,
+            # 只有 runninghub 有「引擎真源 vs 界面保存」的分歧，如实摊开
+            "effective": (lambda t: {"base_url": t[0], "source": t[1], "ignored_env": t[2]})(
+                _engine_site()) if kind == "runninghub" else None,
         })
     return {
         "ok": True,
@@ -543,4 +737,5 @@ _DOC = {
     "llm": "用途路由在「AI 模型中心」——同一个模型可以只负责剧本，另一个只负责分镜。",
     "comfyui": "本地出图 ￥0，只占 GPU。地址默认 http://127.0.0.1:8188；"
                "没启动时 Studio 会自动拉起一个后台实例（约 30–90 秒），不需要先开桌面版。",
+    "runninghub": "云端出片按次计费（27 币/段 + 1 币/秒）。这里只做只读验证，不产生任务。",
 }

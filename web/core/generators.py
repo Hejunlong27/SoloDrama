@@ -5,7 +5,8 @@
 --------------
 到 2026-10-29 为止，生成能力散在四个地方，各有各的说法：
   * 本地出图      `stages/assets/comfyui/comfy_client.py`（Qwen-Image 2.1）
-  * 出片          `stages/video/comfyui`（本地 ComfyUI H3）
+  * 云端出图·工作流 `gen_assets_rh_workflow.py`（nodeInfoList，文生图 / 图生图）
+  * 出片          `stages/video/workflow`（RunningHub H3）
 用户在界面上根本看不出「我这部片子到底能用哪条通道、缺什么、要花多少钱」。
 更要紧的是**文生图与图生图是两个不同的工作流**（图生图多一个加载图像节点），
 混用一个 id 会出现「传了参考图但出来还是纯文生图」这种花钱买错东西的情况。
@@ -42,7 +43,7 @@ _TTL_INFO = 300.0        # object_info 很大，缓存久一点
 IMAGE_LOCAL_WF = paths.STAGES_DIR / "assets" / "comfyui" / "workflow_qwen_image21.json"
 VIDEO_LOCAL_WF = paths.STAGES_DIR / "video" / "comfyui" / "workflow_h3_local.json"
 
-ENGINE_TEXT = {"local": "本地 ComfyUI"}
+ENGINE_TEXT = {"local": "本地 ComfyUI", "rh": "RunningHub 工作流"}
 STATUS_TEXT = {"ready": "可用", "config": "待配置", "offline": "未启动", "missing": "缺文件",
                "no_ws": "未选项目", "unsupported": "不支持"}
 
@@ -147,6 +148,54 @@ def _project_cfg(ws) -> tuple:
         return json.loads(p.read_text(encoding="utf-8")), str(p)
     except Exception:  # noqa: BLE001
         return {}, str(p)
+
+
+def _rh_image(ws, cfg: dict, mode: str) -> dict:
+    name = str(cfg.get("active_image_provider") or "").strip()
+    provs = cfg.get("image_providers") or {}
+    if not name:
+        return {"ok": False, "status": "config", "detail": "config.local.json 未指定 active_image_provider",
+                "next": "在项目里选一条 image_providers 并写成 active_image_provider"}
+    prov = provs.get(name) or {}
+    if not prov:
+        return {"ok": False, "status": "config", "detail": "image_providers 里没有「%s」" % name,
+                "next": "检查 config.local.json 的 image_providers 段"}
+    wid = str(prov.get("id_i2i") or (prov.get("i2i") or {}).get("id") or "").strip() \
+        if mode == "i2i" else str(prov.get("id") or "").strip()
+    nodes = prov.get("nodes") or {}
+    if mode == "i2i":
+        if not wid:
+            return {"ok": False, "status": "config", "detail": "图生图工作流 ID 未填（id_i2i）",
+                    "next": "在图生图工作流页面运行一次拿到 API 快照 ID，填到 image_providers[\"%s\"].id_i2i" % name}
+        if not (nodes.get("image") or {}).get("nodeId"):
+            return {"ok": False, "status": "config", "detail": "图生图缺参考图节点（nodes.image.nodeId）",
+                    "next": "把工作流里「加载图像」节点的 id 填到 nodes.image.nodeId"}
+        return {"ok": True, "status": "ready", "detail": "工作流 %s · 参考图节点 #%s"
+                % (wid, nodes["image"]["nodeId"]), "workflow_id": wid}
+    if not wid:
+        return {"ok": False, "status": "config", "detail": "文生图工作流 ID 未填（id）",
+                "next": "在文生图工作流页面运行一次拿到 API 快照 ID，填到 image_providers[\"%s\"].id" % name}
+    if not (nodes.get("prompt") or {}).get("nodeId"):
+        return {"ok": False, "status": "config", "detail": "文生图缺提示词节点（nodes.prompt.nodeId）",
+                "next": "把工作流里「字符串」节点的 id 填到 nodes.prompt.nodeId"}
+    return {"ok": True, "status": "ready", "detail": "工作流 %s · 提示词节点 #%s"
+            % (wid, nodes["prompt"]["nodeId"]), "workflow_id": wid}
+
+
+def _rh_video(cfg: dict) -> dict:
+    h3 = cfg.get("h3") or {}
+    nodes = h3.get("nodes") or {}
+    if not h3:
+        return {"ok": False, "status": "config", "detail": "config.local.json 里没有 h3（云端出片）段",
+                "next": "用 video/workflow/scripts/configure.py node --target h3 写入节点映射"}
+    if not str(h3.get("id") or "").strip():
+        return {"ok": False, "status": "config", "detail": "云端出片工作流 ID 未填（h3.id）",
+                "next": "在 H3 工作流页面运行一次拿到 API 快照 ID"}
+    return {"ok": bool(nodes), "status": "ready" if nodes else "config",
+            "detail": "工作流 %s · 已映射 %d 个节点" % (h3.get("id"), len(nodes)),
+            "next": "" if nodes else "补 nodes 映射（prompt / length / 参考图槽位）"}
+
+
 def channels(ws=None) -> dict:
     """返回所有生成通道的真实状态。只读，不产生任何费用。"""
     comfy = _comfy()
@@ -155,6 +204,9 @@ def channels(ws=None) -> dict:
 
     img_local_t2i = _local_wf_state(IMAGE_LOCAL_WF, info)
     vid_local = _local_wf_state(VIDEO_LOCAL_WF, info)
+    rh_t2i = _rh_image(ws, cfg, "t2i") if ws else {"ok": False, "status": "no_ws", "detail": "先选项目"}
+    rh_i2i = _rh_image(ws, cfg, "i2i") if ws else {"ok": False, "status": "no_ws", "detail": "先选项目"}
+    rh_vid = _rh_video(cfg) if ws else {"ok": False, "status": "no_ws", "detail": "先选项目"}
 
     items = [
         {"id": "image.local.t2i", "kind": "image", "engine": "local", "mode": "t2i",
@@ -176,6 +228,24 @@ def channels(ws=None) -> dict:
          "detail": "本机还没有带参考图输入的 Qwen-Image 工作流；现用的 workflow_qwen_image21.json 是纯文生图",
          "missing": [], "next": "导出含 LoadImage 的图生图工作流放到 stages/assets/comfyui/，再登记节点映射"},
 
+        {"id": "image.rh.t2i", "kind": "image", "engine": "rh", "mode": "t2i",
+         "label": "RunningHub 工作流 · 文生图", "model_text": "项目自定义工作流（nodeInfoList）",
+         "workflow": "", "billing": "paid", "cost_text": "按 RH 点数（每张计费）",
+         "command": "assets.rh_wf",
+         "status": ("unsupported" if rh_t2i.get("status") == "no_ws"
+                    else ("ready" if rh_t2i["ok"] else rh_t2i["status"])),
+         "detail": rh_t2i.get("detail", ""), "missing": [],
+         "next": rh_t2i.get("next") or ("先选项目" if rh_t2i.get("status") == "no_ws" else "")},
+
+        {"id": "image.rh.i2i", "kind": "image", "engine": "rh", "mode": "i2i",
+         "label": "RunningHub 工作流 · 图生图", "model_text": "项目自定义工作流（带参考图）",
+         "workflow": "", "billing": "paid", "cost_text": "按 RH 点数（每张计费）",
+         "command": "assets.rh_wf",
+         "status": ("unsupported" if rh_i2i.get("status") == "no_ws"
+                    else ("ready" if rh_i2i["ok"] else rh_i2i["status"])),
+         "detail": rh_i2i.get("detail", ""), "missing": [],
+         "next": rh_i2i.get("next") or ("先选项目" if rh_i2i.get("status") == "no_ws" else "")},
+
         {"id": "video.local.i2v", "kind": "video", "engine": "local", "mode": "i2v",
          "label": "本地 ComfyUI · 图生视频", "model_text": "MiniMax H3（fl2va w4a8 + turbo 4step LoRA）",
          "workflow": str(VIDEO_LOCAL_WF), "billing": "free", "cost_text": "￥0",
@@ -187,6 +257,14 @@ def channels(ws=None) -> dict:
          "missing": vid_local.get("missing") or [],
          "next": "" if vid_local["ok"] and comfy["online"] else "启动 ComfyUI 或补齐工作流/模型"},
 
+        {"id": "video.rh.workflow", "kind": "video", "engine": "rh", "mode": "i2v",
+         "label": "RunningHub 工作流 · 出片（H3）", "model_text": "项目自定义 H3 工作流",
+         "workflow": "", "billing": "paid", "cost_text": "27 RH币/任务 + 1 币/秒",
+         "command": "shots.gen",
+         "status": ("unsupported" if rh_vid.get("status") == "no_ws"
+                    else ("ready" if rh_vid["ok"] else rh_vid["status"])),
+         "detail": rh_vid.get("detail", ""), "missing": [],
+         "next": rh_vid.get("next") or ("先选项目" if rh_vid.get("status") == "no_ws" else "")},
     ]
 
     for it in items:

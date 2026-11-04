@@ -134,6 +134,53 @@ function cardComfy(it, cs) {
     + '已在线就复用，不会出现两个实例抢同一张显卡。</span></div></section>';
 }
 
+function cardRh(it) {
+  const f = it.fields || {};
+  const isApp = String(f.kind || 'workflow').indexOf('app') >= 0;
+  return '<section class="card" id="card-runninghub"><div class="card-h">'
+    + '<span class="state ' + tone(it) + '"><i class="dot ' + tone(it) + '"></i>' + esc(toneText(it)) + '</span>'
+    + '<h3>云端出片 · RunningHub</h3><span class="card-sub">分镜视频 / AI 应用</span>'
+    + '<span class="spacer"></span>' + badge('warn', '★ 按次计费') + '</div>'
+    + '<div class="card-b">'
+    + '<div class="small muted" style="margin-bottom:12px">' + esc(it.doc) + '</div>'
+    // 站点：引擎从 2026-10-29 起读 configs/channels.json，不再读 RUNNINGHUB_BASE_URL。
+    // 这里如实标出来，避免「界面上改了、出片却打另一个站点」。
+    + (function () {
+      const eff = it.effective || {};
+      const note = eff.base_url
+        ? '引擎实际使用：' + eff.base_url + (eff.source ? '（来源：' + eff.source + '）' : '')
+          + (eff.stored_ignored ? '。这里选的 ' + (f.base_url || '') + ' 引擎不读。' : '')
+        : '引擎站点未知（读不到 configs/channels.json）';
+      return field('rSite', '站点（兜底值；引擎读 configs/channels.json）',
+        '<select class="select" id="rSite">'
+        + '<option value="https://www.runninghub.ai"' + (/\.ai$/.test(f.base_url || '') ? ' selected' : '') + '>runninghub.ai（海外）</option>'
+        + '<option value="https://www.runninghub.cn"' + (/\.cn$/.test(f.base_url || '') ? ' selected' : '') + '>runninghub.cn（国内）</option>'
+        + '</select>', note);
+    })()
+    + field('rKind', '调用方式',
+      '<select class="select" id="rKind">'
+      + '<option value="workflow"' + (!isApp ? ' selected' : '') + '>工作流（workflowId）</option>'
+      + '<option value="ai-app"' + (isApp ? ' selected' : '') + '>AI 应用（webappId）</option>'
+      + '</select>')
+    + field('rTarget', isApp ? 'AI 应用 ID' : '工作流 ID',
+      '<input class="input" id="rTarget" value="' + esc(isApp ? (f.ai_app_id || '') : (f.workflow_id || ''))
+      + '" placeholder="' + (isApp ? '从 AI 应用页面 URL 取 webappId' : 'RunningHub 工作流 ID') + '" spellcheck="false">')
+    + field('rKey', 'API Key',
+      '<input class="input" id="rKey" type="password" autocomplete="off" spellcheck="false" placeholder="'
+      + esc(it.has_key ? '已保存 ' + it.key_hint + '，留空不改' : '粘贴 API Key') + '">',
+      it.has_key ? '当前来源：' + ({ file: '连接中心保存的', env: '进程环境变量', registry: 'Windows 用户变量' }[it.key_source] || '未知')
+        + '。留空保存不会清掉它。' : 'Key 只存本机 web/var/，接口不回显明文。')
+    + '<div class="row" style="gap:8px;margin-top:4px">'
+    + '<button class="btn primary" id="rSave">保存</button>'
+    + '<button class="btn quiet" id="rTest">测试连接</button>'
+    + (it.has_key ? '<button class="btn quiet" id="rClear" style="margin-left:auto">清除本机 Key</button>' : '')
+    + '</div>'
+    + '<div id="rResult" style="margin-top:10px">' + resultBox(it) + '</div>'
+    + '</div><div class="card-foot"><span class="tiny dim">测试只查账户余额与节点表，'
+    + '<b>不会提交任何任务</b>。真正出片在「分镜与视频」，那里有计费确认单。</span></div></section>';
+}
+
+
 function resultBox(it) {
   if (!it.last_test && !it.last_detail) {
     return '<div class="tiny dim">还没有测试过。点「测试连接」做一次只读探测（5 秒内返回）。</div>';
@@ -175,12 +222,15 @@ async function renderChannels(ctx) {
   (ov.items || []).forEach((i) => { byKind[i.kind] = i; });
   const llm = byKind.llm || { fields: {}, doc: '' };
   const comfy = byKind.comfyui || { fields: {}, doc: '' };
+  /* 平台通道默认不接通，但卡片在 —— 用户选了它才需要填 Key。
+     藏起来会让人以为「不支持」，填一次就要到处翻文档。 */
+  const rh = byKind.runninghub || { fields: {}, doc: '' };
   /* 本机服务实时状态（在线 / 谁启动的 / 正在启动的进度）。读不到就退化成静态说明，不挡页面。 */
   const cs = await api.comfyStatus().catch(() => null);
 
   const html = header(ov)
     + '<div class="grid g2" style="align-items:start">'
-    + cardLlm(llm) + cardComfy(comfy, cs)
+    + cardLlm(llm) + cardComfy(comfy, cs) + cardRh(rh)
     + '<section class="card"><div class="card-h"><h3>注入关系</h3>'
     + '<span class="card-sub">界面填一次，子进程自动带上</span></div><div class="card-b">'
     + kv([
@@ -212,7 +262,7 @@ async function renderChannels(ctx) {
         const old = all.textContent;
         all.innerHTML = '<span class="spinner"></span>测试中';
         try {
-          for (const k of ['llm', 'comfyui']) {
+          for (const k of ['llm', 'comfyui', 'runninghub']) {
             try { await api.testConnection(k); } catch (e) { /* 单个失败不影响其余 */ }
           }
           toast('测试完成');
@@ -225,6 +275,82 @@ async function renderChannels(ctx) {
     }
   };
 }
+
+function mountRh(ctx, root) {
+  const kindSel = root.querySelector('#rKind');
+  if (kindSel) kindSel.onchange = () => ctx.refresh();
+
+  const collect = () => {
+    const isApp = String((root.querySelector('#rKind') || {}).value || '').indexOf('app') >= 0;
+    const target = (root.querySelector('#rTarget') || {}).value || '';
+    return {
+      base_url: (root.querySelector('#rSite') || {}).value || '',
+      kind: isApp ? 'ai-app' : 'workflow',
+      workflow_id: isApp ? '' : target,
+      ai_app_id: isApp ? target : ''
+    };
+  };
+
+  const save = root.querySelector('#rSave');
+  if (save) save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const body = collect();
+      const keyEl = root.querySelector('#rKey');
+      if (keyEl && keyEl.value.trim()) body.api_key = keyEl.value.trim();
+      await api.saveConnection('runninghub', body);
+      toast('已保存 RunningHub 配置');
+      ctx.refresh();
+    } catch (e) { toast('保存失败：' + (e.detail || e.message), 'bad'); }
+    finally { save.disabled = false; }
+  };
+
+  const test = root.querySelector('#rTest');
+  if (test) test.onclick = async () => {
+    test.disabled = true;
+    test.innerHTML = '<span class="spinner"></span>测试中';
+    const box = root.querySelector('#rResult');
+    try {
+      const r = await api.testConnection('runninghub');
+      if (box) box.innerHTML = '<div class="alert ' + (r.ok ? 'info' : 'bad') + '">'
+        + '<span class="nav-ico">' + icon(r.ok ? 'check' : 'alert', 14) + '</span><div>'
+        + esc(r.detail || '') + (r.next ? '<div class="tiny" style="margin-top:4px;opacity:.8">下一步：'
+          + esc(r.next) + '</div>' : '') + '</div></div>';
+      toast(r.ok ? 'RunningHub 可用' : '测试失败', r.ok ? 'ok' : 'bad');
+    } catch (e) { toast('测试失败：' + (e.detail || e.message), 'bad'); }
+    finally { test.disabled = false; test.textContent = '测试连接'; }
+  };
+
+  const clear = root.querySelector('#rClear');
+  if (clear) clear.onclick = () => {
+    openModal({
+      title: '清除本机保存的 Key？',
+      icon: 'lock',
+      html: '<div class="small">只会删除 <span class="mono">web/var/connections.keys.json</span> 里这一条。'
+        + '如果你在 Windows 用户变量或进程环境里也设了 Key，那些不受影响，仍会被识别。</div>',
+      foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+        + '<button class="btn primary" id="kClear">清除</button>',
+      mount: (m) => {
+        m.querySelector('#kClear').onclick = async () => {
+          try {
+            await api.saveConnection('runninghub', { api_key: '' });
+            closeModal();
+            toast('已清除本机 Key');
+            ctx.refresh();
+          } catch (e) { toast('清除失败：' + (e.detail || e.message), 'bad'); }
+        };
+      }
+    });
+  };
+}
+
+/* ============================================================
+   页签分发：连接中心 = 通道配置 + 生成通道 + 出片工作流
+   为什么合到一页：这三块回答的是同一个问题「我把东西接上了吗、接的是哪一份」。
+   分成两个顶级菜单时，用户要在两个页面之间对着看，还容易出现「这边显示可用、
+   那边说没配置」的口径差（因为各自探测的时机不同）。
+   ============================================================ */
+
 
 function mountComfy(ctx, root) {
   const save = root.querySelector('#cSave');

@@ -3,7 +3,14 @@
   "_note": "高清放大配置 —— 改这里就能改后端/目标分辨率/模型/编码，不需要动代码。用法：python scripts/upscale.py --ep ep03",
   "enabled": true,
   "backend": "topaz",
-  "_backend_note": "二选一：topaz=本地 Topaz Video（免费、慢、画质最稳，默认）｜off=跳过（母版直接进字幕，只在母版已是交付规格时用）。命令行 --backend 可临时覆盖。",
+  "_backend_note": "三选一：topaz=本地 Topaz Video（免费、慢、画质最稳，默认）｜rh=RunningHub RH_Astra Iris（约 35 币/集，2–3 分钟，输出按源宽高比吸附后自动裁到精确目标）｜off=跳过（母版直接进字幕，只在母版已是交付规格时用）。命令行 --backend 可临时覆盖。",
+  "rh": {
+    "_note": "RunningHub 放大通道的**可调参数**。节点映射（nodeId/fieldName）、workflow_id、keep_audio 的唯一真源是能力卡 configs/capabilities/rh.upscale.v1.json —— 换工作流改卡，不在这里抄一遍。这里只放超时/重试/清理模型这类项目级偏好；要临时换工作流，才在本文件写 workflow_id 或 nodes（扁平 {角色: nodeId}）覆盖。",
+    "instance_type": "default",
+    "cleaner_action": "Purge Model",
+    "timeout_min": 40.0,
+    "poll_interval": 5.0
+  },
   "tool": {
     "_note": "留空 = 自动探测。本机实测：Topaz 装在 D 盘，模型权重也被挪到了 D 盘；独立跑 ffmpeg 必须把这两个目录用环境变量告诉它，否则报 'Model not found: prob-4'。",
     "install_dir": "",

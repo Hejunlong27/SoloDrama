@@ -42,6 +42,8 @@ _ENV_FIX = {
     "ffmpeg": ("bin.ffmpeg", {"kind": "manual"}),
     "ffprobe": ("bin.ffprobe", {"kind": "manual"}),
     "whisper-cli": ("bin.whisper", {"kind": "manual"}),
+    "RUNNINGHUB_API_KEY": ("cfg.rh_key", {"kind": "page", "page": "#/connections"}),
+    "RUNNINGHUB_BASE_URL": ("cfg.rh_base", {"kind": "page", "page": "#/connections"}),
     "ComfyUI 本地端口": ("svc.comfy", {"kind": "comfy_start"}),
     "manifest.sha256": ("repo.manifest", {"kind": "manual"}),
 }

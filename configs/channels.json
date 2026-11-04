@@ -1,9 +1,18 @@
 {
-  "_comment": "本仓库只跑本地 ComfyUI：没有平台站点、没有 API Key、没有余额。这张文件只剩一个用处 —— 记住本机 ComfyUI 的地址。",
-  "version": 2,
+  "_comment": "通道站点真源（**非机密**）。站点为什么放这里而不是环境变量：环境变量是进程启动快照，改完不重开终端就读旧值，症状却是上传报「API Key 不存在」——看起来像 Key 错、像账号错，唯独不像变量过期。",
+  "version": 1,
+  "runninghub": {
+    "site": "cn",
+    "sites": {
+      "cn": {"url": "https://www.runninghub.cn", "label": "国内站（zh）"},
+      "ai": {"url": "https://www.runninghub.ai", "label": "国际站（AI）"}
+    },
+    "key_env": "RUNNINGHUB_API_KEY",
+    "legacy_env": ["RUNNINGHUB_BASE_URL", "RH_BASE_URL"],
+    "_note": "改站点优先用 `configure.py set-site cn|ai`；临时单次覆盖用环境变量 SOLODRAMA_RH_SITE。旧的 RUNNINGHUB_BASE_URL 只在没有本文件时才生效。"
+  },
   "comfyui": {
     "url": "http://127.0.0.1:8188",
     "_note": "本地出图/出片端口；换机器才需要改。"
-  },
-  "_note": "改端口用 configure 或直接改这里；换机器才需要动。"
+  }
 }

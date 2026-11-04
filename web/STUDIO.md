@@ -363,6 +363,34 @@ python web/tools/verify_llm_loop.py
 | `image.local.t2i` | 本地 ComfyUI | 文生图 | `stages/assets/comfyui/workflow_qwen_image21.json`（Qwen-Image 2.1 int8 + 4step turbo） | ￥0 |
 | `image.local.i2i` | 本地 ComfyUI | 图生图 | **未内置**（现用工作流是纯文生图，没有加载图像节点） | ￥0 |
 | `video.local.i2v` | 本地 ComfyUI | 图生视频 | `stages/video/comfyui/workflow_h3_local.json`（MiniMax H3 多参 · 4 步） | ￥0 |
+| `image.rh.t2i` | RunningHub 工作流 | 文生图 | `image_providers[active].id` + `nodes.prompt.nodeId`（**可选通道**） | 按张计费 |
+| `image.rh.i2i` | RunningHub 工作流 | 图生图 | `image_providers[active].id_i2i` + `nodes.image.nodeId`（必须给参考图） | 按张计费 |
+| `video.rh.workflow` | RunningHub H3 | 图生视频 | `h3.id` + `h3.nodes`（**可选通道**） | 按段计费 |
+
+
+### 9.0 默认哪条，怎么切
+
+**默认本地。** 出图出片的默认值、新建项目的默认值、界面上的默认选中项，三处一致指向
+`local_comfyui`。云端是并列的第二条，不是隐藏开关：选它才知道会花钱。
+
+| 出口 | 本地（默认） | 平台（可选） |
+| --- | --- | --- |
+| 命令行出片 | `drama video run --engine local --ep ep01` | `drama video run --engine workflow` |
+| 命令行出图 | `drama assets --engine local` | `drama assets --engine rh` |
+| Studio | 「出片」页本地按钮（￥0） | 同一页「云端出片（★计费）」 |
+| 放大 | `upscale --backend topaz` | `upscale --backend rh` |
+| 前置 | 不需要任何 Key | 要 `RUNNINGHUB_API_KEY` + 工作流 ID |
+
+**为什么默认必须是本地**，三条都不是「省钱优先」：
+
+1. 新建项目时默认指向云端，等于每个新项目一建出来就欠一笔账 —— 而用户往往不知道。
+2. 出站是**代码路径**决定的，不是配置决定的。`cmd_video_run` 里本地分支在开闸之前
+   `return`，所以本地通道根本走不到开闸那一步。改 `model-plan.json` 也绕不过去。
+3. 平台通道要显式声明意图才可用：跑 RH 命令、或直接运行 RH 专用脚本（它们自己开闸）。
+
+出口守卫（`stages/_netguard.py`）是这套规则的兜底：默认只放行本机与内网，
+平台域名要 `SOLODRAMA_ALLOW_RH=1`，且 `rh-api.*` 这类变体**永久**不放。
+`test_netguard_platform.py` 把这三条不变量钉住。
 
 ### 9.1 为什么文生图与图生图必须分成两条
 

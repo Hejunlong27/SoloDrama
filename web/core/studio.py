@@ -498,15 +498,16 @@ def _human_sec(sec: float) -> str:
 
 
 def cost(ws) -> dict:
-    """时间账：已经占了多少 GPU 时间、花在哪、还差多久。
+    """成本账：分「时间」与「钱」两个口径，各自只在自己有意义时才非零。
 
-    ★ 2026-11-04：整页口径从「钱」换成「时间」。
-      本仓库出图出片全在本机，平台费用恒为 0 —— 一个永远显示 ¥0 的成本页
-      不只是没用，还会让人以为「计费没接上」而去排查一个不存在的问题。
-      这里回答的是真问题：这一集占了几小时、哪一步最吃时间、整季还要几天。
+    * 本地通道（默认）→ ￥0。唯一稀缺的是 GPU 时间：这一集占几小时、
+      哪一步最吃时间、整季还要几天。这是 `sec` 系列。
+    * 平台通道（RunningHub）→ 按次计费。`coins / usd / cny` 有值。
+      只跑过本机时它们恒为 0，这是**事实**而不是「没接上」。
 
-    字段兼容：`ledger.coins / usd / cny` 仍返回（恒为 0），因为旧前端或导出脚本
-    可能还在读；新增 `sec` 系列是唯一有意义的数值。
+    ★ 为什么两个都留：只报时间的话，跑过云端的人看不到自己花了多少；
+      只报钱的话，纯本机跑的人看到一个永远 ¥0 的页面，会以为坏了。
+      前端按 `ledger.coins > 0` 决定突出哪一侧。
     """
     inv = inventory.inventory(ws)
     rows = _attempts(ws)
@@ -514,14 +515,27 @@ def cost(ws) -> dict:
     total_sec = sum(r["sec"] for r in ok_rows)
 
     by_stage, by_ep = {}, {}
+    by_stage_coins, by_ep_coins = {}, {}
+    total_coins = total_money = 0.0
     for r in ok_rows:
         st = r["stage"] or "其他"
         by_stage[st] = by_stage.get(st, 0.0) + r["sec"]
+        by_stage_coins[st] = by_stage_coins.get(st, 0.0) + (r.get("coins") or 0.0)
+        total_coins += r.get("coins") or 0.0
+        total_money += r.get("money") or 0.0
         if r["episode"]:
             by_ep[r["episode"]] = by_ep.get(r["episode"], 0.0) + r["sec"]
+            by_ep_coins[r["episode"]] = by_ep_coins.get(r["episode"], 0.0) + (r.get("coins") or 0.0)
+
+    # 1 RH币 ≈ ￥0.0025（2026-09-18 实测）；美元钱包按 7.2 折人民币。
+    # ★ 这两个系数只用于「把两种余额合成一个总花费」，不影响任何计费判断。
+    coin_to_cny, usd_cny = 0.0025, 7.2
+    total_cny = total_coins * coin_to_cny + total_money * usd_cny
 
     if ok_rows:
         source, source_text = "ledger", "来自本机耗时台账（逐次尝试的实际占用）"
+        if total_coins or total_money:
+            source_text = "来自耗时台账；金额是平台通道账单（逐次尝试的 usage）"
     else:
         source, source_text = "none", "还没有跑过任何任务"
 
@@ -535,8 +549,9 @@ def cost(ws) -> dict:
         "source": source,
         "source_text": source_text,
         "ledger": {
-            # 兼容字段：本仓库恒为 0，仅防旧前端读不到而崩
-            "coins": 0.0, "usd": 0.0, "cny": 0.0,
+            # 金额：只有走过平台通道才非 0。纯本机跑时它是 0 —— 那是事实，不是缺失。
+            "coins": round(total_coins, 2), "usd": round(total_money, 4),
+            "cny": round(total_cny, 4),
             "attempts": len(rows),
             "success": len(ok_rows),
             "failed": len(rows) - len(ok_rows),
@@ -548,10 +563,15 @@ def cost(ws) -> dict:
             "human": _human_sec(total_sec / len(ok_rows)) if ok_rows else "—",
             "sample": len(ok_rows),
         },
-        "by_stage": [{"stage": k, "sec": round(v, 1), "human": _human_sec(v)}
+        "by_stage": [{"stage": k, "sec": round(v, 1), "human": _human_sec(v),
+                      "coins": round(by_stage_coins.get(k, 0.0), 2)}
                      for k, v in sorted(by_stage.items(), key=lambda kv: kv[1], reverse=True)],
-        "by_episode": [{"ep": k, "sec": round(v, 1), "human": _human_sec(v)}
+        "by_episode": [{"ep": k, "sec": round(v, 1), "human": _human_sec(v),
+                        "coins": round(by_ep_coins.get(k, 0.0), 2)}
                        for k, v in sorted(by_ep.items())],
+        # 平台用量（工作流命中次数 / 任务数）：和台账金额互为佐证
+        "platform": {"tasks": (inv.get("spend") or {}).get("tasks", 0),
+                     "workflow_hits": (inv.get("spend") or {}).get("workflow_hits", 0)},
         "rows": sorted(rows, key=lambda r: r["at"], reverse=True)[:200],
         "estimate": est,
         # 资产图张数：这是「还要跑多少」的分母，不是钱

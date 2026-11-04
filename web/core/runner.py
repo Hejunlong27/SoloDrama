@@ -42,7 +42,6 @@ EXIT_MEANING = {
     EXIT_INTERRUPTED: ("interrupted", "被中断"),
 }
 
-# 但名字留着无害 —— 历史日志里可能还有它们，脱敏规则不能跟着删。
 SECRET_ENV_NAMES = (
     "RUNNINGHUB_API_KEY", "RUNNINGHUB_API_KEY_2",
     "RUNNINGHUB_ENT_API_KEY", "RUNNINGHUB_ENT_API_KEY_2",
@@ -120,7 +119,7 @@ def base_env(ws=None, extra=None) -> dict:
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env.setdefault("SOLODRAMA_PYTHON", paths.engine_python())
-    # ★ 2026-11-04：**不注入任何平台地址/Key**。以前这里默认塞
+    env.setdefault("RUNNINGHUB_BASE_URL", "https://www.runninghub.ai")
     # 连接中心（web/var/connections.json）里存的地址/Key 在这里注入。
     # 顺序很重要：先给默认值，再让用户保存的连接覆盖，最后 extra（命令级参数）覆盖两者。
     try:

@@ -4,10 +4,10 @@
 
 为什么有它
 ----------
-新分支把创作移出引擎后，剩下一堆**执行参数**：出图走哪条通道、出片用哪个工作流、
+新分支把创作移出引擎后，剩下一堆**执行参数**：出图走本地还是云端、出片用哪个工作流、
 并发多少、放大到多大。这些参数散落在三处（`model-plan.json`、`config.local.json`、
 `config.upscale.json`），逐条手改既慢又容易只改一半 —— 典型症状是「确认单写着本地、
-实际跑的是另一条」，账对不上时已经出了几十张图。
+实际跑的是云端」，账对不上时已经出了几十张图。
 
 预配置卡把这三处收成一份 JSON，一条命令落盘，并**回读校验**。
 
@@ -143,7 +143,7 @@ def main(argv=None) -> int:
     if a.apply:
         # _do_set 自带「同一 kind 重设会写 history」的行为，幂等
         rc1 = M._do_set(ws, "image", img.get("choice") or "local_comfyui", detail_img, source="preset")
-        rc2 = M._do_set(ws, "video", vid.get("choice") or "local_comfyui", detail_vid, source="preset")
+        rc2 = M._do_set(ws, "video", vid.get("choice") or "runninghub", detail_vid, source="preset")
         if rc1 != 0 or rc2 != 0:
             print("[WARN] 通道确认单写入有告警（退出码 %s / %s），请检查 model-plan.json"
                   % (rc1, rc2))

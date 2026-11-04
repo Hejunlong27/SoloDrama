@@ -266,17 +266,13 @@ def main(argv=None) -> int:
     ap.add_argument("--look", default="", help="视觉 look id（不给就留空，待确认）")
     ap.add_argument("--narrative", default="dialogue", choices=["dialogue", "narration"])
     ap.add_argument("--aspect", default="9:16")
-    # ★ 2026-11-04：交付分辨率（如 1080x1920）。写进 project-setup.json，
-    #   这是 `drama_profile.py` 唯一会去读分辨率的地方；不写就等于「没定」。
-    ap.add_argument("--resolution", default="", help="交付分辨率 WxH（可选）")
     ap.add_argument("--world", default="")
     ap.add_argument("--region", default="east_asian",
                     choices=["east_asian", "western", "south_asian", "latin"])
     ap.add_argument("--image-engine", dest="image_engine", default="local_comfyui",
-                    choices=["local_comfyui"])
-    # ★ 2026-11-04：只剩本地 ComfyUI（出图出片同一台机器、同一个 ComfyUI）。
+                    choices=["local_comfyui", "runninghub"])
     ap.add_argument("--video-engine", dest="video_engine", default="local_comfyui",
-                    choices=["local_comfyui"])
+                    choices=["local_comfyui", "runninghub"])
     ap.add_argument("--force", action="store_true", help="覆盖已有模板文件（默认跳过）")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
@@ -320,11 +316,6 @@ def main(argv=None) -> int:
             title=a.title, episodes=a.episodes, platform=a.platform or "（待填）"),
         "05-分镜/ep01_storyboard.md": STORYBOARD_TMPL.format(title=a.title, track=a.track),
     }
-    if a.resolution:
-        files["project-setup.json"] = json.dumps(
-            {"resolution": {"deliver": a.resolution},
-             "_note": "交付分辨率；出片后按 delivery_spec 归一化到这个尺寸（crop-to-fill，不补边）"},
-            ensure_ascii=False, indent=2)
     print("\n[模板]")
     wrote = skipped = 0
     for rel, text in files.items():

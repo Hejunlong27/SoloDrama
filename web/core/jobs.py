@@ -3,7 +3,7 @@
 
 为什么必须作业化（而不是让 HTTP 请求等命令跑完）：
   * 出片 / 放大 / 字幕是分钟~小时级任务，浏览器一刷新就会断；
-  * 本机资源有限：GPU 同时只能跑一个（出图 / 出片 / Topaz 抢同一块卡）；
+  * 本机资源有限：GPU 同时只能跑一个（Topaz 独占）、RunningHub 单账号并发 ≤5；
   * 计费动作必须留痕：谁、何时、执行了什么、预估多少、实际消耗多少。
 
 状态语义与引擎退出码对齐（见 runner.EXIT_MEANING）：
@@ -25,14 +25,15 @@ _STARTED = False
 _WORKERS: dict = {}          # job_id -> {"pid": int, "thread": Thread}
 _RUNNING_JOBS: dict = {}     # job_id -> runner 进程句柄（用于取消）
 
-#   本机只有一个 GPU，出图与出片抢同一个显存 —— 并发只能是 1，
-#   第二个任务进来就 OOM。这不是「保守设置」，是硬约束。
-GPU_SLOTS = 1                # 本机 GPU 独占（出图/出片共用一块卡）
+RH_SLOTS = 5                 # RunningHub 单账号并发硬限（平台硬限，不可调优）
+GPU_SLOTS = 1                # 本机 GPU 独占
 CPU_MEDIA_SLOTS = 1
 
 RESOURCE_TOKENS = []
 for _i in range(GPU_SLOTS):
     RESOURCE_TOKENS.append("GPU-%d" % (_i + 1))
+for _i in range(RH_SLOTS):
+    RESOURCE_TOKENS.append("RH-%d" % (_i + 1))
 for _i in range(CPU_MEDIA_SLOTS):
     RESOURCE_TOKENS.append("MEDIA-1")
 
@@ -132,6 +133,7 @@ def lock_status() -> dict:
         "used": used,
         "summary": {
             "gpu": "%d/%d" % (sum(1 for t in RESOURCE_TOKENS if t.startswith("GPU-") and t in used), GPU_SLOTS),
+            "rh": "%d/%d" % (sum(1 for t in RESOURCE_TOKENS if t.startswith("RH-") and t in used), RH_SLOTS),
         },
     }
 
