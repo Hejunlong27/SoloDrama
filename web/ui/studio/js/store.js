@@ -42,6 +42,10 @@ export function setWs(ws, opts) {
     if (S.ws) u.searchParams.set('ws', S.ws); else u.searchParams.delete('ws');
     history.replaceState(null, '', u.toString());
   }
+  /* ★ 2026-11-04：资源监视的「磁盘」跟着工作区走（成片落 D:，卡住的永远是 D:）。
+     这里发一个轻量事件，比让 monitor.js 轮询比对 ws 要干净。 */
+  try { window.dispatchEvent(new CustomEvent('sd:ws-changed', { detail: { ws: S.ws } })); }
+  catch (e) { /* 老浏览器没有 CustomEvent 就算了，监控条只是晚 3 秒更新 */ }
 }
 
 export function project() {

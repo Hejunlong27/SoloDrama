@@ -107,6 +107,8 @@ export const del = (path, params) => request(path + (params ? '?' + qs(params) :
 /* ---- 具体接口（与 web/app.py 的路径一一对应，改后端时同步这里）---- */
 export const api = {
   health: () => get('/api/health'),
+  /* 资源监视：不进 TTL 表 —— 3 秒一次要的就是新数据，缓存会把它变成「假动态」 */
+  monitor: (ws) => get('/api/monitor', { ws }),
   workspaces: () => get('/api/workspaces'),
   discover: (refresh) => get('/api/workspaces/discover', { refresh: refresh ? 1 : 0 }),
   setCurrent: (ws) => post('/api/workspaces/current', { path: ws }),

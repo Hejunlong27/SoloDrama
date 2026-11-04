@@ -1107,3 +1107,87 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   .fw:not(.hide) { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; border-radius: 0; }
   .fw-rz { display: none; }
 }
+
+/* ==========================================================================
+   资源监视（2026-11-04）
+   顶栏三条：显存 / 内存 / 磁盘。它们是「现在能不能压活」的判断依据，
+   所以放常驻位置而不是藏进某个页面；详情与曲线点开看。
+   ========================================================================== */
+.mon { display: flex; align-items: center; gap: 10px; flex: none; }
+.mon-i {
+  appearance: none; -webkit-appearance: none;
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 6px; border-radius: var(--r-xs);
+  border: 1px solid transparent; background: transparent;
+  font: inherit; cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+.mon-i:hover { background: var(--bg-hover); border-color: var(--line); }
+.mon-l { font-size: 10.5px; color: var(--txt-2); white-space: nowrap; }
+.mon-bar {
+  width: 44px; height: 5px; border-radius: 3px; flex: none;
+  background: rgba(255, 255, 255, .10); overflow: hidden;
+}
+.mon-bar > i {
+  display: block; height: 100%; width: 0; border-radius: 2px;
+  background: var(--ok);
+  transition: width .45s var(--ease), background .3s var(--ease);
+}
+.mon-v {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--txt-2);
+  min-width: 28px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.mon-i.warn .mon-bar > i { background: var(--accent); }
+.mon-i.bad .mon-bar > i { background: #d65c5c; }
+.mon-i.bad .mon-v { color: #e28787; }
+.mon-i.na { opacity: .45; }
+.mon-i.na .mon-bar { display: none; }
+
+/* 顶栏挤的时候先丢标签，再整块收起 —— 数字比标题重要，条本身能说明是哪一项 */
+@media (max-width: 1240px) { .mon-l { display: none; } .mon { gap: 6px; } }
+@media (max-width: 860px) { .mon { display: none; } }
+
+/* ---------- 资源监视浮窗 ---------- */
+.mn {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 14px; display: flex; flex-direction: column; gap: 14px;
+}
+.mn-note { display: flex; gap: 6px; align-items: center; font-size: var(--fs-11); color: var(--txt-3); }
+.mn-sec { display: flex; flex-direction: column; gap: 6px; }
+.mn-h { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-12); }
+.mn-h b { font-weight: 500; color: var(--txt); }
+.mn-s {
+  font-size: var(--fs-11); color: var(--txt-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;
+}
+.mn-p { font-family: var(--font-mono); font-size: var(--fs-12); color: var(--txt-2);
+  font-variant-numeric: tabular-nums; }
+.mn-bar {
+  height: 7px; border-radius: 4px; overflow: hidden;
+  background: var(--bg-inset); border: 1px solid var(--line);
+}
+.mn-bar > i {
+  display: block; height: 100%; width: 0;
+  transition: width .45s var(--ease), background .3s var(--ease);
+}
+.mn-f {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: var(--fs-11); color: var(--txt-3);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.mn-spark {
+  width: 100%; height: 30px; display: block;
+  background: var(--bg-inset); border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+}
+.mn-tip {
+  font-size: var(--fs-11); line-height: 1.65; color: var(--txt-3);
+  padding: 8px 10px; border-radius: var(--r-sm);
+  background: var(--bg-inset); border: 1px solid var(--line);
+}
+
+/* 曲线描边色：只能在这里定义（内联 var() 会被 CSSOM 丢弃，属性 var() 根本不生效） */
+.mn-line { transition: stroke .3s var(--ease); }
+.mn-line.ok { stroke: var(--ok); }
+.mn-line.warn { stroke: var(--accent); }
+.mn-line.bad { stroke: #d65c5c; }

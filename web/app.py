@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from core import (adapters, agent, artifacts, canvas, comfy_launcher, comfy_probe, comfy_store,
-                  creation, graph, timing, updater,
+                  creation, graph, monitor, timing, updater,
                   skills as SKILLS, commands as CMD,
                     connections, generators,
                     health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
@@ -248,6 +248,19 @@ def health():
         "readonly": READONLY_MODE,
         "locks": jobs.lock_status(),
     }
+
+
+@app.get("/api/monitor")
+def monitor_snapshot(ws: str = Query(default="")):
+    """显存 / 内存 / 磁盘的当前快照（前端每 3 秒拉一次）。
+
+    ★ 用 `ws` 只为决定「看哪个盘」：只看 C: 没意义 —— 成片落在 D:，
+      卡住的永远是 D:。没选项目时也能看（那时只有仓库盘）。
+
+    ⚠ 函数名不能叫 `monitor`：本文件 import 了 `core.monitor`，同名会在模块级
+      把模块覆盖成函数（和 `pipeline` / `health` 同一个坑，已踩两次）。
+    """
+    return monitor.snapshot(str(ws or "").strip())
 
 
 @app.get("/api/health/checks")

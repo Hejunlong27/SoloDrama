@@ -18,8 +18,8 @@
      于是改完 css/js 刷新页面看到的还是旧文件 —— 表现是「改了没生效」。
      2026-11-04 踩过一次：画布样式写完了，页面上一个格子都没有。
      发布时把下面这个日期串改一次，强制所有客户端取新文件；开发期刷新即可（服务端已发 no-cache）。 -->
-<link rel="stylesheet" href="css/tokens.css?v=20261104h">
-<link rel="stylesheet" href="css/app.css?v=20261104h">
+<link rel="stylesheet" href="css/tokens.css?v=20261104m">
+<link rel="stylesheet" href="css/app.css?v=20261104m">
 </head>
 <body>
 
@@ -58,6 +58,8 @@
 
       <div class="health" id="health"></div>
       <span class="spacer"></span>
+      <!-- 资源监视（显存 / 内存 / 磁盘）：三项常驻，点开看详情与曲线 -->
+      <div class="mon" id="monitor" role="group" aria-label="资源占用"></div>
       <span class="badge warn hide" id="roBadge" title="只读模式下所有写操作被拒绝">只读模式</span>
       <span class="badge outline" id="engineBadge" title="引擎解释器">引擎</span>
       <button class="btn ghost icon" id="btnRefresh" title="重新读取（清缓存）">
@@ -98,6 +100,6 @@
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
-<script type="module" src="js/main.js?v=20261104h"></script>
+<script type="module" src="js/main.js?v=20261104m"></script>
 </body>
 </html>

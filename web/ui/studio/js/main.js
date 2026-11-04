@@ -5,6 +5,7 @@
 import { api, clearCache } from './api.js';
 import { esc, icon, paintIcons, errorCard, openDrawer, closeDrawer, closeModal, skeleton, toast } from './ui.js';
 import { toggleAgent, agentOpen, restoreAgent, syncAgent, openAgent } from './agent-panel.js';
+import { initMonitor, openMonitor } from './monitor.js';
 import {
   S, loadProjects, loadCaps, loadHealth, loadRunning, project as currentProject,
   setWs, initialWs, initialCollapsed, setCollapsed, loadProjects as reloadProjects
@@ -413,6 +414,7 @@ async function boot() {
     if (b) b.onclick = () => location.reload();
     return;
   }
+  initMonitor();          /* 顶栏资源条：先画出来，别等首个接口回来 */
   if (!location.hash) location.hash = '#/workbench';
   render().then(() => {
     prefetch(S.ws);
@@ -422,6 +424,8 @@ async function boot() {
     const want = new URLSearchParams(location.search).get('agent');
     if (want === '1') openAgent();
     else restoreAgent();
+    /* `?monitor=1` 直接摊开资源监视：排查「跑不动」时不必先点一下 */
+    if (new URLSearchParams(location.search).get('monitor') === '1') openMonitor();
   });
 }
 
