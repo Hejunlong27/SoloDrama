@@ -1,9 +1,17 @@
 # ---- 密钥与本地配置（绝不入库）----
 .env
 *.key
+# 运行期全局配置：含实例域名/端口/密钥路径，只留 example
+configs/settings.json
 config.local.json
 **/config.local.json
 **/config.assets.json
+
+# ---- 云端运行期数据（工作区侧，不入库）----
+# `python -m cloud` 在 cwd 找不到工作区时会退到当前目录 —— 万一在仓库根跑过，
+# 台账与实例记录（含实例 ID / 地址）不该跟着入库。
+台账/
+**/.cloud/
 
 # ---- 剧项目数据与产物（落工作区，不入库）----
 data/

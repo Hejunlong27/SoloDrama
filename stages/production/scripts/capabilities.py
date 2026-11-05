@@ -68,13 +68,17 @@ def _check_comfy(cap: dict, online: bool) -> list:
         return res
     try:
         import urllib.request
+        # ★ 地址不能写死 8188：连接中心/环境变量改过端口或指向云端之后，
+        #   能力卡会一直报「不可达」而实际能跑 —— 卡片一旦说错就没人再看它。
+        base = (os.environ.get("COMFYUI_URL") or os.environ.get("COMFY_URL")
+                or "http://127.0.0.1:8188").rstrip("/")
         op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        raw = op.open("http://127.0.0.1:8188/system_stats", timeout=4).read()
+        raw = op.open(base + "/system_stats", timeout=4).read()
         st = json.loads(raw.decode("utf-8"))
         ver = (st.get("system") or {}).get("comfyui_version")
-        res.append((True, "ComfyUI 可达（%s）" % ver))
+        res.append((True, "ComfyUI 可达（%s · %s）" % (ver, base)))
     except Exception as exc:                                   # noqa: BLE001
-        res.append((False, "ComfyUI 不可达（%s）—— 本地出图会失败，先启动 8188" % type(exc).__name__))
+        res.append((False, "ComfyUI 不可达（%s）—— 出图会失败，先确认服务地址与启动状态" % type(exc).__name__))
     return res
 
 

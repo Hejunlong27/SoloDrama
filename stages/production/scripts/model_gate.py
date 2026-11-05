@@ -138,12 +138,15 @@ MODEL_OPTIONS = {
             "id": "cloud_comfyui",
             "label": "云端 ComfyUI（★计费/自建）",
             "cost": "按云主机/平台计费（自建或租用）",
-            "desc": "把视频工作流提交到云端 ComfyUI 服务；适合本机显存不够或散热吃紧。"
-                    "★ 引擎**暂无云端 ComfyUI 视频执行器**（同 P1-1）。",
-            "engine_arg": None,
-            "executor": None,
-            "requires": ["comfy_url", "comfy_workflow"],
-            "optional": [],
+            "desc": "把视频工作流提交到云端 ComfyUI 服务（自建 GPU 主机 / 镜像实例，"
+                    "如仙宫云）；适合本机显存不够或散热吃紧。"
+                    "★ 2026-11-05 起**有执行器了**：与本地同一个客户端，COMFYUI_URL 指向远端。",
+            "engine_arg": "cloud",
+            "executor": "stages/video/comfyui/comfy_local_video.py（同一客户端，COMFYUI_URL 指向远端）",
+            # 工作流已随仓库交付（workflow_h3_minimax_canvas.json + 同名 map），
+            # 远端唯一必填的是**地址**；要换工作流再用 optional 的 comfy_workflow。
+            "requires": ["comfy_url"],
+            "optional": ["comfy_workflow"],
         },
         {
             "id": "runninghub",
@@ -272,6 +275,51 @@ def missing_evidence(kind: str, choice: str, detail: dict | None) -> list:
 
 
 # ---------------------------------------------------------------------------
+# 确认单 → 环境变量（「确认单即执行依据」的出片侧实现）
+# ---------------------------------------------------------------------------
+# 出图侧早在 2026-10-19 就做了这件事（`gen_assets_local.py::_apply_model_plan_env`），
+# 出片侧一直缺：用户确认了「云端 ComfyUI + 某地址」，执行时却各自读环境变量 ——
+# 两边不连线时，**静默回落到 127.0.0.1**，报出来是「连不上 ComfyUI」，
+# 而真相是「跑到了另一台机器上」。这里把它补齐。
+ENV_MAP = {
+    "image": {"comfy_url": "COMFYUI_URL", "comfy_workflow": "COMFYUI_WORKFLOW"},
+    "video": {"comfy_url": "COMFYUI_URL", "comfy_workflow": "COMFYUI_VIDEO_WORKFLOW"},
+}
+
+
+def plan_detail(ws: pathlib.Path, kind: str) -> dict:
+    """读确认单里某类的 detail（读不到就空 dict，不抛）。"""
+    try:
+        m = (load_plan(ws).get("models") or {}).get(kind) or {}
+    except Exception:                                            # noqa: BLE001
+        return {}
+    d = m.get("detail")
+    return d if isinstance(d, dict) else {}
+
+
+def apply_env(ws: pathlib.Path, kind: str) -> dict:
+    """把确认单的执行依据回灌成环境变量。返回实际写入的键值（供日志/界面显示）。
+
+    * **环境变量优先**：用 `setdefault` 语义 —— 命令行/父进程显式设过的不许被覆盖。
+    * 只回灌 `ENV_MAP[kind]` 里登记过的键，避免把任意 detail 变成进程环境。
+    """
+    mapping = ENV_MAP.get(kind) or {}
+    det = plan_detail(ws, kind)
+    applied = {}
+    for key, env in mapping.items():
+        v = str(det.get(key) or "").strip()
+        if not v:
+            continue
+        if key == "comfy_workflow" and not pathlib.Path(v).expanduser().is_file():
+            continue                  # 文件不在了就别注入一个死路径
+        if os.environ.get(env):
+            continue                  # 已有值 → 不覆盖
+        os.environ[env] = v
+        applied[env] = v
+    return applied
+
+
+# ---------------------------------------------------------------------------
 # 门禁查询（给 drama.py 用）
 # ---------------------------------------------------------------------------
 def gate_state(ws: pathlib.Path, kind: str) -> dict:
@@ -311,8 +359,8 @@ def require(ws: pathlib.Path, kind: str, expected_engine: str | None = None) -> 
     if not opt.get("executor") and not opt.get("manual"):
         return False, (
             "本项目确认的%s模型是「%s」，但引擎**暂无该通道的执行器**，无法开工。\n"
-            "        这不是配置问题，是能力缺口：本地/云端 ComfyUI 的视频执行器尚未实现。\n"
-            "        请改选有执行器的通道：drama models set %s=runninghub（或 runninghub_ai_app）。"
+            "        这不是配置问题，是能力缺口。\n"
+            "        请改选有执行器的通道：drama models set %s=<local_comfyui|cloud_comfyui|runninghub>"
             % (KINDS[kind], opt.get("label", choice), kind))
 
     # 通道一致性校验：仅当本次调用能确定「实际用的通道」时才比对
@@ -359,6 +407,8 @@ def render_menu(kind: str, indent: str = "    ") -> str:
 
 def render_confirm_request(kind: str, ws: pathlib.Path) -> str:
     """未确认时打印给用户/agent 的确认请求（含可照抄的命令）。"""
+    # 选项 id 从清单里取，避免文档与代码再次分叉（曾漏掉 cloud_comfyui）。
+    ids = "|".join(o["id"] for o in MODEL_OPTIONS[kind])
     return (
         "=" * 74 + "\n"
         "【前置条件】首次%s前必须确认模型（本项目：%s）\n" % (KINDS[kind], ws) +
@@ -367,7 +417,7 @@ def render_confirm_request(kind: str, ws: pathlib.Path) -> str:
         render_menu(kind) + "\n"
         "确认方式（任选其一）：\n"
         "  交互式：drama models --ask\n"
-        "  命令行：drama models --set %s=<local_comfyui|runninghub|closed_source>\n" % kind +
+        "  命令行：drama models --set %s=<%s>\n" % (kind, ids) +
         "确认后本项目的后续执行不再询问；换模型请用 drama models --reset %s 后重确认。\n" % kind
     )
 

@@ -20,8 +20,11 @@
 3. **下载先写 `.part` 再改名**。中断留下半个 mp4 比没有更危险 —— 下游会把它当
    完整产物继续拼接。
 
-★ 与 `stages/_netguard.py` 的关系：守卫只放行本机/内网，这一层正好只连本机，
-  两者不冲突。若把 `COMFYUI_URL` 指向远端，守卫会拦（这是有意的：本仓库不出网）。
+★ 与 `stages/_netguard.py` 的关系：
+  这一层自己不做任何出口判定，连哪台机器完全由 `COMFYUI_URL` 决定；守卫在 socket /
+  urllib / httpx 三个入口按主机放行。默认只放本机与内网，**云端镜像要逐条点名**：
+  `SOLODRAMA_TRUSTED_HOSTS="*.container.x-gpu.com"`。这条设计不变 —— 它不是拦
+  「用云端」，而是拦「没人声明过的域名」。
 """
 
 from __future__ import annotations
@@ -193,17 +196,66 @@ def post_multipart(path: str, body: bytes, boundary: str, *, timeout: float = 18
     return json.loads(raw.decode("utf-8")) if raw else {}
 
 
-def download(path_with_query: str, dst: str, *, timeout: float = 300, retries: int = 3) -> int:
-    """下载到 dst。先写 `dst.part`，成功后改名 —— 半截文件不许冒充完整产物。"""
+def download(path_with_query: str, dst: str, *, timeout: float = 300, retries: int = 3,
+             resume: bool = True) -> int:
+    """下载到 dst。先写 `dst.part`，成功后改名 —— 半截文件不许冒充完整产物。
+
+    断点续传（2026-11-05，云端接入）
+    --------------------------------
+    本机产物 1–40 MB，失败重下代价可接受；云端 1080p 交付件可能上百 MB，而云端链路
+    比本机更容易断（弹性 IP / 隧道 / 镜像限速）。所以这里用 `Range: bytes=N-` 接着下：
+
+      · 服务端给 **206** → 追加写 `.part`；给 **200** → 它不支持 Range，截断重写。
+      · 服务端给 **416**（区间越界）→ `.part` 已经完整，直接收尾，不重下。
+      · `resume=False` 时行为与旧版一致（每次从 0 写）。
+
+    ★ 为什么不复用 `request()`：那一层返回的是**整个 body 的 bytes**，续传要么在内存里
+      拼、要么把 Range 语义塞进 GET 的公共路径。下载是唯一需要流式写盘的调用点，
+      单独一条实现比给公共层加开关更清楚。
+    """
     os.makedirs(os.path.dirname(os.path.abspath(dst)) or ".", exist_ok=True)
     tmp = dst + ".part"
-    raw = request(base_url() + path_with_query, timeout=timeout, retries=retries,
-                  tag="download")
-    with open(tmp, "wb") as fh:
-        fh.write(raw)
+    url = base_url() + path_with_query
+    attempts = max(0, int(retries)) + 1
+    last: BaseException | None = None
+
+    for i in range(attempts):
+        got = os.path.getsize(tmp) if (resume and os.path.exists(tmp)) else 0
+        headers = {"Range": "bytes=%d-" % got} if got else {}
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with _OPENER.open(req, timeout=timeout) as r:
+                status = getattr(r, "status", 200) or 200
+                # 206 = 按区间续写；200 = 服务端无视 Range，必须截断重写，
+                # 否则前一次残留的字节会和新内容拼成「看起来完整、其实错位」的文件。
+                mode = "ab" if (status == 206 and got) else "wb"
+                with open(tmp, mode) as fh:
+                    while True:
+                        chunk = r.read(1 << 20)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416 and got:
+                # 断点已经到最后了：服务端没有可发的东西，说明 .part 就是全量
+                break
+            if exc.code not in _RETRY_STATUS or i == attempts - 1:
+                raise ComfyHTTPError(exc.code, url, "") from exc
+            last = exc
+        except Exception as exc:                                   # noqa: BLE001
+            last = exc
+            if not _retryable(exc) or i == attempts - 1:
+                raise ComfyOffline(_offline_hint(exc, "download")) from exc
+        if i < attempts - 1:
+            time.sleep(_BACKOFF[min(i, len(_BACKOFF) - 1)])
+    else:                                                          # pragma: no cover
+        raise ComfyOffline(_offline_hint(last, "download"))
+
     # 大小校验：0 字节说明服务端给了空响应，不能当成功
-    if os.path.getsize(tmp) == 0:
-        os.remove(tmp)
+    if not os.path.exists(tmp) or os.path.getsize(tmp) == 0:
+        if os.path.exists(tmp):
+            os.remove(tmp)
         raise ComfyError("下载到 0 字节（%s）—— 产物可能已被清理" % path_with_query[:80])
     if os.path.exists(dst):
         os.remove(dst)

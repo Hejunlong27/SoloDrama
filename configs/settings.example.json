@@ -17,8 +17,23 @@
     "fuse": 3
   },
   "comfyui": {
-    "_desc": "本地出图通道（￥0，默认通道）。注意：引擎当前从**环境变量**读取这些值（COMFYUI_URL / COMFYUI_WORKFLOW / COMFYUI_NODE_*），本段用于声明与留档；设了环境变量即可生效。",
+    "_desc": "ComfyUI 通道（默认本机 ￥0）。加载优先级：环境变量 > 本文件 > 内置默认；`python -m cloud` 会用 hydrate_env() 把本段补进环境变量，子进程因此看到同一台机器。",
     "base_url": "http://127.0.0.1:8188",
+    "_mode_desc": "local=本机 8188｜ssh_tunnel=本机引擎 + SSH 隧道（拓扑 B）｜direct=直连云端实例公网端口（拓扑 C）",
+    "mode": "local",
+    "ssh": {
+      "_desc": "拓扑 B：ssh -L <local_port>:127.0.0.1:8188 root@<host>；隧道端点仍是 loopback，守卫零改动",
+      "host": "",
+      "port": 22,
+      "user": "root",
+      "local_port": 18188,
+      "key_path": ""
+    },
+    "_trusted_desc": "受信远端：只有列在这里的主机才允许出网（守卫黑白名单见 stages/_netguard.py）。云端镜像需要这两条。",
+    "trusted_hosts": [
+      "*.container.x-gpu.com",
+      "api.xiangongyun.com"
+    ],
     "workflow": "<工作流 JSON 路径；留空则用 stages/assets/comfyui/workflow_qwen_image21.json>",
     "nodes": {
       "_desc": "换工作流必须核对节点 id，否则会把提示词写进错误的节点",
@@ -32,7 +47,91 @@
       "char": "16:9 (Widescreen)",
       "scene": "16:9 (Widescreen)",
       "prop": "1:1 (Square)"
+    },
+    "timeout": {
+      "_desc": "提交超时 / 轮询间隔 / 视频单段轮询分钟数（0=按链路自动：远端 30、本地 20）",
+      "submit": 120,
+      "poll": 1.5,
+      "video_min": 0
     }
+  },
+  "cloud": {
+    "_desc": "云端 ComfyUI 镜像（★计费）。Token 只从环境变量读（XGY_TOKEN），本文件不落 Key。",
+    "provider": "xiangongyun",
+    "image_id": "",
+    "gpu": "4090",
+    "disk_gb": 100,
+    "mount_cloud": true,
+    "max_hours_per_day": 8,
+    "_guard_desc": "成本护栏：create() 前查当日累计 GPU 小时，超限直接拒绝（台账 = <工作区>/台账/cloud-cost.jsonl）",
+    "auto_stop_after_idle_min": 15,
+    "price_per_hour": 1.59,
+    "_price_desc": "兜底单价（元/时）：用户 2026-11-05 给定 1.59。优先用上游每台实例返回的 price_per_hour；取不到才用这个数。为 0 时台账记时长、金额记 0 并标 priced=false。",
+    "api_base": "https://api.xiangongyun.com/api/",
+    "token_env": "XGY_TOKEN",
+    "auth_header": "Authorization",
+    "auth_scheme": "Bearer",
+    "_id_field_desc": "上游请求体/查询串里「实例 ID」的键名（待核对）",
+    "id_field": "instance_id",
+    "_endpoints_desc": "⚠ 端点名待登录 API Playground 核对后填（相对路径，如 instance/create）。缺哪个，python -m cloud doctor 会点名。",
+    "endpoints": {
+      "create": "",
+      "list": "",
+      "start": "",
+      "stop": "",
+      "destroy": "",
+      "detail": ""
+    },
+    "_field_map_desc": "从响应 JSON 取值的点路径（支持数组下标）。写候选列表则按序尝试。2026-11-05 已按官方 API Playground「获取实例列表」的真实字段名校准。",
+    "field_map": {
+      "id": [
+        "data.id",
+        "id"
+      ],
+      "name": [
+        "data.name",
+        "name"
+      ],
+      "http_url": [
+        "data.web_url",
+        "web_url"
+      ],
+      "ssh_host": [
+        "data.ssh_domain",
+        "ssh_domain"
+      ],
+      "ssh_port": [
+        "data.ssh_port",
+        "ssh_port"
+      ],
+      "state": [
+        "data.status",
+        "status"
+      ],
+      "price_per_hour": [
+        "data.price_per_hour",
+        "price_per_hour"
+      ],
+      "retain": [
+        "data.retain",
+        "retain"
+      ],
+      "retain_price": [
+        "data.retain_price",
+        "retain_price"
+      ]
+    },
+    "_url_desc": "响应没给 http_url 时的兜底模板；{id} 是占位符。仙宫云规则：https://<id>-8188.container.x-gpu.com",
+    "http_url_template": "",
+    "ssh": {
+      "host": "",
+      "port": 22,
+      "user": "root",
+      "key_path": ""
+    },
+    "workspace_root": "/root/cloud",
+    "ready_timeout_min": 8,
+    "_retain_desc": "关机保留磁盘（retain）仍按 retain_price 计费 —— stop() 会打警告，别以为停了就不花钱。"
   },
   "video": {
     "resolution_default": "768p",
@@ -43,5 +142,7 @@
     "max_attempts_per_shot": 3,
     "cooldown_seconds": 300
   },
-  "ledger": { "path": "orchestrator/ledger.jsonl" }
+  "ledger": {
+    "path": "orchestrator/ledger.jsonl"
+  }
 }

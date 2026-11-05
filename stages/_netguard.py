@@ -5,10 +5,18 @@
   一段从别处抄来的调用 —— 都会让某个镜头在没人注意的时候上传到外部平台。
   配置是软的，出口是硬的。
 
-三个出口，默认全关：
+四个出口，默认全关：
   · 本机与内网          → 一直放行（ComfyUI 就住在这里）
+  · 受信远端（云端镜像） → 要 SOLODRAMA_TRUSTED_HOSTS 里**逐条点名**主机
   · 平台通道（runninghub） → 要 SOLODRAMA_ALLOW_RH=1
   · 其他远端（大模型网关） → 要 SOLODRAMA_ALLOW_REMOTE=1
+
+★ 为什么给「受信远端」单开一条口子，而不是复用 ALLOW_REMOTE
+  （2026-11-05 云端接入）：
+  把 `COMFYUI_URL` 指向 `https://<实例>-8188.container.x-gpu.com` 是**正常的云端
+  出片用法**，但 ALLOW_REMOTE 放开的是「除黑名单外的一切远端」——为了跑一镜就把
+  整个互联网放开，等于用一个粗开关换掉一个精确边界。受信名单是逐个域名的白名单：
+  只放你写下来的那几家，其他域名照旧拒绝。
 
 ★ 「默认关」不等于「删掉」。平台通道是一等公民：显式选了 `--engine workflow`
   或直接运行 RH 脚本，走的通；但任何**没有声明意图**的代码路径都出不去。
@@ -113,6 +121,54 @@ def _is_private_ip(host: str) -> bool:
     return bool(ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified)
 
 
+# ---- 受信远端：逐条点名的云端镜像 -------------------------------------------
+# 云端 ComfyUI（自建 GPU 主机 / 仙宫云一类的镜像实例）地址是公网域名，靠私网判定
+# 永远进不来。这条口子**不放开整个互联网**：只有写在名单里的主机能过。
+#
+# 格式：逗号分隔；`*.suffix` 表示该后缀下的任意子域（不含后缀本身，保证最小权限）。
+#   SOLODRAMA_TRUSTED_HOSTS="*.container.x-gpu.com,api.xiangongyun.com"
+_TRUSTED: set | None = None
+
+
+def _trusted_hosts() -> set:
+    """受信远端主机集合（模块级缓存）。
+
+    ★ 缓存意味着 `monkeypatch.setenv` 之后必须调 `reset_trusted()`，否则读到的是旧值。
+      这不是瑕疵：名单在一次运行里不该变，缓存掉的是一次次拆字符串的开销。
+    """
+    global _TRUSTED
+    if _TRUSTED is None:
+        raw = (os.environ.get("SOLODRAMA_TRUSTED_HOSTS")
+               or os.environ.get("DRAMA_TRUSTED_HOSTS") or "").strip()
+        _TRUSTED = {h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip()}
+    return _TRUSTED
+
+
+def reset_trusted() -> None:
+    """清缓存（配置变更 / 测试用）。"""
+    global _TRUSTED
+    _TRUSTED = None
+
+
+def _is_trusted(host: str) -> bool:
+    """命中受信名单？
+
+    `*.container.x-gpu.com` 只匹配**子域**：`abc-8188.container.x-gpu.com` 过，
+    `container.x-gpu.com` 本身不过 —— 后者不是实例地址，放它没有理由。
+    """
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return False
+    for pat in _trusted_hosts():
+        if pat.startswith("*."):
+            suffix = pat[1:]                 # "*.a.com" → ".a.com"
+            if h != suffix and h.endswith(suffix):
+                return True
+        elif h == pat:
+            return True
+    return False
+
+
 def check_host(host: str, *, port: int | None = None, where: str = "") -> None:
     """判定这个目标主机能不能连。不能就连抛。"""
     h = (host or "").strip().lower()
@@ -151,12 +207,43 @@ def check_host(host: str, *, port: int | None = None, where: str = "") -> None:
         return
     if _is_private_ip(h):
         return
+    # ★ 受信远端：插在私网之后、ALLOW_REMOTE 之前 —— 位置就是权限大小。
+    #   放在私网之前没有意义（私网本来就放行）；放在 ALLOW_REMOTE 之后等于它永不生效
+    #   （粗开关已先返回）。黑名单在最前面，受信名单**不能**覆盖它。
+    if _is_trusted(h):
+        return
 
     if _allow_remote():
         return
     raise RemoteForbidden(
-        "网络出口守卫拒绝访问 %r（%s）：只允许本机与内网地址。"
-        "确需访问远端（例如大模型网关）请设 SOLODRAMA_ALLOW_REMOTE=1。" % (h, where or "出站请求"))
+        "网络出口守卫拒绝访问 %r（%s）：只允许本机、内网与受信远端。\n"
+        "  · 云端 ComfyUI（自建 GPU / 镜像实例）：把实例域名逐条写进 "
+        "SOLODRAMA_TRUSTED_HOSTS，如 SOLODRAMA_TRUSTED_HOSTS=\"*.container.x-gpu.com\"\n"
+        "  · 确需访问其他远端（例如大模型网关）：设 SOLODRAMA_ALLOW_REMOTE=1（粒度很粗，慎用）"
+        % (h, where or "出站请求"))
+
+
+def would_allow(host: str) -> bool:
+    """不开任何粗开关时，这个主机能不能过？
+
+    给上层做「先解释、再执行」用：要连云端之前先说清「守卫认不认这个域名」，
+    而不是等请求发出去再吃一个 RemoteForbidden —— 那时错误埋在子进程里，很难指出来。
+    黑名单永远是 False（与 check_host 同序）。
+    """
+    h = (host or "").strip().lower()
+    if not h:
+        return True
+    for pat in FORBID_SUBSTRINGS:
+        if pat in h:
+            return False
+    for pat in _PLATFORM_SUBSTRINGS:
+        if pat in h:
+            return _allow_platform()
+    if h in _LOCAL_EXACT or h.endswith(_LOCAL_SUFFIXES):
+        return True
+    if _is_private_ip(h):
+        return True
+    return _is_trusted(h)
 
 
 def check_url(url: str, *, where: str = "") -> None:
@@ -312,6 +399,11 @@ def selfcheck() -> list:
         ("平台 .cn 子域", lambda: check_host("api.runninghub.cn"), not _allow_platform()),
         # 变体永久拦：即使开了平台闸也不放行。
         ("平台变体（永久）", lambda: check_host("rh-api.runninghub.ai"), True),
+        # 受信远端：期望值随名单变 —— 名单里写了就应当放行，没写就应当拦。
+        # 写死一个期望值会让「已经配好云端」的机器报假失败。
+        ("受信远端（云端镜像）",
+         lambda: check_host("abc-8188.container.x-gpu.com"),
+         not _is_trusted("abc-8188.container.x-gpu.com")),
         ("外部站点", lambda: check_host("example.com"), not _allow_remote()),
     ):
         try:
@@ -326,7 +418,12 @@ def selfcheck() -> list:
 
 if __name__ == "__main__":
     ok_all = True
-    print("网络出口守卫 · 自检（%s）" % ("允许远端" if _allow_remote() else "仅本机+内网"))
+    _trusted = sorted(_trusted_hosts())
+    print("网络出口守卫 · 自检（%s%s）"
+          % ("允许远端" if _allow_remote() else "仅本机+内网",
+             "；受信远端 %d 条" % len(_trusted) if _trusted else "；无受信远端"))
+    if _trusted:
+        print("  受信名单：%s" % ", ".join(_trusted))
     for name, ok, detail in selfcheck():
         print("  %s %-22s %s" % ("[OK] " if ok else "[FAIL]", name, detail))
         ok_all = ok_all and ok
