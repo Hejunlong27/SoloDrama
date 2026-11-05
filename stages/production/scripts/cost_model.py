@@ -178,17 +178,30 @@ def estimate(durations, tier: str = "consumer", params: dict | None = None,
 # ---------------------------------------------------------------------------
 # 自校准：用历史台账（真实 usage）修正参数
 # ---------------------------------------------------------------------------
+def _run_dirs(ws) -> list:
+    """台账可能在两处，都要认。
+
+    ★ 2026-11-05 实测发现：`iter_ledger_records` 只读 `<ws>/ledger/runs`，
+      而引擎（`drama.py::cmd_cost`）读的是 `<ws>/video-pipeline/ledger/runs` ——
+      于是 `--calibrate` 在真实项目里**永远样本不足**，自校准等于不存在。
+      两处并列扫，去重由调用方的 shot 键负责。
+    """
+    root = pathlib.Path(ws)
+    cands = [root / "ledger" / "runs", root / "video-pipeline" / "ledger" / "runs"]
+    return [d for d in cands if d.is_dir()]
+
+
 def iter_ledger_records(ws) -> list:
-    """从 `<ws>/ledger/runs/*.json` 取出「有真实 usage 的成功 attempt」。
+    """从台账取出「有真实 usage 的成功 attempt」。
 
     返回 [{shot_id, duration_s, coins, money, task_cost_time}, ...]
     （`task_cost_time` = 平台返回的 GPU 运行秒，是 P2-7 的关键量）
     """
-    root = pathlib.Path(ws) / "ledger" / "runs"
     out = []
-    if not root.is_dir():
-        return out
-    for f in sorted(root.glob("*.json")):
+    files = []
+    for d in _run_dirs(ws):
+        files += sorted(d.glob("*.json"))
+    for f in files:
         try:
             d = json.loads(f.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError):
@@ -238,6 +251,46 @@ def _fit_linear(points):
         return None
     a = (sy - b * sx) / n
     return a, b
+
+
+def observed(ws, *, last: int = 40) -> dict:
+    """**实际跑出来的**单位成本 —— 只报事实，不做预估。
+
+    为什么要有这条
+    --------------
+    预估参数无论怎么拟合，都是"用过去猜未来"；而平台每次任务都会回传 `usage`
+    （`consumeCoins` / `thirdPartyConsumeMoney` / `taskCostTime`）。既然真实值就在台账里，
+    给人看的数字就该是它 —— 预估只在闸门里用，不该出现在"我要花多少钱"的位置上。
+
+    返回
+    ----
+    {samples, coins_per_shot, coins_per_second, money_per_shot, gpu_seconds_per_second,
+     coin_range, at, basis}
+    样本不足时各值为 None，调用方必须显式处理「没有实测」这种状态。
+    """
+    recs = [r for r in iter_ledger_records(ws) if (r.get("coins") or r.get("money"))]
+    recs = recs[-max(1, int(last)):]
+    coins = [r["coins"] for r in recs if r.get("coins")]
+    money = [r["money"] for r in recs if r.get("money")]
+    secs = [r["duration_s"] for r in recs if (r.get("duration_s") or 0) > 0]
+    gpu = [r["task_cost_time"] for r in recs if r.get("task_cost_time")]
+
+    per_shot = _median(coins)
+    # 币/秒：只在「有币 + 有时长」的同一条记录上算，不能拿 A 的币除 B 的秒
+    ratios = [r["coins"] / r["duration_s"]
+              for r in recs if r.get("coins") and (r.get("duration_s") or 0) > 0]
+    gpu_ratios = [r["task_cost_time"] / r["duration_s"]
+                  for r in recs if r.get("task_cost_time") and (r.get("duration_s") or 0) > 0]
+    return {
+        "samples": len(recs),
+        "coins_per_shot": per_shot,
+        "coins_per_second": _median(ratios),
+        "money_per_shot": _median(money),
+        "gpu_seconds_per_second": _median(gpu_ratios),
+        "coin_range": (min(coins), max(coins)) if coins else None,
+        "shot_seconds_median": _median(secs),
+        "basis": "本机台账（平台 usage 回传）",
+    }
 
 
 def calibrate(records, params: dict | None = None) -> dict:
