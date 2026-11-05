@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/ui/studio/img/logo.svg" width="84" height="84" alt="SoloDrama">
+  <img src="docs/showcase/00-cover.jpg" width="720" alt="SoloDrama — 把一句话点子做成可发布竖屏短剧">
 </p>
 
 # SoloDrama
