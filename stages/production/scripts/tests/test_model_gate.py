@@ -108,19 +108,65 @@ def main() -> int:
                   all("requires" in o for o in mg.MODEL_OPTIONS[kind]))
 
         # 8b. ★ 执行依据门禁：Cloud ComfyUI 缺 URL / 缺工作流文件 → 必须拦下
+        # ★ 2026-11-05（云端接入）：出片侧的执行器已补齐，工作流随仓库交付，
+        #   所以 video 的云端只强制 **地址**；image 仍要求工作流文件（出图工作流由用户选）。
+        WANT = {"image": {"comfy_url", "comfy_workflow"}, "video": {"comfy_url"}}
         for kind in ("image", "video"):
             miss = mg.missing_evidence(kind, "cloud_comfyui", {})
             check("%s 云端ComfyUI 缺依据被识别" % kind,
-                  set(miss) == {"comfy_url", "comfy_workflow"}, str(miss))
+                  set(miss) == WANT[kind], str(miss))
             miss2 = mg.missing_evidence(kind, "cloud_comfyui",
                                         {"comfy_url": "https://x", "comfy_workflow": str(ws / "nope.json")})
             check("%s 不存在的 ComfyUI 工作流文件被识别" % kind,
-                  len(miss2) == 1 and "路径不存在" in miss2[0], str(miss2))
+                  len(miss2) == (1 if kind == "image" else 0)
+                  and (kind != "image" or "路径不存在" in miss2[0]), str(miss2))
             wf = ws / "wf.json"
             wf.write_text("{}", encoding="utf-8")
             check("%s 依据齐备时不报缺" % kind,
                   mg.missing_evidence(kind, "cloud_comfyui",
                                       {"comfy_url": "https://x", "comfy_workflow": str(wf)}) == [])
+
+        # 8b-2. ★ 2026-11-05：出片侧云端通道必须**有执行器**且方向是 cloud ——
+        #   这两条是「功能缺口」的守门断言：删掉执行器、或把 engine_arg 改回 None，
+        #   都会让 `drama video run --engine cloud` 变成一条跑不通的路。
+        vopt = [o for o in mg.MODEL_OPTIONS["video"] if o["id"] == "cloud_comfyui"][0]
+        check("video/cloud_comfyui 有执行器", bool(vopt.get("executor")), str(vopt))
+        check("video/cloud_comfyui 通道标识为 cloud", vopt.get("engine_arg") == "cloud", str(vopt))
+        check("video/cloud_comfyui 执行器指向 comfy_local_video",
+              "comfy_local_video.py" in str(vopt.get("executor")), str(vopt))
+        # 门禁放行链路：确认云端 + 给地址 → require 必须过
+        rc_set = mg.cmd_set(_ns(workspace=str(ws), pairs=["video=cloud_comfyui"],
+                                detail=None, comfy_url="https://abc-8188.container.x-gpu.com",
+                                comfy_workflow=None, app_url=None, app_id=None,
+                                workflow_id=None))
+        ok_cloud, msg_cloud = mg.require(ws, "video", expected_engine="cloud")
+        check("确认云端+地址后 video 门禁放行", rc_set == 0 and ok_cloud, msg_cloud)
+        ok_wrong, _ = mg.require(ws, "video", expected_engine="local")
+        check("确认云端却用 local 通道被拦", ok_wrong is False)
+        mg.cmd_set(_ns(workspace=str(ws), pairs=["video=local_comfyui"], detail=None,
+                       comfy_url=None, comfy_workflow=None, app_url=None, app_id=None,
+                       workflow_id=None))
+
+        # 8b-3. ★ 确认单即执行依据：detail 里的地址要能被回灌成环境变量
+        mg.cmd_set(_ns(workspace=str(ws), pairs=["video=cloud_comfyui"], detail=None,
+                       comfy_url="https://abc-8188.container.x-gpu.com", comfy_workflow=None,
+                       app_url=None, app_id=None, workflow_id=None))
+        import os as _os
+        old = _os.environ.pop("COMFYUI_URL", None)
+        try:
+            applied = mg.apply_env(ws, "video")
+            check("apply_env 注入 COMFYUI_URL",
+                  applied.get("COMFYUI_URL") == "https://abc-8188.container.x-gpu.com",
+                  str(applied))
+            _os.environ["COMFYUI_URL"] = "http://127.0.0.1:8188"
+            check("apply_env 不覆盖已有环境变量", mg.apply_env(ws, "video") == {})
+        finally:
+            _os.environ.pop("COMFYUI_URL", None)
+            if old is not None:
+                _os.environ["COMFYUI_URL"] = old
+        mg.cmd_set(_ns(workspace=str(ws), pairs=["video=local_comfyui"], detail=None,
+                       comfy_url=None, comfy_workflow=None, app_url=None, app_id=None,
+                       workflow_id=None))
 
         # 8c. ★ 本地 ComfyUI 不强制要工作流文件（有仓库默认工作流），但选了云端就必须给
         check("本地ComfyUI 生图无强制依据", mg.missing_evidence("image", "local_comfyui", {}) == [])

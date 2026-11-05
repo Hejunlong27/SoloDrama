@@ -99,15 +99,6 @@
       "title": "RandomNoise"
     }
   },
-  "200": {
-    "class_type": "忽略多组孤海",
-    "inputs": {
-      "_w0": ""
-    },
-    "_meta": {
-      "title": "忽略多组孤海"
-    }
-  },
   "224": {
     "class_type": "ComfyMathExpression",
     "inputs": {

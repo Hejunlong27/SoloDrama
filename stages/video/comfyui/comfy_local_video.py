@@ -35,6 +35,16 @@
     python comfy_local_video.py --check
     python comfy_local_video.py --prompt "..." --ref a.png --out out/
     python comfy_local_video.py --prompt "..." --ref a.png --out out/ --submit
+
+远端（云端镜像实例）怎么用
+--------------------------
+    set SOLODRAMA_TRUSTED_HOSTS=*.container.x-gpu.com    ← 守卫要认这个域名（见 _netguard）
+    set COMFYUI_URL=https://<实例ID>-8188.container.x-gpu.com
+    python comfy_local_video.py --check                              ← 先过就绪三查（版本/节点/模型）
+    python comfy_local_video.py --prompt "..." --ref a.png --out out/ --submit
+
+三处差异自动生效：超时 30 分钟（`SOLODRAMA_VIDEO_TIMEOUT_MIN` 可覆盖）、提交前 `/free`、
+产物下载带 Range 续传。本机默认值不变，回滚只需把 `COMFYUI_URL` 改回 127.0.0.1。
 """
 from __future__ import annotations
 
@@ -83,6 +93,37 @@ def _load_comfy_http():
 
 Q = _load_comfy_http()
 COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
+
+# ★ 2026-11-05：这个脚本不只跑本机了。`COMFYUI_URL` 指向云端镜像实例时，它就是
+#   「远程执行器」—— 门禁侧 `model_gate` 的 `video=cloud_comfyui` 指向本文件。
+#   与本地只有三处差别：超时档位、提交前释放显存、产物下载允许续传（见 _comfy_http）。
+
+# 单段轮询超时（分钟）。
+#   · 本地按实测给：RTX 4060 8G / H3 8 步 / 0.8MP，单段 **5–10 分钟**（docs/orchestration/
+#     标准作业流程.md），所以留 20 分钟（含冷加载 offload 的抖动）。
+#   · 远端按「本地 × 1.5」：多一层网络与排队，但卡通常更快。**不是**把本地压到 3 分钟 ——
+#     那样本地长段会被判超时，属于用新功能换旧回归。
+TIMEOUT_MIN_LOCAL = 20.0
+TIMEOUT_MIN_REMOTE = 30.0
+
+
+def _is_loopback(url: str) -> bool:
+    """这个地址是不是本机？只认 loopback 字面量 —— 内网 IP 也算远端（走网络、会排队）。"""
+    h = (urllib.parse.urlsplit(url or "").hostname or "").strip().lower()
+    return h in ("127.0.0.1", "localhost", "::1", "0.0.0.0", "")
+
+
+def _default_timeout_min() -> float:
+    """超时默认值：环境变量 > 链路类型（远端放宽 50%）。"""
+    env = (os.environ.get("SOLODRAMA_VIDEO_TIMEOUT_MIN") or "").strip()
+    if env:
+        try:
+            v = float(env)
+            if v > 0:
+                return v
+        except ValueError:
+            print("  [WARN] SOLODRAMA_VIDEO_TIMEOUT_MIN=%r 不是数字，改用自动档" % env)
+    return TIMEOUT_MIN_LOCAL if _is_loopback(COMFY) else TIMEOUT_MIN_REMOTE
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +205,14 @@ def load_map(workflow_path: str, map_path: str = "") -> tuple:
     cand = []
     if map_path:
         cand.append((map_path, "命令行 --map"))
-    sc = sidecar_for(workflow_path)
+    # 与 load_workflow 同一条基准：只给文件名时按本目录找 sidecar，
+    # 否则「同目录有 .map.json」这件事会因为工作目录不同而失效（映射悄悄退回内置默认）。
+    wf_abs = workflow_path
+    if workflow_path and not os.path.isabs(workflow_path) and not os.path.exists(workflow_path):
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), workflow_path)
+        if os.path.exists(here):
+            wf_abs = here
+    sc = sidecar_for(wf_abs)
     if os.path.isfile(sc):
         cand.append((sc, "同名 sidecar"))
     for path, why in cand:
@@ -242,6 +290,13 @@ MODEL_NODES = {
 
 def load_workflow(path: str = "") -> dict:
     p = path or DEFAULT_WORKFLOW
+    # ★ 只给文件名时按**本目录**解析：用户（和界面输入框）习惯写 `workflow_h3_local.json`，
+    #   而命令行的工作目录未必是这里 —— 直接 open 会报 FileNotFoundError，
+    #   看起来像「替代工作流不存在」，其实只是相对路径的基准不同。
+    if path and not os.path.isabs(p) and not os.path.exists(p):
+        cand = os.path.join(os.path.dirname(os.path.abspath(__file__)), p)
+        if os.path.exists(cand):
+            p = cand
     with open(p, encoding="utf-8") as fh:
         wf = json.load(fh)
     # ★ 必须整份都是 API 格式（每个值都是带 class_type 的节点）。只查顶层 dict 是不够的：
@@ -553,8 +608,8 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
 # ---------------------------------------------------------------------------
 # 提交 + 轮询 + 落盘
 # ---------------------------------------------------------------------------
-def submit_and_wait(wf: dict, *, timeout_min: float) -> dict:
-    """提交并等到产物就绪。
+def submit_and_wait(wf: dict, timeout_min: float | None = None) -> dict:
+    """提交并等到产物就绪。`timeout_min=None` 按链路自动取档（远端 30 / 本地 20）。
 
     ★ 2026-11-04 重写，三处稳定性改动：
 
@@ -565,7 +620,21 @@ def submit_and_wait(wf: dict, *, timeout_min: float) -> dict:
     3. **任务丢失检测**：ComfyUI 重启或队列被手工清空后，`/history/<pid>` 会永远
        空着 —— 旧实现会死等到 20 分钟超时才报「超时」，而真正原因是「任务没了」。
        现在同时查 `/queue`：既不在历史也不在队列，连续两次就立刻判定丢失。
+
+    ★ 2026-11-05 云端接入：远端多一步「提交前释放显存」。24G 看着宽裕，但出图/出片
+      两条工作流同时驻留就会 OOM；而云端的 OOM 表现为任务直接消失，比本地更难查。
+      释放失败**不阻塞**主流程 —— 它只是优化，不是前置条件。
     """
+    if timeout_min is None:
+        timeout_min = _default_timeout_min()
+
+    if not _is_loopback(COMFY):
+        try:
+            Q.free_memory(unload_models=True, free_memory=True)
+            print("  [显存] 远端提交前已请求 /free（unload_models=True）")
+        except Exception as exc:                                  # noqa: BLE001
+            print("  [显存] /free 请求失败（不影响提交）：%s" % str(exc).splitlines()[0][:80])
+
     # —— 提交前：队列状况 ——
     try:
         q = Q.queue_state()
@@ -686,7 +755,8 @@ def main() -> int:
     ap.add_argument("--out", default="", help="产物落盘目录（必填，除了体检类命令）")
     ap.add_argument("--name", default="", help="落盘文件名（默认 <prefix>_<seed>.mp4）")
     ap.add_argument("--submit", action="store_true", help="真的提交（占 GPU；不花钱）")
-    ap.add_argument("--timeout-min", type=float, default=20.0, help="轮询超时（分钟）")
+    ap.add_argument("--timeout-min", type=float, default=None,
+                    help="轮询超时（分钟）；不给 = 按链路自动（远端 30 / 本地 20）")
     a = ap.parse_args()
 
     if a.list_nodes:
@@ -730,6 +800,8 @@ def main() -> int:
 
     print("工作流  : %s" % (a.workflow or DEFAULT_WORKFLOW))
     print("映射    : %s" % src)
+    print("ComfyUI : %s（%s）" % (COMFY, "本机" if _is_loopback(COMFY) else "远端 · 超时 %.0f 分钟"
+                                  % _default_timeout_min()))
     if sec:
         print("时长    : %.1fs ≈ %d 帧（17n+5 对齐）" % (sec, frames_for(sec)))
     else:

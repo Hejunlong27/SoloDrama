@@ -19,7 +19,7 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
     status     [--json]                  全盘状态面板：数据/参考图/资产缺口/批次/台账（零网络）
     models     [list|status|set|reset|ask]  ★前置条件：首次生图/出片前确认模型
                                           （本地 ComfyUI / RunningHub / 闭源模型 三选一，写 model-plan.json）
-    preflight                            一次性体检：Key 分级 + 引擎 doctor + check + 预演（全免费）
+    preflight                            一次性体检：生成通道 + Key 分级 + 引擎 doctor + check + 预演（全免费）
     assets     [--engine local|rh] [...] 缺失资产出图（默认本地 ComfyUI ￥0 且干跑）
                                           local=本机出图（不花钱，占 GPU）；rh=RunningHub 云端（★计费）
                                           ★首次 --submit 前会先查模型选择门禁
@@ -200,9 +200,6 @@ COMFY_BATCH_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_batch_v
 MODEL_GATE_PY = SCRIPTS / 'model_gate.py'      # ★ 首次生图/出片前的模型选择门禁
 LOG_DIR = OUT / 'logs'
 
-CNY_PER_RH = 0.0025          # 1 RH币 ≈ ¥0.0025（用户 2026-09-18）；★ 2026-09-19 用户另给 RH币↔USD：
-                             # 1 美元 = 2746 RH币（1 RH币 ≈ $0.0003642）。两者隐含 USD/CNY ≈ 6.865，该汇率未确认。
-CHAR_RH_PER_IMAGE = 27       # 实测：人物定妆图 27 RH币/张
 SCENE_USD_PER_IMAGE = 0.01   # 实测：场景图扣美元钱包 $0.01/张 ≈ ￥0.07
 USD_CNY = 7.0
 
@@ -687,56 +684,90 @@ def _print_dep_report(rows) -> bool:
 
 
 def cmd_preflight(args) -> int:
+    """一次过体检：依赖 → **生成通道** → RH → 引擎 → 配置 → 预演（全免费）。
+
+    ★ 2026-11-05：加了【生成通道】这一段。此前 preflight 只看 RunningHub，
+      于是「本地 ComfyUI 缺一个 LoRA」「云端少两个插件」这类最可能发生的问题
+      在体检里全绿 —— 人以为能跑，批量开跑后每镜各失败一次。
+      判据不在这里重写：调用 `gen_preflight`（它再调 `cloud/health`），只有一份标准。
+
+    `--only` 可选段：deps / gen / rh / engine / config / dryrun（逗号分隔，默认 all）。
+    """
+    only = (getattr(args, 'only', None) or 'all').strip()
+    want = (lambda k: only == 'all' or k in [x.strip() for x in only.split(',')])
     verdict = []
 
-    print('【0/4】运行依赖自检（不联网）')
-    if not _print_dep_report(check_dependencies()):
-        verdict.append(('运行依赖', False, '装完依赖再体检'))
-        print('\n' + '=' * 74)
-        print('体检结论')
-        print('=' * 74)
-        for name, ok, extra in verdict:
-            print('  %-12s %s %s' % (name, '[OK] 通过' if ok else '[NG] 需处理', extra))
-        return 1
-    verdict.append(('运行依赖', True, ''))
+    if want('deps'):
+        print('【0/6】运行依赖自检（不联网）')
+        if not _print_dep_report(check_dependencies()):
+            verdict.append(('运行依赖', False, '装完依赖再体检'))
+            print('\n' + '=' * 74)
+            print('体检结论')
+            print('=' * 74)
+            for name, ok, extra in verdict:
+                print('  %-12s %s %s' % (name, '[OK] 通过' if ok else '[NG] 需处理', extra))
+            return 1
+        verdict.append(('运行依赖', True, ''))
 
-    print('\n【1/4】RunningHub Key 分级（只读，不计费）')
-    rc1, _, _ = run_cmd([sys.executable, SCRIPTS / 'rh_doctor.py', '--check', 'model'],
-                        'preflight_rhdoctor', quiet_ok=False)
-    verdict.append(('Key 分级路由', rc1 == 0, ''))
+    if want('gen'):
+        print('\n【1/6】生成通道（图像 / 视频 × 本地 / 云端 ComfyUI；只读，不计费）')
+        # 依赖没过就别继续：缺 httpx/Pillow 时预检自己也会误报
+        try:
+            import gen_preflight as GP
+            for kind in ('image', 'video'):
+                res = GP.check(kind, None, WS, timeout=30)
+                print(GP.render(res, indent='  '))
+                if res['status'] == 'unsupported':
+                    # 闭源模型：人工产出后落盘，引擎不提交 —— 不算「不可用」，但要说清
+                    print('    （闭源模型通道：引擎不提交，人工产出后落盘）')
+                    continue
+                verdict.append(('生成·%s' % ('图像' if kind == 'image' else '视频'),
+                                res['ok'], GP.STATUS_CN.get(res['status'], res['status'])))
+        except Exception as exc:                       # noqa: BLE001
+            print('  [FAIL] 预检自身没跑起来：%s: %s' % (type(exc).__name__, exc))
+            verdict.append(('生成通道', False, '预检异常'))
 
-    print('\n【2/4】引擎环境体检（不联网）')
-    rc2, log2, _ = run_cmd([sys.executable, RUN_PY, 'doctor', '--json'], 'preflight_doctor')
-    real_fail, noise = [], 0
-    try:
-        doc = json.loads(pathlib.Path(log2).read_text(encoding='utf-8', errors='replace'))
-        for c in doc.get('checks', []):
-            if c.get('level') in ('FAIL', 'WARN'):
-                if _is_noise(c.get('detail')):
-                    noise += 1
-                else:
-                    real_fail.append(c)
-    except (OSError, json.JSONDecodeError):
-        real_fail = [{'id': 'doctor', 'detail': '无法解析 doctor --json（请看日志）'}]
-    if noise:
-        print('  （%d 项属 image_providers 未配置 —— 本线只用 --video-only，已知噪音，忽略）' % noise)
-    if real_fail:
-        print('  ★真正需要处理的 %d 项：' % len(real_fail))
-        for c in real_fail:
-            print('    - %s: %s' % (c.get('id'), str(c.get('detail'))[:110]))
-    verdict.append(('引擎体检', not real_fail, '%d 项真问题' % len(real_fail) if real_fail else ''))
+    if want('rh'):
+        print('\n【2/6】RunningHub Key 分级（只读，不计费）')
+        rc1, _, _ = run_cmd([sys.executable, SCRIPTS / 'rh_doctor.py', '--check', 'model'],
+                            'preflight_rhdoctor', quiet_ok=False)
+        verdict.append(('Key 分级路由', rc1 == 0, ''))
 
-    print('\n【3/4】必填配置检查')
-    # ★ 必须带 --video-only：本线只跑 --video-only，图片工作流(banana)确实不需要。
-    #   不带的话引擎会拿「图片工作流未配置」判失败，而这里以前**只取 rc 不进 verdict**，
-    #   于是体检永远显示全绿、真实出片却被配置闸门挡下（2026-09-19 实测踩到）。
-    rc3, _, _ = run_cmd([sys.executable, RUN_PY, 'check', '--video-only'], 'preflight_check')
-    verdict.append(('必填配置', rc3 == 0, '图片工作流不参与 --video-only 校验'))
+    if want('engine'):
+        print('\n【3/6】引擎环境体检（不联网）')
+        rc2, log2, _ = run_cmd([sys.executable, RUN_PY, 'doctor', '--json'], 'preflight_doctor')
+        real_fail, noise = [], 0
+        try:
+            doc = json.loads(pathlib.Path(log2).read_text(encoding='utf-8', errors='replace'))
+            for c in doc.get('checks', []):
+                if c.get('level') in ('FAIL', 'WARN'):
+                    if _is_noise(c.get('detail')):
+                        noise += 1
+                    else:
+                        real_fail.append(c)
+        except (OSError, json.JSONDecodeError):
+            real_fail = [{'id': 'doctor', 'detail': '无法解析 doctor --json（请看日志）'}]
+        if noise:
+            print('  （%d 项属 image_providers 未配置 —— 本线只用 --video-only，已知噪音，忽略）' % noise)
+        if real_fail:
+            print('  ★真正需要处理的 %d 项：' % len(real_fail))
+            for c in real_fail:
+                print('    - %s: %s' % (c.get('id'), str(c.get('detail'))[:110]))
+        verdict.append(('引擎体检', not real_fail, '%d 项真问题' % len(real_fail) if real_fail else ''))
 
-    print('\n【4/4】预演（零网络请求，不提交任何任务）')
-    rc4, _, _ = run_cmd([sys.executable, RUN_PY, '--video-only', '--dry-run', '--strict'],
-                        'preflight_dryrun')
-    verdict.append(('引擎预演', rc4 == 0, ''))
+    if want('config'):
+        print('\n【4/6】必填配置检查')
+        # ★ 必须带 --video-only：本线只跑 --video-only，图片工作流(banana)确实不需要。
+        #   不带的话引擎会拿「图片工作流未配置」判失败，而这里以前**只取 rc 不进 verdict**，
+        #   于是体检永远显示全绿、真实出片却被配置闸门挡下（2026-09-19 实测踩到）。
+        rc3, _, _ = run_cmd([sys.executable, RUN_PY, 'check', '--video-only'], 'preflight_check')
+        verdict.append(('必填配置', rc3 == 0, '图片工作流不参与 --video-only 校验'))
+
+    if want('dryrun'):
+        print('\n【5/6】预演（零网络请求，不提交任何任务）')
+        rc4, _, _ = run_cmd([sys.executable, RUN_PY, '--video-only', '--dry-run', '--strict'],
+                            'preflight_dryrun')
+        verdict.append(('引擎预演', rc4 == 0, ''))
 
     print('\n' + '=' * 74)
     print('体检结论')
@@ -889,14 +920,29 @@ def _pack_dir(args) -> str | None:
 
 
 def cmd_assets_local(args) -> int:
-    """本地 ComfyUI 通道（￥0 成本）。默认干跑；--submit 才真的出图（不花钱，占 GPU）。"""
+    """ComfyUI 出图（本机 ￥0 / 云端镜像 ★计费）。默认干跑；--submit 才真的出图。
+
+    ★ 2026-11-05：补上云端路由。此前 `model_gate` 里 `image=cloud_comfyui` 是**能确认、
+      不能执行**的状态 —— 没有 `--engine cloud`，`--engine local` 又会被门禁以
+      「确认云端却用 local」拦下，等于这条通道是死的。视频侧 11-04 就补了 cloud 分支，
+      图像侧一直没补，是不对称。
+    """
+    engine = (getattr(args, 'engine', 'local') or 'local')
+    cloud = (engine == 'cloud')
+    label = '云端 ComfyUI 镜像' if cloud else '本地 ComfyUI'
+
     if getattr(args, 'check', False):
+        if cloud:
+            import gen_preflight as GP
+            res = GP.check('image', 'cloud', WS, timeout=30)
+            print(GP.render(res, indent=''))
+            return 0 if res['ok'] else 1
         print('【本地 ComfyUI 体检】（只读 /system_stats，不出图）')
         rc, _, _ = run_cmd([sys.executable, LOCAL_ASSETS_PY, '--check'], 'assets_local_check',
                            quiet_ok=False)
         return rc
-    if args.submit:                       # ★ 首次生图前：模型选择门禁
-        rc = _model_gate('image', expected_engine='local')
+    if args.submit:                       # ★ 首次生图前：模型选择门禁（按确认的通道比对）
+        rc = _model_gate('image', expected_engine=engine)
         if rc:
             return rc
     cmd = [sys.executable, LOCAL_ASSETS_PY]
@@ -911,8 +957,21 @@ def cmd_assets_local(args) -> int:
         cmd += ['--force']
     if args.submit:
         cmd += ['--submit']
-    print('【资产出图 · 本地 ComfyUI】%s（￥0 成本；先出一张确认风格再批量）'
-          % ('★真实出图' if args.submit else '干跑，不占 GPU'))
+    if cloud:
+        import gen_preflight as GP
+        target = GP.resolve('image', WS)
+        url = str(target['url'] or '').rstrip('/')
+        if _is_loopback_url(url):
+            print('[FAIL] 选了 --engine cloud，但图像确认单里的地址是本机：%s' % url)
+            print('       先确认云端地址：drama models set image=cloud_comfyui --comfy-url <地址>')
+            return 2
+        print('  通道    ：%s · %s（依据：%s）' % (label, url, target.get('url_via', '')))
+        if not _cloud_url_ready(url):
+            return 2
+        cmd += ['--comfy-url', url]
+    print('【资产出图 · %s】%s（%s；先出一张确认风格再批量）'
+          % (label, '★真实出图' if args.submit else '干跑，不占 GPU',
+             '★计费' if cloud else '￥0 成本'))
     rc, _, _ = run_cmd(cmd, 'assets_local', quiet_ok=False)
     return rc
 
@@ -974,6 +1033,37 @@ def _latest_batch() -> str:
     return best or ''
 
 
+def _cost_lines(segments: int, ws=None) -> list:
+    """按**真实跑出来的数据**给费用参考。
+
+    为什么不再给预估
+    ----------------
+    `cost_model` 的内置参数（27 币/任务 + 1 币/秒）是 2026-10-19 在一个特定 Key 档位上
+    拟合的；真实项目 307 条台账的中位数是 **45 币/段、6.07 币/秒**（7s 段 138–146 币），
+    比内置参数高约 4 倍。继续展示那个预估值，等于给一个已知会错的数字配上小数位。
+    所以这里只报台账里的事实；没有事实就说没有。
+
+    预估本身没有删除：它仍在 `estimate_video()` 里供**预算闸门**使用（拦超支），
+    只是不再出现在「我要花多少钱」这个位置。
+    """
+    import cost_model as CM
+    o = CM.observed(ws or WS, last=40)
+    if not o["samples"]:
+        return ['  费用参考    : 本机台账暂无计费记录 —— 跑完第一段后，这里显示真实消耗',
+                '  结算方式    : 以平台 usage 为准，跑完自动写台账（不做预估）']
+    lo, hi = o["coin_range"]
+    per = o["coins_per_shot"]
+    lines = ['  实测参考    : 最近 %d 段真实消耗，中位 %.0f 币/段（区间 %.0f–%.0f）'
+             % (o["samples"], per, lo, hi),
+             '  本批约      : %d 段 × %.0f 币 ≈ %.0f RH币（按实测推算，不是拟合预估）'
+             % (segments, per, per * segments),
+             '  数据来源    : %s' % o["basis"]]
+    if o.get("coins_per_second"):
+        lines.append('  单位成本    : %.2f 币/秒 ｜ 中位时长 %.0fs/段'
+                     % (o["coins_per_second"], o.get("shot_seconds_median") or 0))
+    return lines
+
+
 def cmd_video_plan(args) -> int:
     est = estimate_video(args.limit, args.only.split(',') if args.only else None,
                          tier=getattr(args, 'tier', 'consumer'),
@@ -982,27 +1072,8 @@ def cmd_video_plan(args) -> int:
     print('-' * 74)
     print('  将提交      : %d 段' % est['segments'])
     print('  Key tier    : %s' % est['tier_label'])
-    print('  两段式预估  : 固定 %s + 变动 %s = %s%s ≈ ￥%.2f'
-          % (est['fixed_total'], est['variable_total'],
-             est['coins'], ' RH币', est['cny']))
-    print('  GPU 秒口径  : %.0f 运行秒 × 0.205 ≈ %d RH币'
-          % (est['gpu_seconds'], round(est['gpu_model_coins'])))
-    print('  参数来源    : %s' % est['_params_source'])
-    _a = est.get('assumptions') or {}
-    if _a:
-        print('  计算量口径  : %s 步 / %s MP（相对基准 ×%.2f；沿用开工确认单）'
-              % (_a['steps'], _a['megapixels'], _a['work_scale']))
-    cal = est.get('_calibrate')
-    if cal:
-        ev = cal.get('evidence') or {}
-        if cal.get('fitted'):
-            print('  自校准      : %s（样本 %s：币 %s / 钱包 %s / 运行秒 %s）'
-                  % (json.dumps(cal['fitted'], ensure_ascii=False),
-                     ev.get('samples'), ev.get('coin_fit_samples', 0),
-                     ev.get('money_fit_samples', 0), ev.get('gpu_ratio_samples', 0)))
-        else:
-            print('  自校准      : 历史台账样本不足（需 ≥3 条带 usage 的记录），本次沿用默认参数')
-    print('  口径说明    : %s' % est['_caveat'])
+    for line in _cost_lines(est['segments']):
+        print(line)
     only = ['--only', args.only] if args.only else []
     lim = ['--limit', str(args.limit)] if args.limit else []
     print('\n  真实跑（★计费）：')
@@ -1027,28 +1098,130 @@ def cmd_video_plan(args) -> int:
 
 
 def cmd_video_local(args) -> int:
-    """本地 ComfyUI 批量出片（￥0，占 GPU）。
+    """ComfyUI 批量出片（本机 ￥0 / 云端镜像 ★计费）。
 
-    与 RH 通道的区别只有三处：不传 --concurrency（单卡并发只能是 1）、
-    不需要 RunningHub Key、产物落同一个 `07-成片/<ep>/<shot>/final.mp4`。
-    后续 video.audit / 剪辑读的是同一个落点，所以两条通道可以混用：
+    与 RH 通道的区别只有四处：不传 --concurrency（单实例并发只能是 1）、
+    不需要 RunningHub Key、产物落同一个 `07-成片/<ep>/<shot>/final.mp4`、
+    **云端还要认受信域名**（见下）。
+    后续 video.audit / 剪辑读的是同一个落点，所以三条通道可以混用：
     哪一镜本地跑糊了，可以单独用云端重跑那一镜。
+
+    ★ 2026-11-05 云端接入：local 与 cloud 走**同一个执行器**
+      （`comfy_local_video.py`），差别只在 `COMFYUI_URL` 与实际耗时结构。
+      所以这里不是复制一条命令，而是把「确认单里的地址」注入环境变量后交给同一段代码。
+
+    ★ 2026-11-05 任务级启停：`--engine cloud` 默认 `--cloud-lifecycle auto` ——
+      要跑才开（复用/开机/新建/借），跑完就关（只关自己开的）。见 `cloud/session.py`。
     """
     ep = getattr(args, 'ep', None) or 'ep01'
+    engine = (getattr(args, 'engine', None) or 'local')
+    cloud = (engine == 'cloud')
+    label = '云端 ComfyUI 镜像' if cloud else '本机 ComfyUI'
+    lifecycle = ((getattr(args, 'cloud_lifecycle', None) or 'auto') if cloud else 'off')
+
+    url = ''
+    if cloud:
+        url = _resolve_cloud_url(args)
+        if getattr(args, 'comfy_url', None) and _is_loopback_url(str(args.comfy_url)):
+            print('[FAIL] --comfy-url 给的是本机地址：%s' % args.comfy_url)
+            print('       选了 --engine cloud 就要给云端地址（否则是账实不符：以为在云端、实际吃本机）')
+            return 2
+        print('  通道    ：%s · %s' % (label, url or '（由 cloud.endpoints 自动创建）'))
+        print('  生命周期：%s' % _lifecycle_label(lifecycle))
+
     if not args.yes:
-        print('[闸门] 这会真的占本机 GPU 出片（不花钱，但电脑会忙）。确认后加 --yes：')
-        print('       drama video run --engine local --ep %s --yes' % ep)
+        # 干跑**不建实例、不开机** —— 那会白烧几分钟 GPU 才让你看一份计划。
+        print('[闸门] 这会真的%s出片（%s）。确认后加 --yes：'
+              % ('占用云端 GPU、按主机时长计费' if cloud else '占本机 GPU（不花钱，但电脑会忙）',
+                 label))
+        print('       drama video run --engine %s --ep %s --yes' % (engine, ep))
         cmd = [sys.executable, str(COMFY_BATCH_PY), '--ep', ep]
+        if cloud and url:
+            cmd += ['--comfy-url', url]    # 干跑也要显示真实目标，否则头部打印的是本机
+        # ★ 干跑必须展示**将要提交的那一份**：漏传 --workflow 时，计划里打印的是默认 canvas，
+        #   而真跑会提交你指定的替代工作流 —— 这正是「核 A 跑 B」，只是方向反过来
+        #   （2026-11-05 WebUI 实测抓到：干跑显示 canvas，预检也按 canvas 判缺件）。
+        if getattr(args, 'workflow', ''):
+            cmd += ['--workflow', str(args.workflow)]
+        if getattr(args, 'map', ''):
+            cmd += ['--map', str(args.map)]
         if args.limit:
             cmd += ['--limit', str(args.limit)]
         if args.only:
             cmd += ['--only', args.only]
         return run_cmd(cmd, 'video_local_dry', quiet_ok=False)[0]
 
-    rc = _model_gate('video', expected_engine='local')
+    rc = _model_gate('video', expected_engine='cloud' if cloud else 'local')
     if rc:
         return rc
+
+    # ★ 工作流也要按确认单解析：视频确认单里记的 `comfy_workflow` 此前**不生效**
+    #   （只有预检和界面看得到），于是「确认了 A 工作流、实际跑 B」。
+    #   放在分派之前算，cloud / local / lifecycle off 三条路都用同一份依据。
+    import gen_preflight as GP
+    target = GP.resolve('video', WS)
+    wf_from_plan = target['workflow'] if target.get('workflow_via') == '模型确认单' else ''
+    if wf_from_plan:
+        print('  工作流  ：%s（依据：模型确认单）' % wf_from_plan)
+
+    if cloud and lifecycle != 'off':
+        return _run_cloud_task(args, ep, url, lifecycle, label, wf_from_plan)
+
+    if cloud:
+        # lifecycle=off：只用给定地址，不管启停（调试/临时验证用）
+        if not url:
+            print('[FAIL] --cloud-lifecycle off 必须显式给 --comfy-url（不做任何启停就不该替你猜地址）')
+            return 2
+        if not _cloud_url_ready(url):
+            return 2
+    if not cloud:
+        # 本机也要显式解析一次：`COMFYUI_URL` 是 image/video 共用的全局变量，
+        # 长驻进程里可能残留上一次云端任务的地址。确认单（按类）优先，其次环境变量。
+        url = str(target['url'] or '').rstrip('/')
+        print('  通道    ：%s · %s（依据：%s）' % (label, url, target.get('url_via', '')))
+    rc, log, dt = _run_batch(args, ep, url, wf_from_plan)
+    print('\n%s出片退出码 %s（耗时 %.1fs）；日志：%s' % (label, rc, dt, log))
+    if rc == 3:
+        print('★ 退出码 3 = 批次有缺口（不是失败）。直接重跑同一条命令即可补缺，')
+        print('  不要改提示词 —— 缺的那几镜通常只是显存不足或 ComfyUI 队列被打断。')
+    return rc
+
+
+def _lifecycle_label(lifecycle: str) -> str:
+    return {'auto': 'auto（要跑才开，跑完就关；只关自己开的）',
+            'keep': 'keep（跑完保留实例，★ 继续计费）',
+            'off': 'off（不启停，只用给定地址）'}.get(lifecycle, lifecycle)
+
+
+def _resolve_cloud_url(args) -> str:
+    """云端地址：命令行 > 确认单 > 环境变量。返回 '' = 没有可用地址（交给 lifecycle 去建）。
+
+    ★ local 分支不走这里：避免「确认了云端、detail 里留着旧地址，本地出片被悄悄改成打远端」。
+    """
+    import model_gate as MG
+    applied = MG.apply_env(WS, 'video')
+    if applied:
+        print('  [依据] 已从确认单注入：%s' % '、'.join('%s=%s' % kv for kv in applied.items()))
+    if getattr(args, 'comfy_url', None):
+        os.environ['COMFYUI_URL'] = str(args.comfy_url)      # 显式参数优先于确认单
+    u = (os.environ.get('COMFYUI_URL') or '').rstrip('/')
+    return '' if _is_loopback_url(u) else u
+
+
+def _run_batch(args, ep, comfy_url: str, workflow: str = ''):
+    """把批次交给 `comfy_batch_video.py`（含单例锁）。返回 (rc, log, 耗时)。
+
+    `workflow` 为空的含义是「让批次用默认/环境变量」，不是「用仓库默认」——
+    两种情况必须分开：前者的依据可能来自 `COMFYUI_VIDEO_WORKFLOW`。
+    """
     cmd = [sys.executable, str(COMFY_BATCH_PY), '--ep', ep, '--submit']
+    if comfy_url:
+        cmd += ['--comfy-url', comfy_url]   # 双保险：子进程不依赖父进程环境残留
+    wf = workflow or str(getattr(args, 'workflow', '') or '')
+    if wf:
+        cmd += ['--workflow', wf]
+    if getattr(args, 'map', ''):
+        cmd += ['--map', str(args.map)]
     if args.limit:
         cmd += ['--limit', str(args.limit)]
     if args.only:
@@ -1064,22 +1237,151 @@ def cmd_video_local(args) -> int:
     from _lock import single_instance
     try:
         with single_instance('video_run', WS):
-            rc, log, dt = run_cmd(cmd, 'video_local', quiet_ok=False)
+            return run_cmd(cmd, 'video_local', quiet_ok=False)
     except SystemExit:
         print('（已由单例锁拦下，未提交任何任务）')
         raise
-    print('\n本地出片退出码 %s（耗时 %.1fs）；日志：%s' % (rc, dt, log))
+
+
+def _pull_back(url: str, ep: str, history: int = 60) -> dict:
+    """停机前的最后一次回传（只补缺口，不重下已有）。
+
+    ★ 为什么必须在 `with lease:` **之内**调用：产物在实例的 `ComfyUI/output/`，
+      `--cloud-lifecycle auto` 一旦退出 with 就停机；非 retain 的实例连磁盘一起没。
+      停机之后再想拉，只剩「重跑一遍再花一次钱」。
+    ★ 它不是主路径：正常情况每镜跑完已经落盘（`comfy_local_video.download`）。
+      这里兜的是「任务成功、下载失败」这种最难查的缺口。
+    """
+    try:
+        from cloud import pull as PULL
+    except Exception as exc:                                 # noqa: BLE001
+        print('  [回传] 模块不可用（跳过）：%s' % str(exc).splitlines()[0][:120])
+        return {"ok": False}
+    try:
+        res = PULL.pull(WS, ep=ep, url=url, history=history)
+    except Exception as exc:                                 # noqa: BLE001
+        print('  [回传] 失败（不影响停机判定）：%s' % str(exc).splitlines()[0][:160])
+        return {"ok": False}
+
+    got = res.get("downloaded") or []
+    if got or res.get("failed"):
+        for line in PULL.format_result(res).splitlines():
+            print('  ' + line)
+    else:
+        print('  [回传] 远端 %d 个产物，本地均已存在' % res.get("found", 0))
+    if not res.get("ok"):
+        print('  [回传] 有 %d 个没拉下来 —— 实例即将停机，这些必须先补'
+              % len(res.get("failed") or []))
+        print('         处理：python -m cloud pull --workspace "%s" --ep %s --file <文件名>'
+              % (WS, ep))
+        print('         （先别停机：把 --cloud-lifecycle keep 用上，或手工在控制台续租）')
+
+    gap = PULL.local_gaps(WS, ep)
+    if gap.get("missing"):
+        print('  [缺口] %s 仍有 %d 镜没有成片：%s'
+              % (ep, len(gap["missing"]), '、'.join(gap["missing"][:8])))
+        print('         重跑同一条命令即补（已完成的会自动跳过）')
+    return res
+
+
+def _batch_segments(ep) -> int:
+    """读批次记录里成功出片的镜数（写进台账用）。读不到就 0，不影响流程。"""
+    try:
+        import json as _json
+        p = OUT / ep / '_batch_local.json'
+        d = _json.loads(p.read_text(encoding='utf-8'))
+        return int(((d.get('totals') or {}).get('success')) or 0)
+    except Exception:                                     # noqa: BLE001
+        return 0
+
+
+def _run_cloud_task(args, ep, url: str, lifecycle: str, label: str, workflow: str = '') -> int:
+    """★ 任务级启停：租一台镜像 → 出片 → 归还（异常也归还）。
+
+    钱的逻辑就在这几行：机器是**这次任务开着**的，就没有理由在任务结束后继续开着。
+    借来的机器不动 —— 替别人关机是另一种事故（见 cloud/session.py 的三条语义）。
+    """
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+    from cloud import config as CCFG
+    from cloud.session import CloudNotReady, Lease
+
+    CCFG.hydrate_env()                     # settings.json 里的地址/受信域名补进环境
+    cfg = CCFG.effective()
+    wf = str(_PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'workflow_h3_minimax_canvas.json')
+    lease = Lease(cfg, ws=WS, name=getattr(args, 'cloud_name', '') or '', url=url,
+                  keep=(lifecycle == 'keep'), workflow=wf)
+    try:
+        with lease:
+            u = lease.http_url
+            print('  实例    ：%s' % u)
+            if not _guard_ok(u):
+                return 2                   # 退出 with 会照常停机
+            rc, log, dt = _run_batch(args, ep, u, workflow)
+            _pull_back(u, ep)              # ★ 必须在 with 内：退出就停机，文件随之消失
+            lease.usage(episodes=1, segments=_batch_segments(ep))
+    except CloudNotReady as exc:
+        print('[FAIL] %s' % exc)
+        return 2
+    except (OSError, RuntimeError) as exc:                # noqa: BLE001
+        print('[FAIL] 云端任务异常：%s' % str(exc).splitlines()[0][:200])
+        return 2
+    print('\n%s出片退出码 %s（耗时 %.1fs）；日志：%s' % (label, rc, dt, log))
     if rc == 3:
-        print('★ 退出码 3 = 批次有缺口（不是失败）。直接重跑同一条命令即可补缺，')
-        print('  不要改提示词 —— 缺的那几镜通常只是显存不足或 ComfyUI 队列被打断。')
+        print('★ 退出码 3 = 批次有缺口（不是失败）。直接重跑同一条命令即可补缺。')
+    print('  实例已按 lifecycle=%s 收尾；对账：python -m cloud cost' % lifecycle)
     return rc
+
+
+def _is_loopback_url(url: str) -> bool:
+    import urllib.parse as _up
+    h = (_up.urlsplit(str(url or '')).hostname or '').strip().lower()
+    return h in ('127.0.0.1', 'localhost', '::1', '0.0.0.0', '')
+
+
+def _guard_ok(url: str) -> bool:
+    """守卫认不认这个域名（不探活）。"""
+    import urllib.parse as _up
+    host = (_up.urlsplit(str(url or '')).hostname or '').lower()
+    if not host:
+        print('[FAIL] 云端地址认不出主机：%r' % url)
+        return False
+    import _netguard as NG
+    if NG.would_allow(host):
+        return True
+    print('[FAIL] 网络出口守卫不认识 %s。云端出片必须**逐条点名**远端主机：' % host)
+    parts = host.split('.')
+    print('       set SOLODRAMA_TRUSTED_HOSTS=*.%s' % '.'.join(parts[-3:]))
+    print('       （也可以写完整域名；不要用 SOLODRAMA_ALLOW_REMOTE=1 图省事，那会放开整个互联网）')
+    return False
+
+
+def _cloud_url_ready(url: str) -> bool:
+    """云端地址的两道前置：守卫认不认这个域名、服务通不通。返回 False 时已打印原因。"""
+    if not _guard_ok(url):
+        return False
+    import _comfy_http as _Q
+    p = _Q.probe(timeout=8)
+    if not p.get('online'):
+        print('[FAIL] 云端 ComfyUI 连不上：%s' % url)
+        print('       %s' % str(p.get('error') or '').replace('\n', '\n       '))
+        print('       · 实例没启动 → python -m cloud up ／ 控制台点启动')
+        print('       · 端口不对 → 核对 --comfy-url（镜像通常映射到 8188）')
+        return False
+    print('  [就绪] ComfyUI v%s · %s · 显存 %.1f/%.1fG · %dms'
+          % (p.get('version') or '?', p.get('device') or '?', p.get('vram_free_gb') or 0,
+             p.get('vram_total_gb') or 0, p.get('latency_ms') or 0))
+    return True
 
 
 def cmd_video_run(args) -> int:
     # ★ 2026-11-04：出片默认走本地（￥0）。`--engine workflow` 显式切回 RunningHub。
     #   默认值改本地不是「省钱优先」，而是这条链现在的定位：创作在 Skill、执行在引擎，
     #   执行层不该默认产生平台费用。要算钱的通道必须被显式选中。
-    if (getattr(args, 'engine', None) or 'local') == 'local':
+    # ★ 2026-11-05：`--engine cloud`（云端 ComfyUI 镜像）与 local 走**同一个执行器**，
+    #   差别只在 COMFYUI_URL 与超时档位，所以同一条分支。注意它**不开 RH 平台闸** ——
+    #   云端镜像走的是「受信远端」这条独立口子（SOLODRAMA_TRUSTED_HOSTS）。
+    if (getattr(args, 'engine', None) or 'local') in ('local', 'cloud'):
         return cmd_video_local(args)
     # ★ 走到这里 = 用户显式选了平台通道。开闸放在分派之后、任何网络动作之前：
     #   本地通道在上面就 return 了，永远不会经过这行 —— 「默认不出网」是结构性的，
@@ -1097,8 +1399,9 @@ def cmd_video_run(args) -> int:
         return rc
     est = estimate_video(args.limit, args.only.split(',') if args.only else None,
                          tier=getattr(args, 'tier', 'consumer'))
-    print('★ 开始真实出片：%d 段，预估 %d RH币 ≈ ￥%.2f（%s；以 usage 为准）'
-          % (est['segments'], est['coins'], est['cny'], est['tier_label']))
+    print('★ 开始真实出片：%d 段。费用以平台 usage 为准，跑完自动写台账。' % est['segments'])
+    for line in _cost_lines(est['segments']):
+        print(line)
     cmd = [sys.executable, RUN_PY, '--video-only']
     if args.resume:
         cmd += ['--resume', args.resume]
@@ -1256,12 +1559,12 @@ GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
          models list         可选清单：本地ComfyUI(￥0) / RunningHub(★计费) / 闭源模型(★计费)
          models set image=local_comfyui video=runninghub    记录确认（可一次两条）
          models reset video  换模型：先清除再重确认
-体检     preflight           一次过 Key 分级 + 引擎 doctor + check + 预演（全免费）
+体检     preflight           一次过 生成通道 + Key 分级 + 引擎 doctor + check + 预演（全免费）
 资产     assets              缺资产就出图：默认**本地 ComfyUI ￥0**，干跑
          assets --engine local --submit            本机出图（不花钱，占 GPU；先出一张看风格）
          assets --engine local --check             体检 ComfyUI 是否在线（不出图）
          assets --engine local --only char_01      只出某个资产（断点续跑默认跳过已出图）
-         assets --engine rh --submit --kind char   云端计费通道（人物 27 RH币/张，场景 $0.01/张）
+         assets --engine rh --submit --kind char   云端计费通道（★计费，按平台 usage 结算）
 参考图   refs                瘦身体检；refs --apply --write-config 才写盘+改配置
 出片     video plan          计划与成本预估（免费）；带 --limit/--only 可缩小范围
          video run --yes     真跑出片（★计费）；--limit 1 先出小样
@@ -1273,7 +1576,7 @@ GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
          cost --checkpoint   ★ 收工结账：打印台账 + 记基线，下次即可看「单次任务增量」
 ════════════════════════════════════════════════════════════════════════
 铁律：默认不花钱（要 --submit / --yes）；中断后一律用 --resume 续跑，不重新提交。
-成本   ：资产 本地 ComfyUI ￥0 / 云端人物 17-27 RH币/张 / 场景 $0.01/张 | 视频 78-209 RH币/段
+成本   ：本地通道 ￥0；计费通道按平台 usage 结算，累计见 `drama cost`（不预估价）
 通道   ：assets --engine local（本地，￥0，默认）| rh（云端，★计费）
 口径   ：消耗只认平台按任务返回的 usage —— **不用余额差值倒推消耗**
 日志   ：video-pipeline/output/logs/   台账：video-pipeline/ledger/runs/
@@ -1426,8 +1729,10 @@ def main() -> int:
     _add_ws_arg(p)
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser('preflight', help='一次过体检（免费）')
+    p = sub.add_parser('preflight', help='一次过体检（免费）：依赖→生成通道→RH→引擎→配置→预演')
     _add_ws_arg(p)
+    p.add_argument('--only', default='all',
+                   help='只跑某几段：deps,gen,rh,engine,config,dryrun（逗号分隔，默认 all）')
     p.set_defaults(fn=cmd_preflight)
 
     # ---------------- 制作包（新分支的唯一输入入口） ----------------
@@ -1462,7 +1767,7 @@ def main() -> int:
     p = sub.add_parser('assets', help='缺失资产出图（默认本地 ComfyUI ￥0，干跑）')
     _add_ws_arg(p)
     p.add_argument('--pack', default=None, help='制作包目录（默认 <工作区>/pack）')
-    p.add_argument('--engine', choices=('local', 'wf', 'rh'), default='local',
+    p.add_argument('--engine', choices=('local', 'cloud', 'wf', 'rh'), default='local',
                    help='出图通道：local=本地 ComfyUI（￥0，默认）｜wf=RunningHub 工作流（★计费）'
                         '｜rh 是 wf 的旧别名')
     p.add_argument('--ratio', default=None, help='仅 wf：画幅裸值，如 9:16')
@@ -1560,12 +1865,23 @@ def main() -> int:
     q.set_defaults(fn=cmd_video_plan)
     q = vs.add_parser('run', help='真跑出片（本地 ￥0 / 云端 ★计费；都需 --yes）')
     _add_ws_arg(q)
-    q.add_argument('--engine', choices=('local', 'workflow'), default='local',
-                   help='出片通道：local=本机 ComfyUI（￥0，默认）｜workflow=RunningHub（★计费）')
-    q.add_argument('--ep', default=None, help='集号（local 通道必填；ep01 / 1）')
-    q.add_argument('--force', action='store_true', help='local：已有产物也重跑')
+    q.add_argument('--engine', choices=('local', 'cloud', 'workflow'), default='local',
+                   help='出片通道：local=本机 ComfyUI（￥0，默认）｜cloud=云端 ComfyUI 镜像（★计费/自建）｜workflow=RunningHub（★计费）')
+    q.add_argument('--ep', default=None, help='集号（local/cloud 通道必填；ep01 / 1）')
+    q.add_argument('--force', action='store_true', help='local/cloud：已有产物也重跑')
+    q.add_argument('--comfy-url', dest='comfy_url', default=None,
+                   help='local/cloud：ComfyUI 地址（云端镜像如 https://<实例>-8188.container.x-gpu.com）')
+    q.add_argument('--cloud-lifecycle', dest='cloud_lifecycle',
+                   choices=('auto', 'keep', 'off'), default='auto',
+                   help='cloud：auto=要跑才开/跑完就关（默认）｜keep=跑完保留（★继续计费）｜off=不启停')
+    q.add_argument('--cloud-name', dest='cloud_name', default='',
+                   help='cloud：实例名（幂等键：同名在跑则复用；空=按时间自动命名）')
+    q.add_argument('--workflow', default='',
+                   help='出片工作流（默认取确认单 → 环境变量 → 仓库默认 canvas）；'
+                        '本机只有 4 步模型时可给 workflow_h3_local.json')
+    q.add_argument('--map', default='', help='节点映射（默认读同名 sidecar）')
     q.add_argument('--timeout-min', dest='timeout_min', type=float, default=None,
-                   help='local：单镜轮询超时（分钟，默认 20）')
+                   help='local/cloud：单镜轮询超时（分钟；不给=按链路自动，远端 30 / 本地 20）')
     q.add_argument('--yes', action='store_true', help='确认执行闸门（计费通道同时是计费闸门）')
     q.add_argument('--mp', type=float, default=None,
                    help='local：目标兆像素；8G 卡跑 100+ 帧建议 ≤0.3（0.25 约 384x672）')

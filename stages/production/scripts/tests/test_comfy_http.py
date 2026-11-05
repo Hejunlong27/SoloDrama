@@ -154,6 +154,83 @@ def test_download_rejects_empty(monkeypatch, tmp_path):
         srv.shutdown()
 
 
+class _RangeHandler(BaseHTTPRequestHandler):
+    """支持/不支持 Range 的两种服务端（测断点续传必须在真实 socket 上跑）。"""
+
+    body = b"x" * 64
+    support = True
+    seen_range = None
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        rng = self.headers.get("Range")
+        _RangeHandler.seen_range = rng
+        if rng and _RangeHandler.support:
+            start = int(rng.split("=")[1].split("-")[0])
+            chunk = _RangeHandler.body[start:]
+            self.send_response(206)
+            self.send_header("Content-Range", "bytes %d-%d/%d"
+                             % (start, len(_RangeHandler.body) - 1, len(_RangeHandler.body)))
+            self.send_header("Content-Length", str(len(chunk)))
+            self.end_headers()
+            self.wfile.write(chunk)
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(_RangeHandler.body)))
+        self.end_headers()
+        self.wfile.write(_RangeHandler.body)
+
+
+def _serve_range():
+    srv = HTTPServer(("127.0.0.1", 0), _RangeHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return "http://127.0.0.1:%d" % srv.server_address[1], srv
+
+
+def test_download_resumes_from_part(monkeypatch, tmp_path):
+    """云端产物上百 MB，断了要能接着下 —— 而不是从 0 开始再赌一次。"""
+    base, srv = _serve_range()
+    try:
+        _RangeHandler.support, _RangeHandler.seen_range = True, None
+        monkeypatch.setenv("COMFYUI_URL", base)
+        dst = tmp_path / "c.mp4"
+        (tmp_path / "c.mp4.part").write_bytes(b"x" * 32)      # 模拟下到一半
+        n = Q.download("/blob", str(dst), timeout=5)
+        assert _RangeHandler.seen_range == "bytes=32-", _RangeHandler.seen_range
+        assert n == 64 and dst.read_bytes() == b"x" * 64, "续传后必须正好是完整内容"
+    finally:
+        srv.shutdown()
+
+
+def test_download_truncates_when_server_ignores_range(monkeypatch, tmp_path):
+    """服务端无视 Range 返回 200 时必须**截断重写**，否则会拼出 96 字节的错位文件。"""
+    base, srv = _serve_range()
+    try:
+        _RangeHandler.support = False
+        monkeypatch.setenv("COMFYUI_URL", base)
+        dst = tmp_path / "d.mp4"
+        (tmp_path / "d.mp4.part").write_bytes(b"x" * 32)
+        n = Q.download("/blob", str(dst), timeout=5)
+        assert n == 64 and dst.read_bytes() == b"x" * 64
+    finally:
+        srv.shutdown()
+
+
+def test_download_resume_false_starts_over(monkeypatch, tmp_path):
+    base, srv = _serve_range()
+    try:
+        _RangeHandler.support, _RangeHandler.seen_range = True, None
+        monkeypatch.setenv("COMFYUI_URL", base)
+        dst = tmp_path / "e.mp4"
+        (tmp_path / "e.mp4.part").write_bytes(b"y" * 10)
+        n = Q.download("/blob", str(dst), timeout=5, resume=False)
+        assert _RangeHandler.seen_range is None and n == 64
+    finally:
+        srv.shutdown()
+
+
 def test_offline_hint_has_three_actions():
     """连不上时的提示必须给「怎么办」，不能只给一个 WinError 号码。"""
     msg = Q._offline_hint(ConnectionRefusedError("拒绝"), "probe")

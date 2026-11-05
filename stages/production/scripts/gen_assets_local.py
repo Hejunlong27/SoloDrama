@@ -85,10 +85,16 @@ def _apply_model_plan_env() -> dict:
     if wf and pathlib.Path(wf).is_file():
         os.environ.setdefault('COMFYUI_WORKFLOW', wf)
         applied['COMFYUI_WORKFLOW'] = wf
+    # ★ 2026-11-05（按类隔离）：这里必须**覆盖**而不是 setdefault。
+    #   背景：`COMFYUI_URL` 是 image/video 共用的全局变量。一旦进程里已有别的值
+    #   （上一步云端出片留下的、或 settings 里配的云端地址），setdefault 会让
+    #   「图像接本地、视频接云端」这条拼凑方案失效 —— 图像会**静默打到云端**。
+    #   确认单是按类记的，它对这一类就是最终依据；覆盖并打印来源，才可解释。
     url = det.get('comfy_url') or ''
     if url:
-        os.environ.setdefault('COMFYUI_URL', url)
-        applied['COMFYUI_URL'] = url
+        old = os.environ.get('COMFYUI_URL')
+        os.environ['COMFYUI_URL'] = url
+        applied['COMFYUI_URL'] = url if not old or old == url else '%s（原 %s）' % (url, old)
     for k, v in (det.get('comfy_nodes') or {}).items():
         env = 'COMFYUI_NODE_' + str(k).upper()
         os.environ.setdefault(env, str(v))
@@ -140,6 +146,9 @@ def assets_from_pack(pack_dir: pathlib.Path) -> list:
         for aid, item in bucket.items():
             for v in item['variants']:
                 code = v['code']
+                # 层别：模板的资产卡是「三视图 / 造型 / 表情 / 状态」多层，
+                # 出图顺序要先三视图（定一致性）再造型（换衣服），否则同一角色每套造型都像新人。
+                vkind = str(v.get('kind') or S.guess_variant_kind(code, v.get('label') or ''))
                 base = code.lower() in S.BASE_CODES
                 prefix = '%s_%s' % (aid, item['name'])
                 if not base:
@@ -151,12 +160,15 @@ def assets_from_pack(pack_dir: pathlib.Path) -> list:
                     'role': item.get('role') or '',
                     'section': int(''.join(ch for ch in aid if ch.isdigit()) or 0),
                     'variant': code,
+                    'vkind': vkind,
                     'prefix': prefix,
                     'prompt': v['prompt'],
                     'aspect': v.get('aspect') or '',
                     'post_only': item.get('post_only', False),
                 })
-    out.sort(key=lambda a: (AM.KINDS.index(a['kind']), a['section'], a['id']))
+    vk_order = {'turnaround': 0, 'base': 1, 'look': 2, 'state': 3, 'expression': 4}
+    out.sort(key=lambda a: (AM.KINDS.index(a['kind']), a['section'],
+                            vk_order.get(a.get('vkind') or 'base', 9), a['id']))
     return out
 
 
@@ -195,17 +207,46 @@ def _scan_outputs(assets: list) -> list:
     return items
 
 
+def _item_key(it: dict) -> tuple:
+    return (str(it.get('kind') or ''), str(it.get('key') or ''), str(it.get('variant') or ''))
+
+
 def _write_prod_manifest(items: list, manifest: dict) -> None:
+    """写产物清单：**按条目合并**，不是整份覆盖。
+
+    ★ 2026-11-05 实测抓到：工具自己建议「先只出一张看风格」（`--only D01`），
+      而这里原来是整份覆盖 —— 出完一张，清单里就只剩一张，项目状态从「24 张」掉成「1 项」，
+      其余 23 个已存在的产物在台账里消失（文件还在，但记录没了）。
+      清单是**累计事实**，不是本次运行日志；本次运行日志另有 `ledger/runs/`。
+    """
     PROD_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    ok = [it for it in items if it['files']]
+    merged, order = {}, []
+    old = {}
+    if PROD_MANIFEST.is_file():
+        try:
+            old = json.loads(PROD_MANIFEST.read_text(encoding='utf-8-sig')) or {}
+        except (OSError, json.JSONDecodeError):
+            old = {}
+    for it in (old.get('items') or []):
+        if isinstance(it, dict) and it.get('key') is not None:
+            k = _item_key(it)
+            merged[k] = it
+            order.append(k)
+    for it in items:
+        k = _item_key(it)
+        if k not in merged:
+            order.append(k)
+        merged[k] = it                      # 本次结果覆盖同一条（可能重跑过）
+    final = [merged[k] for k in order]
+    ok = [it for it in final if it.get('files')]
     PROD_MANIFEST.write_text(json.dumps({
-        '_note': '本地 ComfyUI 通道产物清单（本工具自动维护）；与云端 char_/scene_assets_manifest.json 并列',
+        '_note': '本地 ComfyUI 通道产物清单（本工具自动维护，**按条目累计**）；与云端 char_/scene_assets_manifest.json 并列',
         '_source': str(ASSET_MD or '(制作包)'),
         '_manifest': str(MANIFEST),
         'channel': 'comfyui-local',
         'produced_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
-        'totals': {'items': len(items), 'produced': len(ok), 'cost_cny': 0.0},
-        'items': items,
+        'totals': {'items': len(final), 'produced': len(ok), 'cost_cny': 0.0},
+        'items': final,
     }, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
@@ -266,6 +307,11 @@ def main() -> int:
     ap.add_argument('--check', action='store_true', help='只体检 ComfyUI 是否在线，然后退出')
     ap.add_argument('--no-boot', action='store_true',
                     help='不自动启动 ComfyUI（默认没启动就拉一个后台实例）')
+    ap.add_argument('--skip-check', dest='skip_check', action='store_true',
+                    help='真跑前跳过生成能力预检（★ 不建议：缺模型会让每张图各失败一次）')
+    ap.add_argument('--comfy-url', dest='comfy_url', default='',
+                    help='ComfyUI 地址（云端镜像如 https://<实例>-8188.container.x-gpu.com）；'
+                         '不给 = 用确认单 / COMFYUI_URL')
     args = ap.parse_args()
     if args.no_boot:
         # 一个开关管三层：本脚本的 ensure()、以及它 spawn 出去的 comfy_client 子进程
@@ -274,6 +320,10 @@ def main() -> int:
     applied = _apply_model_plan_env()
     if applied:
         print('[i] 执行依据取自 model-plan.json：%s' % '；'.join('%s=%s' % (k, v) for k, v in applied.items()))
+    if args.comfy_url:
+        # 显式参数最高：它是「这一次就想打这里」，覆盖确认单是可解释的
+        os.environ['COMFYUI_URL'] = args.comfy_url.strip().rstrip('/')
+        print('[i] --comfy-url 覆盖为：%s' % os.environ['COMFYUI_URL'])
 
     if args.check:
         return cmd_check()
@@ -351,9 +401,9 @@ def main() -> int:
     print('成本      : ￥0（本机 GPU 出图，不产生任何平台费用）')
     print('-' * 84)
     for a in assets:
-        print('  %-18s %-4s %-14s %-24s %s'
+        print('  %-18s %-4s %-14s %-22s %-11s %s'
               % (a['id'], KIND_CN[a['kind']], a['name'], a['aspect'] or '—',
-                 a['prompt'][:26] + '…'))
+                 a.get('vkind') or 'base', a['prompt'][:22] + '…'))
 
     if not args.submit:
         print()
@@ -372,6 +422,18 @@ def main() -> int:
     if not _ensure_comfy():
         print('[FAIL] ComfyUI 没起来，本次不提交（避免每张图都空跑一次超时）')
         return 2
+    # ★ 2026-11-05：在线 ≠ 能出图。缺一个节点类或一个模型，每张图都会各失败一次，
+    #   而报错只有一句 node type missing。预检只有一份判据（cloud/health），这里只调用。
+    if not args.skip_check:
+        try:
+            import gen_preflight as GP          # 同目录
+            pre = GP.check('image', 'local', WS, timeout=30)
+            print(GP.render(pre, indent='  '))
+            if not pre['ok']:
+                print('[FAIL] 生成能力预检未通过，本次不提交（加 --skip-check 可强制尝试）')
+                return 2
+        except Exception as exc:                # noqa: BLE001 —— 预检自身故障不该拦住出图
+            print('  [WARN] 预检没跑起来（%s: %s），继续提交' % (type(exc).__name__, exc))
     print('  $ %s' % ' '.join(cmd[1:]))
     t0 = time.time()
     rc = subprocess.call(cmd)
