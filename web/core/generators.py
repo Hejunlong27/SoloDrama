@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -41,9 +42,14 @@ _TTL_PROBE = 30.0        # 在线探测
 _TTL_INFO = 300.0        # object_info 很大，缓存久一点
 
 IMAGE_LOCAL_WF = paths.STAGES_DIR / "assets" / "comfyui" / "workflow_qwen_image21.json"
-VIDEO_LOCAL_WF = paths.STAGES_DIR / "video" / "comfyui" / "workflow_h3_local.json"
+# ★ 必须与执行器同源：`comfy_local_video.DEFAULT_WORKFLOW` 自 2026-11-04 起是 canvas，
+#   而这里长期指向旧的 `workflow_h3_local.json` —— 于是界面上核对的是 A、真跑提交的是 B。
+VIDEO_LOCAL_WF = Path(os.environ.get("COMFYUI_VIDEO_WORKFLOW")
+                      or (paths.STAGES_DIR / "video" / "comfyui"
+                          / "workflow_h3_minimax_canvas.json"))
 
-ENGINE_TEXT = {"local": "本地 ComfyUI", "rh": "RunningHub 工作流"}
+ENGINE_TEXT = {"local": "本地 ComfyUI", "cloud": "云端 ComfyUI",
+               "rh": "RunningHub 工作流"}
 STATUS_TEXT = {"ready": "可用", "config": "待配置", "offline": "未启动", "missing": "缺文件",
                "no_ws": "未选项目", "unsupported": "不支持"}
 
@@ -117,6 +123,20 @@ def _local_wf_state(path: Path, info: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "status": "missing", "detail": "工作流不是合法 JSON（%s）" % type(exc).__name__,
                 "missing": [], "nodes": 0}
+    # ★ 模型替换必须应用：`_substitute` 把云端/作者机器的文件名换成本机现有的量化版，
+    #   不应用就会拿**原始文件名**去核对，报一堆「缺模型」而实际能跑（告警一旦失信就没人看）。
+    side = path.with_name(path.stem + ".map.json")
+    if side.is_file():
+        try:
+            mm = json.loads(side.read_text(encoding="utf-8"))
+            for tid, patch in (mm.get("_substitute") or {}).items():
+                if tid in wf and isinstance(patch, dict):
+                    ins = wf[tid].setdefault("inputs", {})
+                    for k, v in patch.items():
+                        if k in ins:
+                            ins[k] = v
+        except Exception:                              # noqa: BLE001 —— 映射坏了不该拖垮页面
+            pass
     if not info:
         return {"ok": False, "status": "offline", "detail": "ComfyUI 未启动，无法核对节点与模型",
                 "missing": [], "nodes": len(wf)}
@@ -138,6 +158,123 @@ def _local_wf_state(path: Path, info: dict) -> dict:
                 "detail": "缺模型文件 %d 个（首个：%s）" % (len(miss_models), miss_models[0])}
     return {"ok": True, "status": "ready", "nodes": len(wf), "missing": [],
             "detail": "%d 节点 / 模型齐全" % len(wf)}
+
+
+def _plan_detail(ws, kind: str) -> dict:
+    """项目模型确认单里这一类的 detail（读不到就空 dict）。
+
+    云端通道的地址与工作流**只认确认单**：它同时是执行期的依据（`model_gate.apply_env`
+    会把同一个 comfy_url 灌进 COMFYUI_URL），界面上显示的必须与真跑一致。
+    """
+    if not ws:
+        return {}
+    try:
+        d = json.loads((Path(str(ws)) / "model-plan.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    det = ((((d.get("models") or {}).get(kind)) or {}).get("detail") or {})
+    return det if isinstance(det, dict) else {}
+
+
+def plan_choice(ws, kind: str) -> str:
+    """项目在模型确认单里为这一类选的通道（`local_comfyui` / `cloud_comfyui` / `runninghub`…）。
+
+    ★ 公开而非私有：流水线调度（`pipeline.py`）与画布（`graph.py`）也要按它选命令。
+      三处各写一份「读 model-plan.json」的结果，必然是有的地方看到云端、有的地方看到本地，
+      然后「流水线跑本地、界面说云端」—— 这类不一致比功能缺失更难查。
+    """
+    if not ws:
+        return ""
+    try:
+        d = json.loads((Path(str(ws)) / "model-plan.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ""
+    return str((((d.get("models") or {}).get(kind)) or {}).get("choice") or "")
+
+
+# 旧名保留：模块内已有调用点，改名不改语义
+_plan_choice = plan_choice
+
+
+def cloud_selected(ws, kind: str) -> bool:
+    """这一类是否**确认了云端 ComfyUI**（只认确认单，不看环境变量与界面缓存）。"""
+    return plan_choice(ws, kind) == "cloud_comfyui"
+
+
+def _is_loopback(url: str) -> bool:
+    h = (url or "").split("//")[-1].split("/")[0].split(":")[0].lower()
+    return h in ("127.0.0.1", "localhost", "::1", "")
+
+
+_CLOUD_CACHE: dict = {}
+
+
+def _cloud_probe(url: str) -> tuple:
+    """云端实例的 (在线状态, object_info)。只读；失败归类成 reason，不抛。"""
+    now = time.time()
+    hit = _CLOUD_CACHE.get(url)
+    if hit and now - hit["at"] < 30:
+        return hit["st"], hit["info"]
+    st = {"online": False, "version": "", "vram_free_gb": 0.0, "reason": ""}
+    info: dict = {}
+    try:
+        s = _json_url(url + "/system_stats", timeout=8)
+        dev = (s.get("devices") or [{}])[0]
+        st = {"online": True,
+              "version": str((s.get("system") or {}).get("comfyui_version") or ""),
+              "vram_free_gb": round(float(dev.get("vram_free") or 0) / (1024 ** 3), 1),
+              "reason": ""}
+        info = _json_url(url + "/object_info", timeout=40)
+    except Exception as exc:                       # noqa: BLE001
+        st["reason"] = "连不上 %s（%s）" % (url, type(exc).__name__)
+    _CLOUD_CACHE[url] = {"at": now, "st": st, "info": info}
+    return st, info
+
+
+def _local_wf(ws, kind: str) -> Path:
+    """本地实际会提交的工作流：确认单 > 环境变量 > 仓库默认。
+
+    ★ 与 `gen_preflight.resolve()` 同一条口径。这里长期只看仓库常量，于是
+      「项目确认单指向 hq 版」时页面核对的是默认版 —— 报缺节点，而真跑其实是通的。
+    """
+    det = _plan_detail(ws, kind)
+    wf = str(det.get("comfy_workflow") or "").strip()
+    if wf and Path(wf).is_file():
+        return Path(wf)
+    return VIDEO_LOCAL_WF if kind == "video" else IMAGE_LOCAL_WF
+
+
+def _cloud_target(ws, kind: str) -> dict:
+    """云端通道的 (url, workflow)；没确认云端或没有地址就返回 {}（= 这条通道不显示）。
+
+    ★ 不能只看 detail 里有没有 comfy_url：项目确认「本地 ComfyUI」时也会把
+      `http://127.0.0.1:8188` 记进 detail（那是本地地址，不是云端）。只看地址会把
+      本地项目错判出一条「云端可用」，然后它去探 127.0.0.1 —— 假绿灯比红灯更糟。
+    """
+    choice = _plan_choice(ws, kind)
+    if choice and choice != "cloud_comfyui":
+        return {}
+    det = _plan_detail(ws, kind)
+    url = str(det.get("comfy_url") or "").strip()
+    if url and _is_loopback(url) and choice != "cloud_comfyui":
+        url = ""
+    via = "确认单"
+    if not url:
+        base = _comfy_base()
+        if not _is_loopback(base):
+            url, via = base, "连接中心/环境变量"
+    if not url:
+        return {}
+    # 云端出图仍走 `gen_assets_local`（同一客户端）；工作流取确认单，缺就用仓库默认
+    if kind == "video":
+        wf = str(det.get("comfy_workflow") or "").strip() or str(VIDEO_LOCAL_WF)
+        default_wf = Path(paths.STAGES_DIR / "video" / "comfyui" / "workflow_h3_minimax_canvas.json")
+    else:
+        wf = str(det.get("comfy_workflow") or "").strip() or str(IMAGE_LOCAL_WF)
+        default_wf = IMAGE_LOCAL_WF
+    if not Path(wf).is_file():
+        wf = str(default_wf)
+    return {"url": url.rstrip("/"), "workflow": wf, "via": via}
 
 
 def _project_cfg(ws) -> tuple:
@@ -202,8 +339,10 @@ def channels(ws=None) -> dict:
     info = _comfy_info() if comfy["online"] else {}
     cfg, cfg_path = _project_cfg(ws)
 
-    img_local_t2i = _local_wf_state(IMAGE_LOCAL_WF, info)
-    vid_local = _local_wf_state(VIDEO_LOCAL_WF, info)
+    img_wf = _local_wf(ws, "image")
+    vid_wf = _local_wf(ws, "video")
+    img_local_t2i = _local_wf_state(img_wf, info)
+    vid_local = _local_wf_state(vid_wf, info)
     rh_t2i = _rh_image(ws, cfg, "t2i") if ws else {"ok": False, "status": "no_ws", "detail": "先选项目"}
     rh_i2i = _rh_image(ws, cfg, "i2i") if ws else {"ok": False, "status": "no_ws", "detail": "先选项目"}
     rh_vid = _rh_video(cfg) if ws else {"ok": False, "status": "no_ws", "detail": "先选项目"}
@@ -211,7 +350,7 @@ def channels(ws=None) -> dict:
     items = [
         {"id": "image.local.t2i", "kind": "image", "engine": "local", "mode": "t2i",
          "label": "本地 ComfyUI · 文生图", "model_text": "Qwen-Image 2.1（int8 + 4step turbo）",
-         "workflow": str(IMAGE_LOCAL_WF), "billing": "free", "cost_text": "￥0",
+         "workflow": str(img_wf), "billing": "free", "cost_text": "￥0",
          "command": "assets.local",
          "detail": ("ComfyUI v%s · 空闲 %.1fG ｜ " % (comfy["version"], comfy["vram_free_gb"])
                     if comfy["online"] else comfy["reason"])
@@ -221,12 +360,18 @@ def channels(ws=None) -> dict:
          "missing": img_local_t2i.get("missing") or [],
          "next": "" if img_local_t2i["ok"] and comfy["online"] else "启动 ComfyUI 或补齐工作流/模型"},
 
+        # ★ 2026-11-05：能力早就有了（`comfy_client --image` + `workflow_qwen21_edit.json`
+        #   + `COMFYUI_NODE_LOADIMAGE`），只是 `drama assets` 批量入口没接参考图。
+        #   写成「未内置工作流」会让人去重新导一份已经存在的文件 —— 那是错的方向。
         {"id": "image.local.i2i", "kind": "image", "engine": "local", "mode": "i2i",
-         "label": "本地 ComfyUI · 图生图", "model_text": "（未内置）",
-         "workflow": "", "billing": "free", "cost_text": "￥0", "command": "",
+         "label": "本地 ComfyUI · 图生图", "model_text": "Qwen-Image 2.1 edit（两个 LoadImage）",
+         "workflow": str(paths.STAGES_DIR / "assets" / "comfyui" / "workflow_qwen21_edit.json"),
+         "billing": "free", "cost_text": "￥0", "command": "",
          "status": "unsupported",
-         "detail": "本机还没有带参考图输入的 Qwen-Image 工作流；现用的 workflow_qwen_image21.json 是纯文生图",
-         "missing": [], "next": "导出含 LoadImage 的图生图工作流放到 stages/assets/comfyui/，再登记节点映射"},
+         "detail": "客户端已支持（comfy_client --image 参考图 + workflow_qwen21_edit.json）；"
+                   "但 drama assets 批量入口尚未接 --ref，只能逐张/按 spec 出图",
+         "missing": [], "next": "验证：comfy_client.py --workflow workflow_qwen21_edit.json "
+                                 "--image a.png --prompt \"...\" --submit（批量入口待接）"},
 
         {"id": "image.rh.t2i", "kind": "image", "engine": "rh", "mode": "t2i",
          "label": "RunningHub 工作流 · 文生图", "model_text": "项目自定义工作流（nodeInfoList）",
@@ -248,7 +393,7 @@ def channels(ws=None) -> dict:
 
         {"id": "video.local.i2v", "kind": "video", "engine": "local", "mode": "i2v",
          "label": "本地 ComfyUI · 图生视频", "model_text": "MiniMax H3（fl2va w4a8 + turbo 4step LoRA）",
-         "workflow": str(VIDEO_LOCAL_WF), "billing": "free", "cost_text": "￥0",
+         "workflow": str(vid_wf), "billing": "free", "cost_text": "￥0",
          "command": "video.local",
          "detail": ("ComfyUI v%s · 空闲 %.1fG ｜ " % (comfy["version"], comfy["vram_free_gb"])
                     if comfy["online"] else comfy["reason"]) + (vid_local["detail"] if comfy["online"] else ""),
@@ -259,13 +404,48 @@ def channels(ws=None) -> dict:
 
         {"id": "video.rh.workflow", "kind": "video", "engine": "rh", "mode": "i2v",
          "label": "RunningHub 工作流 · 出片（H3）", "model_text": "项目自定义 H3 工作流",
-         "workflow": "", "billing": "paid", "cost_text": "27 RH币/任务 + 1 币/秒",
+         "workflow": "", "billing": "paid", "cost_text": "按平台 usage 结算",
          "command": "shots.gen",
          "status": ("unsupported" if rh_vid.get("status") == "no_ws"
                     else ("ready" if rh_vid["ok"] else rh_vid["status"])),
          "detail": rh_vid.get("detail", ""), "missing": [],
          "next": rh_vid.get("next") or ("先选项目" if rh_vid.get("status") == "no_ws" else "")},
     ]
+
+    # —— 云端 ComfyUI：只有解析出地址才出现（没地址 = 这条通道此刻不存在）——
+    # 与本地行同构：同一个执行器、同一份工作流判据，只是地址指向实例。
+    for _kind, _id, _label, _cmd in (
+            # ★ 命令列必须是**云端命令**：此前写的是 assets.local / video.local，
+            #   于是界面告诉你「去跑本地出图」—— 那是另一台机器，还绕过了计费确认。
+            ("image", "image.cloud.t2i", "云端 ComfyUI · 文生图", "assets.cloud"),
+            ("video", "video.cloud.i2v", "云端 ComfyUI · 图生视频", "video.cloud")):
+        t = _cloud_target(ws, _kind)
+        if not t:
+            continue
+        st, info = _cloud_probe(t["url"])
+        if st["online"]:
+            wfst = _local_wf_state(Path(t["workflow"]), info)
+            detail = "ComfyUI v%s · 空闲 %.1fG ｜ %s" % (st["version"] or "?",
+                                                        st["vram_free_gb"], wfst["detail"])
+        else:
+            wfst = {"ok": False, "status": "offline", "missing": []}
+            detail = st["reason"] or "连不上"
+        items.append({
+            "id": _id, "kind": _kind, "engine": "cloud",
+            "mode": "t2i" if _kind == "image" else "i2v",
+            "label": _label, "model_text": "镜像内的 H3 / Qwen-Image（随镜像交付）",
+            "workflow": t["workflow"], "billing": "paid",
+            # 不写死单价：实例价由上游返回，兜底值只用于闸门。界面显示真实单价没有意义——
+            # 用户要看的是「这台机器开了多久、花了多少」，那在 `cloud cost` 台账里。
+            "cost_text": "按云主机时长结算",
+            "command": _cmd, "detail": detail,
+            "missing": wfst.get("missing") or [],
+            "status": ("ready" if wfst["ok"] and st["online"] else
+                       ("offline" if not st["online"] else wfst["status"])),
+            "next": "" if wfst["ok"] and st["online"] else
+                    ("启动实例（python -m cloud up / attach）或检查地址：%s" % t["url"]),
+            "endpoint": t["url"], "endpoint_via": t["via"],
+        })
 
     for it in items:
         it["kind_text"] = "图像" if it["kind"] == "image" else "视频"

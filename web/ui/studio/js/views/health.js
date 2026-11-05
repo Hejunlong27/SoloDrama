@@ -26,7 +26,10 @@ function action(it) {
       + icon('spark', 12) + ' 一键修复</button>';
   }
   if (fx.kind === 'page' && fx.page) {
-    return '<button class="btn quiet sm" data-go="' + esc(fx.page) + '">去填写</button>';
+    // 文案取后端的 label：同一类「翻页修复」既可能是「去填写 Key」，也可能是
+    // 「去连接中心」改地址 —— 写死「去填写」在后一种场景里是错的话。
+    return '<button class="btn quiet sm" data-go="' + esc(fx.page) + '">'
+      + esc(fx.label || '去填写') + '</button>';
   }
   if (fx.cmd) {
     return '<button class="btn quiet sm" data-copy="' + esc(it.id) + '">'

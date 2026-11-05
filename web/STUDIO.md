@@ -357,15 +357,23 @@ python web/tools/verify_llm_loop.py
 
 > 台账真源：`web/core/generators.py`；本机模板在 `stages/assets/comfyui/` 与 `stages/video/comfyui/`。
 > 状态全部**现算**（ComfyUI 在线 + 工作流节点类 + 模型文件 + 项目 `config.local.json`），不存快照。
+> 工作流一律**先取项目模型确认单**（`model-plan.json` 的 `detail.comfy_workflow`），仓库常量只是兜底 ——
+> 页面核对的工作流、预检核对的工作流、执行器提交的工作流必须是同一份，否则就是「核 A 跑 B」。
 
-| 通道 | 引擎 | 模式 | 工作流 / 配置 | 成本 |
-| --- | --- | --- | --- | --- |
-| `image.local.t2i` | 本地 ComfyUI | 文生图 | `stages/assets/comfyui/workflow_qwen_image21.json`（Qwen-Image 2.1 int8 + 4step turbo） | ￥0 |
-| `image.local.i2i` | 本地 ComfyUI | 图生图 | **未内置**（现用工作流是纯文生图，没有加载图像节点） | ￥0 |
-| `video.local.i2v` | 本地 ComfyUI | 图生视频 | `stages/video/comfyui/workflow_h3_local.json`（MiniMax H3 多参 · 4 步） | ￥0 |
-| `image.rh.t2i` | RunningHub 工作流 | 文生图 | `image_providers[active].id` + `nodes.prompt.nodeId`（**可选通道**） | 按张计费 |
-| `image.rh.i2i` | RunningHub 工作流 | 图生图 | `image_providers[active].id_i2i` + `nodes.image.nodeId`（必须给参考图） | 按张计费 |
-| `video.rh.workflow` | RunningHub H3 | 图生视频 | `h3.id` + `h3.nodes`（**可选通道**） | 按段计费 |
+| 通道 | 引擎 | 模式 | 工作流 / 配置 | 成本 | 界面命令 |
+| --- | --- | --- | --- | --- | --- |
+| `image.local.t2i` | 本地 ComfyUI | 文生图 | 确认单 → `workflow_qwen_image21.json`（Qwen-Image 2.1 int8 + 4step turbo） | ￥0 | `assets.local` |
+| `image.local.i2i` | 本地 ComfyUI | 图生图 | `workflow_qwen21_edit.json`（两个加载图像）；**批量入口未接 `--ref`** | ￥0 | — |
+| `image.cloud.t2i` | **云端 ComfyUI 镜像** | 文生图 | 确认单里的 `comfy_url` + 同一套出图客户端 | 按主机时长（默认 ￥1.59/时） | `assets.cloud` |
+| `video.local.i2v` | 本地 ComfyUI | 图生视频 | 确认单 → `workflow_h3_minimax_canvas.json`（6 图槽）/ `workflow_h3_local.json`（1 图槽） | ￥0 | `video.run` |
+| `video.cloud.i2v` | **云端 ComfyUI 镜像** | 图生视频 | 同一执行器 `comfy_local_video.py`，地址指向实例 | 按主机时长 | `video.cloud` |
+| `image.rh.t2i` | RunningHub 工作流 | 文生图 | `image_providers[active].id` + `nodes.prompt.nodeId`（**可选通道**） | 按张计费 | `assets.rh_wf` |
+| `image.rh.i2i` | RunningHub 工作流 | 图生图 | `image_providers[active].id_i2i` + `nodes.image.nodeId`（必须给参考图） | 按张计费 | `assets.rh_wf` |
+| `video.rh.workflow` | RunningHub H3 | 图生视频 | `h3.id` + `h3.nodes`（**可选通道**） | 按段计费 | `shots.gen` |
+
+**云端两条只在「模型确认单确实选了 `cloud_comfyui`」时出现。** 只看 `detail.comfy_url` 是不够的 ——
+项目确认本地时也会把 `127.0.0.1:8188` 记进 detail，那样会凭空多出一条「云端可用」并去探本机
+（假绿灯比红灯更糟，所以这条由 `test_cloud_wiring.py` + `test_generators.py` 双向钉住）。
 
 
 ### 9.0 默认哪条，怎么切
@@ -373,13 +381,19 @@ python web/tools/verify_llm_loop.py
 **默认本地。** 出图出片的默认值、新建项目的默认值、界面上的默认选中项，三处一致指向
 `local_comfyui`。云端是并列的第二条，不是隐藏开关：选它才知道会花钱。
 
-| 出口 | 本地（默认） | 平台（可选） |
-| --- | --- | --- |
-| 命令行出片 | `drama video run --engine local --ep ep01` | `drama video run --engine workflow` |
-| 命令行出图 | `drama assets --engine local` | `drama assets --engine rh` |
-| Studio | 「出片」页本地按钮（￥0） | 同一页「云端出片（★计费）」 |
-| 放大 | `upscale --backend topaz` | `upscale --backend rh` |
-| 前置 | 不需要任何 Key | 要 `RUNNINGHUB_API_KEY` + 工作流 ID |
+| 出口 | 本地（默认） | 云端镜像 | 平台（可选） |
+| --- | --- | --- | --- |
+| 命令行出片 | `drama video run --engine local --ep ep01` | `drama video run --engine cloud --ep ep01`（默认自动启停） | `drama video run --engine workflow` |
+| 命令行出图 | `drama assets --engine local` | `drama assets --engine cloud` | `drama assets --engine rh` |
+| Studio | 「出片/出图」页本地按钮（￥0） | 同一页「云端镜像（★按主机时长）」 | 同一页「云端出片（★计费）」 |
+| 放大 | `upscale --backend topaz` | — | `upscale --backend rh` |
+| 前置 | 不需要任何 Key | 受信域名 `SOLODRAMA_TRUSTED_HOSTS` + 实例 | 要 `RUNNINGHUB_API_KEY` + 工作流 ID |
+| 开跑前 | `preflight.gen`（免费） | 同一份预检，地址换实例 | 同一份预检，判据换 RH |
+
+**三种通道是「按类隔离」的**：确认单里 `models.image` 与 `models.video` 各记一条，执行器各自
+解析自己的地址再显式下传。所以可以「生图接本地 + 出片接云端」拼起来跑 —— 靠的是按类解析，
+**不是**靠 `COMFYUI_URL` 这一个全局变量传话（那必然串味）。
+
 
 **为什么默认必须是本地**，三条都不是「省钱优先」：
 
@@ -400,6 +414,22 @@ python web/tools/verify_llm_loop.py
 * 两个 id 各取各的（`id` / `id_i2i`），**互不兜底**；
 * 图生图必须先上传参考图，把返回的**平台文件名**写进 `nodes.image` 指定的节点；
 * 缺 `nodes.image.nodeId` 时状态直接判「待配置」，不允许提交。
+
+### 9.1.1 资产卡的「层」（variant kind）
+
+模板产出的资产卡是**多层**的：三视图（定一致性）、造型（LOOK-A/B，换衣服）、表情四态、状态卡。
+`pack/assets/*.json` 的 `variants[]` 因此多一个 `kind`：
+
+| kind | 含义 | 出图顺序 |
+|---|---|---|
+| `turnaround` | 三视图 / 空景卡 | 1（先定一致性） |
+| `base` | 主卡（只有一张时） | 2 |
+| `look` | 造型（LOOK-A/B…） | 3 |
+| `state` | 状态卡（布包版、病容版） | 4 |
+| `expression` | 表情四态（组图，参考用） | 5 |
+
+缺省不写 `kind` 时按 `code` / `label` 推断（`LOOK-` → look，「三视图」→ turnaround …），
+推断不出来就 `base`。出图按上表排序：**先三视图再造型**，否则同一角色每套造型都像新人。
 
 ### 9.2 本地出片（H3）的实测口径
 
@@ -455,6 +485,18 @@ python comfy_local_video.py --workflow 新工作流.json --check         # ④ �
 ## 10. 流水线（连跑模式）
 
 真源 `web/core/pipeline.py`；页面 `#/pipeline`（项目级）。
+
+### 10.0.1 创作页的分批续写
+
+模板产物（资产库 / 剧本 / 导演手册）几乎都是「第N批／共M批」。创作页对这三个环节多了
+一个「继续写第 N 批」按钮：
+
+* 后端 `creation.write(append=True)`：**追加**在已有正文后（分隔线分开，旧版留 `.bak_时间戳`）；
+* `creation.vars_for()` 会算出 `prior`（已写内容，头 1200 + 尾 8000 字）、`batch_no`、
+  `shot_from`（导演手册：已写到的最大镜号 + 1）、`ep_from`（剧本）；
+* 导演手册一批 **4–5 镜**（`shots_per_batch`，默认 5）：8 镜会撞模型的 8k 输出上限，末镜被截断。
+
+> 覆盖写入 + 不带上一批内容 = 每点一次「生成」都从第 1 批重来，4 批模板最后只剩最后一批。
 
 ### 10.1 两种模式
 

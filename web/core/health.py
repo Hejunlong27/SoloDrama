@@ -44,7 +44,11 @@ _ENV_FIX = {
     "whisper-cli": ("bin.whisper", {"kind": "manual"}),
     "RUNNINGHUB_API_KEY": ("cfg.rh_key", {"kind": "page", "page": "#/connections"}),
     "RUNNINGHUB_BASE_URL": ("cfg.rh_base", {"kind": "page", "page": "#/connections"}),
+    # ★ 2026-11-05：env_check 在「地址指向云端」时会把项名改成「ComfyUI 远端地址」，
+    #   这张表是按**名字**查的 —— 不登记别名，该项就会丢掉分组与修复入口（表现：体检页多一行
+    #   没有按钮的孤项）。两个名字都指向同一条修复策略。
     "ComfyUI 本地端口": ("svc.comfy", {"kind": "comfy_start"}),
+    "ComfyUI 远端地址": ("svc.comfy", {"kind": "comfy_start"}),
     "manifest.sha256": ("repo.manifest", {"kind": "manual"}),
 }
 
@@ -243,10 +247,32 @@ def _fix_spec(item: dict, fix: dict) -> dict:
             "argv": argv,
         })
     elif kind == "comfy_start":
-        spec.update({
-            "auto": True, "label": "自动启动", "cmd": "",
-            "note": "起一个后台实例（无窗口）。首次约 30–90 秒；你手动打开的桌面版不会被接管",
-        })
+        # ★ 2026-11-05：地址指向云端时**不能**给「自动启动」按钮 —— 那只会拉起一个
+        #   本机实例，而用户要的是云端那台（两者都叫 ComfyUI，点完还是「不可达」）。
+        base = (os.environ.get("COMFYUI_URL") or os.environ.get("COMFY_URL") or "").strip()
+        host = ""
+        if base:
+            try:
+                from urllib.parse import urlsplit
+                host = urlsplit(base if "//" in base else "http://" + base).hostname or ""
+            except (ValueError, TypeError):
+                host = ""
+        remote = bool(host) and host not in ("127.0.0.1", "localhost", "::1")
+        if remote:
+            # kind 改成 page：前端的渲染是按 kind 分支的，「自动启动」类会给「一键修复」按钮，
+            # 点了只会拉起本机实例，而用户要的是云端那台。
+            spec.update({
+                "kind": "page",
+                "auto": False, "label": "去连接中心", "cmd": "",
+                "page": "#/connections",
+                "note": ("当前指向云端（%s）：本机不会替你开机。用 python -m cloud up / attach，"
+                         "或把地址改回本机" % host),
+            })
+        else:
+            spec.update({
+                "auto": True, "label": "自动启动", "cmd": "",
+                "note": "起一个后台实例（无窗口）。首次约 30–90 秒；你手动打开的桌面版不会被接管",
+            })
     elif kind == "manual":
         spec.update({"auto": False, "label": "复制命令" if item.get("hint") else "",
                      "cmd": item.get("hint") or "",

@@ -132,6 +132,41 @@ def main():
         check(all(x["status"] in ("unsupported", "config") for x in rh),
               "无工作区时云端通道状态应为 unsupported/config：%s"
               % [(x["id"], x["status"]) for x in rh])
+        print("[7] 云端 ComfyUI：确认了就出现两行，没确认就不出现")
+        # 没确认云端 → 页面不该多出「空壳通道」
+        d8 = generators.channels(str(ws))
+        check(not [x for x in d8["items"] if x["engine"] == "cloud"],
+              "未确认云端时不该出现 cloud 行：%s"
+              % [x["id"] for x in d8["items"] if x["engine"] == "cloud"])
+
+        # 确认了云端 + 给地址 → 图像/视频各一行，且地址来自确认单（与执行期同源）
+        (ws / "model-plan.json").write_text(json.dumps({
+            "gate_version": 2,
+            "models": {"image": {"choice": "cloud_comfyui", "confirmed": True,
+                                 "detail": {"comfy_url": "https://abc-8188.container.x-gpu.com"}},
+                       "video": {"choice": "cloud_comfyui", "confirmed": True,
+                                 "detail": {"comfy_url": "https://abc-8188.container.x-gpu.com"}}},
+        }, ensure_ascii=False), encoding="utf-8")
+        generators._cloud_probe = lambda url: (
+            {"online": True, "version": "0.43.2", "vram_free_gb": 23.2, "reason": ""},
+            {"UNETLoader": {"input": {"required": {"unet_name": [["x.safetensors"]]}}},
+             "LoadImage": {"input": {"required": {"image": [["a.png"]]}}},
+             "CLIPLoader": {"input": {"required": {"clip_name": [[]]}}},
+             "VAELoader": {"input": {"required": {"vae_name": [[]]}}},
+             "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [[]]}}},
+             "ModelAttentionBackend": {}})
+        generators._local_wf_state = lambda path, info: {
+            "ok": True, "status": "ready", "detail": "3 节点 / 模型齐全", "missing": [], "nodes": 3}
+        d9 = generators.channels(str(ws))
+        cloud = [x for x in d9["items"] if x["engine"] == "cloud"]
+        check([x["id"] for x in cloud] == ["image.cloud.t2i", "video.cloud.i2v"],
+              "云端应两行：%s" % [x["id"] for x in cloud])
+        check(all(x["status"] == "ready" for x in cloud),
+              "探测通 + 工作流齐应为 ready：%s" % [(x["id"], x["status"]) for x in cloud])
+        check(all(x.get("endpoint") == "https://abc-8188.container.x-gpu.com" for x in cloud),
+              "地址必须来自模型确认单（与 model_gate.apply_env 同源）")
+        check(any("1.59" in x["cost_text"] or "云主机" in x["cost_text"] for x in cloud),
+              "云端行必须写清计费口径：%s" % [x["cost_text"] for x in cloud])
     finally:
         generators._comfy, generators._comfy_info = real_comfy, real_info
         generators.VIDEO_LOCAL_WF, generators.IMAGE_LOCAL_WF = real_video_wf, real_image_wf

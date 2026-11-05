@@ -1,6 +1,8 @@
 /* 资产中心：缺口（引擎判定）+ 参考图超限 + 资产图片预览（工作区白名单）+ 真实出图
    出图走引擎既有的两条通道：
-     本地 ComfyUI  ￥0，占 GPU（需 8188 在线）      → assets.local  --submit
+     本地 ComfyUI  ￥0，占 GPU                     → assets.local   --submit
+     云端 ComfyUI  ★按主机时长                    → assets.cloud   --submit
+     RH 工作流     ★按张结算                      → assets.rh_wf
    前置：引擎的 gen_assets_local.py **只认环境变量 SOLODRAMA_ASSET_MD**，
    所以这里必须先选「资产提示词 md」，由后端注入（浏览器永远不拼命令）。 */
 import { api, mediaUrl } from '../api.js';
@@ -138,7 +140,8 @@ export async function render(ctx) {
       : '放到 <span class="mono">04-资产/</span> 或 <span class="mono">04-资产/design/</span>') + '</div></div></div>'
     + '<div class="clitem"><span class="mk warn">' + icon('cpu', 12) + '</span><div class="body">'
     + '<div class="ttl"><span>本地 ComfyUI</span>' + badge('outline', '￥0 · 占 GPU') + '</div>'
-    + '<div class="desc">需要在 8188 端口运行。先点「出图器体检」确认在线，否则会排到队才失败。</div></div></div>'
+    + '<div class="desc">地址取「连接中心」（默认 127.0.0.1:8188）。先点「出图能力预检」——'
+    + '它会核在线 + 节点类 + 模型文件，省掉「每张图各失败一次」。</div></div></div>'
     + '<div class="clitem"><span class="mk off">' + icon('close', 12) + '</span><div class="body">'
     + '<div class="ttl"><span>在线改提示词 / 参考图瘦身写盘</span>' + badge('muted', '未开放') + '</div>'
     + '<div class="desc">提示词改动请改 md 后重新出图；瘦身命令 <span class="mono">refs.apply</span> 会写盘，'
@@ -242,6 +245,8 @@ function openGenPanel(ctx, md) {
       + '<div class="row-gap">'
       + '<label class="chk"><input type="radio" name="gEng" value="local" checked>'
       + '<span>本地 ComfyUI（￥0，占 GPU 数分钟）</span></label>'
+      + '<label class="chk"><input type="radio" name="gEng" value="cloud">'
+      + '<span>云端 ComfyUI 镜像（<b>★计费</b>，按主机时长）</span></label>'
       + '<label class="chk"><input type="radio" name="gEng" value="rh">'
       + '<span>云端 RunningHub（<b>★计费</b>，按张结算）</span></label>'
       + '</div></div>'
@@ -262,8 +267,8 @@ function openGenPanel(ctx, md) {
       + '<span>已生成的也重跑（会重复占 GPU）</span></label>'
 
       + '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-      + '两条通道都是<b>后台作业</b>：提交后到「任务中心」看实时日志。'
-      + '本地通道先点「出图器体检」确认 8188 在线，能省掉一轮排队失败。</div></div>'
+      + '三条通道都是<b>后台作业</b>：提交后到「任务中心」看实时日志。'
+      + '本机通道先点「出图能力预检」——它会核在线/节点/模型，能省掉「每张图各失败一次」。</div></div>'
       + '</div>',
     foot: '<span class="spacer"></span>'
       + '<button class="btn quiet" data-close="drawer">取消</button>'
@@ -284,6 +289,10 @@ function openGenPanel(ctx, md) {
         const r = root.querySelector('input[name="gEng"]:checked');
         return r ? r.value : 'local';
       };
+      // ★ 三条通道对应三个**不同命令**。此前只有「rh 或 其他」两分支，
+      //   于是云端镜像根本选不出来 —— 界面能看到通道页说「云端可用」，这里却跑不了。
+      const SPEC_OF = { local: 'assets.local', cloud: 'assets.cloud', rh: 'assets.rh_wf' };
+      const TITLE_OF = { local: '本地出图', cloud: '云端镜像出图', rh: '云端工作流出图' };
       // 资产提示词：本地走环境变量（asset_md），云端走 CLI 参数（md）。两个键都给，
       // 多出来的会被命令校验忽略。
       const params = (submit) => {
@@ -301,10 +310,10 @@ function openGenPanel(ctx, md) {
       root.querySelector('#gDry').onclick = () => {
         const p = params(false);
         closeDrawer();
+        const eng = engine();
         doRun(ctx, {
-          specId: engine() === 'rh' ? 'assets.rh_wf' : 'assets.local',
-          title: (engine() === 'rh' ? '云端出图' : '本地出图')
-            + ' · 干跑（列出清单，不提交）',
+          specId: SPEC_OF[eng] || 'assets.local',
+          title: TITLE_OF[eng] + ' · 干跑（列出清单，不提交）',
           params: p,
           onDone: () => setTimeout(() => ctx.refresh(), 1200)
         });
@@ -326,7 +335,8 @@ function openGenPanel(ctx, md) {
               + (p.only ? ' · 只做 ' + esc(p.only) : '') + '</div>'
               + (p.force ? '<div class="tiny dim">已生成的会重跑</div>' : '') + '</div>'
               + '<div class="alert info" style="margin-top:10px"><span class="nav-ico">' + icon('alert', 14)
-              + '</span><div>前提：ComfyUI 在 <span class="mono">127.0.0.1:8188</span> 运行。</div></div>',
+              + '</span><div>前提：ComfyUI 已启动（地址取「连接中心」，不再写死 8188）。'
+              + '开跑前会自动做生成能力预检。</div></div>',
             foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
               + '<button class="btn primary" id="gOk">开始</button>',
             mount: (m) => {
@@ -339,8 +349,28 @@ function openGenPanel(ctx, md) {
               };
             }
           });
+        } else if (eng === 'cloud') {
+          // ★ 云端镜像：计费口径与 RH 完全不同 —— 是按**主机时长**，不是按张。
+          //   写成「按张结算」会让人以为「少出几张就少花钱」，其实机器开着就在烧。
+          closeDrawer();
+          runAction(ctx, {
+            specId: 'assets.cloud',
+            title: '云端镜像出图（★按主机时长）',
+            params: p,
+            costTitle: '云端镜像出图（按主机时长计费）',
+            cost: {
+              lines: [
+                ['通道', '云端 ComfyUI 镜像（自建/租用实例）'],
+                ['类型', p.kind + (p.only ? ' · 只做 ' + p.only : '')],
+                ['计费', '按实例开机时长（默认 ￥1.59/时），与出几张无关'],
+                ['合计', '出图时长 × 单价；地址取模型确认单，缺地址会直接停']
+              ],
+              note: '跑完请确认实例已停（任务默认自动停，只停自己开的）；台账可在「成本」页看。'
+            },
+            onDone: () => setTimeout(() => ctx.refresh(), 1500)
+          });
         } else {
-          // ★ 云端通道：先看计费单，不直接跑。这里不是唠叨 ——
+          // ★ RH 通道：先看计费单，不直接跑。这里不是唠叨 ——
           //   资产图一次几十张，单价乘以张数就是真金白银。
           closeDrawer();
           runAction(ctx, {

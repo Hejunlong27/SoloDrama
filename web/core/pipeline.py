@@ -23,7 +23,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from . import adapters, commands as CMD, paths, runner, studio
+from . import adapters, commands as CMD, generators as GEN, paths, runner, studio
 
 # ---------------------------------------------------------------------------
 # 环节 → 命令（只登记**确实存在且语义等价**的；没登记的按人工处理）
@@ -37,7 +37,13 @@ STAGE_MAP = {
                  "note": "模板生成后需要人补市场数据（榜单/竞品），补齐才过节点判据"},
     "script": {"cmd": "script.plan", "mode_text": "剧本编排",
                "note": "按 blueprint 生成分集骨架；正文由 AI/人工在创作中心写"},
+    # ★ 2026-11-05：项目确认了「云端 ComfyUI」时，跑 assets.local 会被模型门禁
+    #   （expected_engine=local）直接拦下 —— 于是流水线在资产环节永远停住，
+    #   而界面又说「云端已就绪」。所以这里按**模型确认单**选命令，不写死本地。
     "asset": {"cmd": "assets.local", "mode_text": "本地出图（￥0）",
+              "alt": {"cmd": "assets.cloud", "mode_text": "云端出图（★按主机时长）",
+                      "when": ("image", "cloud_comfyui"),
+                      "note": "云端实例出图，按主机时长计费；跑完请确认实例已停"},
               "note": "本机 ComfyUI 出图，不花钱但占 GPU；需要「资产提示词 md」"},
     "board": {"cmd": "convert.apply", "mode_text": "分镜转 data 五文件",
               "note": "把分镜 md 转成引擎输入（含 <Picture n> 机械重排）"},
@@ -118,7 +124,13 @@ def plan(ws: str, *, budget: float = 0.0) -> dict:
                         "blocked": blocked, "ready": ready})
             continue
 
-        cmd = _stage_cmd(spec["cmd"])
+        spec_cmd, spec_mode, spec_note = spec["cmd"], spec["mode_text"], spec["note"]
+        alt = spec.get("alt") or {}
+        if alt and GEN.plan_choice(ws, alt["when"][0]) == alt["when"][1]:
+            spec_cmd = alt["cmd"]
+            spec_mode = alt.get("mode_text") or spec_mode
+            spec_note = alt.get("note") or spec_note
+        cmd = _stage_cmd(spec_cmd)
         meta = _cmd_meta(cmd)
         paid = meta["billing"] == "paid"
         est = spec.get("est")
@@ -146,9 +158,9 @@ def plan(ws: str, *, budget: float = 0.0) -> dict:
                 verdict, why = "ask", str(exc)
 
         out.append({"id": sid, "name": name, "state": st.get("state"),
-                    "action": verdict, "action_text": spec["mode_text"],
-                    "page": "", "cmd": spec["cmd"], "billing": meta["billing"],
-                    "est_coins": est, "detail": spec["note"] + "；" + why,
+                    "action": verdict, "action_text": spec_mode,
+                    "page": "", "cmd": spec_cmd, "billing": meta["billing"],
+                    "est_coins": est, "detail": spec_note + "；" + why,
                     "blocked": blocked, "ready": ready, "paid": paid})
 
     auto_n = len([x for x in out if x["action"] == "auto"])

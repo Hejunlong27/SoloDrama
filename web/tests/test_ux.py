@@ -145,6 +145,16 @@ def test_friendly_error():
           "画图工具" in ux.friendly_error(1, "本机 ComfyUI 未启动")["title"],
           "本机画图工具未开时应给出可懂提示")
 
+    # ★ 2026-11-05 实测抓到：预检报「缺一个 LoRA」时被翻成「画图工具连不上」，
+    #   人于是去重启 ComfyUI，而真正要做的是下一个模型文件。两件事必须分开。
+    miss = ("视频 · local ｜ http://127.0.0.1:8188\n[NG] 不可用：缺文件\n"
+            " - 模型文件齐全：缺：#145 LoraLoaderModelOnly = minimax_h3_8step.safetensors")
+    down = ("连不上 ComfyUI http://127.0.0.1:8188（probe）\n"
+            "  原因：<urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>")
+    check(ux.friendly_error(1, miss)["title"] != ux.friendly_error(1, down)["title"],
+          "「缺模型文件」与「服务连不上」必须是两条不同的提示")
+    check("缺" in ux.friendly_error(1, miss)["title"], "缺件时应说「缺文件」，而不是「连不上」")
+
 
 def test_help_prompt():
     print("[6] 求助提示词")

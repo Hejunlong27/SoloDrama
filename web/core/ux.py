@@ -161,12 +161,17 @@ TASKS = [
              {"spec": "pack.import", "label": "导入并生成 data/ 契约"},
          ]}),
     Task("cast_assets", "给角色和场景定形象", "形象定好之后，每个镜头里的长相才能保持一致",
-         "先看要画哪些，再决定用哪台机器画", ["assets.check", "assets.local", "assets.rh_wf"],
+         "先看要画哪些，再决定用哪台机器画",
+         ["assets.check", "assets.local", "assets.cloud", "assets.rh_wf"],
          stage="cast", cost_hint="用云端画会花钱，开始前会显示金额", after="接下来把剧本拆成分镜",
          ui={"kind": "sequence", "steps": [
-             {"spec": "assets.check", "label": "先检查画图工具", "free": True, "next": "清单"},
+             {"spec": "assets.check", "label": "先检查画图能力", "free": True, "next": "清单"},
              {"spec": "assets.local", "label": "用这台电脑画（免费）", "params": {"kind": "all"}},
-             {"spec": "assets.rh_wf", "label": "用云端画（要花钱）", "params": {"kind": "all"}, "confirm": True},
+             # 云端分两种计费口径，不能合成一个「云端」按钮：一个是按主机时长、一个是按张。
+             {"spec": "assets.cloud", "label": "用云端镜像画（按主机时长）",
+              "params": {"kind": "all"}, "confirm": True},
+             {"spec": "assets.rh_wf", "label": "用 RunningHub 画（按张计费）",
+              "params": {"kind": "all"}, "confirm": True},
          ]}),
     Task("draw_boards", "给每个镜头画一张首帧", "首帧决定这一镜的构图、站位和光线，出片时当第一张参考图",
          "一集一集画，缺哪镜会列出来", ["board.frame"], stage="boards",
@@ -603,9 +608,19 @@ def friendly_error(code, text: str = "") -> dict:
     if "找不到短剧工作区" in txt:
         return {"level": "fix", "title": "没找到这部剧的文件夹",
                 "detail": "可能是文件夹被移动或改名了。请重新选择这部剧的位置。"}
-    if "ComfyUI" in txt or "8188" in txt:
-        return {"level": "fix", "title": "画图工具没有打开",
-                "detail": "用「这台电脑」画图需要先打开本机的画图工具（ComfyUI）。打开后重试即可。"}
+    if ("缺模型" in txt or "模型文件齐全" in txt or "缺文件" in txt
+            or "node type missing" in txt or "_missing_node_type" in txt):
+        # ★ 2026-11-05 实测抓到：预检报「缺一个 LoRA」时，这里曾翻成「画图工具连不上」——
+        #   于是人跑去重启 ComfyUI，而真正要做的是下一个模型文件。缺件与连不上必须分开。
+        return {"level": "fix", "title": "画图工具在，但缺文件",
+                "detail": "预检已经把缺的节点类 / 模型全名列出来了。把文件放到对应 models 目录，"
+                          "或换一份本机就能跑的工作流（预检会给出替代项）。这不是「服务没开」。"}
+    if any(k in txt for k in ("连不上", "不可达", "未启动", "没启动", "10061", "refused",
+                              "Connection refused", "WinError", "timed out", "超时")) \
+            or ("8188" in txt and "未监听" in txt):
+        return {"level": "fix", "title": "画图工具连不上",
+                "detail": "用「这台电脑」画图要先打开本机的 ComfyUI；如果这条通道指向的是云端实例，"
+                          "请先确认实例已开机（python -m cloud up / attach），并确认域名在受信名单里。"}
     if "API Key" in txt or "并发" in txt:
         return {"level": "fix", "title": "云端账号出了点问题",
                 "detail": "可能是密钥没配好或同时在跑的任务太多。建议交给 AI 助手处理。"}

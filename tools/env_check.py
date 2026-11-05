@@ -409,11 +409,31 @@ def collect() -> dict:
         "hint": ("环境变量里还留着 %s —— 已不生效，建议删掉，免得下次 `echo` 到旧值又排查一轮"
                  % site_dead) if site_dead else "",
     })
+    # ★ 2026-11-05：地址不能写死 127.0.0.1:8188 —— 连上云端镜像之后，这项会一直报
+    #   「未监听」并提示「会自动启动」，而实际上你根本不需要本机服务。
+    #   体检项一旦说错，人就不看了（和「能力卡写死 8188」是同一个坑）。
+    _comfy_url = (os.environ.get("COMFYUI_URL") or os.environ.get("COMFY_URL")
+                  or "").strip().rstrip("/")
+    _cu_host, _cu_port = "127.0.0.1", 8188
+    if _comfy_url:
+        try:
+            from urllib.parse import urlsplit
+            _sp = urlsplit(_comfy_url if "//" in _comfy_url else "http://" + _comfy_url)
+            _cu_host = _sp.hostname or "127.0.0.1"
+            _cu_port = int(_sp.port or (443 if _sp.scheme == "https" else 80))
+        except (ValueError, TypeError):
+            _cu_host, _cu_port = "127.0.0.1", 8188
+    _cu_local = _cu_host in ("127.0.0.1", "localhost", "::1")
+    _cu_ok = _port_open(_cu_host, _cu_port)
     items.append({
-        "group": "配置", "name": "ComfyUI 本地端口",
-        "ok": _port_open("127.0.0.1", 8188), "required": False,
-        "detail": "127.0.0.1:8188 " + ("可达" if _port_open("127.0.0.1", 8188) else "未监听（出图时会自动启动）"),
-        "hint": "本地出图默认￥0；没启动时 Studio 会拉起一个后台实例，不用先开桌面版",
+        "group": "配置", "name": "ComfyUI %s" % ("本地端口" if _cu_local else "远端地址"),
+        "ok": _cu_ok, "required": False,
+        "detail": "%s:%d " % (_cu_host, _cu_port) + (
+            "可达" if _cu_ok else
+            ("未监听（出图时会自动启动）" if _cu_local else "连不上（云端实例可能没开机）")),
+        "hint": ("本地出图默认￥0；没启动时 Studio 会拉起一个后台实例，不用先开桌面版"
+                 if _cu_local else
+                 "当前指向云端：本机体检不会替你开机；用 python -m cloud up/attach，或改回本机地址"),
     })
 
     # 4.5) 环境快照 —— 治「设了但当前进程没读到」这类假阴性

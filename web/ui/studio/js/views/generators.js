@@ -23,7 +23,12 @@ function row(it) {
     + '<td>' + badge(tone, it.status_text)
     + '<div class="tiny dim" style="margin-top:4px;max-width:420px">' + esc(it.detail || '') + '</div>'
     + missing + '</td>'
-    + '<td class="small dim" style="max-width:260px">' + esc(it.next || '—') + '</td>'
+    + '<td class="small dim" style="max-width:260px">' + esc(it.next || '—')
+    + (it.endpoint
+      ? '<div class="tiny dim mono" style="margin-top:4px">' + esc(it.endpoint)
+        + (it.endpoint_via ? ' <span class="dim">（' + esc(it.endpoint_via) + '）</span>' : '')
+        + '</div>' : '')
+    + '</td>'
     + '<td class="right mono tiny dim">' + esc(it.command || '—') + '</td>'
     + '</tr>';
 }
@@ -35,7 +40,7 @@ function section(kind, title, sub, items) {
     + '<span class="card-sub">' + esc(sub) + '</span></div>'
     + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
     + '<th style="width:30%">通道 / 模型</th><th style="width:12%">引擎 · 模式</th>'
-    + '<th style="width:28%">状态</th><th>下一步</th><th class="right">命令</th>'
+    + '<th style="width:28%">状态</th><th>下一步 / 实际地址</th><th class="right">命令</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div></div></section>';
 }
 
@@ -60,7 +65,7 @@ export async function render(ctx, opts) {
     + '<button class="btn quiet" id="btnRhCfg">' + icon('settings', 14) + ' 配置云端工作流</button>';
   const summary = '图像 ' + ((c.image || {}).ready || 0) + '/' + ((c.image || {}).total || 0)
     + ' 可用 · 视频 ' + ((c.video || {}).ready || 0) + '/' + ((c.video || {}).total || 0)
-    + ' 可用 · 本地出图/出片 ￥0，云端工作流按点数计费';
+    + ' 可用 · 本机 ￥0 ｜ 云端镜像按主机时长 ｜ 云端工作流按点数';
   /* 嵌入到连接中心时不再画页头（否则一个页面两个大标题），只留一行工具按钮 */
   const html = ''
     + (embedded
@@ -81,9 +86,10 @@ export async function render(ctx, opts) {
     + section('video', '视频模型', '本地 H3 图生视频 ｜ 云端 H3 工作流出片', vids)
 
     + '<div class="alert info"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-    + '「状态」来自真实探测：本地通道核对 ComfyUI 在线 + 工作流节点类 + 模型文件；'
-    + '云端通道核对项目 <span class="mono">video-pipeline/config.local.json</span> 里的工作流 ID 与节点映射。'
-    + '换项目后这里会跟着变。</div></div>';
+    + '「状态」来自真实探测：ComfyUI 通道（本机 / 云端镜像）核对**服务在线 + 工作流节点类 + 模型文件**，'
+    + '云端还会打印实例地址与来源；RunningHub 通道核对项目 '
+    + '<span class="mono">video-pipeline/config.local.json</span> 里的工作流 ID 与节点映射。'
+    + '换项目后这里会跟着变。云端行只在**模型确认单确实选了云端**时出现。</div></div>';
 
   return {
     html,

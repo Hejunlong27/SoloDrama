@@ -21,6 +21,7 @@ SCRIPTS = {
     "drama": paths.PROD_SCRIPTS / "drama.py",
     # ★ 2026-11-02（分支 feat/pack-engine）：创作层已移出仓库，唯一入口是制作包导入。
     "pack_import": paths.IMPORT_SCRIPTS / "pack_import.py",
+    "md2pack": paths.IMPORT_SCRIPTS / "md2pack.py",
     "preset_apply": paths.IMPORT_SCRIPTS / "preset_apply.py",
     "asset_md": paths.ASSETS_SCRIPTS / "asset_md.py",
     "ingest": paths.PROD_SCRIPTS / "ingest_check.py",
@@ -196,7 +197,9 @@ class Command:
         if self.gate:
             lines.append("注意：本命令受「%s」门禁约束，未过门禁（退出码 4）时不要跳步，先按提示完成确认。" % self.gate)
         if self.billing in (PAID, EXTERNAL):
-            lines.append("注意：本命令★计费，须先给出清单与预估金额，等我明确确认后再执行；不要自行重试。")
+            lines.append("注意：本命令★计费，须先给出清单与**按台账实测的参考费用**，"
+                         "等我明确确认后再执行；不要自行重试。不要编预估单价——"
+                         "报不出实测数据就直说「尚无计费记录」。")
         if self.danger == DANGER:
             lines.append("注意：本命令会写盘或覆盖产物，执行前先说明影响范围。")
         lines.append("执行后把结果压缩成 3 行以内汇报（结果 / 花费 / 下一步建议）；退出码为 2 或 3 时立即停下说明原因。")
@@ -336,6 +339,17 @@ _add(_c("project.scaffold", "0 项目", "新建剧项目（结构 + 空模板）
 # ===== 制作包：新分支的唯一输入入口 ========================================
 # 为什么把「导入」放在第一位：创作已经移出引擎（选题/剧本/资产设计/导演/分镜/提示词
 # 都在 Skill 里），引擎能做的第一件事就是**读包**。没有包，后面每个按钮都点不动。
+_add(_c("convert.apply", "1 导入", "创作稿 → 制作包（机械转换，不创作）", "md2pack",
+        argv=[], billing=FREE, danger=WRITE,
+        flags={"--out": "out", "--ep": "ep"},
+        bools={"--drop-missing-cast": "drop_missing_cast"},
+        params=[Param("out", "输出目录", "str", placeholder="留空用 <工作区>/pack"),
+                Param("ep", "只转这些集", "str", placeholder="1,2（留空转全部）"),
+                Param("drop_missing_cast", "资产没齐时移除缺失参考图（会连 {{Mixed n}} 一起摘）",
+                      "bool", default=False)],
+        help="把 00-创作/ 的资产库与导演手册转成 pack（资产/分集 JSON），并写一份缺口报告。"
+             "只做识别与搬运：不改台词、不改提示词、不补写。缺口一律写进 _import_report.md。",
+        agent="转换后先读缺口报告：缺提示词的资产、被跳过的镜头、没认出来的台词，都要逐条告诉我。"))
 _add(_c("pack.check", "1 导入", "校验制作包（只读，不写盘）", "pack_import",
         argv=[], mode="sync", danger=READ,
         flags={"--pack": "pack", "--ep": "ep"},
@@ -383,14 +397,37 @@ _add(_c("assets.local", "2 资产", "本地出图（￥0，默认干跑）", "dr
              "本机 ComfyUI 没启动时会自动拉起后台实例（30–90 秒，可用 --no-boot 关掉）。",
         agent="先干跑给我看清单与缺口；我确认后再加 --submit。出图前不用管 ComfyUI 是否在线，"
               "它会自动启动。"))
-_add(_c("assets.check", "2 资产", "ComfyUI 在线体检", "drama",
+_add(_c("assets.check", "2 资产", "出图能力预检（免费）", "drama",
         argv=["assets", "--engine", "local", "--check"], mode="sync", danger=READ,
         # 2026-11-02：资产提示词已改为惰性校验（--pack 通道不必设 SOLODRAMA_ASSET_MD），
         # 所以体检不再需要先给 md；保留这个参数只为老项目。
+        # ★ 2026-11-05：它已经不是「只看在线」了 —— 会核守卫/在线/版本/节点类/模型文件/必需输入，
+        #   与批量入口用的是**同一份判据**（gen_preflight -> cloud.health）。标题必须跟着改，
+        #   否则人会以为「在线 = 能出图」。
         params=[Param("asset_md", "资产提示词 md（老通道，可留空）", "str")],
         env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="只体检 ComfyUI 是否在线，不出图（没启动会先自动拉起）。",
-        agent="不在线就把启动失败的原因（端口被占 / 缺依赖 / 超时）说清楚；不用叫我手动开桌面版。"))
+        help="核四件事：ComfyUI 在线 / 工作流节点类齐全 / 模型文件存在 / 必需输入有着落。"
+             "不出图、不花钱（没启动会先自动拉起）。",
+        agent="逐条报失败项（缺哪个节点类、哪个模型文件全名），并给出「补齐」或「换工作流」两条出路。"))
+_add(_c("assets.cloud", "2 资产", "云端 ComfyUI 出图（★按主机时长）", "drama",
+        # 不打 gate 标记：G5 是**出片**门禁，出图挂在它上面会让任务记录里出现假的阶段标记。
+        # 计费确认靠 billing=PAID + danger=DANGER（与 assets.rh_wf 同一套）。
+        argv=["assets", "--engine", "cloud"], billing=PAID, danger=DANGER,
+        flags={"--kind": "kind", "--only": "only", "--pack": "pack", "--comfy-url": "comfy_url"},
+        bools={"--submit": "submit", "--force": "force"},
+        params=[Param("kind", "类型", "enum", default="all", choices=["all", "char", "scene", "prop"]),
+                Param("only", "只做这些", "str", placeholder="P01@LOOK-A,P02"),
+                Param("pack", "制作包目录", "str", placeholder="留空用 <工作区>/pack"),
+                Param("comfy_url", "云端 ComfyUI 地址", "str",
+                      placeholder="https://<实例>-8188.container.x-gpu.com（留空取模型确认单）"),
+                Param("submit", "真的出图（★计费）", "bool", default=False),
+                Param("force", "已生成的也重跑（★重复计费）", "bool", default=False),
+                Param("asset_md", "资产提示词 md（老通道，SOLODRAMA_ASSET_MD）", "str")],
+        resources=["GPU"],
+        env={"SOLODRAMA_ASSET_MD": "asset_md"},
+        help="同一套出图客户端，只是地址指向云端实例。计费按**主机时长**（默认 ￥1.59/时），"
+             "不是按张 —— 所以干跑先看清单，别在空中排队。地址留空时取模型确认单。",
+        agent="执行前报出：目标地址、将出几张、预计主机时长与费用；地址是本机时要拦住（那是假云端）。"))
 _add(_c("assets.rh_wf", "2 资产", "云端工作流出图（★计费，非默认）", "gen_rh_wf",
         billing=PAID, danger=DANGER,
         flags={"--md": "md", "--only": "only", "--ratio": "ratio",
@@ -475,7 +512,8 @@ _add(_c("video.local", "4 出片", "本地出视频（H3，￥0，默认干跑�
                 Param("submit", "真的出片（占 GPU，不花钱）", "bool", default=False)],
         resources=["GPU"],
         help="走本机 ComfyUI 的 H3 图生视频工作流（stages/video/comfyui/workflow_h3_local.json）。"
-             "默认干跑；本机需 ComfyUI 在 8188 运行。先跑「本地视频体检」确认节点与模型齐全。",
+             "默认干跑；地址取连接中心（默认 127.0.0.1:8188）。"
+             "正式出片请用「真跑出片」（含预检与断点续跑），本命令是单镜调试通道。",
         agent="先干跑给我看时长/帧数/槽位；确认后加 --submit。出片前先体检。"))
 _add(_c("video.local.check", "4 出片", "本地视频体检", "comfy_video",
         argv=["--check"], mode="sync", danger=READ, billing=GPU,
@@ -484,7 +522,7 @@ _add(_c("video.local.check", "4 出片", "本地视频体检", "comfy_video",
                 Param("map", "节点映射 JSON", "str")],
         resources=["GPU"],
         help="逐项核对：ComfyUI 在线 + 工作流里每个节点类可用 + 每个模型文件存在。不占 GPU 出片。",
-        agent="缺什么直接说缺哪个文件/节点；ComfyUI 没开就提示启动 8188。"))
+        agent="缺什么直接说缺哪个文件/节点，并给出替代工作流；连不上就说清探测的实际地址。"))
 _add(_c("video.workflow.nodes", "4 出片", "列出工作流节点（换工作流时用）", "comfy_video",
         argv=["--list-nodes"], mode="sync", danger=READ,
         flags={"--workflow": "workflow"},
@@ -509,12 +547,16 @@ _add(_c("video.plan", "4 出片", "出片计划与耗时预估（不提交任务
         agent="报出「这一集预计多久 / 瓶颈在哪个阶段」，并说明哪些系数还没实测校准。"))
 _add(_c("video.run", "4 出片", "真跑出片（本机 GPU，￥0）", "drama",
         argv=["video", "run", "--engine", "local"], billing=GPU, danger=DANGER,
-        flags={"--limit": "limit", "--only": "only", "--ep": "ep"},
+        # `--workflow`：默认工作流缺件时的**替代方案**入口。没有它，界面上只能被预检拦住，
+        # 而命令行早就支持（2026-11-05 实测：h3_local 能跑，却在界面里无路可走）。
+        flags={"--limit": "limit", "--only": "only", "--ep": "ep", "--workflow": "workflow"},
         bools={"--yes": "yes", "--force": "force"},
         params=[Param("ep", "集号", "str", required=True, placeholder="ep01"),
                 Param("yes", "确认执行（会占 GPU）", "bool", default=False),
                 Param("limit", "只跑前 N 段（小样）", "int"),
                 Param("only", "指定段", "str"),
+                Param("workflow", "工作流 JSON", "str",
+                      placeholder="留空取确认单；缺件时可填 workflow_h3_local.json"),
                 Param("force", "已有产物也重跑", "bool", default=False)],
         resources=["GPU"],
         help="￥0，占本机 GPU。已有产物的镜自动跳过；缺口的镜再跑同一条命令即可补，不用改提示词。",
@@ -524,6 +566,28 @@ _add(_c("video.status", "4 出片", "批次进度", "drama",
         params=[Param("batch", "批次号（留空取最新）", "str")],
         help="读 summary.json / state.json。",
         agent="汇总：总数 / 成功 / 失败 / 待跑 / 消耗 / 用时，并列出失败段 id。"))
+_add(_c("video.cloud", "4 出片", "云端 ComfyUI 出片（★按主机时长）", "drama",
+        argv=["video", "run", "--engine", "cloud"], billing=PAID, danger=DANGER, gate="G5",
+        flags={"--limit": "limit", "--only": "only", "--ep": "ep",
+               "--comfy-url": "comfy_url", "--cloud-lifecycle": "cloud_lifecycle",
+               "--cloud-name": "cloud_name", "--workflow": "workflow"},
+        bools={"--yes": "yes", "--force": "force"},
+        params=[Param("ep", "集号", "str", required=True, placeholder="ep01"),
+                Param("yes", "确认执行（会开机并计费）", "bool", default=False),
+                Param("limit", "只跑前 N 段（小样）", "int"),
+                Param("only", "指定段", "str"),
+                Param("comfy_url", "实例地址", "str",
+                      placeholder="https://<实例>-8188.container.x-gpu.com（留空由启停流程给）"),
+                Param("cloud_lifecycle", "实例启停", "enum", default="auto",
+                      choices=["auto", "keep", "off"],
+                      help="auto=要跑才开、跑完就关；keep=跑完保留（继续计费）；off=只用给定地址"),
+                Param("cloud_name", "实例名（幂等键）", "str", placeholder="留空自动命名"),
+                Param("workflow", "工作流 JSON", "str", placeholder="留空取模型确认单 -> 仓库默认"),
+                Param("force", "已有产物也重跑", "bool", default=False)],
+        resources=["GPU"],
+        help="与本地出片**同一个执行器**，只是地址在云端。默认 auto：复用/开机/新建 -> 出片 -> "
+             "停机，只停自己开的。干跑不建实例，门禁在建实例之前。",
+        agent="执行前报出：实例名、集号、将跑几段、按 ￥1.59/时 的预计费用；结束后提醒查成本台账。"))
 _add(_c("video.rh", "4 出片", "云端出片（RunningHub，★计费）", "drama",
         argv=["video", "run", "--engine", "workflow"], billing=PAID, danger=DANGER, gate="G5",
         flags={"--limit": "limit", "--only": "only", "--resume": "resume",
@@ -536,7 +600,7 @@ _add(_c("video.rh", "4 出片", "云端出片（RunningHub，★计费）", "dra
                 Param("concurrency", "并发（平台硬限 ≤5）", "int", default=2)],
         resources=["RH"],
         help="★ 不加 --resume 的全量重跑 = 重复提交、重复扣费。默认通道是本机 GPU（video.run，￥0）。",
-        agent="执行前必须报出：批次号、将提交段数、预估花费、是否续跑。等我明确确认后再执行。"))
+        agent="执行前必须报出：批次号、将提交段数、按台账实测的参考花费、是否续跑。等我明确确认后再执行。"))
 _add(_c("video.rh.sample", "4 出片", "云端小样 1 段（★计费）", "drama",
         argv=["video", "run", "--engine", "workflow", "--limit", "1"],
         billing=PAID, danger=DANGER, gate="G4",
@@ -552,7 +616,7 @@ _add(_c("video.rh.resume", "4 出片", "云端续跑批次（★计费）", "dra
                 Param("only", "只补这些段", "str"),
                 Param("yes", "确认计费", "bool", default=False)],
         resources=["RH"], help="复用 taskId，不重复提交已成功的段。",
-        agent="续跑前先查该批次的在途任务；告我这次补哪些段、预估花费。"))
+        agent="续跑前先查该批次的在途任务；告我这次补哪些段、参考花费（按台账实测，不是预估）。"))
 # ===== 环节 7 剪辑：母版拼接 → 高清放大 → 字幕 ==========================
 # ★ 2026-11-01：分组名从「11 拼接字幕」改为「7 剪辑」，并删掉 `media.assemble`
 #   —— 它的 help 写「拼接 + 2K 放大」，argv 却是 `subtitle.py --stage upscale`（受开关
@@ -659,9 +723,14 @@ _add(_c("compliance.all", "7 发行", "整剧合规预检（受限集数 + AIGC�
         agent="算出余量（ceil(0.1×总集数) − 已受限），并提示 AIGC 标注口径。"))
 
 # ===== 诊断 ===============================================================
+_add(_c("preflight.gen", "9 诊断", "生成能力预检（图像 + 视频，免费）", "drama",
+        argv=["preflight", "--only", "gen"], mode="sync", danger=READ, billing=FREE,
+        help="按模型确认单逐条核：守卫放行 / 服务在线 / 版本 / 节点类 / 模型文件 / 必需输入。"
+             "本地与云端用的是同一份判据（gen_preflight -> cloud.health），不另算一套。",
+        agent="按「通道 · 状态 · 缺什么 · 下一步」四列报告；缺模型时把「本机就能跑的替代工作流」一并给出。"))
 _add(_c("diag.preflight", "9 诊断", "一次性体检（免费）", "drama",
         argv=["preflight"], mode="sync", danger=READ,
-        help="Key 分级 + 引擎 doctor + check + 预演。",
+        help="生成通道 + Key 分级 + 引擎 doctor + check + 预演（六段，可用 --only 只跑某段）。",
         agent="按「环境 / 密钥 / 通道 / 数据」四类汇总问题清单，并给出可照抄的修法。"))
 _add(_c("diag.rhdoctor", "9 诊断", "RunningHub 双 Key 体检", "rhdoctor",
         argv=["--json"], mode="sync", danger=READ, billing=FREE,
@@ -673,8 +742,8 @@ _add(_c("diag.rhdoctor", "9 诊断", "RunningHub 双 Key 体检", "rhdoctor",
         agent="按「哪一类可用 / 不可用 + 原因 + 改法」三列报告。"))
 _add(_c("diag.comfy", "9 诊断", "本地 ComfyUI 在线体检", "comfy_check",
         argv=["--check"], mode="sync", danger=READ,
-        help="零网络依赖，检查 127.0.0.1:8188。",
-        agent="不在线就告我启动方法。"))
+        help="按「连接中心」里配的地址探 /system_stats（不再写死 8188 —— 改过端口或上云后就对不上）。",
+        agent="不在线就告我启动方法，并把实际探测的地址打出来。"))
 _add(_c("diag.guide", "9 诊断", "打印速查（drama.py guide）", "drama",
         argv=["guide"], mode="sync", danger=READ, help="命令速查全文。",
         agent="把速查整理成「常用五条命令」。"))

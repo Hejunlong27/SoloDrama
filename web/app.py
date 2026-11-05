@@ -1470,7 +1470,9 @@ def api_create_generate(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="不支持的用途：%s" % purpose)
 
     extra = {k: payload.get(k) for k in
-             ("idea", "episodes", "seconds", "episodes_range", "script_ep") if payload.get(k)}
+             ("idea", "episodes", "seconds", "episodes_range", "script_ep",
+              "shots_per_batch") if payload.get(k)}
+    append = bool(payload.get("append"))
     try:
         variables = creation.vars_for(ws, purpose, extra)
     except ValueError as exc:
@@ -1491,12 +1493,24 @@ def api_create_generate(payload: dict = Body(...)):
                                    % (res.get("finish_reason") or "未知"))
     try:
         saved = creation.write(ws, stage or _stage_of(purpose), text,
-                               name=str(payload.get("name") or ""))
+                               name=str(payload.get("name") or ""), append=append)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    return {"ok": True, "saved": saved, "usage": res.get("usage"),
-            "provider": res.get("provider_name") or res.get("provider"),
-            "chars": len(text), "detail": saved.get("detail")}
+    out = {"ok": True, "saved": saved, "usage": res.get("usage"),
+           "provider": res.get("provider_name") or res.get("provider"),
+           "chars": len(text), "detail": saved.get("detail"),
+           "finish_reason": res.get("finish_reason") or "",
+           # 批次进度：界面据此显示「继续写第 3 批」而不是「重新生成」
+           "batch": saved.get("batch") or 0,
+           "batch_total": saved.get("batch_total") or 0,
+           "append": bool(saved.get("append"))}
+    if res.get("truncated"):
+        # ★ 截断不能静默：产物看起来是完整的 md，直到下游导入才报「某镜缺提示词」。
+        #   这里明确告诉用户「这一批没写完，接着让它写下一批」，而不是让人以为写完了。
+        out["warning"] = ("这一批输出被长度上限截断（finish_reason=length）。"
+                          "内容末尾可能缺几镜：再点一次生成让它继续写下一批，"
+                          "或把「每批镜数」调小（8 镜 ≈ 8k tokens 已到模型上限）。")
+    return out
 
 
 def _stage_of(purpose: str) -> str:

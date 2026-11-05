@@ -33,7 +33,7 @@ import re
 import time
 from pathlib import Path
 
-from . import adapters, canvas, creation, paths, studio
+from . import adapters, canvas, creation, generators as GEN, paths, studio
 
 _EP_RE = re.compile(r"^(?:ep)?[_-]?(\d{1,3})$")
 _CACHE: dict = {}
@@ -345,6 +345,25 @@ def _norm_ep(raw: str) -> str:
     return ("ep%02d" % int(m.group(1))) if m else "ep01"
 
 
+# 哪些节点会因为「项目确认了云端」而换成另一条命令
+_CLOUD_SWAP = {
+    "asset.render": ("image", "assets.cloud"),
+    "video.batch": ("video", "video.cloud"),
+}
+
+
+def _cmd_for(ws: str, nid: str) -> str:
+    """节点上「运行」按钮该跑哪条命令 —— 按模型确认单选，与流水线/命令层同一条口径。
+
+    ★ 写死本地命令的后果：云端项目里点「资产出图」会被门禁拦（expected_engine=local），
+      而用户看到的是「按钮没反应」。
+    """
+    swap = _CLOUD_SWAP.get(nid)
+    if swap and GEN.plan_choice(ws, swap[0]) == "cloud_comfyui":
+        return swap[1]
+    return _CMD_BY_ID.get(nid, "")
+
+
 def _build(ws: str, ep: str) -> dict:
     ep = _norm_ep(ep)
     wf = adapters.norm_workflow(adapters.workflow_status(ws))
@@ -433,7 +452,7 @@ def _build(ws: str, ep: str) -> dict:
                      else "产物已齐；引擎判据未过（缺 _done 标记或上游顺序不同）"),
             "detail": n.get("detail") or "",
             "progress": p,
-            "cmd": _CMD_BY_ID.get(nid, ""),
+            "cmd": _cmd_for(ws, nid),
             "create_stage": "",
             "ep": bool(n.get("ep")),
             "locked": False,
