@@ -25,6 +25,7 @@ Skill 的约定是 `片名/01-企划案.md`、`02-资产库.md`…… 而引擎�
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -94,22 +95,33 @@ def state(ws) -> dict:
         item = {"id": s["id"], "label": s["label"], "desc": s["desc"],
                 "needs": s["needs"], "multi": bool(s.get("multi"))}
         if s.get("multi"):
-            files = sorted(p.glob("*.md")) if p.is_dir() else []
+            # ⚠ 必须排除 `.bak_时间戳.md`：它和正式文件同后缀，glob 会把它当成「第二集/第二批」，
+            #   于是状态字数翻倍、批次读成最大号、prior 里塞两份内容（2026-11-05 实测撞到）。
+            files = sorted(f for f in p.glob("*.md") if ".bak_" not in f.name) if p.is_dir() else []
+            texts = [(f, f.read_text(encoding="utf-8", errors="replace")) for f in files]
             item.update({"state": "done" if files else "empty",
                          "files": [{"name": f.name, "rel": _rel(ws, f),
-                                    "chars": len(f.read_text(encoding="utf-8", errors="replace")),
-                                    "mtime": f.stat().st_mtime} for f in files],
+                                    "chars": len(t),
+                                    "batch": batch_of(t)[0], "batch_total": batch_of(t)[1],
+                                    "mtime": f.stat().st_mtime} for f, t in texts],
                          "path": _rel(ws, p)})
             item["chars"] = sum(x["chars"] for x in item["files"])
+            # 这一环节的批次进度（多集时取最靠后的那个文件）
+            if texts:
+                item["batch"], item["batch_total"] = max((batch_of(t) for _f, t in texts),
+                                                         key=lambda x: (x[0], x[1]))
         else:
             ok = p.is_file() and p.stat().st_size > 0
             # ★ 字数要按**字符**数，不是字节数。中文一个字 3 字节，
             #   用 st_size 会把 440 字显示成「952 字」—— 用户会以为生成了两倍内容，
             #   而真相只是编码差异。这种错不影响功能，但会让人对整页数字失去信任。
-            n = len(p.read_text(encoding="utf-8", errors="replace")) if ok else 0
+            cur_text = p.read_text(encoding="utf-8", errors="replace") if ok else ""
+            n = len(cur_text)
             item.update({"state": "done" if ok else "empty",
                          "path": _rel(ws, p),
                          "chars": n,
+                         "batch": batch_of(cur_text)[0],
+                         "batch_total": batch_of(cur_text)[1],
                          "mtime": p.stat().st_mtime if ok else 0})
         stages.append(item)
 
@@ -173,7 +185,7 @@ def read(ws, stage: str) -> dict:
     if s.get("multi"):
         items = []
         if p.is_dir():
-            for f in sorted(p.glob("*.md")):
+            for f in sorted(x for x in p.glob("*.md") if ".bak_" not in x.name):
                 items.append({"name": f.name,
                               "text": f.read_text(encoding="utf-8", errors="replace")})
         return {"ok": True, "stage": stage, "items": items,
@@ -182,8 +194,12 @@ def read(ws, stage: str) -> dict:
     return {"ok": True, "stage": stage, "text": text, "path": str(p)}
 
 
-def write(ws, stage: str, text: str, *, name: str = "", backup: bool = True) -> dict:
+def write(ws, stage: str, text: str, *, name: str = "", backup: bool = True,
+          append: bool = False) -> dict:
     """把产物写进 `00-创作/`。**不覆盖已有的不同内容而不留备份**。
+
+    `append=True`：接在已有正文后面（分批模板的「继续写下一批」）。
+    覆盖与追加的差别不是风格问题：分批模板每批只写 4–5 镜，覆盖就等于每批只剩最后一批。
 
     为什么留备份：这些是模型写的、人要改的文本。一次「重新生成」把改了三小时的东西
     冲掉，是这类工具最容易造成的不可逆损失。
@@ -209,18 +225,25 @@ def write(ws, stage: str, text: str, *, name: str = "", backup: bool = True) -> 
         p = d / s["file"]
 
     bak = ""
-    if backup and p.is_file() and p.stat().st_size > 0:
-        old = p.read_text(encoding="utf-8", errors="replace")
-        if old.strip() != text:
-            b = p.with_name("%s.bak_%d%s" % (p.stem, int(time.time()), p.suffix))
-            b.write_text(old, encoding="utf-8", newline="")
-            bak = str(b)
-    p.write_text(text, encoding="utf-8", newline="")
+    old = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    if backup and old.strip() and old.strip() != text:
+        b = p.with_name("%s.bak_%d%s" % (p.stem, int(time.time()), p.suffix))
+        b.write_text(old, encoding="utf-8", newline="")
+        bak = str(b)
+    if append and old.strip():
+        # 分隔线让人一眼看出「这是第几批」，也让后续解析能按批切开
+        p.write_text(old.rstrip() + "\n\n---\n\n" + text, encoding="utf-8", newline="")
+    else:
+        p.write_text(text, encoding="utf-8", newline="")
     rel = _rel(ws, p)
+    cur, total = batch_of(p.read_text(encoding="utf-8", errors="replace"))
     return {"ok": True, "stage": stage, "path": str(p), "rel": rel,
-            "chars": len(text), "backup": bak,
-            "detail": "已写入 %s（%d 字）%s"
-                      % (rel, len(text), "；旧版备份为 %s" % Path(bak).name if bak else "")}
+            "chars": len(text), "backup": bak, "append": bool(append),
+            "batch": cur, "batch_total": total,
+            "detail": "%s %s（%d 字）%s%s"
+                      % ("已追加到" if (append and old.strip()) else "已写入", rel, len(text),
+                         "；第 %d/%d 批" % (cur, total) if cur else "",
+                         "；旧版备份为 %s" % Path(bak).name if bak else "")}
 
 
 def save_idea(ws, payload: dict) -> dict:
@@ -270,6 +293,51 @@ def _idea_fallback(brief: dict) -> str:
     return "；".join(x for x in bits if x)
 
 
+BATCH_RE = re.compile(r"第\s*(\d+)\s*批(?:\s*[／/]\s*共\s*(\d+)\s*批)?")
+SHOT_HEAD_RE = re.compile(r"^###\s*镜\s*(\d+)\s*$", re.M)
+EP_HEAD_RE = re.compile(r"^##\s*第\s*(\d+)\s*集", re.M)
+
+
+def batch_of(text: str) -> tuple:
+    """从产物正文里读出「第N批／共M批」。→ (N, M)；没有就 (0, 0)。"""
+    hits = BATCH_RE.findall(text or "")
+    if not hits:
+        return 0, 0
+    cur = max(int(a) for a, _b in hits)
+    total = max((int(b) for _a, b in hits if b), default=0)
+    return cur, total
+
+
+def next_segment(text: str, stage: str) -> dict:
+    """下一批该从哪开始写。
+
+    ★ 为什么必须算而不是交给模型：模型看不到「上一批写到镜 5」这种状态，
+      你不告诉它，它就从镜 1 重写一遍 —— 表现是「点了继续，前三镜变成重复内容」。
+    """
+    cur, total = batch_of(text)
+    out = {"has_text": bool((text or "").strip()), "batch": cur, "total": total,
+           "batch_no": cur + 1 if cur else 1, "shot_from": 1, "ep_from": 1}
+    if stage == "director":
+        shots = [int(x) for x in SHOT_HEAD_RE.findall(text or "")]
+        out["shot_from"] = (max(shots) + 1) if shots else 1
+    if stage == "script":
+        eps = [int(x) for x in EP_HEAD_RE.findall(text or "")]
+        out["ep_from"] = (max(eps) + 1) if eps else 1
+    return out
+
+
+def _tail_excerpt(text: str, head: int = 1200, tail: int = 8000) -> str:
+    """续写用摘录：**开头（结构）+ 结尾（写到哪）**。
+
+    只留开头会丢掉「上一批写到第几镜/第几集」；只留结尾会丢掉模板规定的章节结构。
+    """
+    t = text or ""
+    if len(t) <= head + tail:
+        return t
+    return (t[:head] + "\n\n…（中间省略 %d 字）…\n\n" % (len(t) - head - tail)
+            + t[-tail:])
+
+
 def _excerpt(text: str, limit: int = 12000) -> str:
     """截断过长的上下文。留着开头比截中间好 —— 章节结构都在开头。"""
     t = text or ""
@@ -300,6 +368,18 @@ def vars_for(ws, purpose: str, extra: dict | None = None) -> dict:
     plan_text = read(ws, "plan")["text"]
 
     v = {"skill_prompt": _excerpt(skill_prompt, 20000), "style_lock": style}
+    # —— 续写上下文（分批模板必需）——
+    # 只给「已有正文」而**算出下一批从哪开始**，模型才不会从第 1 批重写。
+    stage_of = {"create.plan": "plan", "create.assets": "assets",
+                "create.script": "script", "create.director": "director"}[purpose]
+    cur_text = read(ws, stage_of)["text"]
+    seg = next_segment(cur_text, stage_of)
+    v["prior"] = _tail_excerpt(cur_text) if seg["has_text"] else ""
+    v["batch_no"] = seg["batch_no"]
+    v["batch_total"] = seg["total"]
+    v["shot_from"] = seg["shot_from"]
+    v["ep_from"] = seg["ep_from"]
+
     if purpose == "create.plan":
         if not idea:
             raise ValueError("还没写灵感：先在上面填一句话（一句话就够，不要写大纲）")
@@ -320,7 +400,9 @@ def vars_for(ws, purpose: str, extra: dict | None = None) -> dict:
         if not assets_text.strip():
             raise ValueError("还没有资产库：导演手册要引用资产代号（P01/S01/D01）")
         v.update({"assets": _excerpt(assets_text),
-                  "script_ep": _excerpt(str(extra.get("script_ep") or ""), 12000)})
+                  "script_ep": _excerpt(str(extra.get("script_ep") or ""), 12000),
+                  # 本集要拆几镜：一次 4–5 镜，超出模型输出上限会被截断
+                  "shots_per_batch": int(extra.get("shots_per_batch") or 5)})
         if not str(extra.get("script_ep") or "").strip():
             raise ValueError("还没指定要拆哪一集的剧本：把那一集的剧本贴进来，或先在「分集剧本」里生成")
     return v

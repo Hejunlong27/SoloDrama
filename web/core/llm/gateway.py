@@ -336,6 +336,12 @@ class Gateway:
                       "total_tokens": usage.get("total_tokens")},
             "cost": cost,
             "simulated": simulated,
+            # ★ 2026-11-05：把 finish_reason 透出去。此前它被吃掉，于是「输出被截断」
+            #   和「正常结束」在调用方看来一模一样 —— 产物看起来完整，直到下游校验
+            #   （pack_import）才报「最后一镜缺 video_prompt」。截断必须当场可见。
+            "finish_reason": str((res.extra or {}).get("finish_reason") or ""),
+            "truncated": str((res.extra or {}).get("finish_reason") or "") in
+                         ("length", "max_tokens"),
         }
 
         # 结构化解析 + Schema 校验

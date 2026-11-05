@@ -71,7 +71,8 @@ TEMPLATE_MAP = {
         "format": "markdown",
         "schema_id": "",
         "output": "text",
-        "vars": ("skill_prompt", "plan", "style_lock"),
+        "vars": ("skill_prompt", "plan", "style_lock",
+                 "prior", "batch_no"),
     },
     "skill-script": {
         "file": "skill_script.md",
@@ -80,7 +81,8 @@ TEMPLATE_MAP = {
         "format": "markdown",
         "schema_id": "",
         "output": "text",
-        "vars": ("skill_prompt", "plan", "episodes_range", "style_lock"),
+        "vars": ("skill_prompt", "plan", "episodes_range", "style_lock",
+                 "prior", "batch_no", "ep_from"),
     },
     "skill-director": {
         "file": "skill_director.md",
@@ -89,7 +91,8 @@ TEMPLATE_MAP = {
         "format": "markdown",
         "schema_id": "",
         "output": "text",
-        "vars": ("skill_prompt", "assets", "script_ep", "style_lock"),
+        "vars": ("skill_prompt", "assets", "script_ep", "style_lock",
+                 "prior", "batch_no", "shot_from", "shots_per_batch"),
     },
 }
 
@@ -199,6 +202,10 @@ def field_hint(path: str) -> str:
 # ---------------------------------------------------------------------------
 # 渲染
 # ---------------------------------------------------------------------------
+# 允许为空的输入：`prior` 在第一批时就是空的（没有上一批），不能算缺变量。
+OPTIONAL_VARS = {"style_hint", "prior"}
+
+
 def render_parts(tid: str, variables: dict):
     """渲染成 (system, user) 两段。
 
@@ -215,7 +222,7 @@ def render_parts(tid: str, variables: dict):
     vars_ = variables or {}
     # `style_hint` 是可选的：有的 Skill 已经把风格写在提示词里，不必再给
     missing = [v for v in t["vars"]
-               if v != "style_hint" and (v not in vars_ or vars_[v] in (None, ""))]
+               if v not in OPTIONAL_VARS and (v not in vars_ or vars_[v] in (None, ""))]
     if missing:
         from .errors import LLMError
         raise LLMError("config", "模板 %s 缺少输入变量：%s" % (tid, "、".join(missing)))

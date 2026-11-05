@@ -20,6 +20,9 @@ const PIPE = [
 ];
 
 // 每个产物用哪个用途生成、缺什么就不能点
+/* 哪些产物是「模板分批、需要续写」的：这三个必须支持追加，否则每次生成只留最后一批。 */
+const BATCHED = { assets: true, script: true, director: true };
+
 const GEN = {
   plan: { purpose: 'create.plan', needs: ['skill'], hint: '一句话灵感 + 已装载模板 + 画风' },
   assets: { purpose: 'create.assets', needs: ['skill', 'plan'], hint: '需要先有企划案' },
@@ -74,6 +77,12 @@ function stageCard(s, ctx, st) {
     + '<div class="row" style="gap:6px;flex-wrap:wrap">'
     + '<button class="btn primary sm" data-gen="' + s.id + '"' + (can ? '' : ' disabled title="' + esc(g.hint || '') + '"') + '>'
     + (ok ? '重新生成' : '生成') + '</button>'
+    + (ok && BATCHED[s.id]
+      ? '<button class="btn quiet sm" data-gen-cont="' + s.id + '">'
+        + '继续写' + (s.batch_total
+          ? '第' + Math.min((s.batch || 0) + 1, s.batch_total) + '/' + s.batch_total + '批'
+          : '下一批') + '</button>'
+      : '')
     + (ok ? '<button class="btn quiet sm" data-edit="' + s.id + '">查看 / 修改</button>' : '')
     + (!can ? '<span class="tiny dim">' + esc(g.hint || '') + '</span>' : '')
     + '</div></div>';
@@ -238,9 +247,9 @@ export async function render(ctx) {
       if (sb) sb.onclick = saveIdea;
 
       /* 生成：同步等模型（30–60 秒）。按钮进 loading，页面不锁 —— 期间还能看别的。 */
-      root.querySelectorAll('[data-gen]').forEach((b) => {
+      const bindGen = (sel, appendMode) => root.querySelectorAll(sel).forEach((b) => {
         b.onclick = async () => {
-          const stage = b.dataset.gen;
+          const stage = b.dataset.gen || b.dataset.genCont;
           const g = GEN[stage] || {};
           const old = b.innerHTML;
           b.disabled = true;
@@ -269,7 +278,11 @@ export async function render(ctx) {
             }
           }
           try {
-            const r = await api.createGenerate({ ws: ctx.ws, purpose: g.purpose, stage, ...extra });
+            // 续写：把 append 交给后端，让它接在已有正文后面（不覆盖前一批）
+            if (stage === 'director' && extra.script_ep) extra.shots_per_batch = 5;
+            const r = await api.createGenerate({
+              ws: ctx.ws, purpose: g.purpose, stage, append: appendMode, ...extra
+            });
             /* mock 产出的是一份**演练样例**，不是真内容。不说清的话，用户会拿着
                「演练片名」去问为什么片名是假的 —— 而真正原因是模型还没配。 */
             const prov = String(r.provider || '');
@@ -296,6 +309,8 @@ export async function render(ctx) {
           }
         };
       });
+      bindGen('[data-gen]', false);
+      bindGen('[data-gen-cont]', true);
 
       /* 查看 / 修改：人和模型共写同一个文件，所以要能改、改完能存。 */
       root.querySelectorAll('[data-edit]').forEach((b) => {

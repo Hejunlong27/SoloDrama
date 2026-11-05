@@ -170,6 +170,27 @@ def ep_index_of(name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+# variant 的「层」：模板产出的资产卡是多层的（三视图 / 造型 / 表情 / 状态），
+# 引擎以前只能存一层，于是信息被压扁。这里显式记录层别，出图时可按层决定顺序与用途。
+VARIANT_KINDS = ("base", "turnaround", "look", "expression", "state")
+
+
+def guess_variant_kind(code: str, label: str = "") -> str:
+    """按 code / label 推断层别。识别不出来就是 base。"""
+    c = str(code or "").upper()
+    lb = str(label or "")
+    if c.startswith("LOOK") or "造型" in lb or "服装" in lb:
+        return "look"
+    if ("VIEW" in c or "TURN" in c or c.startswith("三视图")
+            or "三视图" in lb or "turnaround" in lb.lower()):
+        return "turnaround"
+    if c.startswith("EXP") or "表情" in lb or "expression" in lb.lower():
+        return "expression"
+    if c.startswith("STATE") or "状态" in lb:
+        return "state"
+    return "base"
+
+
 def variant_key(asset_id: str, code: str = "") -> str:
     """资产 ID + 变体代号 → 参考图表里的 key。
 
@@ -296,9 +317,17 @@ def load_pack(pack_dir) -> tuple:
                 if not prompt:
                     rep.err("ASSET015", "%s：id=%s 的 %s 提示词为空（无法出图）" % (fname, aid, code))
                     continue
+                raw_kind = str(v.get("kind") or "").strip().lower()
+                label = str(v.get("label") or code)
+                vkind = raw_kind or guess_variant_kind(code, label)
+                if vkind not in VARIANT_KINDS:
+                    rep.warn("ASSET016", "%s：id=%s 的 %s kind=%r 不认识，按推断值 %r 处理"
+                             % (fname, aid, code, raw_kind, guess_variant_kind(code, label)))
+                    vkind = guess_variant_kind(code, label)
                 clean.append({
                     "code": code,
-                    "label": str(v.get("label") or code),
+                    "label": label,
+                    "kind": vkind,
                     "prompt": prompt,
                     "aspect": str(v.get("aspect") or pack["aspect"].get(kind) or "").strip(),
                     "episodes": [str(x).strip() for x in (v.get("episodes") or []) if str(x).strip()],
