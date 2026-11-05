@@ -2,27 +2,37 @@
   "_comment": "workflow_h3_minimax_canvas.json 的节点映射（由 workflow_ui2api.py 转换后人工确认）。改这里，不要改 comfy_local_video.py。",
   "_source_ui": "【Minimax+H3】无损融合单采【满血API画布级工作流】 (1).json",
   "_source_note": "界面格式 64 节点 → API 格式 30 节点；转换报告见 workflows_src/ui2api_report.md",
-
   "_substitute": {
-    "145": { "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors" },
-    "234": { "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors" },
-    "232": { "clip_name": "qwen3vl_32b_minimax_h3_int4_convrot.safetensors" }
+    "145": {
+      "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+    },
+    "234": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "232": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int4_convrot.safetensors"
+    }
   },
   "_substitute_note": "作者机器上的文件名本机没有，按功能等价替换为已下载的量化版（8step turbo LoRA 换 comfyui 版；video VAE 换 int8 convrot；qwen3vl-32b 换 int4 convrot）。UNET(127) 原本就是本机的 Cobijada 混合版，未动。换机器时先跑 --check 看缺哪几个。",
-
   "_length_node": "136",
   "_length_note": "帧数不走连线：136.length 要 INT，而 ComfyMathExpression(224) 输出 FLOAT，ComfyUI 提交前校验会以 return_type_mismatch 拒掉整张图（150.preview_frames 同理，所以它固定 48）。改为由 comfy_local_video.frames_for(seconds) 按 17n+5 算好、提交前写成字面量 —— 秒数照样生效，且不依赖连线类型。",
-
   "prompt": "238",
-  "images": ["199", "188", "189", "190", "191", "192"],
+  "images": [
+    "199",
+    "188",
+    "189",
+    "190",
+    "191",
+    "192"
+  ],
   "seconds": "227",
   "steps": "160",
   "seed": "129",
   "aspect": "228",
   "prefix": "148",
-
   "_images_note": "顺序 = 136 的 ref_images.ref_image_0..5 的连线顺序，即 199 → 188 → 189 → 190 → 191 → 192。第 7 槽（ref_image_6）未接，引擎会把多余槽位重复最后一张图。",
   "_steps_ineffective": true,
   "_steps_note": "本工作流的采样 sigmas 来自 147 ManualSigmas（固定 10 段手写值），BasicScheduler(160) 没有被 SamplerCustomAdvanced 引用 —— 改 steps 不改变实际步数。要改步数必须重写 147 的 sigmas 字符串。",
-  "_aspect_note": "228 ResolutionSelector 的两个输出槽直接喂 136 的 width/height（槽 0=宽、槽 1=高）。★ 2026-11-04 改为 9:16 / 0.4MP：原来是 16:9 / 1.1MP，竖屏短剧用横屏参数不仅画幅错，8G 卡 107 帧下还会 OOM（实测请求 6.83GiB）。0.4MP 约 480×864，先跑通链路，画质优先时再往上调。"
+  "_aspect_note": "228 ResolutionSelector 的两个输出槽直接喂 136 的 width/height（槽 0=宽、槽 1=高）。★ 2026-11-04 改为 9:16 / 0.4MP：原来是 16:9 / 1.1MP，竖屏短剧用横屏参数不仅画幅错，8G 卡 107 帧下还会 OOM（实测请求 6.83GiB）。0.4MP 约 480×864，先跑通链路，画质优先时再往上调。",
+  "_preview_node": "150"
 }

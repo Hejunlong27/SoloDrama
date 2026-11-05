@@ -23,6 +23,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import time
 import sys
 
 from .provisioner import Instance
@@ -50,6 +51,30 @@ def _target(inst: Instance, user: str = "", port: int = 0) -> str:
     return "%s@%s" % (user or "root", host)
 
 
+# ★ 2026-11-05（云端实测反馈）：仙宫云的 sshd 在**磁盘 IO 饱和**时握手会被重置
+#   （`kex_exchange_identification: Connection reset`），而此时端口是通的、进程也在 ——
+#   看起来像网络问题，实际是系统资源问题（网盘下载 66 GB、cat 合并 9 GB、GPU 满载都会触发）。
+#   另外连续几十次连接会触发**限流**，恢复窗口约 60 秒。
+#   所以：只对「连接类」错误重试，且退避要给足（3 → 15 → 60）。
+_SCP_BACKOFF = (3, 15, 60)
+_SCP_CONN_HINTS = ("connection reset", "connection refused", "connection timed out",
+                   "kex_exchange_identification", "broken pipe", "connection closed",
+                   "network is unreachable", "no route to host")
+
+
+def _scp_once(cmd: list, src: str, dst: str, timeout: float) -> dict:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired as exc:
+        raise TransportError("scp 超时（%.0fs）：%s → %s" % (timeout, src, dst)) from exc
+    out = ((p.stdout or "") + (p.stderr or "")).strip()
+    if p.returncode != 0:
+        raise TransportError("scp 失败（退出码 %d）：%s\n  %s"
+                             % (p.returncode, " ".join(cmd[0:1] + ["…"]), out[-500:]))
+    return {"ok": True, "src": src, "dst": dst, "bytes": _size_of(src)}
+
+
 def _scp(src: str, dst: str, *, port: int, key: str = "", recursive: bool = True,
          timeout: float = 1800) -> dict:
     cmd = [_bin("scp"), "-o", "StrictHostKeyChecking=accept-new",
@@ -61,16 +86,24 @@ def _scp(src: str, dst: str, *, port: int, key: str = "", recursive: bool = True
     if recursive:
         cmd += ["-r"]
     cmd += [src, dst]
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
-    except subprocess.TimeoutExpired as exc:
-        raise TransportError("scp 超时（%.0fs）：%s → %s" % (timeout, src, dst)) from exc
-    out = ((p.stdout or "") + (p.stderr or "")).strip()
-    if p.returncode != 0:
-        raise TransportError("scp 失败（退出码 %d）：%s\n  %s"
-                             % (p.returncode, " ".join(cmd[0:1] + ["…"]), out[-500:]))
-    return {"ok": True, "src": src, "dst": dst, "bytes": _size_of(src)}
+
+    last: Exception | None = None
+    for attempt, wait in enumerate((0,) + _SCP_BACKOFF):
+        if wait:
+            print("  [SSH] 连接被重置或限流，%.0f 秒后重试（第 %d 次）…" % (wait, attempt))
+            time.sleep(wait)
+        try:
+            return _scp_once(cmd, src, dst, timeout)
+        except TransportError as exc:
+            msg = str(exc).lower()
+            if not any(h in msg for h in _SCP_CONN_HINTS):
+                raise                                # 文件不存在之类：重试没有意义
+            last = exc
+    raise TransportError("scp 连续 %d 次连接失败（已按 3/15/60 秒退避）：%s\n"
+                         "  · 实例高 IO 时 sshd 会假死，等负载降下来再试\n"
+                         "  · 高频连接会被限流，间隔 60 秒以上才恢复\n"
+                         "  · 只跑 HTTP 通道可以不搬文件（跳过 push/pull）"
+                         % (len(_SCP_BACKOFF) + 1, last)) from last
 
 
 def _size_of(path: str) -> int:

@@ -52,6 +52,7 @@ import argparse
 import json
 import os
 import sys
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -226,14 +227,16 @@ def load_map(workflow_path: str, map_path: str = "") -> tuple:
         # 允许只写部分 role，其余落回内置
         base = _builtin_map()
         base.update({k: v for k, v in d.items() if k in MAP_KEYS})
-        # ★ 2026-11-04：`_rewire` 是「连线修补」段，不属于角色映射，单独透传。
-        #   为什么需要：从 ComfyUI 界面格式转来的工作流常带**静默断链** ——
-        #   画布上看着连着，实际 SetNode 的输入是空的，于是「秒数」根本没接到
-        #   `length`（帧数）上，改成 5 秒仍然出 10 秒。这类断链不报错、不改就永远发现不了。
-        if isinstance(d.get("_rewire"), dict):
-            base["_rewire"] = d["_rewire"]
-        if isinstance(d.get("_substitute"), dict):
-            base["_substitute"] = d["_substitute"]
+        # ★ 下划线开头的键**不是角色映射**，必须显式透传 —— 否则它们被上面那行过滤掉，
+        #   声明了也等于没写（本项 2026-11-05 实测抓到的静默失效：
+        #   canvas map 里写了 `_length_node: 136`，读回来却是 None，
+        #   于是「按秒数算帧数」从未生效，改 --seconds 出片长度不变）。
+        #   `_rewire`：连线修补（界面转 API 留下的静默断链）。
+        #   `_substitute`：模型名替换。
+        #   `_length_node` / `_preview_node`：接收帧数的节点（0.43.2 起必须是 INT 字面量）。
+        for key in ("_rewire", "_substitute", "_length_node", "_preview_node"):
+            if d.get(key) not in (None, "", {}):
+                base[key] = d[key]
         return base, "%s（%s）" % (path, why)
     env_used = any(os.environ.get(s["env"]) for s in MAP_ROLES.values())
     return _builtin_map(), ("环境变量 COMFYUI_VIDEO_NODE_*" if env_used else "脚本内置默认")
@@ -411,6 +414,26 @@ def map_check(workflow_path: str = "", map_path: str = "") -> int:
 # ---------------------------------------------------------------------------
 # 在线体检
 # ---------------------------------------------------------------------------
+def check_length_wiring(wf: dict, m: dict) -> list:
+    """体检：帧数还是「连线」且 map 没声明 `_length_node` → 云端会被 400 拒掉。
+
+    ★ 来源：4090 镜像实测。工作流里 `length` 常接一个 `ComfyMathExpression`
+      （秒数 × 24 吸附 17 的倍数），它输出 FLOAT，而 `length` 要 INT。
+      0.42.1 会隐式转，0.43.2 起直接 `return_type_mismatch` 拒绝整张图。
+      本机跑得好好的，上云就 400 —— 这类「换台机器就挂」的问题必须在体检阶段说出来。
+    """
+    if str(m.get("_length_node") or ""):
+        return []
+    for nid, node in (wf or {}).items():
+        ins = (node or {}).get("inputs") or {}
+        if isinstance(ins.get("length"), list):
+            return ["  [WARN] 节点 %s.length 仍是连线 %s，而 map 未声明 _length_node。"
+                    % (nid, ins["length"]),
+                    "         ComfyUI ≥0.43.2 会以 return_type_mismatch 拒绝整张图（本地 0.42.1 能跑）。",
+                    "         修法：在 <工作流>.map.json 里加 \"_length_node\": \"%s\"。" % nid]
+    return []
+
+
 def check(workflow_path: str = "", map_path: str = "") -> int:
     print("ComfyUI : %s" % COMFY)
     try:
@@ -430,6 +453,8 @@ def check(workflow_path: str = "", map_path: str = "") -> int:
     wf = apply_map_patches(json.loads(json.dumps(wf)), m)
     print("工作流  : %s（%d 节点）" % (workflow_path or DEFAULT_WORKFLOW, len(wf)))
     print("映射    : %s" % src)
+    for _line in check_length_wiring(wf, m):
+        print(_line)
 
     oi = http_json(COMFY + "/object_info", timeout=60)
     miss_cls = sorted({v.get("class_type") for v in wf.values()} - set(oi))
@@ -497,6 +522,88 @@ def frames_for(seconds: float) -> int:
     """H3 帧数约束：length = 17n + 5（与工作流里 ComfyMathExpression 的公式同源）。"""
     n = max(5, round(float(seconds) * 24))
     return n + (5 - (n % 17)) % 17
+
+
+ASPECT_TXT_RE = re.compile(r"(\d+)\s*[:：]\s*(\d+)")
+
+
+def _image_size(path: str):
+    """读图片宽高。**纯标准库**：PNG 读 IHDR，JPEG 扫 SOF 段。读不到返回 None。
+
+    为什么不用 Pillow：这个脚本的卖点之一是零第三方依赖（云端只装了 ComfyUI 的环境
+    也能跑）。为了一个告警去绑一个图像库不值。
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w = int.from_bytes(head[16:20], "big")
+                h = int.from_bytes(head[20:24], "big")
+                return (w, h) if w and h else None
+            if head[:2] != b"\xff\xd8":          # 不是 PNG 也不是 JPEG
+                return None
+            fh.seek(2)
+            while True:
+                b = fh.read(1)
+                if not b:
+                    return None
+                if b != b"\xff":
+                    continue
+                m = fh.read(1)
+                while m == b"\xff":               # 段头允许填充 0xFF
+                    m = fh.read(1)
+                if not m:
+                    return None
+                code = m[0]
+                if code in (0xD8, 0xD9) or 0xD0 <= code <= 0xD7 or code == 0x01:
+                    continue
+                ln = int.from_bytes(fh.read(2), "big")
+                if ln < 2:
+                    return None
+                if code in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                            0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    buf = fh.read(5)
+                    if len(buf) < 5:
+                        return None
+                    h = int.from_bytes(buf[1:3], "big")
+                    w = int.from_bytes(buf[3:5], "big")
+                    return (w, h) if w and h else None
+                fh.seek(ln - 2, 1)
+    except OSError:
+        return None
+
+
+def check_ref_ratio(refs, aspect_text: str, tol: float = 0.05) -> list:
+    """参考图比例 vs 输出画幅，偏差 > tol 就告警。返回要打印的行（**不阻断**）。
+
+    ★ 2026-11-05（云端实测反馈）：`ref_image_size='match'` 只保证**参考图自身**不变形，
+      不保证它与目标画幅匹配。实测 3:4 参考 → 9:16 输出，纵向拉伸 22%（脸型明显变长）；
+      16:9 参考 → 9:16 输出更糟（横向压缩 44%）。
+      这种变形不是镜头畸变，事后无法靠调色或裁切修正 —— 只能重出资产。
+
+    为什么只告警不阻断：有人确实会拿方图道具做特写（1:1 → 9:16 是可接受的构图选择）。
+    阻断会把合理用法也堵死；但沉默会让人把「脸被拉长」当成模型能力问题。
+    """
+    m = ASPECT_TXT_RE.search(str(aspect_text or ""))
+    if not m or not refs:
+        return []
+    aw, ah = int(m.group(1)), int(m.group(2))
+    if not aw or not ah:
+        return []
+    target = aw / ah
+    out = []
+    for f in refs:
+        size = _image_size(str(f))
+        if not size:
+            continue
+        w, h = size
+        r = w / h
+        dev = abs(r - target) / target
+        if dev > tol:
+            out.append("  [WARN] 参考图 %s 比例 %.3f ≠ 画幅 %d:%d（%.3f），偏差 %.0f%% "
+                       "→ 画面会被拉伸；建议参考图与出片同比例重出"
+                       % (os.path.basename(str(f)), r, aw, ah, target, dev * 100))
+    return out
 
 
 def _roles(m: dict, role: str) -> list:
@@ -568,6 +675,13 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
         ins = wf[lid].setdefault("inputs", {})
         if "length" in ins:
             ins["length"] = frames_for(seconds)
+    # 预览帧数必须与成片同步：不同步时人会按「预览看着像 5 秒」去判断，
+    # 实际出片却是另一个长度（云端 0.43.2 上 preview_frames 收 FLOAT 同样会 400）。
+    pv = str(m.get("_preview_node") or "")
+    if pv and pv in wf and seconds is not None:
+        pins = wf[pv].setdefault("inputs", {})
+        if "preview_frames" in pins:
+            pins["preview_frames"] = frames_for(seconds)
 
     ids = _roles(m, "steps")
     # `steps is None` = 沿用工作流原值。批处理里没有「步数」这个概念，
@@ -775,7 +889,9 @@ def main() -> int:
         print("[FAIL] 缺 --out（产物目录）")
         return 2
 
-    seed = a.seed if a.seed >= 0 else int(time.time()) % 2_000_000_000
+    # 毫秒取模：`int(time.time())` 是秒级，同一秒内连开两个进程会拿到同一个种子，
+    # 而 ComfyUI 对相同 prompt+seed 会直接复用缓存（2 秒「成功」，画面是上一次的）。
+    seed = a.seed if a.seed >= 0 else int(time.time() * 1000) % 2_000_000_000
     wf = load_workflow(a.workflow)
     m, src = load_map(a.workflow, a.map)
 
@@ -838,6 +954,10 @@ def main() -> int:
         names.append(upload_image(p))
     if names:
         print("参考图已上传: %s" % "、".join(names))
+
+    # 参考图比例 vs 目标画幅（告警，不阻断 —— 理由见 check_ref_ratio）
+    for _line in check_ref_ratio(a.ref, a.aspect or ""):
+        print(_line)
 
     # ★ 按实际参考图数量关掉多余槽位：6 槽工作流这次只有 2 张图时，
     #   不裁就等于让另外 4 个槽继续拿上次的文件跑（串景 + 白占显存）。

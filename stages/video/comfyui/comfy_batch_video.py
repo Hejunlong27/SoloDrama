@@ -118,8 +118,13 @@ def _aspect_map() -> dict:
         return _ASPECT_CACHE
     opts = []
     try:
-        oi = V.Q.get_json("/object_info/ResolutionSelector", timeout=20, retries=1)
-        node = (oi or {}).get("ResolutionSelector") or {}
+        oi = V.Q.get_json("/object_info/ResolutionSelector", timeout=20, retries=1) or {}
+        # ★ 云端实测反馈：`/object_info/<不存在的名字>` 在部分版本上返回 **HTTP 200**
+        #   （body 是全量列表或空对象），凭状态码判断一定假阳性。
+        #   所以这里不假设「拿到 200 就有这个 key」—— 没有就退回全量接口再取一次。
+        if "ResolutionSelector" not in oi:
+            oi = V.http_json(V.COMFY + "/object_info", timeout=60) or {}
+        node = oi.get("ResolutionSelector") or {}
         spec = ((node.get("input") or {}).get("required") or {}).get("aspect_ratio") or []
         if len(spec) >= 2 and isinstance(spec[1], dict):
             opts = list(spec[1].get("options") or [])
@@ -348,11 +353,18 @@ def main(argv=None) -> int:
 
     results = []
     t_all = time.time()
+    # ★ 2026-11-05（云端实测反馈）：ComfyUI 对**完全相同的 prompt + seed** 会直接复用上次
+    #   的节点输出，2 秒「完成」且不报错。批量里两镜提示词恰好相同、seed 又撞上时，
+    #   第二镜会静默拿到第一镜的画面。所以 seed 按「批次基底 + 镜序」派生：
+    #   同批内必然唯一，重跑也能看出是哪一镜（写进批次记录）。
+    base_seed = int(time.time() * 1000) % 1_000_000_000
     for i, p in enumerate(todo, 1):
         sid = p["sid"]
         print("\n[%d/%d] %s ｜ %.0fs ｜ 参考图 %d 张"
               % (i, len(todo), sid, p["seconds"] or 0, len(p["refs"])))
-        row = {"shot": sid, "status": "FAILED", "file": "", "error": "", "wall_s": 0}
+        shot_seed = base_seed + i
+        row = {"shot": sid, "status": "FAILED", "file": "", "error": "", "wall_s": 0,
+               "seed": shot_seed}
         t0 = time.time()
         try:
             # 上传参考图（ComfyUI 需要先落到它的 input 目录）
@@ -360,7 +372,7 @@ def main(argv=None) -> int:
             wf2 = V.apply_nodes(json.loads(json.dumps(wf)), m,
                                 prompt=p["prompt"], ref_names=names,
                                 seconds=p["seconds"], steps=None,
-                                seed=int(time.time()) % 2_000_000_000,
+                                seed=shot_seed,
                                 aspect=(a.aspect or p.get("aspect") or ""), mp=a.mp, prefix="h3_%s" % sid)
             res = V.submit_and_wait(wf2, timeout_min=a.timeout_min)
             files = res.get("files") or []
