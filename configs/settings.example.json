@@ -43,9 +43,10 @@
       "aspect": "13",
       "latent": "7"
     },
+    "_aspect_desc": "资产卡画幅。★ 人物/场景必须与出片画幅一致，否则参考图会被拉伸（见 pack_spec.DEFAULT_ASPECT）。以制作包里的 aspect 为准，这里只是兜底。",
     "aspect_default": {
-      "char": "16:9 (Widescreen)",
-      "scene": "16:9 (Widescreen)",
+      "char": "9:16 (Portrait Widescreen)",
+      "scene": "9:16 (Portrait Widescreen)",
       "prop": "1:1 (Square)"
     },
     "timeout": {
