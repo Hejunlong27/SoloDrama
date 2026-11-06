@@ -85,12 +85,12 @@ NUM_EN = {1: "exactly one person", 2: "exactly two people", 3: "exactly three pe
           4: "exactly four people", 5: "exactly five people"}
 
 BOARD_TMPL = """\
-【任务】一张**竖版 9:16 电影静帧**，用作这一镜的构图参考。它是摄影画面，不是分镜表、不是线稿。
+【任务】一张**{orient_cn} {ratio} 电影静帧**，用作这一镜的构图参考。它是摄影画面，不是分镜表、不是线稿。
 【构图】{board}
 【人数】{people_line}
 【人物】{cast_line}
 【风格】{style_line}
-【画面】single frame, vertical 9:16, cinematic still photograph, natural perspective, \
+【画面】single frame, {orient_en} {ratio}, cinematic still photograph, natural perspective, \
 believable depth of field, photographic material truth, real skin texture, \
 credible fabric wrinkles, no illustration look.
 【光线】{light_line}
@@ -172,13 +172,17 @@ def _codes(refs, known=()) -> list:
                 break
         if hit is None and s.upper() in known_set:
             hit = s.upper()
+        # 没有 character-bible 时（known 为空），裸代号 P01 也要能认成角色 ——
+        # 否则人数会算成 0 再兜底成 1，两个人物的镜头会被写成「exactly one person」。
+        if hit is None and re.fullmatch(r"P\d{2}", s, flags=re.I):
+            hit = s.upper()
         if hit:
             out.append(hit)
     return out
 
 
 def build_prompt(shot_id: str, spec: dict, bible: dict, style_line: str,
-                 h3_prompt: str = "") -> tuple:
+                 h3_prompt: str = "", ratio: str = "") -> tuple:
     """boards.json 的一条 → (完整提示词, 人数, 出场代号列表)。
 
     人数 = `refs` 里 char_* 的**实际个数**。这是硬约束：写死 1 人而画面两人，
@@ -188,6 +192,15 @@ def build_prompt(shot_id: str, spec: dict, bible: dict, style_line: str,
     codes = _codes(refs, [c.get("code") for c in (bible.get("characters") or [])])
     n = len(codes) or 1
     people = NUM_EN.get(n, "exactly %d people" % n)
+
+    # 画幅：分镜图是构图稿，必须跟交付画幅一致（2026-11-06：横屏项目曾被写死成 9:16）
+    _ratio = (str(ratio or "").strip() or str(spec.get("ratio") or "").strip() or "9:16")
+    _portrait = True
+    try:
+        _w, _h = [float(x) for x in _ratio.split(":")[:2]]
+        _portrait = _w <= _h
+    except (ValueError, IndexError):
+        pass
 
     # 人物外观：从 character-bible 取「服装 + 主色 + 发型」一句话。
     # 不写长相细节 —— 分镜图不承担身份，写多了反而把角色卡挤掉。
@@ -223,6 +236,9 @@ def build_prompt(shot_id: str, spec: dict, bible: dict, style_line: str,
         cast_line=cast_line,
         style_line=style_line or "cinematic live-action photography",
         light_line=light_line,
+        ratio=_ratio or "9:16",
+        orient_cn=("横版" if _portrait is False else "竖版"),
+        orient_en=("horizontal" if _portrait is False else "vertical"),
     )
     return txt, n, codes
 
@@ -314,7 +330,8 @@ def main() -> int:
         if sid in missing:
             continue
         txt, n, codes = build_prompt(sid, spec, bible, style_line,
-                                     str((h3.get(sid) or {}).get("prompt") or ""))
+                                     str((h3.get(sid) or {}).get("prompt") or ""),
+                                     ratio=str(spec.get("ratio") or ""))
         plan.append((sid, txt, n, codes, spec))
 
     if not a.apply or a.dry_run:

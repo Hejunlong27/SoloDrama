@@ -111,6 +111,16 @@ def _():
     return "4 种写法归一"
 
 
+@reg("A", "A05 没有 character-bible 时，裸代号 P01 也算角色（否则双人镜写死 1 人）")
+def _():
+    # 2026-11-06 实测：横屏项目没建 04-资产/design/character-bible.json，
+    # known 为空 → 裸代号不算角色 → 人数算成 0 兜底成 1 → 双人镜写成 exactly one person。
+    txt, n, codes = G.build_prompt("s", spec(["P01", "P02", "S01"]), {}, "")
+    assert n == 2, "裸代号应算出 2 个人，实际 %d（codes=%s）" % (n, codes)
+    assert "exactly two people" in txt, txt[:300]
+    assert codes == ["P01", "P02"], codes
+
+
 # =========================================================================== B 禁令
 @reg("B", "B01 模板里没有写死人数的句式（历史事故的直接防线）")
 def _():
@@ -176,15 +186,22 @@ def _():
     return "透传 / 兜底"
 
 
-@reg("C", "C05 ratio 原样带出（9:16 与 16:9 都要能表达）")
+@reg("C", "C05 画幅跟 spec.ratio 走：竖屏写 vertical、横屏写 horizontal")
 def _():
-    for r in ("9:16", "16:9", "3:4"):
+    # 2026-11-06：模板里曾写死 `vertical 9:16`，横屏项目（16:9）的分镜图仍是竖构图，
+    # 出片时构图被裁 —— 而且不报错。现在画幅由 ratio 参数/ spec 决定，两个方向都要能表达。
+    for r, cn, en in (("9:16", "竖版", "vertical"), ("16:9", "横版", "horizontal"),
+                      ("3:4", "竖版", "vertical")):
         s = spec(["char_ava"])
         s["ratio"] = r
         txt, _, _ = G.build_prompt("s", s, BIBLE, "")
-        # 模板里写死 vertical 9:16，ratio 由调用方在 CLI 层决定 —— 这里只要求不崩
-        A_("single frame" in txt, "ratio=%s 时结构不完整" % r)
-    return "3 种 ratio 均可装配"
+        assert "%s %s" % (cn, r) in txt, "ratio=%s 时任务行没写成「%s %s」：%s" % (r, cn, r, txt[:120])
+        assert "single frame, %s %s" % (en, r) in txt, "ratio=%s 时英文画幅串不对" % r
+        assert "single frame" in txt, "ratio=%s 时结构不完整" % r
+    # 显式参数优先于 spec
+    txt, _, _ = G.build_prompt("s", spec(["char_ava"]), BIBLE, "", ratio="16:9")
+    assert "横版 16:9" in txt, "显式 ratio 应覆盖 spec：%s" % txt[:120]
+    return "3 种 ratio + 参数覆盖"
 
 
 # =========================================================================== D 契约
