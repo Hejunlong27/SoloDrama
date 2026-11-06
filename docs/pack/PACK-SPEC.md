@@ -209,7 +209,7 @@
         { "asset": "D01" }
       ],
       "board_prompt": "办公室。何暖在画左站着，手拿合同，面朝画右……",
-      "video_prompt": "资产图锚定：\n角色 何暖（LOOK-A） 的参考图是 {{Mixed 1}}……",
+      "video_prompt": "subject_definitions://n<Picture 1> 是本镜分镜图……\n<Subject 1> 是 <Picture 2> 中的何暖……\n\nsummary://n[reference generation] ……",
       "dialogue": [
         { "asset": "P01", "text": "一年，互不干涉。", "start": 0.4, "end": 2.2 }
       ],
@@ -234,7 +234,7 @@
 | `cast[].asset` | 是 | 必须在资产 JSON 里存在，否则导入失败 |
 | `cast[].variant` | 否 | 缺省取该资产的第一个变体 |
 | `shots[].board_prompt` | 是 | 分镜图提示词；空则跳过该镜分镜图并在 `ingest` 报缺 |
-| `shots[].video_prompt` | 是 | 视频提示词，引擎逐字提交。**台词必须写成 `<d>[语种] 原句。</d>`**（见 §5.3） |
+| `shots[].video_prompt` | 是 | 视频提示词，引擎逐字提交。**必须是 H3 多参六段式**（见 §5.3），台词写成 `<d>[语种] 原句。</d>` |
 | `shots[].dialogue` | 否 | 台词；只用于字幕对齐，不参与出片 |
 | `shots[].shots_within` | 否 | 段内切点数，仅展示 |
 
@@ -242,13 +242,17 @@
 
 平台侧参考图槽位是固定的（H3 六槽）。`cast` 的数组顺序直接决定：
 
-- `<Picture 1>` = `cast[0]`
-- `<Picture 2>` = `cast[1]`
+- `<Picture 1>` = 分镜图（本镜有分镜图时；它固定占 1 号）
+- `<Picture 2>` = `cast[0]`
+- `<Picture 3>` = `cast[1]`
 - …
 
-所以 `video_prompt` 里的 `{{Mixed n}}` 必须与 `cast` 顺序**逐位对应**。导入器会做一次
-机械校验：`video_prompt` 里出现的最大 `Mixed n` 不得大于 `len(cast)`，否则报错。
+所以 `video_prompt` 里的 `<Picture n>` 必须与 `cast` 顺序**逐位对应**。导入器会做一次
+机械校验：`video_prompt` 里出现的最大图号不得大于 `len(cast) + 1`，否则报错。
 如需重排，改 `cast` 顺序，引擎会同步重排提示词里的图号（见 §8）。
+
+> 老包里的 `{{Mixed n}}` / `{{Picture n}}` 仍被接受并同样校验；`md2pack` 会把它们
+> 机械归一成 `<Picture n>`（H3 只认后者）。新包不要再写 `{{…}}`。
 
 ### 5.2 台词块是可选的，但字幕依赖它
 
@@ -260,7 +264,27 @@
 
 没有 `dialogue` 也能出片，字幕走纯 ASR 通道。
 
-### 5.3 台词在提示词里必须带 `<d>` 标记
+### 5.3 视频提示词：H3 多参六段式 + `<d>` 标记
+
+`video_prompt` **必须**是 H3 多参（Ref2VA）六段式，顺序固定：
+
+```
+subject_definitions → summary → retention_analysis
+→ detailed_description → overall_soundscape → non_diegetic_music
+```
+
+它不是文风偏好，而是「哪张参考图是谁」的唯一声明。缺 `subject_definitions` /
+`retention_analysis` 时，上传的参考图对模型只是「几张没署名的图」，人物与场景会漂 ——
+出片能出，但每条都要重跑。判据见 `stages/import/h3_prompt.py`，完整契约与样例见
+[`H3-REF2VA-PROMPT.md`](H3-REF2VA-PROMPT.md)。
+
+| 判据 | 行为 |
+|---|---|
+| 六段缺失 / 顺序错 / 残留 `{{Mixed n}}` / 出现 `<Video n>` | `SHOT019` **阻断** |
+| `<Subject n>` 缺失或编号不连续、图号空号或越界、`retention_analysis` 缺行或标记词自造 | `SHOT020` **阻断** |
+| 正文过短、缺 `[Shot 1]`、缺时间戳、缺 `(Sx)`、配乐留空 | `SHOT021` 告警 |
+
+#### 5.3.1 台词必须带 `<d>` 标记
 
 `video_prompt` 里的对话**一律**写成 `<d>[语种] 原句。</d>`（中文项目即 `<d>[Chinese] …</d>`）。
 裸写在引号里的目标语言文本会被 H3 当成「画面中应当出现的文字」，**直接烧成画面字幕**，
@@ -356,6 +380,8 @@ refs/D01.png
 - 缺必需字段
 - `shot.duration` 越界（<4 或 >15）
 - `cast.asset` 引用了不存在的资产
+- `video_prompt` 不是 H3 六段式（`SHOT019`）
+- 六段里的标签对不上：Subject 缺失/编号不连续、图号空号或越界、retention 缺行（`SHOT020`）
 - 资产 ID 前缀与 `kind` 不符
 - `style_lock` 为空
 - 同一资产内 `variant.code` 重复
@@ -365,20 +391,33 @@ refs/D01.png
 - `duration_total` 与逐镜求和相差 >2s
 - `episodes/` 文件数 ≠ `episode_count`
 - `cast` 中的资产在 `assets/*.json` 里没有 `prompt`（无法出图，出图阶段会缺）
-- `video_prompt` 的 `{{Mixed n}}` 超出 `len(cast)`
+- `video_prompt` 的图号超过 `len(cast) + 1`（`SHOT016`）
+- 六段写得不完整：正文过短、缺 `[Shot 1]`、缺时间戳、缺 `(Sx)`、配乐留空（`SHOT021`）
 - `video_prompt` 里有引号包住的中文台词却没包 `<d>` 标记（`SHOT018`，见 §5.3）
 - 某资产被多集引用，但 `variants[].episodes` 未覆盖该集
 - 分镜图提示词缺失
 
-### 8.3 图号重排（自动）
+### 8.3 图号：作者负责，导入只校验形状
 
-`video_prompt` 里的 `{{Picture n}}` / `{{Mixed n}}` 会按 `cast` 顺序机械重排：
+> 2026-11-06 更正：本节此前写「导入器会按 cast 顺序机械重排图号」——**没有这个实现**。
+> 文档说有、代码没有，比写错更危险：人会以为写错了也会被自动修好。
 
-- `board_ref` 固定占 `1` 号（即分镜图永远是第一张参考图）；
-- `cast` 里的资产从 `2` 号起依次排；
-- 原提示词中的图号一律按「在 `cast` 中的序号 + 1」重写。
+规则只有一条，由作者遵守：
 
-重排只改图号数字，不动其余文字。重排前后对照会写进导入报告。
+- `board_ref` 固定占 `1` 号（本镜有分镜图时）；
+- `cast` 里的资产从 `2` 号起，**按数组顺序**依次排。
+
+导入器**只校验形状**，不改内容：
+
+| 校验 | 判据 |
+|---|---|
+| 图号连续 | `<Picture n>` 必须从 1 起连续，不留空号（`SHOT020`） |
+| 不越界 | 最大图号 ≤ `len(cast) + 1`（`SHOT016` / `SHOT020`） |
+| 不悬空 | 六段里出现的每个 `<Picture n>` 都要在 `subject_definitions` 里被解释（`SHOT020`） |
+
+**「第 2 张图到底是哪个资产」导入器无法判断** —— 它读不出中文描述里的语义。
+写错顺序不会被拦，只会表现为「模型把场景当成了人」。所以模板与提示层把
+「`<Picture n>` = 上传顺序」写成硬规则，转换时逐镜对位。
 
 ## 九、Skill 侧的产出责任
 
@@ -428,7 +467,7 @@ python stages/production/scripts/drama.py pack import \
 
 | 点 | 样例里的做法 | 错法 |
 |---|---|---|
-| 图号 | `video_prompt` 从 `{{Mixed 2}}` 起（分镜图占 1） | 从 `{{Mixed 1}}` 起 → 导入报图号越界 |
+| 图号 | 分镜图占 `<Picture 1>`，`cast[0]` 从 `<Picture 2>` 起 | `<Picture 1>` 写成人物 → 导入报图号错位（`SHOT020`） |
 | 时长 | 6 / 6 / 4，合计 16 与 `duration_total` 一致 | 把一条长镜拆成 3s + 3s 两个 shot → 3s 越界被拒 |
 | 风格 | `style_lock` 是完整一句（风格 + 色彩 + 光影） | 只写「美式复古」→ 出图风格漂 |
 

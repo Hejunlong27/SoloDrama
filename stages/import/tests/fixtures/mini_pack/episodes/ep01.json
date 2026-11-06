@@ -9,36 +9,60 @@
       "duration": 12,
       "ratio": "9:16",
       "cast": [
-        { "asset": "P01", "variant": "LOOK-A" },
-        { "asset": "P02", "variant": "LOOK-A" },
-        { "asset": "S01" },
-        { "asset": "D01" }
+        {
+          "asset": "P01",
+          "variant": "LOOK-A"
+        },
+        {
+          "asset": "P02",
+          "variant": "LOOK-A"
+        },
+        {
+          "asset": "S01"
+        },
+        {
+          "asset": "D01"
+        }
       ],
       "board_prompt": "办公室。何暖在画左站着，手拿合约，面朝画右；靳衍在画右坐在办公桌后，抬头看她。",
-      "video_prompt": "资产图锚定：\n角色 何暖（LOOK-A） 的参考图是 {{Mixed 2}}\n角色 靳衍（LOOK-A） 的参考图是 {{Mixed 3}}\n场景 S01 的参考图是 {{Mixed 4}}\n\n0-4秒：\n画面：中景。何暖把合约放到桌上。\n约束：口型对齐台词。",
+      "video_prompt": "subject_definitions:\n<Picture 1> 是本镜分镜图（首帧构图锚点）：会议室长桌两侧的中景，合约在桌面中央。\n<Subject 1> 是 <Picture 2> 中的何暖：二十七八岁，黑色低马尾，炭灰西装外套，白衬衫。\n<Subject 2> 是 <Picture 3> 中的靳衍：三十岁上下，深灰三件套，袖口露出银色腕表。\n<Subject 3> 是 <Picture 4> 中的会议室：玻璃幕墙、深色长桌、冷白顶灯。\n<Subject 4> 是 <Picture 5> 中的合约：A4 纸本，封面右下角有红色骑缝章。\n\nsummary:\n[reference generation] 目标视频呈现 <Subject 1> 把 <Subject 4> 推到 <Subject 2> 面前的单拍动作，参考图提供两人形象、<Subject 3> 的空间结构与合约外观。\n\nretention_analysis:\n<Subject 1>（出现于 [Shot 1]）：fully_preserved - 保留其低马尾、炭灰西装与白衬衫。\n<Subject 2>（出现于 [Shot 1]）：fully_preserved - 保留其深灰三件套与银色腕表。\n<Subject 3>（出现于 [Shot 1]）：fully_preserved - 保留玻璃幕墙、深色长桌与冷白顶灯。\n<Subject 4>（出现于 [Shot 1]）：fully_preserved - 保留 A4 纸本与红色骑缝章。\n<Picture 1>（[Shot 1] 首帧）：partially_preserved - 保留机位与桌面两侧的站位。\n\ndetailed_description:\n目标视频为冷调写实职场质感，玻璃反光与冷白顶灯，低饱和灰蓝。\n[Shot 1] 中景，<Subject 1> 把 <Subject 4> 沿桌面推到 <Subject 2> 面前，指尖在纸角停住；<Subject 2> 垂眼看向封面。镜头固定，带轻微手持呼吸感。\n<Subject 1>（S1）说：<d>[Chinese] 一年，互不干涉。</d>\n\noverall_soundscape:\n空调低鸣，纸张在桌面摩擦的沙沙声，椅脚轻响。\n\nnon_diegetic_music:\nN/A",
       "dialogue": [
-        { "asset": "P01", "text": "一年，互不干涉。", "start": 0.4, "end": 2.2 }
+        {
+          "asset": "P01",
+          "text": "一年，互不干涉。",
+          "start": 0.4,
+          "end": 2.2
+        }
       ]
     },
     {
       "id": "shot_002",
       "duration": 5,
       "cast": [
-        { "asset": "P01", "variant": "LOOK-B" },
-        { "asset": "S01" }
+        {
+          "asset": "P01",
+          "variant": "LOOK-B"
+        },
+        {
+          "asset": "S01"
+        }
       ],
       "board_prompt": "夜晚。何暖在画右坐在沙发上，低头看手机，窗外霓虹反射。",
-      "video_prompt": "画面：近景。何暖低头，手指停在屏幕上。\n约束：何暖闭口。"
+      "video_prompt": "subject_definitions:\n<Picture 1> 是本镜分镜图（首帧构图锚点）：近景，何暖低头看手机。\n<Subject 1> 是 <Picture 2> 中的何暖：二十七八岁，黑色低马尾，炭灰西装外套。\n<Subject 2> 是 <Picture 3> 中的会议室：玻璃幕墙与深色长桌的一角。\n\nsummary:\n[reference generation] 目标视频呈现 <Subject 1> 在 <Subject 2> 里低头看屏幕、手指停住的一拍。\n\nretention_analysis:\n<Subject 1>（出现于 [Shot 1]）：fully_preserved - 保留低马尾与炭灰西装。\n<Subject 2>（出现于 [Shot 1]）：fully_preserved - 保留幕墙反光与长桌边缘。\n<Picture 1>（[Shot 1] 首帧）：partially_preserved - 保留下压的近景机位。\n\ndetailed_description:\n冷调写实职场质感，冷白顶灯，低饱和灰蓝。\n[Shot 1] 近景，<Subject 1> 低头，拇指停在屏幕上没有再动；她闭口。\n\noverall_soundscape:\n空调低鸣，指腹擦过屏幕的轻响。\n\nnon_diegetic_music:\nN/A"
     },
     {
       "id": "shot_003",
       "duration": 4,
       "cast": [
-        { "asset": "S01" },
-        { "asset": "FX01" }
+        {
+          "asset": "S01"
+        },
+        {
+          "asset": "FX01"
+        }
       ],
       "board_prompt": "空镜。办公室落地窗，午后光穿过百叶。",
-      "video_prompt": "画面：空镜。光带缓慢移动。\n约束：无人物。"
+      "video_prompt": "subject_definitions:\n<Picture 1> 是本镜分镜图（首帧构图锚点）：空镜，会议室无人。\n<Subject 1> 是 <Picture 2> 中的会议室：玻璃幕墙、深色长桌、冷白顶灯。\n<Subject 2> 是 <Picture 3> 中的光带：一道斜切过桌面的暖色反光。\n\nsummary:\n[reference generation] 目标视频是 <Subject 1> 的空镜，<Subject 2> 缓慢移过桌面。\n\nretention_analysis:\n<Subject 1>（出现于 [Shot 1]）：fully_preserved - 保留幕墙、长桌与顶灯。\n<Subject 2>（出现于 [Shot 1]）：partially_preserved - 保留暖色反光的走向与色温。\n<Picture 1>（[Shot 1] 首帧）：fully_preserved - 保留空镜构图。\n\ndetailed_description:\n冷调写实职场质感，冷白顶灯与暖色反光对比。\n[Shot 1] 空镜，<Subject 2> 沿 <Subject 1> 的桌面缓慢移动，尘埃在光里浮动；无人入画。\n\noverall_soundscape:\n空调低鸣，远处城市底噪。\n\nnon_diegetic_music:\nN/A"
     }
   ]
 }

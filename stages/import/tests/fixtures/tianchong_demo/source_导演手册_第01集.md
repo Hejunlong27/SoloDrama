@@ -28,32 +28,35 @@
 风格：美式复古影视风格，胶片颗粒，年代色偏，自然窗光与钨丝灯，轻微褪色，9:16竖构图，无文字，无水印
 ```
 
-**B段：视频提示词**
 
 ```
-上传顺序：Mixed 1＝shot_001 分镜图｜Mixed 2＝P01 LOOK-A｜Mixed 3＝P02 LOOK-A｜Mixed 4＝S01 空景卡｜Mixed 5＝D01
+subject_definitions:
+<Picture 1> 是本镜分镜图（首帧构图锚点）：长桌两侧的中景，何暖居左、靳衍居右。
+<Subject 1> 是 <Picture 2> 中的何暖：二十五六岁，齐肩卷发，墨绿丝绒连衣裙。
+<Subject 2> 是 <Picture 3> 中的靳衍：三十出头，深棕格纹西装，领口松开一颗扣。
+<Subject 3> 是 <Picture 4> 中的办公室：深色胡桃木桌、墨绿丝绒窗帘、午后斜光。
+<Subject 4> 是 <Picture 5> 中的合约：米白纸本，封面一枚火漆印。
 
-资产图锚定：
-角色 何暖（LOOK-A） 的参考图是 {{Mixed 2}}
-角色 靳衍（LOOK-A） 的参考图是 {{Mixed 3}}
-场景 S01 的参考图是 {{Mixed 4}}
-道具 合约 的参考图是 {{Mixed 5}}
+summary:
+[reference generation] 目标视频呈现 <Subject 1> 把 <Subject 4> 推给 <Subject 2> 的一拍，以及 <Subject 2> 抬眼敲桌的回应，参考图提供两人形象、<Subject 3> 的空间与合约外观。
 
-0-3秒：
-画面：中景。何暖把合约放到桌上，说：“一年，互不干涉。”
-禁止：禁止两人换位，禁止合约文字可读，禁止跳轴。
-约束：何暖口型对齐台词；靳衍闭口，眼神有兴趣。
-站位与朝向：何暖居左，靳衍居右，两人相对。
-运镜：缓慢推近到两人之间。
-音效：纸张落桌声，轻音乐渐入。
+retention_analysis:
+<Subject 1>（出现于 [Shot 1]）：fully_preserved - 保留齐肩卷发与墨绿丝绒裙。
+<Subject 2>（出现于 [Shot 2]）：fully_preserved - 保留格纹西装与松开的领口。
+<Subject 3>（出现于 [Shot 1]、[Shot 2]）：fully_preserved - 保留胡桃木桌、丝绒窗帘与斜光方向。
+<Subject 4>（出现于 [Shot 1]）：fully_preserved - 保留米白纸本与火漆印。
+<Picture 1>（[Shot 1] 首帧）：partially_preserved - 保留机位与左右站位。
 
-3-6秒：
-画面：近景。靳衍抬眼，手指在桌面轻敲两下。
-约束：靳衍口型对齐台词“三个月。”
-运镜：固定。
-音效：指节敲桌声。
+detailed_description:
+美式复古影视质感，胶片颗粒，褪色绿与钨丝灯橙，午后窗光轻微过曝。
+[Shot 1] 中景，<Subject 1> 把 <Subject 4> 推到 <Subject 2> 面前，说：<d>[Chinese] 一年，互不干涉。</d>
+[Shot 2] At 00:03.000，镜头缓推到两人之间，<Subject 2> 抬眼，指尖在桌面轻敲两下，说：<d>[Chinese] 三个月。</d>
 
-[视觉风格：美式复古影视风格，胶片颗粒，年代色偏，褪色绿色与钨丝灯橙，自然窗光，轻微过曝，生活化真实抓拍感，9:16竖屏]
+overall_soundscape:
+纸张落桌声，指节敲桌的两声，室外远处车流。
+
+non_diegetic_music:
+N/A
 ```
 
 ## 第2镜 抬头
@@ -70,28 +73,31 @@
 风格：美式复古影视风格，胶片颗粒，年代色偏，自然窗光与钨丝灯，轻微褪色，9:16竖构图，无文字，无水印
 ```
 
-**B段：视频提示词**
 
 ```
-上传顺序：Mixed 1＝shot_002 分镜图｜Mixed 2＝P01 LOOK-A｜Mixed 3＝S01 空景卡
+subject_definitions:
+<Picture 1> 是本镜分镜图（首帧构图锚点）：中近景，何暖低头看合约。
+<Subject 1> 是 <Picture 2> 中的何暖：二十五六岁，齐肩卷发，墨绿丝绒连衣裙。
+<Subject 2> 是 <Picture 3> 中的办公室：胡桃木桌边缘与墨绿丝绒窗帘。
 
-资产图锚定：
-角色 何暖（LOOK-A） 的参考图是 {{Mixed 2}}
-场景 S01 的参考图是 {{Mixed 3}}
+summary:
+[reference generation] 目标视频呈现 <Subject 1> 在 <Subject 2> 前低头看合约、抬眼开口的两拍。
 
-0-3秒：
-画面：中近景。何暖低头看合约，睫毛轻颤。
-约束：何暖闭口。
-运镜：极缓推近。
-音效：纸张摩擦声。
+retention_analysis:
+<Subject 1>（出现于 [Shot 1]、[Shot 2]）：fully_preserved - 保留卷发、丝绒裙与面部。
+<Subject 2>（出现于 [Shot 1]、[Shot 2]）：fully_preserved - 保留桌沿与窗帘的材质与色温。
+<Picture 1>（[Shot 1] 首帧）：partially_preserved - 保留中近景机位。
 
-3-6秒：
-画面：中近景。何暖抬眼看向画右，嘴唇轻启。
-约束：何暖口型对齐台词“我签。”
-运镜：固定。
-音效：笔尖落纸。
+detailed_description:
+美式复古影视质感，胶片颗粒，褪色绿与钨丝灯橙，午后窗光轻微过曝。
+[Shot 1] 中近景，<Subject 1> 低头看合约，睫毛轻颤，没有说话；镜头极缓推近。
+[Shot 2] At 00:03.000，<Subject 1> 抬眼看向画右，嘴唇轻启，说：<d>[Chinese] 我签。</d>
 
-[视觉风格：美式复古影视风格，胶片颗粒，年代色偏，褪色绿色与钨丝灯橙，自然窗光，轻微过曝，生活化真实抓拍感，9:16竖屏]
+overall_soundscape:
+纸张摩擦声，笔尖落纸的一声轻响。
+
+non_diegetic_music:
+N/A
 ```
 
 ## 第3镜 落地窗空镜
@@ -108,19 +114,26 @@
 风格：美式复古影视风格，胶片颗粒，年代色偏，自然窗光与钨丝灯，轻微褪色，9:16竖构图，无文字，无水印
 ```
 
-**B段：视频提示词**
 
 ```
-上传顺序：Mixed 1＝shot_003 分镜图｜Mixed 2＝S01 空景卡
+subject_definitions:
+<Picture 1> 是本镜分镜图（首帧构图锚点）：空镜，办公室无人。
+<Subject 1> 是 <Picture 2> 中的办公室：胡桃木桌、墨绿丝绒窗帘、午后斜光。
 
-资产图锚定：
-场景 S01 的参考图是 {{Mixed 2}}
+summary:
+[reference generation] 目标视频是 <Subject 1> 的空镜，一道暖色反光缓慢移过桌面。
 
-0-4秒：
-画面：空镜。光带缓慢移动，尘埃在光里浮动。
-约束：无人物。
-运镜：固定。
-音效：远处城市底噪，空调低鸣。
+retention_analysis:
+<Subject 1>（出现于 [Shot 1]）：fully_preserved - 保留桌面、窗帘与斜光方向。
+<Picture 1>（[Shot 1] 首帧）：fully_preserved - 保留空镜构图。
 
-[视觉风格：美式复古影视风格，胶片颗粒，年代色偏，褪色绿色与钨丝灯橙，自然窗光，轻微过曝，生活化真实抓拍感，9:16竖屏]
+detailed_description:
+美式复古影视质感，胶片颗粒，褪色绿与钨丝灯橙。
+[Shot 1] 空镜，一道暖色反光穿过窗帘落上桌面并缓慢移动，尘埃在光里浮动；无人入画。
+
+overall_soundscape:
+远处城市底噪，空调低鸣。
+
+non_diegetic_music:
+N/A
 ```

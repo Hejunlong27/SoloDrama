@@ -345,10 +345,10 @@ def test_tianchong_demo_pack():
     assert pack["style_lock"].startswith("美式复古影视风格")
     assert set(assets) == {"character", "scene", "prop"}
     s1 = eps[1]["shots"][0]
-    # cast 顺序 = 参考图上传顺序 = video_prompt 里 Mixed 2..5 的顺序
+    # cast 顺序 = 参考图上传顺序 = video_prompt 里 <Picture 2..5> 的顺序
     assert [c["key"] for c in s1["cast"]] == ["P01@LOOK-A", "P02@LOOK-A", "S01", "D01"]
     assert s1["duration"] == 6
-    assert "{{Mixed 5}}" in s1["video_prompt"]
+    assert "<Picture 5>" in s1["video_prompt"], "第 5 张参考图必须被点名，否则它只是张没署名的图"
     assert s1["board_prompt"].startswith("参考：STYLE01")
     # 台词只保留能定位到本镜 cast 的条目
     assert [d["text"] for d in s1["dialogue"]] == ["一年，互不干涉。", "三个月。"]
@@ -370,10 +370,10 @@ def test_tianchong_demo_pack():
     assert pack["style_lock"].startswith("美式复古影视风格")
     assert set(assets) == {"character", "scene", "prop"}
     s1 = eps[1]["shots"][0]
-    # cast 顺序 = 参考图上传顺序 = video_prompt 里 Mixed 2..5 的顺序
+    # cast 顺序 = 参考图上传顺序 = video_prompt 里 <Picture 2..5> 的顺序
     assert [c["key"] for c in s1["cast"]] == ["P01@LOOK-A", "P02@LOOK-A", "S01", "D01"]
     assert s1["duration"] == 6
-    assert "{{Mixed 5}}" in s1["video_prompt"]
+    assert "<Picture 5>" in s1["video_prompt"], "第 5 张参考图必须被点名，否则它只是张没署名的图"
     assert s1["board_prompt"].startswith("参考：STYLE01")
     # 台词只保留能定位到本镜 cast 的条目
     assert [d["text"] for d in s1["dialogue"]] == ["一年，互不干涉。", "三个月。"]

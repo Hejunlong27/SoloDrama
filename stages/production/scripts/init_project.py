@@ -229,9 +229,11 @@ STORYBOARD_TMPL = """# EP01 分镜 · {title}
        它是构图锚（机位/光位/人物位置），不是身份锚。
        默认走本地文生图，￥0；人数由 refs 里的 char_* 自动算，不用你写「几个人」。
 
-  3. `prompt` 是 H3 提示词，六段式：
-       [REFS] / [SHOT] / [SUBJECT] / [ACTION] / [LIGHT]（+ [DIALOGUE]）
-       `<Picture n>` 的编号**由转换器机械重排**，你按 refs 顺序从 1 写就行。
+  3. `prompt` 是 H3 多参提示词，**六段式**（顺序固定）：
+       subject_definitions / summary / retention_analysis /
+       detailed_description / overall_soundscape / non_diegetic_music
+       `<Picture 1>` 固定是分镜图，`<Picture 2>` 起按 refs 顺序排。编号**不会**被自动重排 ——
+       写错只会表现为「模型把场景当成了人」。详见 docs/pack/H3-REF2VA-PROMPT.md。
 
   4. 已删字段（写了也没用，只会告警）：banana_prompt / crop / time。
 

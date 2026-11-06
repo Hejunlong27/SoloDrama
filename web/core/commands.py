@@ -22,6 +22,7 @@ SCRIPTS = {
     # ★ 2026-11-02（分支 feat/pack-engine）：创作层已移出仓库，唯一入口是制作包导入。
     "pack_import": paths.IMPORT_SCRIPTS / "pack_import.py",
     "md2pack": paths.IMPORT_SCRIPTS / "md2pack.py",
+    "h3_prompt": paths.IMPORT_SCRIPTS / "h3_prompt.py",
     "prompt_marks": paths.IMPORT_SCRIPTS / "prompt_marks.py",
     "preset_apply": paths.IMPORT_SCRIPTS / "preset_apply.py",
     "asset_md": paths.ASSETS_SCRIPTS / "asset_md.py",
@@ -364,6 +365,15 @@ _add(_c("prompt.fix", "1 导入", "老项目补台词标记（<d>，重写 h3_pr
              "默认干跑。改完要重跑受影响的镜 —— 已烧进成片的字幕无法去除。",
         agent="先干跑，告诉我多少镜会被改、还剩几条要人工判断（招牌/标语类不自动改）；"
               "确认后再写盘。写盘前必须说明「旧成片只能重跑」。"))
+_add(_c("prompt.check", "1 导入", "体检视频提示词是否合六段式（只读）", "h3_prompt",
+        argv=[], mode="sync", danger=READ,
+        flags={"--ep": "ep", "--file": "file"},
+        params=[Param("ep", "只查这些集", "str", placeholder="ep01,ep02（留空全扫）"),
+                Param("file", "直接指定文件（.md 或 .json）", "str", placeholder="留空扫 06-提示词/*/h3_prompts.json")],
+        help="按 H3 多参（Ref2VA）六段式判据逐镜体检：缺段、标签悬空、图号空号、时间戳越界、"
+             "台词缺 <d> 或说话人。只读，不改文件。结构项会让导入被 SHOT019/020 阻断。",
+        agent="先报「多少镜全绿 / 多少镜被阻断 / 多少镜只是告警」，再把阻断项按镜头列出来，"
+              "每条要说清缺哪一段、哪个标签对不上。不要替用户改提示词 —— 那是创作判断。"))
 _add(_c("pack.check", "1 导入", "校验制作包（只读，不写盘）", "pack_import",
         argv=[], mode="sync", danger=READ,
         flags={"--pack": "pack", "--ep": "ep"},

@@ -148,10 +148,25 @@ def test_free_failure_does_not_block_submit(fake, monkeypatch):
 # 门禁与分派（结构断言：命令面真的接上了）
 # ---------------------------------------------------------------------------
 def test_drama_accepts_cloud_engine():
-    """`drama video run --engine cloud` 必须被解析器接受，且分派到同一执行器。"""
+    """`drama video run --engine` 必须接受 cloud（与本机同一条执行分支）与 auto（按确认单）。
+
+    这里不比对整行字符串：加一个取值就断的断言守不住行为，只会让人去改断言。
+    解析 choices 元组，再断言「必须有的都在」。
+    """
+    import re
+
     src = (COMFY_DIR.parents[2] / "stages" / "production" / "scripts" / "drama.py").read_text(
         encoding="utf-8")
-    assert "choices=('local', 'cloud', 'workflow')" in src
+    # 注意：`assets` 与 `video run` 各有一个 --engine（前者是 local/cloud/wf/rh），
+    # 所以这里找**所有**声明，再挑出视频的那一个 —— 别取第一个就断言。
+    found = re.findall(r"add_argument\(\s*['\"]--engine['\"]\s*,\s*choices=\(([^)]*)\)", src)
+    assert found, "找不到 --engine 的 choices 声明"
+    sets = [{c.strip().strip("'\"") for c in g.split(",") if c.strip()} for g in found]
+    video = [s for s in sets if "workflow" in s]
+    assert video, "video run 的 --engine 必须接受 workflow（RunningHub 通道）：%s" % sets
+    choices = video[0]
+    assert {"local", "cloud"} <= choices, choices
+    assert "auto" in choices, "节点模板用 --engine auto 按模型确认单选通道（V0.7.71）"
     assert "in ('local', 'cloud')" in src, "cloud 应与 local 走同一条执行分支"
     assert "--comfy-url" in src
 

@@ -54,7 +54,7 @@ LAYOUT = {
 PROMPT_TPL = (
     "上传顺序：Mixed 1＝B01 分镜图｜Mixed 2＝P01 LOOK-A｜Mixed 3＝S01｜Mixed 4＝D01\n"
     "\n"
-    "资产图锚定：\n"
+    "subject_definitions://n"
     "角色 A 的参考图是 {{Mixed 2}}\n"
     "场景 S01 的参考图是 {{Mixed 3}}\n"
     "道具 D01 的参考图是 {{Mixed 4}}\n"

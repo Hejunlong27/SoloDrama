@@ -26,6 +26,7 @@ import json
 import re
 from pathlib import Path
 
+import h3_prompt as H3        # 六段式（Ref2VA）结构判据的唯一真源
 import prompt_marks as PM      # 台词标记判据的唯一真源（<d>[语种] …</d>）
 
 # ===========================================================================
@@ -496,10 +497,13 @@ def _norm_shots(shots: list, idx: int, assets: dict, pack: dict,
             rep.err("SHOT015", "%s（%s）缺 video_prompt（出片必需）" % (tag, sid))
             continue
 
-        # Mixed 图号越界检查：n 不超过 cast 数（分镜图占 1 号，故上限为 len(cast)+1）
-        nums = [int(x) for x in re.findall(r"\{\{\s*(?:Mixed|Picture)\s*(\d+)\s*\}\}", video)]
+        # 图号越界检查：n 不超过 cast 数（分镜图占 1 号，故上限为 len(cast)+1）。
+        # ★ 2026-11-06：两种写法都认 —— `<Picture n>`（现行六段式）与 `{{Mixed n}}`
+        #   （2026-11 之前的老包）。老包仍按原规则拦，不做静默转换。
+        nums = [int(a or b) for a, b in re.findall(
+            r"\{\{\s*(?:Mixed|Picture)\s*(\d+)\s*\}\}|<Picture\s+(\d+)\s*>", video)]
         if nums and max(nums) > len(cast) + 1:
-            rep.err("SHOT016", "%s（%s）video_prompt 里最大图号 {{Mixed %d}} 超过 cast 数 %d + 分镜图 1 张"
+            rep.err("SHOT016", "%s（%s）video_prompt 里最大图号 Picture %d 超过 cast 数 %d + 分镜图 1 张"
                     % (tag, sid, max(nums), len(cast)))
             continue
 
@@ -512,6 +516,17 @@ def _norm_shots(shots: list, idx: int, assets: dict, pack: dict,
             rep.warn("SHOT018",
                      "%s（%s）video_prompt 有 %d 处引号中文没包 <d> 标记，出片会烧成画面字幕：%s"
                      % (tag, sid, len(bare), " / ".join(bare[:3])))
+
+        # ★ 2026-11-06：**视频提示词必须是 H3 多参（Ref2VA）六段式**。
+        #   为什么是阻断而不是告警：六段结构决定「哪张参考图是谁」。缺了 subject_definitions，
+        #   上传的图对模型只是几张没署名的图，人物与场景会漂 —— 出片能出，但每条都要重跑，
+        #   那才是真的贵。判据只有一份（`h3_prompt.py`），这里只做 severity 映射。
+        h3_err, h3_warn = H3.lint(video, duration=float(dur), n_cast=len(cast))
+        for bucket, ident, msg in h3_err:
+            rep.err("SHOT019" if bucket == "struct" else "SHOT020",
+                    "%s（%s）%s（%s）" % (tag, sid, msg, ident))
+        for _bucket, ident, msg in h3_warn:
+            rep.warn("SHOT021", "%s（%s）%s（%s）" % (tag, sid, msg, ident))
 
         out.append({
             "id": sid,

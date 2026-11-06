@@ -44,6 +44,7 @@ for p in (HERE, HERE.parents[1] / "production" / "scripts"):
         sys.path.insert(0, str(p))
 
 import pack_spec as S  # noqa: E402
+import h3_prompt as H3       # 视频提示词六段式契约的唯一判据
 import prompt_marks as PM  # noqa: E402
 
 ID_RE = re.compile(r"\b(P\d{2}|S\d{2}|D\d{2}|FX\d{2})\b")
@@ -285,15 +286,28 @@ def parse_episode(md: str, ep: int, ratio: str, name2id: dict,
         if known is not None and not strict_cast:
             # 参考图引用了 pack 里没有的资产（典型：资产库只出了人物批）：
             # 留着会让导入直接阻断（SHOT010），丢掉只降低一致性 —— 后者能跑，前者不能。
-            # 但必须逐条记进报告，并把提示词里对应的 {{Mixed n}} 一起摘掉（见下）。
-            keep = []
-            for c in cast:
-                (keep if c["asset"] in known else dropped_cast).append(c)
-            if dropped_cast:
+            # 但必须逐条记进报告，并把提示词里对应的图号一起摘掉（见下）。
+            #
+            # ★ 2026-11-06：**六段式提示词不允许自动摘**。六段里 `<Picture n>` 与 cast 顺序
+            #   强绑定，摘一张就要重排全部 `<Picture n>` / `<Subject n>`、还要删掉引用它的
+            #   Subject 定义与 retention 行 —— 而 `detailed_description` 里可能正在用那个
+            #   `<Subject n>`。机械重排会静默改变语义，比导入失败更贵。所以这里保留，
+            #   交给门禁点名（SHOT010/SHOT020），人去看一眼。
+            missing_cast = [c for c in cast if c["asset"] not in known]
+            if missing_cast and H3.looks_structured(b.group(1)):
                 gaps.append({"shot": sid,
-                             "reason": "参考图缺资产，已从 cast 移除：%s"
-                                       % "、".join(c["asset"] for c in dropped_cast)})
-            cast = keep
+                             "reason": "参考图缺资产（%s），但六段式提示词不能自动摘 cast；"
+                                       "已保留，请补齐资产库或手改 B 段"
+                                       % "、".join(c["asset"] for c in missing_cast)})
+            else:
+                keep = []
+                for c in cast:
+                    (keep if c["asset"] in known else dropped_cast).append(c)
+                if dropped_cast:
+                    gaps.append({"shot": sid,
+                                 "reason": "参考图缺资产，已从 cast 移除：%s"
+                                           % "、".join(c["asset"] for c in dropped_cast)})
+                cast = keep
         if variants_of:
             # 镜头点名 LOOK-B，而资产库只给了三视图：不能直接阻断（SHOT011），
             # 回落到该资产**实际有的第一个变体**，并记进报告 —— 画面会少一层造型区分，
@@ -310,7 +324,10 @@ def parse_episode(md: str, ep: int, ratio: str, name2id: dict,
         dlg, dropped = _dialogue(body, name2id, cast)
         for d in dropped:
             gaps.append({"shot": sid, "reason": "台词未采用：%s（%s）" % (d["text"][:12], d["reason"])})
-        vp = b.group(1).strip()
+        # ★ H3 只认 `<Picture n>`：`{{Mixed n}}` 是本仓库的历史占位符，模型不认识，
+        #   会被当正文一起读进去（2026-11-06 实测：参考图在，人物不像，根因就是这句没绑定）。
+        #   归一化只换写法，不动正文；`上传顺序：…` 脚手架行一并删掉（它会被画进画面）。
+        vp = H3.normalize(b.group(1).strip())
         if dropped_cast:
             # 丢了参考图就必须把对应挂载点一起摘掉：留着既过不了 SHOT016，
             # 真出片时模型也在等一张没上传的图。allowed 按**实际 cast 数**算（分镜图不进 Mixed）。
@@ -324,6 +341,14 @@ def parse_episode(md: str, ep: int, ratio: str, name2id: dict,
             gaps.append({"shot": sid,
                          "reason": "台词已自动包 <d> 标记（%d 句），建议回源修正"
                                    % (n_board + n_vp)})
+        # ★ 六段式：转换层只报告、不补写。缺段时导入会被 SHOT019 阻断，
+        #   在这里先点名缺哪几段，省得用户从门禁错误码倒推。
+        _sec, _order, _dup = H3.split_sections(vp)
+        _missing = [k for k in H3.SECTIONS if k not in _sec]
+        if _missing:
+            gaps.append({"shot": sid,
+                         "reason": "B 段不是 H3 六段式（缺 %s），导入会被 SHOT019 阻断；"
+                                   "按 skill_director 的 B 段结构重写" % "、".join(_missing)})
         shots.append({
             "id": sid, "duration": int(round(dur)), "ratio": ratio,
             "cast": cast,

@@ -147,15 +147,33 @@ style_lock: 美式复古影视风格，胶片颗粒，年代色偏
 办公室。何暖在画左站着，手拿合同，面朝画右。表情：倔强。50mm，东侧略低，中景。落地窗午后暖光。9:16竖构图。
 ```
 ```video
-画面：中景。何暖把合同放到桌上，说：<d>[Chinese] 一年，互不干涉。</d>
-约束：表情、细节；台词只写成 <d>[Chinese] 原句。</d>，不加引号、不写「口型对齐」。
-运镜：缓慢推近。
-音效：纸张落桌声。
+subject_definitions:
+<Picture 1> 是本镜分镜图（首帧构图锚点）：办公室中景，何暖立于画左，面朝画右。
+<Subject 1> 是 <Picture 2> 中的何暖：二十八岁，齐肩短发，浅灰西装外套，手拿合同。
+<Subject 2> 是 <Picture 3> 中的办公室：落地窗、深色会议桌、午后斜光。
+
+summary:
+[reference generation] 目标视频呈现 <Subject 1> 在 <Subject 2> 里把合同放到桌上的一拍，参考图提供其形象与该办公室的空间结构。
+
+retention_analysis:
+<Subject 1>（出现于 [Shot 1]）：fully_preserved - 保留其短发、浅灰西装与手部动作。
+<Subject 2>（出现于 [Shot 1]）：fully_preserved - 保留落地窗、会议桌与斜光方向。
+<Picture 1>（[Shot 1] 首帧）：partially_preserved - 保留机位与站位。
+
+detailed_description:
+美式复古影视质感，胶片颗粒，年代色偏，褪色绿与钨丝灯橙，午后窗光轻微过曝。
+[Shot 1] 中景，<Subject 1> 把合同放到桌上，指尖在纸边停住。镜头缓慢推近。
+<Subject 1>（S1）说：<d>[Chinese] 一年，互不干涉。</d>
+
+overall_soundscape:
+纸张落桌声，室外远处车流。
+
+non_diegetic_music:
+N/A
 ```
 
-> **台词必须是 `<d>[Chinese] 原句。</d>`**。裸写在引号里的中文会被 H3 当成「画面中应出现的文字」
-> 直接烧成画面字幕，出片后无法去除（2026-11-06 实测，见 `PACK-SPEC.md` §5.3）。
-> 转换器会自动补标记并留痕，但正确做法是在这里就写对。
+> **两条硬约束**（见 `PACK-SPEC.md` §5.3）：B 段必须是 H3 多参六段式（缺段导入阻断），
+> 台词必须是 `<d>[Chinese] 原句。</d>`（裸写引号中文会被烧成画面字幕，事后无法去除）。
 ```
 
 ## 五、与「总裁甜宠」类 Skill 的差异
