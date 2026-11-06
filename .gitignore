@@ -71,6 +71,11 @@ web/**/jobs.db
 web/**/jobs.db-wal
 web/**/jobs.db-shm
 
+# ---- 安装产物：`launcher.py --init` 建的专用环境（2026-11-06 补） ----
+# ⚠ 之前没排除，装完 40MB+ 的 venv 会全部显示成待提交文件。venv 只属于当前这台机器/这个账户，
+#   换机器重建即可，绝不入库。
+envs/
+
 # ---- 系统/编辑器 ----
 Thumbs.db
 Desktop.ini

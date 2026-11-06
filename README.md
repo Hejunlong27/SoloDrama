@@ -11,6 +11,126 @@
 
 ---
 
+## 装起来
+
+**三种装法，看你在哪一边，选一条就行 —— 不用都做。**
+
+| 你是 | 机器 | 怎么做 | 耗时 |
+|---|---|---|---|
+| 内容创作者 | Windows + N 卡 | 装 Python → 双击 `start.cmd`，缺什么它会问你 | ~3 分钟 |
+| 开发者 | 任意 | `git clone` + 两条 `pip install` | ~2 分钟 |
+| 只想先看看界面 | 任意 | 同上。**不接 ComfyUI 也能开工作台** | ~2 分钟 |
+
+### 前置
+
+| 项 | 要求 | 说明 |
+|---|---|---|
+| Python | 3.10+（实测 3.13） | 安装时勾 **Add Python to PATH**，否则双击只会闪一下 |
+| 系统 | Windows 10/11 为主路径；macOS / Linux 可跑控制台与命令行 | 仓库里的 `.cmd` 只适用 Windows，其他平台用 `launcher.py` |
+| 显卡 | 有 N 卡（≥8G 显存更稳，实测 4060 8G）→ 全链路本机、￥0 | 没有也能用：创作/审片/导出照常，出图出片走云端或平台通道 |
+| ComfyUI | **不装也能启动** | 只在真正出图/出片时才需要：本机 8188，或云端地址 |
+| 目录 | 放在自己有写权限的地方 | 别放 `C:\Program Files`（要管理员）；路径带空格或中文没关系，脚本都加了引号 |
+
+### A. Windows 一键（给创作者）
+
+1. 装 Python 3.10+，勾上 *Add Python to PATH*。
+2. 把仓库放到任意目录（`git clone` 或下载 zip 解开都行）。
+3. 双击 `start.cmd`。
+
+首次启动若缺依赖，它会**列出两条路**，并问一句「要现在就自动创建环境并安装依赖吗？」——
+回车即可。它在仓库下建 `envs/solodrama-web/`（已 gitignore，不入库），装
+`fastapi / uvicorn / httpx`，约 1 分钟；失败会直接打印可复制的手工命令，不会停在空白窗口。
+
+只想装环境不想启动：`start.cmd --init`。装完建议补一条，把引擎要的 `Pillow` 也放进同一个环境：
+
+```bat
+envs\solodrama-web\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+不补也能开界面，只是字幕、放大、本机出图会报「引擎解释器缺 Pillow」。
+
+### B. 手动（给开发者 / 想控制装在哪）
+
+```bash
+git clone https://github.com/Hejunlong27/SoloDrama.git
+cd SoloDrama
+
+python -m venv envs/solodrama-web
+
+# Windows
+envs/solodrama-web/Scripts/python.exe -m pip install -r web/requirements-web.txt
+envs/solodrama-web/Scripts/python.exe -m pip install -r requirements.txt
+
+# macOS / Linux
+envs/solodrama-web/bin/python -m pip install -r web/requirements-web.txt
+envs/solodrama-web/bin/python -m pip install -r requirements.txt
+```
+
+两份依赖是**故意分开**的：`web/requirements-web.txt` 是控制台（fastapi / uvicorn），
+`requirements.txt` 是引擎（httpx / Pillow）。装进同一个 venv 最省事；分两个环境也能跑，
+启动器会自己挑一个装齐了的，并在控制台里告诉你挑了哪个。
+
+### 启动
+
+| 想要 | 命令 |
+|---|---|
+| 图形工作台（Windows） | 双击 `start.cmd` |
+| 只读演示（禁止写操作与计费） | 双击 `start-readonly.cmd` |
+| 任意平台 | `python web/launcher.py` |
+| 换端口 | `python web/launcher.py --port 9000` |
+| 不开浏览器 | `python web/launcher.py --no-browser` |
+| 给同网段同事看 | `python web/launcher.py --host 0.0.0.0`（仅可信内网） |
+| 只装环境不启动 | `python web/launcher.py --init` |
+
+默认 `127.0.0.1:8788`，端口被占会自动往后找（最多 12 个），不会报 address already in use。
+启动后：`/` 跳 `/studio/` 工作台，`/ui/` 是旧控制台（命令面板与审计）。
+要直接打开某一部剧：`http://127.0.0.1:8788/?ws=<剧目录>`（书签就用这个写法）。
+停止 = 关窗口或 `Ctrl+C`。
+服务器上也可以不改命令行，用环境变量 `SOLODRAMA_CONSOLE_HOST` / `SOLODRAMA_CONSOLE_PORT`。
+
+### 不开界面也能跑
+
+界面和命令行调的是同一套引擎、同一份门禁，只是入口不同：
+
+```bash
+python stages/production/scripts/drama.py init --workspace "<剧目录>" --title "剧名" --look "视觉风格"
+python stages/production/scripts/drama.py --workspace "<剧目录>" status
+python stages/production/scripts/drama.py --workspace "<剧目录>" next
+```
+
+**工作区放在仓库外面**，一部剧一个目录；`init` 会生成 `00-创作` … `09-发行` 的骨架与配置。
+
+### 装完先验一遍
+
+```bash
+python tools/env_check.py                                     # 缺什么、怎么修，逐条列出
+python -m pytest tools/tests stages/import/tests -q           # 不依赖工作区的离线测试
+```
+
+⚠ 不要在仓库根直接跑 `pytest`：引擎脚本导入期就要求工作区存在。逐目录跑，
+`stages/production/scripts/tests` 还要先设 `SOLODRAMA_WORKSPACE=<fixtures/mini_drama>`。
+
+### 不同机器、不同人
+
+| 场景 | 能做什么 | 要注意 |
+|---|---|---|
+| Windows + N 卡 | 全链路本机跑，￥0 | 出图与出片分开阶段跑（显存装不下两套权重） |
+| Windows 无独显 / 小显存 | 创作、审片、导出都能用 | 出图出片走云端或平台通道；通道必须自己选，界面不替你预选计费项 |
+| macOS / Linux | 控制台 + 命令行可跑（`bin/python`、`python3 web/launcher.py`） | 出图出片要自备 ComfyUI 或云端；**引擎侧未做端到端验证** |
+| 服务器 / 无显示器 | `--no-browser --host 0.0.0.0` | 对外演示加 `--readonly` |
+| 同机多个账户 | 各人 clone 一份 | `envs/` 在仓库内，venv 记的是创建者的解释器路径，共用会别扭 |
+| 交给 AI 助手装 | 见 [`docs/operations/使用者路线.md`](docs/operations/使用者路线.md) 的整段提示词 | 助手会先读真源再动手，你只需在「要不要花钱」处答一句 |
+
+### 起不来，先看这三条
+
+| 现象 | 多半是 | 修法 |
+|---|---|---|
+| 窗口闪一下就没了 / `Python not found` | 没装 Python，或没勾 Add to PATH | 重装并勾选；或直接 `py -3 web/launcher.py` |
+| 页面白屏 / 404 | 端口被别的进程占了 | 看窗口打印的实际端口；或 `--port 9000` |
+| 能开界面，出图报缺模型 | 没接 ComfyUI，或工作流要的模型本机没有 | 先跑预检：界面「通道与预检」，或 `drama preflight --only gen` |
+
+---
+
 ## 四层结构
 
 ```mermaid
