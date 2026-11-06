@@ -77,11 +77,17 @@ drama models set video=cloud_comfyui --comfy-url https://<实例>-8188.container
 | 通道 | 默认工作流 | 特点 |
 |---|---|---|
 | 本机 ComfyUI | `workflow_h3_minimax_canvas.json` | 6 参考图槽、fl2v turbo 8step |
-| 云端镜像 | `workflow_h3_pika_8g.json` | pika 极速版：**2 参考槽**、lcm 采样、SigmaShift(12/2) |
+| 云端镜像 | `workflow_h3_pika_8g.json` | pika 极速版：**2 参考槽**、lcm 采样、SigmaShift(12/2)；已实测可跑 |
 
-云端那份新增两项镜像侧依赖，上云前先 `python -m cloud probe` 确认：
-LoRA `pika_h3_flex_ref2va_comfy_bf16.safetensors`、节点类
-`LayerUtility: ImageScaleByAspectRatio V2`（ComfyUI_LayerStyle 插件）。
+出片节点（`drama do video.batch`）执行的是 `drama video run --engine auto` —— 通道只从
+`<工作区>/model-plan.json` 的 `video.choice` 读一次：选 `cloud_comfyui` 就用上面那份 pika，
+选 `local_comfyui` 就用本机 canvas。没有确认单则回落本机（￥0）并打印一行说明。
+
+云端那份比本机多两项镜像侧依赖：LoRA `pika_h3_flex_ref2va_comfy_bf16.safetensors`、
+节点类 `LayerUtility: ImageScaleByAspectRatio V2`（ComfyUI_LayerStyle 插件）。
+
+> ✅ **2026-11-06 已实测**：这两个依赖在仙宫云镜像里存在，整条工作流可直接跑通。
+> 换镜像版本或换实例厂商时仍需 `python -m cloud probe` 复核（镜像不是仓库的一部分）。
 
 > 2 个槽位意味着**三人的镜头只会提交前两张参考图**。执行器会打印 WARN 点名被丢掉的图；
 > 需要 6 槽一致性时用本机那份 `--workflow workflow_h3_minimax_canvas.json`。

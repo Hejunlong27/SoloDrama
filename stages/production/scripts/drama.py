@@ -1120,6 +1120,50 @@ def _video_wf_default(cloud: bool = False) -> str:
     return str(_GP.default_workflow('video', cloud=cloud))
 
 
+# 通道 id → `video run --engine` 的取值。新增通道时必须同步本表；
+# 守卫 `test_video_plan::test_engine_map_covers_all_options` 会断言全覆盖。
+VIDEO_ENGINE_OF_CHOICE = {
+    "local_comfyui": "local",
+    "cloud_comfyui": "cloud",
+    "runninghub": "workflow",
+    "runninghub_ai_app": "workflow",
+    "closed_source": "",          # 没有内置执行器：明确报错，不假装能跑
+}
+
+
+def _resolve_video_engine() -> tuple:
+    """`--engine auto` 的解析：按 `<工作区>/model-plan.json` 的 `video.choice` 决定走哪条。
+
+    → (engine, 说明)。engine 为空串 = 确认了但没有内置执行器，调用方据此退出。
+
+    ★ 为什么需要它：出片节点（`drama do video.batch`）里曾**写死** `--engine local`，
+      于是「确认单选云端」与「节点跑本机」是两套互不相干的真源 —— 云端的 pika 工作流
+      永远调不到。现在节点写 `--engine auto`，通道只从确认单读一次。
+    ★ 没有确认单时**回落到本机**（￥0）并打印一行说明：本地不产生费用，预选它不违反
+      「计费通道永不预选」；反过来若直接报错，会把从没确认过模型的老项目卡死在出片这一步。
+    """
+    import json as _json
+    plan_file = WS / "model-plan.json"
+    if not plan_file.is_file():
+        return "local", "未找到模型确认单 model-plan.json → 本机 ComfyUI（￥0）"
+    try:
+        plan = _json.loads(plan_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as e:
+        return "local", "确认单读不出来（%s）→ 本机 ComfyUI（￥0）" % e
+    st = (plan.get("models") or {}).get("video") or {}
+    choice = str(st.get("choice") or "").strip()
+    if not st.get("confirmed") or not choice:
+        return "local", "确认单尚未确认 video 通道 → 本机 ComfyUI（￥0）"
+    eng = VIDEO_ENGINE_OF_CHOICE.get(choice)
+    if eng is None:
+        return "", ("确认单里的 video.choice=%r 不在已知通道表里（%s）"
+                    % (choice, "、".join(sorted(VIDEO_ENGINE_OF_CHOICE))))
+    if not eng:
+        return "", ("确认单把 video 通道定成了「%s」，它没有内置执行器："
+                    "请在站外生成后把成片放回 07-成片/<ep>/<shot>/final.mp4" % choice)
+    return eng, "模型确认单：video=%s → --engine %s" % (choice, eng)
+
+
 def cmd_video_local(args) -> int:
     """ComfyUI 批量出片（本机 ￥0 / 云端镜像 ★计费）。
 
@@ -1419,6 +1463,15 @@ def _cloud_url_ready(url: str) -> bool:
 
 
 def cmd_video_run(args) -> int:
+    # ★ 2026-11-06：`--engine auto` 按模型确认单选通道（节点默认就是 auto）。
+    #   显式给了 local/cloud/workflow 就照办 —— auto 只是「不替用户拍板」的写法。
+    if (getattr(args, 'engine', None) or '') == 'auto':
+        eng, note = _resolve_video_engine()
+        if not eng:
+            print('[FAIL] %s' % note)
+            return 4
+        print('  [通道] %s' % note)
+        args.engine = eng
     # ★ 2026-11-04：出片默认走本地（￥0）。`--engine workflow` 显式切回 RunningHub。
     #   默认值改本地不是「省钱优先」，而是这条链现在的定位：创作在 Skill、执行在引擎，
     #   执行层不该默认产生平台费用。要算钱的通道必须被显式选中。
@@ -1909,8 +1962,8 @@ def main() -> int:
     q.set_defaults(fn=cmd_video_plan)
     q = vs.add_parser('run', help='真跑出片（本地 ￥0 / 云端 ★计费；都需 --yes）')
     _add_ws_arg(q)
-    q.add_argument('--engine', choices=('local', 'cloud', 'workflow'), default='local',
-                   help='出片通道：local=本机 ComfyUI（￥0，默认）｜cloud=云端 ComfyUI 镜像（★计费/自建）｜workflow=RunningHub（★计费）')
+    q.add_argument('--engine', choices=('local', 'cloud', 'workflow', 'auto'), default='local',
+                   help='出片通道：auto=按模型确认单（节点默认）｜local=本机（￥0）｜cloud=云端镜像（★计费/自建）｜workflow=RunningHub（★计费）')
     q.add_argument('--ep', default=None, help='集号（local/cloud 通道必填；ep01 / 1）')
     q.add_argument('--force', action='store_true', help='local/cloud：已有产物也重跑')
     q.add_argument('--comfy-url', dest='comfy_url', default=None,

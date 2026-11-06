@@ -1,6 +1,19 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-06 更新（V0.7.71 · 云端出片通道打通：pika 工作流实测可用 + 节点按确认单选通道）**
+
+  用户实测确认：`workflow_h3_pika_8g.json` 在仙宫云镜像可直接跑通（含 LoRA 与 LayerStyle 节点）。
+
+  | # | 变更 | 说明 |
+  |---|---|---|
+  | 1 | `drama video run --engine auto` | 通道只从 `<ws>/model-plan.json` 的 `video.choice` 读一次：`cloud_comfyui→cloud`、`runninghub*→workflow`、`local_comfyui→local`；无确认单回落本机（￥0）并打印原因；`closed_source` 明确拒绝（无内置执行器） |
+  | 2 | 出片节点模板 `--engine local` → `--engine auto` | 原来节点写死本机，**确认单选了云端也永远跑不到 pika**——两套真源；现在统一 |
+  | 3 | 依赖状态从「待确认」改为「已实测」 | `docs/云端ComfyUI接入.md`、`workflow_h3_pika_8g.map.json`（`_extra_deps` / `_verified`） |
+
+  守卫：`test_video_plan.py` +7 例（映射表全覆盖、无确认单回落、cloud/RH 解析、未确认不偷跑、闭源拒绝、节点模板必须是 auto）。
+  回归：生产 123（+7）＋脚本型 58 全绿。
+
 - **2026-11-06 更新（V0.7.70 · 复盘遗留：B3/B4/B5 处理完 + R2/R3/R5 收敛）**
 
   接 `docs/复盘-2026-11-06-bug与冗余.md` 的清单，用户指定「待修待决全修，冗余只做 R2/R3/R5」。

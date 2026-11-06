@@ -158,7 +158,7 @@ NODES: list = [
      "check": "segments", "next": "video.audit", "reflow": ["video.resolve"],
      "ws_kind": "engine",
      #   理由与 drama.cmd_video_run 一致：执行层不该默认产生平台费用。
-     "run": "python stages/production/scripts/drama.py video run --engine local"},
+     "run": "python stages/production/scripts/drama.py video run --engine auto"},
     {"id": "video.audit", "stage": "video", "ep": True,
      "trigger": "drama do video.audit --ep ep01",
      "reads": ["video.batch"], "output": "_done/video.audit.<ep>.json",

@@ -21,9 +21,9 @@
   "_length_note": "帧数不走连线：136.length 接的是 #224 ComfyMathExpression（输出 FLOAT），0.43.2 会以 return_type_mismatch 拒整张图。改为由 comfy_local_video.frames_for(seconds) 按 17n+5 算好、提交前写成 INT 字面量（覆盖掉那条连线）—— 秒数照样生效。",
   "_sigma_note": "采样参数与 canvas 版不同，别拿两边的耗时/画质直接对比：#253 MiniMaxH3SigmaShift(shift_video=12, shift_audio=2) + #123 KSamplerSelect=lcm + #147 手写 sigmas + #145 LoRA pika_h3_flex_ref2va（本机 canvas 用的是 fl2v turbo 8step）。",
   "_extra_deps": [
-    "LoRA#145 pika_h3_flex_ref2va_comfy_bf16.safetensors（本工作流新增，镜像里要确认存在）",
-    "节点类 LayerUtility: ImageScaleByAspectRatio V2（ComfyUI_LayerStyle 插件；canvas 版没用到）",
-    "节点类 MiniMaxH3SigmaShift（H3 侧内置；canvas 版没用到）"
+    "LoRA#145 pika_h3_flex_ref2va_comfy_bf16.safetensors（2026-11-06 仙宫云镜像实测存在）",
+    "节点类 LayerUtility: ImageScaleByAspectRatio V2（ComfyUI_LayerStyle；同上实测存在）"
   ],
-  "_check_hint": "上云前先 `python -m cloud probe` 与 `python stages/video/comfyui/comfy_local_video.py --workflow workflow_h3_pika_8g.json --map-check`，两处都过再真跑。"
+  "_check_hint": "上云前先 `python -m cloud probe`（换镜像才必要）与 `python stages/video/comfyui/comfy_local_video.py --workflow workflow_h3_pika_8g.json --map-check`（改过 map 才必要），两处都过再真跑。",
+  "_verified": "2026-11-06 用户实测：本工作流在仙宫云部署环境下可直接跑通。更换镜像版本 / 厂商仍需 cloud probe 复核。"
 }
