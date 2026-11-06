@@ -152,8 +152,14 @@ _boot_netguard()
 #   它是界面格式，由 `workflow_ui2api.py` 转成这里的 API 格式（64 → 30 节点），
 #   映射与两处断链修补见同名 sidecar `workflow_h3_minimax_canvas.map.json`。
 #   旧的 `workflow_h3_multiref6.json` 仍在，`--workflow` 可随时切回。
-DEFAULT_WORKFLOW = os.environ.get(
-    "COMFYUI_VIDEO_WORKFLOW", os.path.join(HERE, "workflow_h3_minimax_canvas.json"))
+#
+# ★ 2026-11-06：**默认值分通道**了 —— 本机仍是 canvas，云端默认 pika 极速版。
+#   真源在 `workflow_defaults.py`（别在这里再写死一份文件名；预检、界面、云端任务都读它）。
+import workflow_defaults as _WD                                  # noqa: E402
+
+DEFAULT_WORKFLOW = os.environ.get("COMFYUI_VIDEO_WORKFLOW", _WD.video_path(False))
+# 云端默认（给 `drama --engine cloud` 用；执行器本身不猜通道，由调用方显式传 --workflow）
+DEFAULT_WORKFLOW_CLOUD = _WD.video_path(True)
 
 # ---------------------------------------------------------------------------
 # 节点映射的角色表
@@ -657,6 +663,13 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
              if str(n.get("class_type")) == "LoadImage" and nid not in img_ids]
     img_ids += sorted(extra, key=lambda x: (0, int(x)) if str(x).isdigit() else (1, str(x)))
     if img_ids and ref_names:
+        # ★ 2026-11-06：工作流的槽位可能**少于**本镜的参考图（云端 pika 版只有 2 槽）。
+        #   旧行为是静默丢掉多余的 —— 三人的镜头只喂前两张，模型只能靠提示词猜第三个人。
+        #   这种损失不会报错，只会在成片里表现为「第三个人长得不像」，所以必须说出来。
+        if len(ref_names) > len(img_ids):
+            print("  [WARN] 本镜参考图 %d 张 > 工作流槽位 %d 个，多出的 %d 张不会提交：%s"
+                  % (len(ref_names), len(img_ids), len(ref_names) - len(img_ids),
+                     "、".join(os.path.basename(str(x)) for x in ref_names[len(img_ids):])))
         for i, nid in enumerate(img_ids):
             wf[nid]["inputs"]["image"] = ref_names[i] if i < len(ref_names) else ref_names[-1]
 
@@ -687,15 +700,18 @@ def apply_nodes(wf: dict, m: dict, *, prompt: str, ref_names: list, seconds, ste
     # `steps is None` = 沿用工作流原值。批处理里没有「步数」这个概念，
     # 传 None 比传一个猜出来的数字安全：猜大了慢，猜小了糊，而且都不报错。
     if ids and ids[0] in wf and steps is not None:
-        ins = wf[ids[0]]["inputs"]
-        ins["steps" if "steps" in ins else "value"] = int(steps)
-        # ★ 2026-11-04：有些工作流的步数不是由采样器节点决定，而是由一串**手写的 sigmas**
-        #   决定（Minimax H3 画布版就是）。改 steps 会改到一个没被引用的节点上 ——
-        #   静默无效。宁可吵一次，也不让人以为「设了 8 步」。
         if m.get("_steps_ineffective"):
+            # ★ 2026-11-06：有些工作流的步数不是由节点参数决定，而是由一串**手写的 sigmas**
+            #   决定（Minimax H3 的两个版本都是）。这种工作流里那个「steps 节点」往往根本
+            #   不存在（pika 版登记的是 ManualSigmas），往里写 steps/value 会多出一个
+            #   ComfyUI 不认识的输入 —— 0.43.2 直接 400。
+            #   所以：**只告警，不写**。宁可吵一次，也不让人以为「设了 8 步」。
             print("  [WARN] 本工作流的实际步数由固定 sigmas 决定，steps=%s 不生效。" % steps)
             if m.get("_steps_note"):
                 print("         %s" % m["_steps_note"])
+        else:
+            ins = wf[ids[0]]["inputs"]
+            ins["steps" if "steps" in ins else "value"] = int(steps)
 
     ids = _roles(m, "seed")
     if ids and ids[0] in wf:

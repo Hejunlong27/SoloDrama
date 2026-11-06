@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -42,11 +43,23 @@ _TTL_PROBE = 30.0        # 在线探测
 _TTL_INFO = 300.0        # object_info 很大，缓存久一点
 
 IMAGE_LOCAL_WF = paths.STAGES_DIR / "assets" / "comfyui" / "workflow_qwen_image21.json"
-# ★ 必须与执行器同源：`comfy_local_video.DEFAULT_WORKFLOW` 自 2026-11-04 起是 canvas，
-#   而这里长期指向旧的 `workflow_h3_local.json` —— 于是界面上核对的是 A、真跑提交的是 B。
-VIDEO_LOCAL_WF = Path(os.environ.get("COMFYUI_VIDEO_WORKFLOW")
-                      or (paths.STAGES_DIR / "video" / "comfyui"
-                          / "workflow_h3_minimax_canvas.json"))
+# ★ 必须与执行器同源：默认工作流的真源是 `stages/video/comfyui/workflow_defaults.py`。
+#   历史上这里写死过 `workflow_h3_local.json`，而执行器已换 canvas —— 于是「界面核对 A、
+#   真跑提交 B」。2026-11-06 起视频默认值还**按通道分**（本机 canvas / 云端 pika），
+#   所以走 `_video_wf(cloud)`，别再在这一层拼文件名。
+def _video_wf(cloud: bool = False) -> Path:
+    d = paths.STAGES_DIR / "video" / "comfyui"
+    try:
+        if str(d) not in sys.path:
+            sys.path.insert(0, str(d))
+        import workflow_defaults as WD                       # noqa: PLC0415
+        return Path(WD.video_path(cloud))
+    except Exception:                                        # noqa: BLE001
+        return d / ("workflow_h3_pika_8g.json" if cloud else "workflow_h3_minimax_canvas.json")
+
+
+VIDEO_LOCAL_WF = Path(os.environ.get("COMFYUI_VIDEO_WORKFLOW") or _video_wf(False))
+VIDEO_CLOUD_WF = _video_wf(True)
 
 ENGINE_TEXT = {"local": "本地 ComfyUI", "cloud": "云端 ComfyUI",
                "rh": "RunningHub 工作流"}
@@ -267,8 +280,9 @@ def _cloud_target(ws, kind: str) -> dict:
         return {}
     # 云端出图仍走 `gen_assets_local`（同一客户端）；工作流取确认单，缺就用仓库默认
     if kind == "video":
-        wf = str(det.get("comfy_workflow") or "").strip() or str(VIDEO_LOCAL_WF)
-        default_wf = Path(paths.STAGES_DIR / "video" / "comfyui" / "workflow_h3_minimax_canvas.json")
+        # ★ 云端的仓库默认是**另一份**（pika 极速版），不是本机那份 canvas —— 见 `_video_wf`
+        default_wf = VIDEO_CLOUD_WF
+        wf = str(det.get("comfy_workflow") or "").strip() or str(default_wf)
     else:
         wf = str(det.get("comfy_workflow") or "").strip() or str(IMAGE_LOCAL_WF)
         default_wf = IMAGE_LOCAL_WF

@@ -57,10 +57,32 @@ STAGES = ROOT / "stages"
 
 # 默认工作流（与执行器同源：`comfy_local_video.py` 的 DEFAULT_WORKFLOW /
 # `comfy_client.py` 的默认出图工作流）。换工作流仍走「确认单 detail」或环境变量。
+#
+# ★ 2026-11-06：视频默认值**分通道** —— 本机 canvas、云端 pika 极速版。
+#   下面的字面量只是「`workflow_defaults.py` 读不到时」的兜底；正常路径走 `_default_wf()`。
 DEFAULT_WF = {
     "image": STAGES / "assets" / "comfyui" / "workflow_qwen_image21.json",
     "video": STAGES / "video" / "comfyui" / "workflow_h3_minimax_canvas.json",
 }
+DEFAULT_WF_CLOUD = {
+    "video": STAGES / "video" / "comfyui" / "workflow_h3_pika_8g.json",
+}
+
+
+def default_workflow(kind: str, *, cloud: bool = False) -> pathlib.Path:
+    """这一类的仓库默认工作流。视频按通道分，图像不分。
+
+    真源是 `stages/video/comfyui/workflow_defaults.py`（执行器/界面/预检共用一份）。
+    读不到就退上面的字面量 —— 预检不该因为一个 import 失败就整个跑不了。
+    """
+    if kind == "video":
+        try:
+            _add_paths()
+            import workflow_defaults as _WD                       # noqa: PLC0415
+            return pathlib.Path(_WD.video_path(cloud))
+        except Exception:                                         # noqa: BLE001
+            return pathlib.Path((DEFAULT_WF_CLOUD if cloud else DEFAULT_WF)["video"])
+    return pathlib.Path(DEFAULT_WF[kind])
 KIND_CN = {"image": "图像", "video": "视频"}
 ENGINE_CN = {"local": "本地 ComfyUI", "cloud": "云端 ComfyUI", "rh": "RunningHub 工作流"}
 
@@ -200,7 +222,9 @@ def resolve(kind: str, ws=None, *, workflow: str = "", url: str = "") -> dict:
         wf = os.environ.get("COMFYUI_VIDEO_WORKFLOW" if kind == "video" else "COMFYUI_WORKFLOW") or ""
         wf_via = "环境变量"
         if not (wf and pathlib.Path(wf).expanduser().is_file()):
-            wf, wf_via = str(DEFAULT_WF[kind]), "仓库默认"
+            # ★ 视频的仓库默认**按通道分**：本机 canvas / 云端 pika。用地址判通道，
+            #   与 `_engine_of()` 同一口径 —— 否则预检核的是本机那份，真跑提交的是云端那份。
+            wf, wf_via = str(default_workflow(kind, cloud=not _is_loopback(url))), "仓库默认"
     return {"url": url.rstrip("/"), "url_via": via,
             "workflow": _abs_wf(kind, wf), "workflow_via": wf_via}
 

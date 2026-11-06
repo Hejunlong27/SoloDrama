@@ -110,6 +110,14 @@ def test_assets_has_cloud_route():
 
 
 def test_video_local_passes_explicit_url():
-    """结构断言：本机出片也要显式传地址，不能吃进程里残留的 COMFYUI_URL。"""
+    """结构断言：本机出片也要显式传地址，不能吃进程里残留的 COMFYUI_URL。
+
+    ★ 2026-11-06：断言从「逐字匹配调用串」改成「匹配前缀 + 语义」——
+      那天给云端补默认工作流（`wf_from_plan or _video_wf_default(cloud=True)`）时，
+      这条逐字匹配无谓地红了。逐字断言守不住语义，只会挡住正常改动。
+    """
     src = (SCRIPTS / "drama.py").read_text(encoding="utf-8")
-    assert "_run_batch(args, ep, url, wf_from_plan)" in src, "本机出片没有显式传地址/工作流"
+    assert "_run_batch(args, ep, url," in src, "本机出片没有显式传地址"
+    assert "def _video_wf_default(" in src, "缺少「默认工作流按通道分」的入口"
+    # 云端必须能落到 pika 那份，而本机保持 canvas —— 两条都要有人管
+    assert "_video_wf_default(cloud=True)" in src, "云端分支没有指定云端默认工作流"

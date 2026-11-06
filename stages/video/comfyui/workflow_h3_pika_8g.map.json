@@ -1,0 +1,29 @@
+{
+  "_comment": "workflow_h3_pika_8g.json 的节点映射（云端默认工作流）。改这里，不要改 comfy_local_video.py。",
+  "_source_ui": "workflows_src/h3_pika_8g_raw.json（【Minimax H3】pika极速出片版（8g可跑））",
+  "_source_note": "界面 66 节点 → API 27 节点；转换报告见 workflows_src/ui2api_report_pika_8g.md。产品线只留 27 节点：删掉界面门控残留 `#200 忽略多组孤海`（无下游引用，中文 class_type 会让云端整份 400）。",
+  "_role_note": "这是**云端**默认工作流（仙宫云 4090 镜像）。本机仍用 workflow_h3_minimax_canvas.json —— 两份的差别是：pika 版只有 2 个参考图槽 + LayerUtility 预缩放 + lcm 采样 + SigmaShift(12/2)。真源见 workflow_defaults.py。",
+  "prompt": "238",
+  "images": [
+    "199",
+    "188"
+  ],
+  "_images_note": "顺序 = 136.ref_images.ref_image_0..1 的连线顺序：199 → 262 → ref_image_0；188 → 266 → ref_image_1。作者原始画布接了 6 个 LoadImage 槽，其中 4 个（189/190/191/192）与它们的预缩放节点被**旁路**（mode=4），转 API 后不参与执行 —— 所以本工作流只有 2 个参考槽。分批时 cast 超过 2 个也只会用前两张（多余的会按 `apply_nodes` 规则重复最后一张填槽）。",
+  "seconds": "227",
+  "steps": "147",
+  "_steps_ineffective": true,
+  "_steps_note": "本工作流没有采样器步数节点：实际步数由 #147 ManualSigmas 的固定 sigmas 串（1.0 → 0.0，6 段）决定，采样器是 lcm。map 里仍然登记 `steps: 147` 只为让 --map-check 有落点；`_steps_ineffective` 让 apply_nodes **不往里写 value**（ManualSigmas 没有 steps/value 输入，写进去会多一个 ComfyUI 不认识的字段，0.43.2 直接 400）。",
+  "seed": "129",
+  "aspect": "228",
+  "_aspect_note": "228 ResolutionSelector 的两个输出槽直接喂 136 的 width/height（槽 0=宽、槽 1=高）。本工作流默认 9:16 / 0.9MP / multiple 32；0.9MP 是作者按 8G 卡调的，云端 4090 可上调，但先按作者值跑通再谈画质。",
+  "prefix": "148",
+  "_length_node": "136",
+  "_length_note": "帧数不走连线：136.length 接的是 #224 ComfyMathExpression（输出 FLOAT），0.43.2 会以 return_type_mismatch 拒整张图。改为由 comfy_local_video.frames_for(seconds) 按 17n+5 算好、提交前写成 INT 字面量（覆盖掉那条连线）—— 秒数照样生效。",
+  "_sigma_note": "采样参数与 canvas 版不同，别拿两边的耗时/画质直接对比：#253 MiniMaxH3SigmaShift(shift_video=12, shift_audio=2) + #123 KSamplerSelect=lcm + #147 手写 sigmas + #145 LoRA pika_h3_flex_ref2va（本机 canvas 用的是 fl2v turbo 8step）。",
+  "_extra_deps": [
+    "LoRA#145 pika_h3_flex_ref2va_comfy_bf16.safetensors（本工作流新增，镜像里要确认存在）",
+    "节点类 LayerUtility: ImageScaleByAspectRatio V2（ComfyUI_LayerStyle 插件；canvas 版没用到）",
+    "节点类 MiniMaxH3SigmaShift（H3 侧内置；canvas 版没用到）"
+  ],
+  "_check_hint": "上云前先 `python -m cloud probe` 与 `python stages/video/comfyui/comfy_local_video.py --workflow workflow_h3_pika_8g.json --map-check`，两处都过再真跑。"
+}

@@ -1,6 +1,60 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-06 更新（V0.7.68 · 视频默认工作流按通道分：云端换 pika 极速版）**
+
+  此前本机与云端共用同一个默认工作流。云端镜像（4090 24G）与产线模型都换成 pika 极速版之后，
+  两边该用的流不一样了，于是把「默认值是哪个」从四个地方各写一遍收成一个真源。
+
+  | 通道 | 默认工作流 | 关键差异 |
+  |---|---|---|
+  | 本机 ComfyUI（4060 8G） | `workflow_h3_minimax_canvas.json`（沿用） | 6 参考槽、fl2v turbo 8step |
+  | 云端镜像（4090 D） | **`workflow_h3_pika_8g.json`**（新增） | pika 极速版：**2 参考槽**、lcm 采样、SigmaShift(12/2)、LoRA `pika_h3_flex_ref2va` |
+
+  ### 一、新工作流入库
+
+  - 源：`workflows_src/h3_pika_8g_raw.json`（界面 66 节点）→ `workflow_ui2api.py` → API 27 节点。
+  - **删掉 `#200 忽略多组孤海`**：无下游引用的界面门控残留，中文 `class_type` 会让云端整份
+    400 `missing_node_type`（与 2026-11-05 canvas 那次同一个坑，`test_workflow_hygiene` 已守）。
+  - 新增 sidecar `workflow_h3_pika_8g.map.json`：`prompt/seconds/seed/aspect/prefix` 照常；
+    `images` 只登记 **199、188** 两个槽（作者画布上另外 4 个 LoadImage 与其预缩放节点被**旁路**，
+    转 API 后不执行）；`_length_node: 136` 让帧数写成 INT 字面量。
+  - `steps` 登记 `147 ManualSigmas` 并标 `_steps_ineffective` —— 本流没有步数节点，
+    实际步数由手写 sigmas（1.0 → 0.0，6 段）+ lcm 决定。
+
+  ### 二、默认值收成一个真源
+
+  新增 `stages/video/comfyui/workflow_defaults.py`，四处在读的那一个：
+
+  | 位置 | 改动 |
+  |---|---|
+  | `comfy_local_video.DEFAULT_WORKFLOW` | 本机不变；**新增** `DEFAULT_WORKFLOW_CLOUD` |
+  | `gen_preflight.DEFAULT_WF` | 新增 `default_workflow(kind, cloud=)`；视频按地址判通道 |
+  | `web/core/generators.py` | 新增 `VIDEO_CLOUD_WF`，云端通道页不再用本机那份 |
+  | `drama.py::_run_cloud_task` | 原来**写死 canvas** → 改用 `_video_wf_default(cloud=True)` |
+
+  ### 三、两处「静默吃掉参数」的修正
+
+  1. `apply_nodes` 的 `steps`：当 map 标了 `_steps_ineffective` 时**只告警、不写入**。
+     此前会往节点里塞 `value`，而 pika 流登记的 `147 ManualSigmas` 没有这个输入 ——
+     0.43.2 会以「多出未知输入」400 拒掉整张图。canvas 流因 160 是 BasicScheduler 才侥幸无害。
+  2. 参考图多于槽位时**打印 WARN 点名**被丢掉的那几张。2 槽工作流配三人镜头时，
+     旧行为是静默丢弃 —— 只会表现为「第三个人长得不像」，不报错。
+
+  ### 四、上云前必须确认的两项镜像依赖
+
+  | 依赖 | 说明 |
+  |---|---|
+  | LoRA `pika_h3_flex_ref2va_comfy_bf16.safetensors` | 本流新增；canvas 用的是 fl2v turbo 8step，不通用 |
+  | 节点类 `LayerUtility: ImageScaleByAspectRatio V2` | 需要 ComfyUI_LayerStyle 插件；canvas 未使用 |
+
+  两项任一缺失都会卡在提交（前者 probe 报缺模型，后者 400 missing_node_type）。
+  先 `python -m cloud probe`，再 `--workflow workflow_h3_pika_8g.json --map-check`，两条都过再真跑。
+
+  测试：新增 `test_workflow_defaults.py`（6 例：两份不同文件 / 都是 API 格式且带 map /
+  执行器与预检同源 / 图像不分通道 / pika 槽数确为 2）；`test_channel_isolation` 的逐字断言
+  改成语义断言（原来会因为调用串换行而无谓变红）。回归 **552 例全绿**。
+
 - **2026-11-06 更新（V0.7.67 · 不再默认跑到 RunningHub + 清掉全部 RH 价格提示）**
 
   用户实测两件事，都指向同一类问题：**界面替用户做了花钱的决定，还给了一个已知会错的数字**。

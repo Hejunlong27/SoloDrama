@@ -69,8 +69,22 @@ drama models set video=cloud_comfyui --comfy-url https://<实例>-8188.container
 不覆盖已有值）。出片侧此前缺这一步 —— 确认了 A 却跑 B 时，报出来是「连不上 ComfyUI」，
 真相是「跑到了另一台机器」。
 
-工作流**不再是必填**：`workflow_h3_minimax_canvas.json` + 同名 map 随仓库交付，
-与出图侧的 `local_comfyui` 同一口径。要换才给 `comfy_workflow`。
+工作流**不再是必填**：随仓库交付一份默认流 + 同名 map，与出图侧的 `local_comfyui` 同一口径。
+要换才给 `comfy_workflow`。
+
+★ 2026-11-06 起默认流**按通道分**（真源 `stages/video/comfyui/workflow_defaults.py`）：
+
+| 通道 | 默认工作流 | 特点 |
+|---|---|---|
+| 本机 ComfyUI | `workflow_h3_minimax_canvas.json` | 6 参考图槽、fl2v turbo 8step |
+| 云端镜像 | `workflow_h3_pika_8g.json` | pika 极速版：**2 参考槽**、lcm 采样、SigmaShift(12/2) |
+
+云端那份新增两项镜像侧依赖，上云前先 `python -m cloud probe` 确认：
+LoRA `pika_h3_flex_ref2va_comfy_bf16.safetensors`、节点类
+`LayerUtility: ImageScaleByAspectRatio V2`（ComfyUI_LayerStyle 插件）。
+
+> 2 个槽位意味着**三人的镜头只会提交前两张参考图**。执行器会打印 WARN 点名被丢掉的图；
+> 需要 6 槽一致性时用本机那份 `--workflow workflow_h3_minimax_canvas.json`。
 
 ### ③ 就绪三查（别等提交才发现缺模型）
 

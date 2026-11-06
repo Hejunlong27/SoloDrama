@@ -1097,6 +1097,19 @@ def cmd_video_plan(args) -> int:
     return 0
 
 
+def _video_wf_default(cloud: bool = False) -> str:
+    """视频默认工作流的绝对路径（真源 `stages/video/comfyui/workflow_defaults.py`）。
+
+    本机 = `workflow_h3_minimax_canvas.json`（6 参考槽 + fl2v turbo 8step）；
+    云端 = `workflow_h3_pika_8g.json`（pika 极速版：2 参考槽 + lcm + SigmaShift）。
+
+    为什么绕一句 `gen_preflight.default_workflow()` 而不是在这里拼路径：
+    预检、界面通道页、执行器必须认**同一份**文件，否则就是「核 A 跑 B」。
+    """
+    import gen_preflight as _GP
+    return str(_GP.default_workflow('video', cloud=cloud))
+
+
 def cmd_video_local(args) -> int:
     """ComfyUI 批量出片（本机 ￥0 / 云端镜像 ★计费）。
 
@@ -1165,7 +1178,10 @@ def cmd_video_local(args) -> int:
         print('  工作流  ：%s（依据：模型确认单）' % wf_from_plan)
 
     if cloud and lifecycle != 'off':
-        return _run_cloud_task(args, ep, url, lifecycle, label, wf_from_plan)
+        # ★ 2026-11-06：确认单没指定工作流时，云端用**云端默认**（pika 极速版）。
+        #   不能让它落回执行器的 DEFAULT_WORKFLOW —— 那是本机那份 canvas。
+        return _run_cloud_task(args, ep, url, lifecycle, label,
+                               wf_from_plan or _video_wf_default(cloud=True))
 
     if cloud:
         # lifecycle=off：只用给定地址，不管启停（调试/临时验证用）
@@ -1179,7 +1195,8 @@ def cmd_video_local(args) -> int:
         # 长驻进程里可能残留上一次云端任务的地址。确认单（按类）优先，其次环境变量。
         url = str(target['url'] or '').rstrip('/')
         print('  通道    ：%s · %s（依据：%s）' % (label, url, target.get('url_via', '')))
-    rc, log, dt = _run_batch(args, ep, url, wf_from_plan)
+    rc, log, dt = _run_batch(args, ep, url,
+                             wf_from_plan or (_video_wf_default(cloud=True) if cloud else ''))
     print('\n%s出片退出码 %s（耗时 %.1fs）；日志：%s' % (label, rc, dt, log))
     if rc == 3:
         print('★ 退出码 3 = 批次有缺口（不是失败）。直接重跑同一条命令即可补缺，')
@@ -1308,7 +1325,8 @@ def _run_cloud_task(args, ep, url: str, lifecycle: str, label: str, workflow: st
 
     CCFG.hydrate_env()                     # settings.json 里的地址/受信域名补进环境
     cfg = CCFG.effective()
-    wf = str(_PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'workflow_h3_minimax_canvas.json')
+    # ★ 2026-11-06：原来是写死的 canvas —— 云端默认换版后这里会「预检核 pika、租机器按 canvas」。
+    wf = workflow or _video_wf_default(cloud=True)
     lease = Lease(cfg, ws=WS, name=getattr(args, 'cloud_name', '') or '', url=url,
                   keep=(lifecycle == 'keep'), workflow=wf)
     try:

@@ -1,0 +1,378 @@
+{
+  "145": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "127",
+        0
+      ],
+      "lora_name": "pika_h3_flex_ref2va_comfy_bf16.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "125": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "129",
+        0
+      ],
+      "guider": [
+        "126",
+        0
+      ],
+      "sampler": [
+        "123",
+        0
+      ],
+      "sigmas": [
+        "147",
+        0
+      ],
+      "latent_image": [
+        "136",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "123": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "lcm"
+    },
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "129": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 859208544389876
+    },
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "224": {
+    "class_type": "ComfyMathExpression",
+    "inputs": {
+      "values.a": [
+        "227",
+        0
+      ],
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17"
+    },
+    "_meta": {
+      "title": "ComfyMathExpression"
+    }
+  },
+  "121": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "125",
+        0
+      ],
+      "vae": [
+        "235",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecodeAudio"
+    }
+  },
+  "122": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "125",
+        0
+      ],
+      "vae": [
+        "234",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "156": {
+    "class_type": "ModelAttentionBackend",
+    "inputs": {
+      "model": [
+        "248",
+        0
+      ],
+      "attention": "comfy kitchen attention"
+    },
+    "_meta": {
+      "title": "ModelAttentionBackend"
+    }
+  },
+  "234": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "165": {
+    "class_type": "BlockSparseAttention",
+    "inputs": {
+      "model": [
+        "156",
+        0
+      ],
+      "selection": "sol-attn",
+      "selection.tau": 1.3,
+      "start_percent": 0.2,
+      "end_percent": 1,
+      "dense_blocks": "",
+      "min_tokens": 12288,
+      "extra_tokens": 256,
+      "sink_conditioning": "exact_kv_and_rows",
+      "verbose": true
+    },
+    "_meta": {
+      "title": "BlockSparseAttention"
+    }
+  },
+  "136": {
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "inputs": {
+      "clip": [
+        "232",
+        0
+      ],
+      "vae": [
+        "234",
+        0
+      ],
+      "audio_vae": [
+        "235",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "262",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "266",
+        0
+      ],
+      "prompt": [
+        "238",
+        0
+      ],
+      "width": [
+        "228",
+        0
+      ],
+      "height": [
+        "228",
+        1
+      ],
+      "length": [
+        "224",
+        1
+      ],
+      "ref_image_size": "match"
+    },
+    "_meta": {
+      "title": "MiniMaxH3ReferenceToVideo"
+    }
+  },
+  "235": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "127": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "Cobijada_H3_Hybrid_Uncensored_pruned_hybrid_int8_convrot_pruned.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "232": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "148": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": [
+        "122",
+        0
+      ],
+      "audio": [
+        "121",
+        0
+      ],
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "27-",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "no_preview": false
+    },
+    "_meta": {
+      "title": "VHS_VideoCombine"
+    }
+  },
+  "227": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 10
+    },
+    "_meta": {
+      "title": "视频时长（秒）"
+    }
+  },
+  "228": {
+    "class_type": "ResolutionSelector",
+    "inputs": {
+      "aspect_ratio": "9:16 (Portrait Widescreen)",
+      "megapixels": 0.9,
+      "multiple": 32
+    },
+    "_meta": {
+      "title": "ResolutionSelector"
+    }
+  },
+  "126": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "253",
+        0
+      ],
+      "conditioning": [
+        "136",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "BasicGuider"
+    }
+  },
+  "147": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0"
+    },
+    "_meta": {
+      "title": "ManualSigmas (已旁路)"
+    }
+  },
+  "199": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "1010a6f1f6024ef6ca1b8973bdf5ee49a19dbd8180972a4604eae41f66531076.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "188": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "cb412b0286bd5af14cb44739b7f55f869d2831bc248e0ec40f9810b10492b20d.png",
+      "upload": "image"
+    },
+    "_meta": {
+      "title": "LoadImage"
+    }
+  },
+  "238": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": "subject_definitions: <Picture 1> 是在灯光温暖且浮空书页的学院图书馆中，手持皮革封面魔导书、拥有白发橙金瞳、身穿深蓝短斗篷与百褶裙的年轻动漫风魔法女学员。<Picture 2> 是战斗形态的女主，拥有赤红双眸、白发，身穿黑红相间军装制服短外衣、黑色绑带束腰、百褶裙与黑色过膝高筒袜，在月光废墟庭院中手持发光银色长剑。<Subject 1> 是结合白发与红色/金光瞳孔的女主，穿着 <Picture 2> 的军装战斗服并挥舞银色长剑。<Subject 2> 是手持巨大双刃重斧、身披重型暗黑板甲的影之审判者对手。   \n\nsummary: [reference generation] 目标视频为15秒影院级16:9超高速魔剑战斗场景，分为5个连续的3秒分镜，展示高速战术位移、招架反击、强力物理碰撞反馈以及哥特废墟环境破坏。\n\nretention_analysis:\n<Picture 1>（[Shot 1]首帧，环境与风格）：partially_preserved - 图书馆元素无缝融入哥特建筑废墟；女主白发与魔法气场完全保留。\n<Subject 1>（出现于[Shot 1]、[Shot 2]、[Shot 3]、[Shot 4]、[Shot 5]）：fully_preserved - <Picture 2> 中的发型、面容、红/金发光双眼、军装制服、过膝袜及银色长剑在所有Shot中保持完全一致。\n<Subject 2>（出现于[Shot 1]、[Shot 2]、[Shot 3]、[Shot 4]、[Shot 5]）：fully_preserved - 重甲对手的轮廓与武器体量全程保持一致。   \n\ndetailed_description:\n[Shot 1] 视频从 <Picture 1> 瞬间切入战斗，低角度跟拍镜头下 <Subject 1> 用长剑横架接下 <Subject 2> 从头顶劈下的巨斧。银剑与巨斧交锋碰撞出刺目的蓝色魔法火花，强劲气浪将两人脚下的石板震碎飞践。<Subject 1> 迅速侧步滑跃，挥剑在 <Subject 2> 的胸甲上划出一道炽烈的光痕，冲击波将周围飘浮的纸张瞬间吹散。（00:00.000–00:03.000）   \n\n[Shot 2] At 00:03.000，手持甩镜头跟着 <Subject 1> 踩踏坍塌的石柱腾空而起。<Subject 2> 向上挥出一道暗黑法球，<Subject 1> 在半空中翻转身体用长剑将法球挡飞，身后爆发出紫光与碎石弹射，随后她以滑铲姿势平稳落地。（00:03.000–00:06.000）   \n\n[Shot 3] At 00:06.000，切换为高速倾斜越肩镜头，<Subject 2> 发动横向斧砍。<Subject 1> 压低身体滑行避开刃口，顺势挑剑击偏巨斧，紧接着施展附魔后踢直击 <Subject 2> 的胸甲。庞大的力量在铠甲表面激起冲击波，将 <Subject 2> 踹飞砸穿旁边的哥特拱门石柱。（00:06.000–00:09.000）   \n\n[Shot 4] At 00:09.000，快速荷兰角拉近镜头追踪 <Subject 1> 极速冲刺，地面留下一道发光的白色残影。<Subject 2> 怒砸巨斧于地面掀起碎石墙，<Subject 1> 踩踏升起的碎石墙跃至对方头顶，空中向下挥剑斜斩，将周围的建筑结构轰至粉碎尘土飞扬。（00:09.000–00:12.000）   \n\n[Shot 5] At 00:12.000，超广角低视角画面中，<Subject 1> 落地于 <Subject 2> 身后，完成一次全轴心360度附魔刺击，剑尖直贯对方核心。刺目的光爆与环形冲击波横扫整个庭院地面，将 <Subject 2> 击飞20米远并重砸于墙壁。尘埃与火星飘落间，<Subject 1> 帅气收剑入鞘，发出清脆的金属咔嗒声，视频精确结束于 00:15.000。（00:12.000–00:15.000）   \n\noverall_soundscape:\n厚重的钢铁武器碰撞声、剧烈的魔法爆炸冲击波、石板破裂飞溅声、重甲沉重的脚步声、高速空气切削声以及清脆的剑刃入鞘金属声。\n\nnon_diegetic_music:\n快节奏的管弦乐配乐，带有激昂的管乐、紧凑的弦乐和声乐吟唱，节奏点精确匹配每3秒的动作切分。"
+    },
+    "_meta": {
+      "title": "MV 镜1 提示词"
+    }
+  },
+  "248": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "145",
+        0
+      ],
+      "lora_name": "VBVR_H3_attn_only.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "253": {
+    "class_type": "MiniMaxH3SigmaShift",
+    "inputs": {
+      "model": [
+        "165",
+        0
+      ],
+      "shift_video": 12,
+      "shift_audio": 2
+    },
+    "_meta": {
+      "title": "SigmaShift 视频12 / 音频3"
+    }
+  },
+  "262": {
+    "class_type": "LayerUtility: ImageScaleByAspectRatio V2",
+    "inputs": {
+      "image": [
+        "199",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LayerUtility: ImageScaleByAspectRatio V2"
+    }
+  },
+  "266": {
+    "class_type": "LayerUtility: ImageScaleByAspectRatio V2",
+    "inputs": {
+      "image": [
+        "188",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LayerUtility: ImageScaleByAspectRatio V2"
+    }
+  }
+}
