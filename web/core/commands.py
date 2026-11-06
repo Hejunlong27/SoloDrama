@@ -521,12 +521,12 @@ _add(_c("video.local", "4 出片", "本地出视频（H3，￥0，默认干跑�
                 Param("steps", "采样步数", "str", placeholder="留空 = 沿用工作流里的值（4 步 turbo 填 4）"),
                 Param("out", "产物目录", "str", placeholder="<工作区>/video-pipeline/output/local-video"),
                 Param("workflow", "工作流 JSON", "str",
-                      placeholder="留空用 stages/video/comfyui/workflow_h3_local.json"),
+                      placeholder="留空用默认（真源 workflow_defaults.py：本机 canvas / 云端 pika）"),
                 Param("map", "节点映射 JSON", "str",
                       placeholder="留空读同名 <工作流>.map.json"),
                 Param("submit", "真的出片（占 GPU，不花钱）", "bool", default=False)],
         resources=["GPU"],
-        help="走本机 ComfyUI 的 H3 图生视频工作流（stages/video/comfyui/workflow_h3_local.json）。"
+        help="走 ComfyUI 的 H3 图生视频工作流（默认见 stages/video/comfyui/workflow_defaults.py）。"
              "默认干跑；地址取连接中心（默认 127.0.0.1:8188）。"
              "正式出片请用「真跑出片」（含预检与断点续跑），本命令是单镜调试通道。",
         agent="先干跑给我看时长/帧数/槽位；确认后加 --submit。出片前先体检。"))

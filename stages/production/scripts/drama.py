@@ -1088,7 +1088,14 @@ def cmd_video_plan(args) -> int:
     print('  续跑同一批次（不重复扣费）：python scripts/drama.py video run --yes --resume <批次>')
     print('  用历史台账校准单价：python scripts/drama.py video plan --calibrate --save-calibration')
     if getattr(args, 'save_calibration', False):
-        if cal and cal.get('fitted'):
+        # ★ 2026-11-06 修：这里原来读一个从未赋值的局部变量 `cal`，
+        #   于是 `video plan --calibrate --save-calibration`（它自己的 help 和 VERSIONS 都写着
+        #   这条命令）一走就 NameError。校准结果其实挂在 `est['_calibrate']` 上。
+        cal = est.get('_calibrate')
+        if not getattr(args, 'calibrate', False):
+            print('  [WARN] 没有实际校准：--save-calibration 只是「把算好的参数写盘」，'
+                  '要和 --calibrate 一起用。')
+        elif cal and cal.get('fitted'):
             import cost_model as CM
             p = CM.write_params(WS, cal['params'])
             print('  [OK] 已把校准结果写入 %s（下次预估自动使用）' % p)
@@ -1131,6 +1138,13 @@ def cmd_video_local(args) -> int:
     cloud = (engine == 'cloud')
     label = '云端 ComfyUI 镜像' if cloud else '本机 ComfyUI'
     lifecycle = ((getattr(args, 'cloud_lifecycle', None) or 'auto') if cloud else 'off')
+
+    # ★ 2026-11-06：这两个参数只有 RunningHub 那条链在用（批次号 / 并发数是 RH 引擎的概念）。
+    #   本机与云端 ComfyUI 的「续跑」就是重跑同一条命令：已有产物默认跳过、不会重复计费。
+    #   旧行为是静默忽略 —— 而 `video plan` 的结尾文案还在教用户 `--resume <批次>`。
+    if getattr(args, 'resume', None) or getattr(args, 'concurrency', None):
+        print('  [提示] --resume / --concurrency 只对 RunningHub 通道生效。')
+        print('         本机 / 云端 ComfyUI 的续跑 = 重跑同一条命令：已有产物会跳过，不会重复计费。')
 
     url = ''
     if cloud:

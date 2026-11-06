@@ -61,7 +61,9 @@ STAGES = ROOT / "stages"
 # ★ 2026-11-06：视频默认值**分通道** —— 本机 canvas、云端 pika 极速版。
 #   下面的字面量只是「`workflow_defaults.py` 读不到时」的兜底；正常路径走 `_default_wf()`。
 DEFAULT_WF = {
-    "image": STAGES / "assets" / "comfyui" / "workflow_qwen_image21.json",
+    # ★ 2026-11-06：与 `comfy_client.DEFAULT_WORKFLOW` / 预配置卡同源（turbo 融合版）。
+    #   旧值是 `workflow_qwen_image21.json`，与执行器不是同一张图。
+    "image": STAGES / "assets" / "comfyui" / "workflow_qwen21_t2i_hq.json",
     "video": STAGES / "video" / "comfyui" / "workflow_h3_minimax_canvas.json",
 }
 DEFAULT_WF_CLOUD = {

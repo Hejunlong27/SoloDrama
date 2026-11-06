@@ -42,7 +42,11 @@ _CACHE: dict = {}
 _TTL_PROBE = 30.0        # 在线探测
 _TTL_INFO = 300.0        # object_info 很大，缓存久一点
 
-IMAGE_LOCAL_WF = paths.STAGES_DIR / "assets" / "comfyui" / "workflow_qwen_image21.json"
+# ★ 2026-11-06：改成与**执行器**同一个文件。此前这里（和预检）指向 `workflow_qwen_image21.json`
+#   （10-16 的旧图：qwen_image_2.1_int8 + 4step LoRA），而 `comfy_client.DEFAULT_WORKFLOW`
+#   与全部预配置卡用的是 `workflow_qwen21_t2i_hq.json`（11-02：turbo 融合版）。
+#   后果和视频那条一样 —— 没有确认单的项目，界面/预检核的是 A，真跑提交的是 B。
+IMAGE_LOCAL_WF = paths.STAGES_DIR / "assets" / "comfyui" / "workflow_qwen21_t2i_hq.json"
 # ★ 必须与执行器同源：默认工作流的真源是 `stages/video/comfyui/workflow_defaults.py`。
 #   历史上这里写死过 `workflow_h3_local.json`，而执行器已换 canvas —— 于是「界面核对 A、
 #   真跑提交 B」。2026-11-06 起视频默认值还**按通道分**（本机 canvas / 云端 pika），
