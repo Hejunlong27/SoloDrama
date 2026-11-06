@@ -295,9 +295,11 @@ def lint(text: str, *, duration: float = 0.0, n_cast: int = 0) -> tuple:
                            % (kind, num, " / ".join(VISIBLE_MARKERS[:2] + ("…",)))))
 
     # ---- 质量 ------------------------------------------------------------
+    # 只对**存在**的段做质量判断：段都没写时，E01 已经说明了问题，
+    # 再叠一串「没有 [Shot 1]」「0 个汉字」只会把真因淹掉。
     body = sec.get("detailed_description", "")
-    shots = list(_SHOT.finditer(body))
-    if not shots:
+    shots = list(_SHOT.finditer(body)) if body else []
+    if body and not shots:
         warns.append(("quality", "H3-W01",
                       "detailed_description 里没有 [Shot 1]：模型拿不到分镜切点，只会当一段连续动作"))
     else:
@@ -324,7 +326,7 @@ def lint(text: str, *, duration: float = 0.0, n_cast: int = 0) -> tuple:
     # 这个数只用来提示「写得像提纲」，不是合格线 —— 所以放在 quality 档，不阻断。
     cjk = _cjk_len(body)
     need = max(90, int(15 * duration)) if duration else 90
-    if cjk < need:
+    if body and cjk < need:
         warns.append(("quality", "H3-W04",
                       "detailed_description 只有 %d 个汉字（本镜 %s 秒，建议 ≥%d）：多参要写清"
                       "每个镜头里谁在哪、做什么、镜头怎么动，太短模型只能自由发挥"
@@ -340,7 +342,7 @@ def lint(text: str, *, duration: float = 0.0, n_cast: int = 0) -> tuple:
                           "<d> 里的句子没有句末标点（…%s）：会与下一句连成一条语音" % line[-12:]))
             break
     music = sec.get("non_diegetic_music", "").strip()
-    if not music:
+    if "non_diegetic_music" in sec and not music:
         warns.append(("quality", "H3-W07",
                       "non_diegetic_music 为空：没有配乐就明确写 `N/A`，留空模型会自己加 BGM"))
 

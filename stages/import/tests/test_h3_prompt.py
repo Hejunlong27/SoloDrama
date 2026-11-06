@@ -99,7 +99,8 @@ def test_legacy_prompt_is_rejected_with_actionable_codes():
     )
     err, warn = H.lint(legacy, duration=10, n_cast=1)
     assert "H3-E01" in codes(err) and "H3-E05" in codes(err), err
-    assert "H3-W01" in codes(warn), warn
+    # 段都不存在时不再叠质量告警：E01 已经说明问题了，多报只会淹掉真因
+    assert not warn, warn
 
 
 # --------------------------------------------------------------------------- B
