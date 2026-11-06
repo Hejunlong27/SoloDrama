@@ -439,9 +439,10 @@ _add(_c("assets.cloud", "2 资产", "云端 ComfyUI 出图（★按主机时长�
                 Param("asset_md", "资产提示词 md（老通道，SOLODRAMA_ASSET_MD）", "str")],
         resources=["GPU"],
         env={"SOLODRAMA_ASSET_MD": "asset_md"},
-        help="同一套出图客户端，只是地址指向云端实例。计费按**主机时长**（默认 ￥1.59/时），"
+        help="同一套出图客户端，只是地址指向云端实例。计费按**主机时长**（以云平台账单为准），"
              "不是按张 —— 所以干跑先看清单，别在空中排队。地址留空时取模型确认单。",
-        agent="执行前报出：目标地址、将出几张、预计主机时长与费用；地址是本机时要拦住（那是假云端）。"))
+        agent="执行前报出：目标地址、将出几张、预计主机时长；**不要给单价或预估金额**"
+              "（内置单价已废弃，真实消耗以台账为准）。地址是本机时要拦住（那是假云端）。"))
 _add(_c("assets.rh_wf", "2 资产", "云端工作流出图（★计费，非默认）", "gen_rh_wf",
         billing=PAID, danger=DANGER,
         flags={"--md": "md", "--only": "only", "--ratio": "ratio",
@@ -601,7 +602,8 @@ _add(_c("video.cloud", "4 出片", "云端 ComfyUI 出片（★按主机时长�
         resources=["GPU"],
         help="与本地出片**同一个执行器**，只是地址在云端。默认 auto：复用/开机/新建 -> 出片 -> "
              "停机，只停自己开的。干跑不建实例，门禁在建实例之前。",
-        agent="执行前报出：实例名、集号、将跑几段、按 ￥1.59/时 的预计费用；结束后提醒查成本台账。"))
+        agent="执行前报出：实例名、集号、将跑几段、预计主机时长；**不要给单价或预估金额**"
+              "（真实消耗以台账为准）。结束后提醒查成本台账。"))
 _add(_c("video.rh", "4 出片", "云端出片（RunningHub，★计费）", "drama",
         argv=["video", "run", "--engine", "workflow"], billing=PAID, danger=DANGER, gate="G5",
         flags={"--limit": "limit", "--only": "only", "--resume": "resume",

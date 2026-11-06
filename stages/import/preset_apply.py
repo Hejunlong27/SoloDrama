@@ -143,7 +143,10 @@ def main(argv=None) -> int:
     if a.apply:
         # _do_set 自带「同一 kind 重设会写 history」的行为，幂等
         rc1 = M._do_set(ws, "image", img.get("choice") or "local_comfyui", detail_img, source="preset")
-        rc2 = M._do_set(ws, "video", vid.get("choice") or "runninghub", detail_vid, source="preset")
+        # ★ 2026-11-06：兜底改成 local_comfyui。原来写 "runninghub" —— 预配置卡只要漏写
+        #   `video.choice`，项目就会被静默设成平台计费通道（用户实测投诉的就是这个现象）。
+        #   兜底必须是「不花钱、不需要额外依据」的那一档。
+        rc2 = M._do_set(ws, "video", vid.get("choice") or "local_comfyui", detail_vid, source="preset")
         if rc1 != 0 or rc2 != 0:
             print("[WARN] 通道确认单写入有告警（退出码 %s / %s），请检查 model-plan.json"
                   % (rc1, rc2))

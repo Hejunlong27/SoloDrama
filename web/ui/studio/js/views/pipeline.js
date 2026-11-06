@@ -77,8 +77,8 @@ export async function render(ctx) {
         + badge('warn', '需确认 ' + ((d.counts || {}).ask || 0))
         + badge('bad', '被挡 ' + ((d.counts || {}).blocked || 0))
         + badge('outline', '需人工 ' + ((d.counts || {}).manual || 0))
-        + '<span class="spacer"></span><span class="tiny dim">预计花费 ' + (d.est_total || 0) + ' / 预算 '
-        + (d.budget || 0) + ' 点</span></div>'
+        + '<span class="spacer"></span><span class="tiny dim">预算闸门 ' + (d.est_total || 0) + ' / '
+        + (d.budget || 0) + ' 点（估算，只用来拦截，不作费用参考）</span></div>'
         + '<section class="card"><div class="card-b tight"><div class="table-wrap">'
         + '<table class="tb"><thead><tr><th style="width:7%">环节</th><th style="width:17%">名称</th>'
         + '<th style="width:14%">状态</th><th>说明</th>'

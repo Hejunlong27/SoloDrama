@@ -9,7 +9,7 @@ Web 控制台有**两张脸**，本模块是「用户端」那一张的脸面层
   ─────────────────────────────    ─────────────────────────────
   「我的短剧」                      工作区 / workspace
   「今天建议做这个」                下一步命令 + 门禁代号
-  「这一步要花约 ¥36」              145 RH币/段、G5 计费闸门
+  「这一步按平台实际用量结算」      usage 台账、G5 计费闸门
   「正在做：第 3 集的画面」          作业 job / 批次 batch id
   「有几处要先修好」                退出码 2
 
@@ -67,9 +67,10 @@ STATE_TEXT = {
     "todo": "还没开始",
 }
 
-# 花费口径（与引擎一致：1 RH币 ≈ ¥0.0025；单段 ≈145 RH币）
+# 花费口径：**只用于把台账里已发生的消耗折算成人话**，不做任何预估
+# （预估会低报约 4 倍，见 `cost_model._cost_lines` 的说明）。`COIN_PER_SHOT` 已删：
+# 那个 145 币/段 是单一 Key 档位的拟合值，真实台账中位数是 45 币/段。
 COIN_TO_CNY = 0.0025
-COIN_PER_SHOT = 145
 USD_TO_CNY = 7.2          # 仅用于把「美元钱包消耗」折算成人民币展示，界面上会注明是估算
 
 
@@ -136,20 +137,40 @@ STYLE_OPTIONS = [
 ]
 
 # 机器选项（用户语言）
+#
+# ★ 2026-11-06 修正（用户实测反馈）：
+#   1) **值必须与 `model_gate.MODEL_OPTIONS[kind]` 的 id 逐字一致**。此前写的是
+#      `runninghub` / `closed_model`，而引擎的 id 是 `runninghub_workflow` / `closed_source`
+#      —— 点下去必报「未知选项」，等于这两个按钮从来没工作过。
+#   2) **只放「不需要额外执行依据」的项**。这一步只提交一张确认单（`models set`），
+#      收不了工作流文件 / 服务地址 / 工作流 ID；放进去就是「选了也跑不起来」。
+#      云端与平台通道去「模型中心」补依据，别在这里给假按钮。
+#   3) **视频组必须给本机选项**。2026-11-04 起本地出片已有执行器，而这里此前只有
+#      RunningHub（还带 `recommend`）—— 于是用户什么都没点，确认单就被写成 RH，
+#      整个项目默认跑到平台计费通道上。这是本轮要根治的那个 bug。
+#   4) 带 `paid` 的选项**永不预选**（见 `web/ui/home.js::uiDual`），要用户亲手点。
 IMAGE_MACHINE_OPTIONS = [
-    {"value": "local_comfyui", "title": "这台电脑（免费）", "desc": "不花钱，但会占用电脑，出图时电脑会比较忙", "recommend": True},
-    {"value": "runninghub", "title": "云端（要花钱）", "desc": "不占电脑，速度快；按张计费"},
+    {"value": "local_comfyui", "title": "这台电脑（免费）",
+     "desc": "不花钱，用本机显卡出图；出图时电脑会比较忙", "recommend": True},
+    {"value": "closed_source", "title": "外部模型（站外付费）",
+     "desc": "自己在可灵 / 即梦等平台生成好，再把图放进这部剧的文件夹", "paid": True},
 ]
 VIDEO_MACHINE_OPTIONS = [
-    {"value": "runninghub", "title": "云端（要花钱）", "desc": "按镜头计费，开始前会显示金额", "recommend": True},
-    {"value": "closed_model", "title": "外部模型（站外付费）", "desc": "自己在外部平台生成好，再把图片放进这部剧的文件夹"},
+    {"value": "local_comfyui", "title": "这台电脑（免费）",
+     "desc": "不花钱，用本机显卡逐段生成；慢一些，期间电脑会很忙", "recommend": True},
+    {"value": "closed_source", "title": "外部模型（站外付费）",
+     "desc": "自己在外部平台生成好，再把视频放进这部剧的文件夹", "paid": True},
 ]
 
 TASKS = [
     Task("choose_machine", "选择用哪台机器做画面", "这一步决定后面要不要花钱",
-         "出图、出片、放大可以分别选；一次配好，全季复用", ["models.list", "models.set"], stage="setup",
+         "默认用这台电脑（不花钱）；要用云端或平台通道，先去「模型中心」配好再回来",
+         ["models.list", "models.set"], stage="setup",
          after="接下来把创作 Skill 做好的制作包导进来",
          ui={"kind": "dual_choice", "spec": "models.set",
+             "note": "这里只列了不需要额外资料的做法；要用云端或 RunningHub，"
+                     "点「把问题交给 AI 助手」，它会帮你把地址和工作流配好。"
+                     "带「要花钱」标记的选项不会替你预先勾选 —— 花钱的事必须你自己点。",
              "groups": [{"label": "画角色和场景的形象", "key": "image", "options": IMAGE_MACHINE_OPTIONS},
                         {"label": "把镜头做成画面", "key": "video", "options": VIDEO_MACHINE_OPTIONS}]}),
     Task("import_pack", "把制作包交给引擎",
@@ -163,7 +184,7 @@ TASKS = [
     Task("cast_assets", "给角色和场景定形象", "形象定好之后，每个镜头里的长相才能保持一致",
          "先看要画哪些，再决定用哪台机器画",
          ["assets.check", "assets.local", "assets.cloud", "assets.rh_wf"],
-         stage="cast", cost_hint="用云端画会花钱，开始前会显示金额", after="接下来把剧本拆成分镜",
+         stage="cast", cost_hint="用云端画会按平台用量结算，本机画不花钱", after="接下来把剧本拆成分镜",
          ui={"kind": "sequence", "steps": [
              {"spec": "assets.check", "label": "先检查画图能力", "free": True, "next": "清单"},
              {"spec": "assets.local", "label": "用这台电脑画（免费）", "params": {"kind": "all"}},
@@ -180,12 +201,12 @@ TASKS = [
              {"spec": "board.frame", "label": "画这一集的分镜图", "params": {"ep": "{ep}"}},
          ]}),
     Task("make_episode", "做出这一集的画面", "这是最花时间的一步，做完就能看到活动的剧",
-         "先算清楚要花多少钱，你同意后再交给云端生成",
+         "默认用本机显卡跑（不花钱）；要用云端，先去「模型中心」配好再回来",
          ["video.plan", "video.run"], stage="shoot", needs_confirm=True,
-         cost_hint="按镜头数量计费，开始前会显示金额", after="做完可以逐段预览",
+         cost_hint="本机跑不花钱，只是慢；云端按平台实际用量结算", after="做完可以逐段预览",
          ui={"kind": "plan_then_run", "plan_spec": "video.plan", "run_spec": "video.run",
              "params": {"limit": None},
-             "confirm_title": "现在开始生成画面", "free_label": "先算一下要花多少钱（不花钱）"}),
+             "confirm_title": "现在开始生成画面", "free_label": "先看历史实测消耗（不花钱）"}),
     Task("finish_episode", "拼成完整一集（含字幕）", "把分散的镜头接成能直接看的完整一集",
          "先把镜头接起来并提升清晰度，然后问你要不要加字幕",
          # ★ 2026-11-01：剪辑已定为三步（拼接母版 → 高清放大 → 字幕），
@@ -199,9 +220,13 @@ TASKS = [
              {"spec": "media.render", "label": "③ 加字幕（可选）", "params": {"burn": True}, "optional": True},
          ]}),
     Task("review_episode", "看看这一集做得怎么样", "确认画面和字幕没问题，再决定发不发",
-         "打开成片播放，逐集检查", ["report.batch"], stage="deliver",
+         "先看这一集跑到哪一步，再做一次交付前体检（都不花钱）",
+         ["video.status", "episode.preflight"], stage="deliver",
          after="没问题就去发布前检查",
-         ui={"kind": "sequence", "steps": [{"spec": "report.batch", "label": "整理这一集的制作情况"}]}),
+         ui={"kind": "sequence", "steps": [
+             {"spec": "video.status", "label": "看这一集跑到哪一步了", "free": True},
+             {"spec": "episode.preflight", "label": "做一次交付前体检", "params": {"eps": "{ep}"}},
+         ]}),
     Task("publish_check", "发布前检查", "平台要求检查内容合规，过了才能发布",
          "回答 3 个问题，系统告诉你能不能发", ["compliance.ep", "compliance.all"],
          stage="deliver", after="通过后就能导出发布",
@@ -509,13 +534,19 @@ def home(ws) -> dict:
 def _machine_text(models: dict) -> str:
     im = (models.get("image") or {})
     vi = (models.get("video") or {})
-    label = {"local_comfyui": "这台电脑（免费）", "cloud_comfyui": "云端 ComfyUI（要花钱）",
-             "runninghub": "云端（要花钱）", "closed_model": "外部模型"}
+    # ★ 键必须覆盖 `model_gate.MODEL_OPTIONS` 的全部 id（2026-11-06）：
+    #   少一个键就会把 `runninghub_workflow` 这种内部 id 直接甩给用户看。
+    label = {"local_comfyui": "这台电脑（免费）",
+             "cloud_comfyui": "云端 ComfyUI（按开机时长）",
+             "runninghub": "RunningHub（按用量）",
+             "runninghub_workflow": "RunningHub（按用量）",
+             "runninghub_ai_app": "RunningHub 应用（按用量）",
+             "closed_source": "外部模型"}
     parts = []
     if im.get("choice"):
-        parts.append("画形象：" + label.get(im["choice"], im["choice"]))
+        parts.append("画形象：" + label.get(im["choice"], "已选"))
     if vi.get("choice"):
-        parts.append("做画面：" + label.get(vi["choice"], vi["choice"]))
+        parts.append("做画面：" + label.get(vi["choice"], "已选"))
     return " · ".join(parts) or "还没选择"
 
 
@@ -628,28 +659,19 @@ def friendly_error(code, text: str = "") -> dict:
             "detail": "可以先看下面的详细记录；如果看不懂，点「把问题交给 AI 助手」。"}
 
 
-def spend_for_shots(n) -> str:
-    """按镜头数给出「大概要花多少」（仅供用户预估，实际以平台账单为准）。"""
-    try:
-        n = int(n)
-    except (TypeError, ValueError):
-        return "—"
-    return yuan(n * COIN_PER_SHOT * COIN_TO_CNY)
-
-
 _STEP_TEXT = {
     "pack.check": "先校验制作包（只读，不写盘）",
     "pack.import": "把制作包导入成引擎能做的镜头清单",
     "board.frame": "给每个镜头画一张首帧",
-    "models.list": "先给你看两种做法各自的代价",
+    "models.list": "先给你看两条路各自要准备什么",
     "models.set": "把你选定的做法记下来",
     "project.scaffold": "建好这部剧的文件夹",
     "project.status": "看看创作进行到哪一步了",
     "assets.check": "先确认画图工具是否可用",
     "assets.local": "用你这台电脑画（免费，会占用电脑）",
-    "assets.rh": "用云端画（要花钱，开始前会报金额）",
-    "video.plan": "先算一下这一集会花多少钱（不花钱）",
-    "video.run": "把镜头交给云端生成（按实际用量扣费）",
+    "assets.rh": "用云端画（按用量结算）",
+    "video.plan": "先看历史实测消耗（不花钱）",
+    "video.run": "用本机显卡把镜头逐段生成（不花钱，占 GPU）",
     "media.assemble": "把镜头接成完整一集并提升清晰度",
     "media.render": "在画面上加字幕",
     "report.batch": "整理这次的制作报告",

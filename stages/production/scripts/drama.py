@@ -1557,7 +1557,7 @@ GUIDE = """短剧生产线 · 速查（python scripts/drama.py <命令>）
 模型     models              ★前置条件：首次生图/出片前必须确认模型（本地/云端/闭源三选一）
          models --ask        交互式引导确认（生图；换 video 传 models ask video）
          models list         可选清单：本地ComfyUI(￥0) / RunningHub(★计费) / 闭源模型(★计费)
-         models set image=local_comfyui video=runninghub    记录确认（可一次两条）
+         models set image=local_comfyui video=local_comfyui  记录确认（可一次两条）
          models reset video  换模型：先清除再重确认
 体检     preflight           一次过 生成通道 + Key 分级 + 引擎 doctor + check + 预演（全免费）
 资产     assets              缺资产就出图：默认**本地 ComfyUI ￥0**，干跑
@@ -1801,7 +1801,7 @@ def main() -> int:
     _add_ws_arg(q)
     q.add_argument('--json', action='store_true')
     q.set_defaults(fn=cmd_models)
-    q = ms.add_parser('set', help='记录确认：set image=local_comfyui [video=runninghub]')
+    q = ms.add_parser('set', help='记录确认：set image=local_comfyui [video=local_comfyui]')
     _add_ws_arg(q)
     q.add_argument('pairs', nargs='+', metavar='kind=choice')
     q.add_argument('--detail', default=None)

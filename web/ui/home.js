@@ -238,17 +238,33 @@ function uiChoice(t) {
 
 function uiDual(t) {
   const ui = t.ui;
+  /* 预选规则（2026-11-06）：
+     「会花钱」的选项**永不预选** —— 花钱的事必须用户亲手点一下。
+     此前这里是 `o.recommend || (!有推荐 && i===0)`，而视频组的第一项就是带
+     recommend 的 RunningHub ⇒ 用户什么都不选，确认单就被写成平台通道。 */
+  const pre = (g) => g.options.findIndex((o) => o.recommend && !o.paid);
   openModal(t.title);
-  $('tmBody').innerHTML = `<p class="muted">${esc(t.why)}</p>` + ui.groups.map((g) => `
+  $('tmBody').innerHTML = `<p class="muted">${esc(t.why)}</p>`
+    + (ui.note ? `<p class="muted small">${esc(ui.note)}</p>` : '')
+    + ui.groups.map((g) => {
+      const k = pre(g);
+      return `
     <div class="group">
       <div class="group-h">${esc(g.label)}</div>
-      ${g.options.map((o, i) => `<label class="opt ${o.recommend ? 'opt-rec' : ''}">
-        <input type="radio" name="${esc(g.key)}" value="${esc(o.value)}" ${o.recommend || (!g.options.some((x) => x.recommend) && i === 0) ? 'checked' : ''}>
-        <div><div class="opt-title">${esc(o.title)}</div><div class="muted small">${esc(o.desc)}</div></div>
+      ${g.options.map((o, i) => `<label class="opt ${o.recommend && !o.paid ? 'opt-rec' : ''}">
+        <input type="radio" name="${esc(g.key)}" value="${esc(o.value)}" ${i === k ? 'checked' : ''}>
+        <div><div class="opt-title">${esc(o.title)}${o.paid ? ' <span class="chip">要花钱</span>' : ''}</div><div class="muted small">${esc(o.desc)}</div></div>
       </label>`).join('')}
-    </div>`).join('');
+    </div>`;
+    }).join('');
   foot('<button class="btn btn-primary" data-ok="1">就这样</button>');
   $('tmFoot').querySelector('[data-ok]').onclick = () => {
+    const miss = ui.groups.filter((g) => !document.querySelector(`input[name="${g.key}"]:checked`));
+    if (miss.length) {
+      // 不再放任「没选就提交」：以前会静默取第一个（常常是计费通道）
+      alert('还有一组没选：' + miss.map((g) => g.label).join('、'));
+      return;
+    }
     const pairs = ui.groups.map((g) => g.key + '=' + document.querySelector(`input[name="${g.key}"]:checked`).value).join(' ');
     runSpec(ui.spec, { pairs }, { title: '正在记录你的选择' });
   };
@@ -273,7 +289,7 @@ function uiSequence(t) {
   $('tmBody').innerHTML = `<p class="muted">${esc(t.why)}</p>` + (t.ui.steps || []).map((s, i) => `
     <div class="steprow">
       <button class="btn ${i === 0 ? 'btn-primary' : ''}" data-step="${i}">${esc(s.label)}</button>
-      <span class="muted small">${s.confirm ? '会花钱，开始前先告诉你金额' : (s.optional ? '可以跳过' : '不花钱')}</span>
+      <span class="muted small">${s.confirm ? '会花钱，按实际用量结算' : (s.optional ? '可以跳过' : '不花钱')}</span>
     </div>`).join('');
   foot('<span class="muted small">按顺序来就行；中途可以关掉这个窗口，已经做好的部分不会丢。</span>');
   $('tmBody').querySelectorAll('[data-step]').forEach((b) => {

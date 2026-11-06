@@ -40,7 +40,8 @@
     python model_gate.py list                       打印可选模型清单
     python model_gate.py ask                        交互式引导确认（需 TTY）
     python model_gate.py set image=local_comfyui    记录确认（非交互；可同时 set video=...）
-    python model_gate.py set video=runninghub --detail "工作流 ID=xxx"
+    python model_gate.py set video=local_comfyui                # 本机出片（￥0，默认）
+    python model_gate.py set video=cloud_comfyui --detail "comfy_url=https://..."
     python model_gate.py reset image                清除某类确认（换模型前用）
     python model_gate.py require image [--engine local]   门禁查询（供 drama.py 调用；未过则退出码 4）
 """
@@ -151,7 +152,10 @@ MODEL_OPTIONS = {
         {
             "id": "runninghub",
             "label": "RunningHub 工作流（★计费）",
-            "cost": "约 78-209 RH币/段（按帧数）",
+            # ★ 2026-11-06：不写单价。这个字段会被写进 model-plan.json 并在界面上显示，
+            #   而「约 78-209 币/段」是单次抽样，真实台账离散度极大（中位 45 币/段）。
+            #   展示口径统一为「按平台实际用量结算」，具体数字只在跑完之后按台账报。
+            "cost": "按平台实际用量结算（跑完进台账，不做预估）",
             "desc": "RunningHub 标准通道工作流出片（九宫格→裁剪→H3 视频）；云端计费，单账号并发 ≤5。",
             "engine_arg": "workflow",
             "executor": "stages/video/workflow/scripts/run.py",
@@ -648,7 +652,7 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("set", help="记录确认：set image=local_comfyui [video=runninghub]")
+    p = sub.add_parser("set", help="记录确认：set image=local_comfyui [video=local_comfyui]")
     p.add_argument("pairs", nargs="+", metavar="kind=choice")
     p.add_argument("--detail", default=None,
                    help='附加说明（k=v,k2=v2 或整段 JSON）。本地/云端 ComfyUI 可在这里写'

@@ -183,6 +183,19 @@ def main() -> int:
                   all(o["label"] in menu for o in mg.MODEL_OPTIONS[kind]))
             check("%s 确认请求含选项与命令" % kind,
                   "请选择本项目的" in req and "models" in req)
+
+        # 10. ★ 2026-11-06（用户实测反馈）：`cost` 会被写进 model-plan.json 并显示给用户，
+        #    所以它**不能带单价或预估金额** —— 内置单价低报约 4 倍，任何预估价都会被当预算依据。
+        #    此前 video/runninghub 写的是「约 78-209 币/段（按帧数）」。
+        import re as _re
+        bad = _re.compile(r"(币\s*/\s*(段|秒|张|次)|\d+\s*[-–]\s*\d+\s*币|"
+                          r"￥\s*\d+(\.\d+)?\s*/\s*(时|段|张)|元\s*/\s*(时|段|张))")
+        for kind, opts in mg.MODEL_OPTIONS.items():
+            for o in opts:
+                for field in ("cost", "label", "desc"):
+                    m = bad.search(str(o.get(field) or ""))
+                    check("%s/%s 的 %s 不含单价（%s）" % (kind, o["id"], field, m.group(0) if m else ""),
+                          m is None, "%s/%s.%s = %r" % (kind, o["id"], field, o.get(field)))
     finally:
         shutil.rmtree(ws, ignore_errors=True)
 

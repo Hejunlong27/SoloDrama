@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +32,67 @@ def check(cond, msg):
         FAILS.append(msg)
         print("  [NG] %s" % msg)
     return cond
+
+
+# ---------------------------------------------------------------------------
+# 机器选项 ↔ 引擎选项的**逐字对齐**（2026-11-06 用户实测反馈的直接产物）
+# ---------------------------------------------------------------------------
+def _engine_options() -> dict:
+    """`model_gate.MODEL_OPTIONS` —— 通道清单的唯一真源。"""
+    eng = WEB.parent / "stages" / "production" / "scripts"
+    if str(eng) not in sys.path:
+        sys.path.insert(0, str(eng))
+    import model_gate  # noqa: PLC0415
+    return model_gate.MODEL_OPTIONS
+
+
+def _check_dual(t) -> None:
+    """双选组（「用哪台机器做画面」）的四条硬约束。
+
+    起因：2026-11-06 实测「新建项目后什么都没选，就默认变成 RunningHub」。
+    根因是这个界面层自己写了一份通道清单，值与引擎不一致（`runninghub` vs
+    `runninghub_workflow`、`closed_model` vs `closed_source`），
+    而且视频组的第一项就是带 `recommend` 的 RunningHub。四条一起钉住：
+
+    1. 每个 value 必须在 `MODEL_OPTIONS[kind]` 里 —— 否则点下去报「未知选项」；
+    2. **不能有必填执行依据** —— 这一步只提交确认单，收不了工作流/地址；
+    3. 带 `paid` 的选项不得带 `recommend` —— 花钱的默认值必须用户亲手点；
+    4. 两类都必须有本机（免费）选项 —— 否则等于强迫用户走计费通道。
+    """
+    eng = _engine_options()
+    for g in t.ui.get("groups") or []:
+        kind = g["key"]
+        opts = eng.get(kind) or []
+        ids = [o["id"] for o in opts]
+        vals = [o["value"] for o in g["options"]]
+        for o in g["options"]:
+            check(o["value"] in ids,
+                  "机器选项 %s（%s）不是引擎的通道 id；可选 %s" % (o["value"], kind, ids))
+            eng_opt = next((x for x in opts if x["id"] == o["value"]), {}) or {}
+            check(not (eng_opt.get("requires") or []),
+                  "机器选项 %s 需要执行依据 %s，这个界面收不了 —— 应让用户去「模型中心」"
+                  % (o["value"], eng_opt.get("requires")))
+            check(not (o.get("recommend") and o.get("paid")),
+                  "机器选项 %s 既标了推荐又标了要花钱 —— 计费通道不得预选" % o["value"])
+        check("local_comfyui" in vals, "%s 组缺少「本机（免费）」选项" % kind)
+        check(len(set(vals)) == len(vals), "%s 组的选项值有重复" % kind)
+
+
+def test_no_price_estimate_in_user_text():
+    """用户端不得出现**任何**单价或预估金额（2026-11-06 用户明确要求）。
+
+    为什么连「¥数字」都禁：内置单价已低报约 4 倍，任何预估价都会被当成预算依据。
+    正确口径是「按平台实际用量结算」，跑完按台账报实测。
+    """
+    print("[7] 用户文案不得出现单价或预估金额")
+    bad_pat = re.compile(r"(币\s*/\s*(段|秒|张|次)|\d+\s*币/|￥\s*\d+(\.\d+)?\s*/\s*时|约\s*¥?\s*\d+\s*元)")
+    free_ok = re.compile(r"￥0")
+    for txt in _user_texts():
+        if free_ok.search(txt):          # 「￥0（免费）」是事实陈述，不是报价
+            txt = free_ok.sub("", txt)
+        m = bad_pat.search(txt)
+        if m:
+            check(False, "用户文案出现单价/预估金额「%s」：%s" % (m.group(0), txt[:60]))
 
 
 def _user_texts():
@@ -111,7 +173,13 @@ def test_tasks_reference_real_specs():
                           "任务 %s 的选项 %s 不是引擎允许的取值" % (t.id, o["value"]))
         if ui.get("kind") == "plan_then_run":
             check(CMD.get(ui["plan_spec"]).billing == CMD.FREE, "「先算钱」那一步必须是免费的")
-            check(CMD.get(ui["run_spec"]).billing == CMD.PAID, "「开始生成」那一步必须标记为计费")
+            # 「开始生成」必须标出**资源代价**：本机跑是 GPU（￥0 但占卡），平台通道是 PAID。
+            # 2026-11-06：原来只认 PAID，而 video.run 早已是「本机 GPU 出片」——
+            # 这条断言把默认通道锁死在计费通道上，是本轮「默认变成 RunningHub」的同类问题。
+            check(CMD.get(ui["run_spec"]).billing in (CMD.PAID, CMD.GPU),
+                  "「开始生成」那一步必须标出资源代价（计费 或 占 GPU）")
+        if ui.get("kind") == "dual_choice":
+            _check_dual(t)
         if ui.get("kind") == "questions":
             spec = CMD.get(ui["spec"])
             for q in ui["questions"]:
@@ -125,7 +193,6 @@ def test_money_and_state():
     check(ux.yuan(0.36) == "¥0.36", "小额金额格式异常：%s" % ux.yuan(0.36))
     check(ux.yuan(1234.5) == "¥1235", "大额金额应取整：%s" % ux.yuan(1234.5))
     check(ux.coins_to_yuan(145) == "¥0.36", "点数换算异常：%s" % ux.coins_to_yuan(145))
-    check(ux.spend_for_shots(18).startswith("¥"), "镜头数预估异常")
     for k, v in ux.STATE_TEXT.items():
         check(bool(v), "状态 %s 无人话措辞" % k)
         check(k not in v, "状态措辞里不应出现工程词：%s" % v)
@@ -166,10 +233,22 @@ def test_help_prompt():
         check(bad not in p, "求助提示词暴露了内部说法「%s」" % bad)
 
 
+def test_no_failures():
+    """把 `check()` 收集到的问题变成 **pytest 也能看见**的失败。
+
+    为什么需要这一条：`check()` 只打印不抛出（为了脚本模式下一次报全）。
+    后果是 `python web/tests/test_ux.py` 会红，而 `pytest web/tests` 一直把它当绿的 ——
+    这套契约就这样静默失效了，2026-11-06 才发现（「默认 RunningHub」「report.batch 已删
+    但任务还在引用」三条同时挂着）。定义在文件最后，靠执行顺序读累积结果。
+    """
+    assert not FAILS, "用户语言层契约有 %d 项未通过：\n%s" % (len(FAILS), "\n".join(FAILS))
+
+
 if __name__ == "__main__":
     for fn in (test_no_developer_vocabulary, test_stages_cover_all_rounds,
                test_tasks_reference_real_specs, test_money_and_state,
-               test_friendly_error, test_help_prompt):
+               test_friendly_error, test_help_prompt,
+               test_no_price_estimate_in_user_text):
         fn()
     print("-" * 60)
     if FAILS:

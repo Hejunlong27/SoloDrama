@@ -1,6 +1,61 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-06 更新（V0.7.67 · 不再默认跑到 RunningHub + 清掉全部 RH 价格提示）**
+
+  用户实测两件事，都指向同一类问题：**界面替用户做了花钱的决定，还给了一个已知会错的数字**。
+
+  ### 一、「新建项目后什么都没选，就默认变成 RunningHub」
+
+  三处成因，逐条堵：
+
+  | # | 位置 | 问题 |
+  |---|---|---|
+  | 1 | `web/core/ux.py::VIDEO_MACHINE_OPTIONS` | 视频组**只有 RunningHub 且带 `recommend`**，本机选项根本不存在 —— 用户不点，确认单也被写成 RH |
+  | 2 | `web/ui/home.js::uiDual` | 预选规则是 `recommend \|\| 第一项`，于是「第一项就是计费通道」直接变成默认值 |
+  | 3 | `stages/import/preset_apply.py` | 兜底写的是 `vid.get("choice") or "runninghub"` —— 预配置卡漏一个字段就静默设成计费通道 |
+
+  改法：视频组补回 `local_comfyui` 并设为唯一预选；**带 `paid` 的选项永不预选**，且提交前校验「两组都选了吗」；
+  预配置兜底改成 `local_comfyui`。
+
+  顺带修掉三处「点了也跑不通」：
+  `ux.py` 的选项值写的是 `runninghub` / `closed_model`，而引擎的 id 是 `runninghub_workflow` / `closed_source`
+  —— 这两项从来没工作过；`review_episode` 任务引用的 `report.batch` 命令早已删除；`plan_then_run` 的断言
+  把「开始生成」锁死成 `PAID`，而 `video.run` 早已是「本机 GPU 出片」。
+
+  ### 二、RH 价格提示全部移除
+
+  | 位置 | 原文 | 现在 |
+  |---|---|---|
+  | `web/core/ux.py` | `COIN_PER_SHOT = 145` + `spend_for_shots()` 按镜头数算 ¥ | 删除；不再有任何按镜头数报预价的路径 |
+  | `web/core/connections.py` | 「27 币/段 + 1 币/秒」 | 「按平台实际用量结算（跑完自动写台账，不做预估）」 |
+  | `model_gate.py` | `cost: "约 78-209 RH币/段（按帧数）"`（会被写进确认单并显示） | 「按平台实际用量结算（跑完进台账，不做预估）」 |
+  | `commands.py` | 「默认 ￥1.59/时」+ 助手指令「按 ￥1.59/时 报预计费用」 | 去掉单价；助手指令改为「不要给单价或预估金额」 |
+  | `views/assets.js` | 「默认 ￥1.59/时」 | 「按实例开机时长结算（以云平台账单为准）」 |
+  | `views/pipeline.js` | 「预计花费 X / 预算 Y 点」 | 「预算闸门 X / Y 点（估算，只用来拦截，不作费用参考）」 |
+  | `configs/model-plan.example.json` | 示例 video 通道 = runninghub + 那条价格 | 改为 local_comfyui；示例本身就是很多项目的复制源 |
+
+  统一口径：**只报「按平台实际用量结算」，具体数字跑完按台账实测报**（`cost_model.observed()`）。
+
+  ### 三、测试
+
+  修掉一个**静默失效的测试套件**：`web/tests/test_ux.py` 的 `check()` 只打印不抛出，
+  `python test_ux.py` 会红，而 `pytest` 一直把它当绿的 —— 上面几条就是这样挂着没被发现。
+  现已加 `test_no_failures`（末尾统一断言）让 pytest 也能看见。
+
+  新增守卫：
+  - `test_ux.py`：机器选项的 value 必须是引擎 id、**不得有必填依据**、`paid` 不得 `recommend`、
+    两组都必须有本机选项；用户文案不得出现单价或预估金额（正则）；
+  - `test_preset_apply.py`（新文件，3 例）：每份预配置卡必须显式声明两类通道且 id 合法、
+    兜底必须是 `local_comfyui`、本机通道必须零依据且有执行器；
+  - `test_model_gate.py`：`MODEL_OPTIONS` 的 cost/label/desc 不允许出现单价。
+
+  回归 **546 例全绿**（cloud 49 / import 53 / subtitle 47 / comfyui 42 / tools 6 / web 140 /
+  production 110 / assets 19 / gen_boards 17 / model_gate 63）。
+
+  ⚠ 已存在的项目若被这套默认值写过 `model-plan.json`（`video.choice=runninghub`），需要显式改回：
+  `drama models set video=local_comfyui`（或 `cloud_comfyui` + 地址）。`drama models status` 可查当前选择。
+
 - **2026-11-06 更新（V0.7.66 · H3 把台词烧成画面字幕：写法问题，不是工作流问题）**
 
   实跑发现：成片在**有人开口的时间段**底部出现白字黑边字幕，文本与剧本逐字一致；
