@@ -19,7 +19,8 @@
 |---|---|---|---|
 | 内容创作者 | Windows + N 卡 | 装 Python → 双击 `start.cmd`，缺什么它会问你 | ~3 分钟 |
 | 开发者 | 任意 | `git clone` + 两条 `pip install` | ~2 分钟 |
-| 只想先看看界面 | 任意 | 同上。**不接 ComfyUI 也能开工作台** | ~2 分钟 |
+| 不想自己敲命令 | 任意 | 把下面 **C** 那段整段发给 AI 助手 | ~5 分钟 |
+| 只想先看看界面 | 任意 | 同「开发者」。**不接 ComfyUI 也能开工作台** | ~2 分钟 |
 
 ### 前置
 
@@ -69,6 +70,50 @@ envs/solodrama-web/bin/python -m pip install -r requirements.txt
 两份依赖是**故意分开**的：`web/requirements-web.txt` 是控制台（fastapi / uvicorn），
 `requirements.txt` 是引擎（httpx / Pillow）。装进同一个 venv 最省事；分两个环境也能跑，
 启动器会自己挑一个装齐了的，并在控制台里告诉你挑了哪个。
+
+### C. 交给 AI 助手（整段复制）
+
+不想自己敲命令，或者要在别人的机器 / 服务器上装 —— 把下面这段整段发给 AI 助手
+（WorkBuddy、Claude Code 等能读文件、能执行命令的 Agent），**把尖括号里的三处换掉**：
+
+```text
+帮我把 SoloDrama 装好，直到能打开工作台。仓库：https://github.com/Hejunlong27/SoloDrama
+我的机器：<Windows 11 / macOS 14 / Ubuntu 22.04>；Python：<版本，或「没装，帮我装 3.10+」>
+放到：<仓库目录>；显卡：<有 N 卡 8G / 没有独显>
+
+按顺序做，每步做完用一行报结果；卡住就停下来说清卡在哪，不要自己发明绕法：
+
+1. 克隆仓库到 <仓库目录>。失败最多重试 3 次（网络/代理偶发断流），仍失败就报错并说明网络环境。
+
+2. 建专用环境并装两份依赖，缺一不可：
+   python -m venv envs/solodrama-web
+   Windows：
+     envs/solodrama-web/Scripts/python.exe -m pip install -r web/requirements-web.txt
+     envs/solodrama-web/Scripts/python.exe -m pip install -r requirements.txt
+   macOS / Linux：
+     envs/solodrama-web/bin/python -m pip install -r web/requirements-web.txt
+     envs/solodrama-web/bin/python -m pip install -r requirements.txt
+
+3. 自检：python tools/env_check.py --json —— 把 ok 和未通过的项报给我。
+   必需项只有 Python 3.10+ / Pillow / ffmpeg / ffprobe；ffmpeg 缺了就告诉我命令，别替我装系统包。
+
+4. 离线用例：python -m pytest tools/tests stages/import/tests -q，要求全绿。
+   不要在仓库根直接跑 pytest（引擎脚本导入期就要求工作区存在）。
+
+5. 真启动一次：python web/launcher.py --no-browser，看到「依赖齐备」和端口后，
+   访问一下 /studio/ 确认返回 200，再停掉。
+
+6. 最后告诉我三件事：启动命令、默认端口、第一次进界面该点哪里。
+
+硬性要求：
+- 不 commit、不 push；别把 envs/ 加进版本库。
+- 不改 stages/、web/core/ 里的代码；装不上就停下，不要改代码绕过。
+- 不装 ComfyUI 也能完成安装；出图出片等我真正要用时再配。
+- 任何要花钱的动作（云端实例、平台通道、放大服务）执行前先报价，等我同意。
+```
+
+它做的事和 A / B 完全一样，只是把「判断-重试-验证」交给助手。装上之后要开始做剧，
+换成 [`docs/新项目启动提示词.md`](docs/新项目启动提示词.md) 里那段。
 
 ### 启动
 
