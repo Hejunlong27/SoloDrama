@@ -3,21 +3,23 @@
 
 为什么要有它
 ------------
-23 节点状态机是整条链的调度真源。它此前**没有任何测试**，验收只能靠「真跑一部剧」——
-那等于用「我做出一部短剧」来证明「引擎没坏」，两件事根本不是一回事：
-剧做出来可能是我手工补了内容，引擎照样有 bug；剧做不出来又分不清是谁的问题。
+12 节点状态机是整条链的调度真源。验收不能靠「真跑一部剧」——那等于用
+「我做出一部短剧」证明「引擎没坏」，两件事不是一回事。
 
-这份测试用 `fixtures/mini_drama`（1 集 2 镜的最小项目）让引擎**自己证明自己**：
+> ⚠ **2026-11-06 重写**：旧版按 23 节点 / 七环节写；重构后节点表缩成
+> **5 环节 12 节点**（引擎只从导入开始，创作层已移出），旧用例 12/25 全红。
+> 现在按当前 `NODES` 表重写。**节点增删时这份测试应当跟着红**，那是它对的地方。
 
-* **A 节点表**：23 节点 / 七环节 / 六字段齐 / 回流白名单 / 判据可判
-* **B 状态推导**：absent / passed / blocked / skipped / stale 的判定，只读磁盘
-* **C 判据**：ffs / board / five / script / assets 的正反例
-* **D Loop**：variant_hash 防抖、L1 预算、L2 回流白名单
-* **E 执行**：内置判据节点可跑、marker 落盘、可选节点不阻塞
+分组：
+* **A 表结构**：节点数 / 环节归属 / 字段齐 / next 链 / 回流白名单 / 判据可识别
+* **B 状态推导**：absent / blocked / passed / stale / skipped，只读磁盘
+* **C 判据**：imported / boards / assets / five 的正反例
+* **D 调度**：next 语义、面板结构、stuck/escalate、回流白名单
+* **E 命令拼装**：干跑与真跑共用同一份 argv
 
 ```bash
-python tests/test_nodes.py            # 全部
-python tests/test_nodes.py --group B  # 只跑某组
+python stages/production/scripts/tests/test_nodes.py            # 全部
+python stages/production/scripts/tests/test_nodes.py --group B  # 只跑某组
 ```
 """
 import argparse
@@ -28,18 +30,18 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
 FIXTURE = pathlib.Path(HERE) / "fixtures" / "mini_drama"
 
-# `_ws` 在 import 期就解析工作区，找不到会 SystemExit ——
-# 所以在 import nodes 之前先把环境变量指到夹具的临时副本。
 _TMP_ROOT = None
 
 
 def _bootstrap():
+    """`_ws` 在 import 期就解析工作区 → 先把环境变量指到夹具副本。"""
     global _TMP_ROOT
     _TMP_ROOT = pathlib.Path(tempfile.mkdtemp(prefix="sd_nodes_"))
     dst = _TMP_ROOT / "mini_drama"
@@ -69,7 +71,7 @@ def A_(cond, msg=""):
 
 
 def png(path: pathlib.Path, w: int = 8, h: int = 8, rgb=(120, 120, 120)):
-    """写一个合法的极简 PNG（不依赖 Pillow）。"""
+    """写一个合法 PNG（不依赖 Pillow）。"""
     def chunk(tag, data):
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
@@ -83,7 +85,6 @@ def png(path: pathlib.Path, w: int = 8, h: int = 8, rgb=(120, 120, 120)):
 
 
 def fresh(ep: str = "ep01") -> "N.Ctx":
-    """每次拿一份新的夹具副本，互不干扰。"""
     d = pathlib.Path(tempfile.mkdtemp(prefix="sd_case_")) / "mini_drama"
     shutil.copytree(WS, d)
     return N.Ctx(d, ep)
@@ -93,67 +94,93 @@ def state_of(ctx, node_id: str) -> str:
     return N.node_state(ctx, N.NODE_BY_ID[node_id])["state"]
 
 
-# =========================================================================== A 节点表
-@reg("A", "A01 23 节点 / 七环节，顺序与环节归属自洽")
+def put_data(ctx, shots: int = 2):
+    """造出导入产物三件（判据 `imported` 只看这三样）。"""
+    d = ctx.data / (ctx.ep or "ep01")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "shots.json").write_text(json.dumps(
+        [{"id": "shot_%03d" % i, "duration": 5} for i in range(1, shots + 1)],
+        ensure_ascii=False), encoding="utf-8")
+    (d / "boards.json").write_text("[]", encoding="utf-8")
+    (d / "h3_prompts.json").write_text("{}", encoding="utf-8")
+    return d
+
+
+# =========================================================================== A 表结构
+@reg("A", "A01 12 节点 / 5 环节，顺序与环节归属自洽")
 def _():
-    A_(len(N.NODES) == 23, "节点数 %d ≠ 23" % len(N.NODES))
-    A_(len(N.STAGES) == 7, "环节数 %d ≠ 7" % len(N.STAGES))
+    A_(len(N.NODES) == 12, "节点数 %d ≠ 12" % len(N.NODES))
+    A_(len(N.STAGES) == 5, "环节数 %d ≠ 5" % len(N.STAGES))
     stage_ids = {s["id"] for s in N.STAGES}
     for n in N.NODES:
         A_(n["stage"] in stage_ids, "%s 的 stage=%s 不在环节表里" % (n["id"], n["stage"]))
-    # 每个环节至少一个节点，且相邻节点的 stage 不来回跳（拓扑要能顺着读）
-    seen, last = [], None
+    # 每个环节至少一个节点
+    for sid in stage_ids:
+        A_(any(n["stage"] == sid for n in N.NODES), "环节 %s 没有任何节点" % sid)
+    # ★ 这里**不能**要求环节连续：`import` 是有意穿插的 ——
+    #   import.pack（进场）→ asset.render（出图）→ import.bind（回填参考表）→ board.frame
+    #   → import.gate（导入门禁）。出图前后各要导一次，插在中间是对的。
+    #   能锁的是「环节首次出现的顺序 == STAGES 的声明顺序」。
+    first = []
     for n in N.NODES:
-        if n["stage"] != last:
-            A_(n["stage"] not in seen, "环节 %s 在顺序里出现了两次（拓扑分段了）" % n["stage"])
-            seen.append(n["stage"])
-            last = n["stage"]
-    A_(len(seen) == 7, "顺序里只出现 %d 个环节" % len(seen))
-    return "%d 节点 / %d 环节" % (len(N.NODES), len(N.STAGES))
+        if n["stage"] not in first:
+            first.append(n["stage"])
+    A_(first == [s["id"] for s in N.STAGES],
+       "环节首次出现顺序与 STAGES 不一致：%s vs %s" % (first, [s["id"] for s in N.STAGES]))
+    return "%d 节点 / %d 环节（import 穿插 %d 次）" % (
+        len(N.NODES), len(N.STAGES), sum(1 for n in N.NODES if n["stage"] == "import"))
 
 
-@reg("A", "A02 每个节点六字段齐全，且 id 唯一")
+@reg("A", "A02 每个节点字段齐全，且 id 唯一")
 def _():
     ids = [n["id"] for n in N.NODES]
     A_(len(ids) == len(set(ids)), "节点 id 重复")
+    need = ("id", "stage", "trigger", "reads", "output", "check", "next", "run", "reflow")
     for n in N.NODES:
-        for k in ("id", "stage", "trigger", "reads", "output", "check", "next", "run"):
+        for k in need:
             A_(k in n, "%s 缺字段 %s" % (n["id"], k))
-        A_(str(n["trigger"]).startswith("drama do "), "%s 的触发命令不规范：%s" % (n["id"], n["trigger"]))
+        A_(str(n["trigger"]).startswith("drama do "), "%s 触发命令不规范：%s" % (n["id"], n["trigger"]))
         A_(str(n["output"]).strip(), "%s 没有产物落点" % n["id"])
-    # 只有最后一个节点允许 next 为空
     tail = [n["id"] for n in N.NODES if not n["next"]]
     A_(tail == ["edit.release"], "空 next 的节点应只有 edit.release，实际：%s" % tail)
     return "%d 个 id 唯一 / 字段齐" % len(ids)
 
 
-@reg("A", "A03 next 必须指向存在的节点，且不会指回自己")
+@reg("A", "A03 next 链：指向存在、不自指、能走到终点且覆盖全表")
 def _():
     for n in N.NODES:
         if not n["next"]:
             continue
         A_(n["next"] in N.NODE_BY_ID, "%s.next=%s 不存在" % (n["id"], n["next"]))
         A_(n["next"] != n["id"], "%s.next 指向自己" % n["id"])
-    return "全部 next 有效"
+    seen, cur, hop = [], N.NODES[0]["id"], 0
+    while cur and hop < 50:
+        A_(cur not in seen, "next 链成环：%s" % cur)
+        seen.append(cur)
+        cur = (N.NODE_BY_ID[cur].get("next") or "")
+        hop += 1
+    A_(len(seen) == len(N.NODES), "next 链只走到 %d/%d 个节点" % (len(seen), len(N.NODES)))
+    A_(seen[-1] == "edit.release", "终点应是 edit.release，实际 %s" % seen[-1])
+    return "%d 跳走完全表" % hop
 
 
-@reg("A", "A04 回流边白名单：只允许表里声明过的边，且都是向前的上游")
+@reg("A", "A04 回流白名单：只允许声明过的边，且只能往回")
 def _():
     idx = {nid: i for i, nid in enumerate(N.ORDER)}
     for a, b in N.REFLOW_EDGES:
-        A_(b in N.NODE_BY_ID, "回流目标 %s 不存在" % b)
-        A_(idx[b] < idx[a], "%s → %s：回流只能往回，不能往前" % (a, b))
-        A_(b in (N.NODE_BY_ID[a].get("reflow") or []), "%s 的 reflow 表里没有 %s" % (a, b))
-    A_(len(N.REFLOW_EDGES) >= 15, "回流边只有 %d 条，太少了" % len(N.REFLOW_EDGES))
-    return "%d 条，全部向前回退" % len(N.REFLOW_EDGES)
+        A_(a in N.NODE_BY_ID and b in N.NODE_BY_ID, "回流边 %s→%s 有不存在的节点" % (a, b))
+        A_(idx[b] < idx[a], "%s → %s：回流只能往回" % (a, b))
+        A_(b in (N.NODE_BY_ID[a].get("reflow") or []), "%s 的 reflow 表里没声明 %s" % (a, b))
+    A_(len(N.REFLOW_EDGES) >= 8, "回流边只有 %d 条，太少" % len(N.REFLOW_EDGES))
+    return "%d 条，全部向回" % len(N.REFLOW_EDGES)
 
 
-@reg("A", "A05 判据表达式都能被 check_node 识别（不是错到永远不过）")
+@reg("A", "A05 判据表达式都能被识别（不是错到永远不过）")
 def _():
     ctx = fresh()
     unknown = []
     for n in N.NODES:
-        ok, detail = N.check_node(ctx, n)
+        _ok, detail = N.check_node(ctx, n)
         if str(detail).startswith("未知判据"):
             unknown.append((n["id"], n["check"]))
     A_(not unknown, "有未知判据：%s" % unknown)
@@ -161,308 +188,223 @@ def _():
 
 
 # =========================================================================== B 状态推导
-@reg("B", "B01 夹具就绪时：剧本/资产通过，分镜图与出片卡住")
+@reg("B", "B01 空骨架：首节点没开工，下游全部 blocked")
 def _():
     ctx = fresh()
-    A_(state_of(ctx, "script.blueprint") == "passed", "蓝图应通过")
-    A_(state_of(ctx, "script.episode") == "passed", "剧本应通过（ep_01.md）")
-    A_(state_of(ctx, "asset.roster") == "passed", "名册应通过")
-    # 分镜图还没出（夹具里是空目录）
-    st = state_of(ctx, "board.frame")
-    A_(st in ("blocked", "failed", "absent"), "分镜图未出时应卡住，实际 %s" % st)
-    return "剧本/资产 passed，分镜图 %s" % st
+    st = state_of(ctx, "import.pack")
+    A_(st in ("absent", "failed"), "首节点应 absent/failed，实际 %s" % st)
+    A_(state_of(ctx, "asset.render") == "blocked",
+       "下游应 blocked，实际 %s" % state_of(ctx, "asset.render"))
+    return "import.pack=%s / asset.render=blocked" % st
 
 
-@reg("B", "B02 缺上游 → blocked，且 blocked 会向下游传播")
+@reg("B", "B02 blocked 的理由要写清是上游问题")
 def _():
     ctx = fresh()
-    A_(state_of(ctx, "video.batch") == "blocked", "出片应被上游阻塞")
-    st = N.node_state(ctx, N.NODE_BY_ID["video.batch"])["detail"]
-    A_("上游未通过" in st, "blocked 的理由要写清上游：%s" % st)
-    return st[:40]
+    detail = N.node_state(ctx, N.NODE_BY_ID["asset.render"])["detail"]
+    A_("上游未通过" in detail, "blocked 理由太含糊：%s" % detail)
+    return detail[:48]
 
 
-@reg("B", "B03 可选节点缺席 → skipped，且不阻塞下游")
+@reg("B", "B03 补齐导入三件 → import.pack 通过，next 指向资产")
 def _():
     ctx = fresh()
-    # 命题卡（positioning.json）夹具里故意没给 → optional，应 skipped
-    A_(state_of(ctx, "research.topic") == "skipped", "可选节点缺席应 skipped")
-    # 关键：它不该让 script.blueprint 变 blocked
-    A_(state_of(ctx, "script.blueprint") == "passed", "可选节点缺席不该阻塞剧本")
-    return "research.topic skipped，剧本仍 passed"
+    put_data(ctx, shots=2)
+    st = state_of(ctx, "import.pack")
+    A_(st == "passed", "三件齐应通过，实际 %s（%s）" % (
+        st, N.node_state(ctx, N.NODE_BY_ID["import.pack"])["detail"]))
+    nx = N.next_node(ctx)
+    A_(nx and nx["node"]["id"] == "asset.render",
+       "next 应指向 asset.render，实际 %s" % (nx["node"]["id"] if nx else None))
+    return "passed / next=asset.render"
 
 
-@reg("B", "B04 stale 先于 passed：上游新过产物就必须重跑")
+@reg("B", "B04 stale 先于 passed：上游比产物新就必须重跑")
 def _():
-    import time
     ctx = fresh()
-    # 夹具里分镜 md 与剧本几乎同时创建 → 一开始 board.script 是 passed
-    A_(state_of(ctx, "board.script") in ("passed", "blocked"),
-        "初始状态异常：%s" % state_of(ctx, "board.script"))
+    d = put_data(ctx)
+    png(ctx.ws / "04-资产" / "characters" / "char_01.png")
+    refs = ctx.ws / "04-资产" / "refs.json"
+    refs.write_text(json.dumps(
+        {"characters": {"char_01": "04-资产/characters/char_01.png"}},
+        ensure_ascii=False), encoding="utf-8")
 
-    # ★ 2026-11-01：script.dialogue 插在 script.gate 之后，它是 asset.roster 的上游。
-    #   不先过它，asset.prompt 会被判 blocked（而不是 stale），这条用例就测不到 stale。
-    # 必须带 --ep：该节点的产物是 marker（_done/script.dialogue.<ep>.json），
-    # 不带 ep 会写到 `script.dialogue.json`，与 ctx.ep=ep01 的查询路径对不上 —— 看起来像「没通过」。
-    N.main(["do", "script.dialogue", "--ep", "ep01", "--workspace", str(ctx.ws)])
-    A_(state_of(ctx, "script.dialogue") == "passed",
-        "夹具剧本应通过台词复核，实际 %s" % state_of(ctx, "script.dialogue"))
-
-    # 生成 bible（asset.prompt 是 board.script 的上游）。
-    # ★ 2026-11-01：A1/A2 改为会话/技能产出后，`do asset.prompt` 只会回 TODO。
-    #   测试里用「会话会做的事」代替：直接调骨架生成器落 bible，再看节点是否认。
-    import subprocess
-    r = subprocess.run([sys.executable, str(pathlib.Path(SCRIPTS).parents[1] / "assets" / "scripts" / "character_design.py"),
-                        "plan", "--roster", str(ctx.ws / "04-资产" / "design" / "roster.json"),
-                        "--out", str(ctx.ws / "04-资产" / "design")],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
-    A_(r.returncode == 0, "骨架生成失败：%s" % (r.stderr or r.stdout)[-300:])
-    A_(state_of(ctx, "asset.prompt") == "passed", "bible 生成后 asset.prompt 应通过")
-
-    # ★ 关键断言：bible 刚生成、分镜 md 还是旧的 → board.script 必须报 stale。
-    #   旧实现是「判据通过就 passed」，于是改完资产、分镜 md 一个字没动也照样 passed，
-    #   拿上一版的分镜去出图，肉眼根本查不出来。
-    st = state_of(ctx, "board.script")
-    A_(st == "stale", "上游（bible）比分镜 md 新时应报 stale，实际 %s" % st)
-
-    # 刷新分镜 md 的 mtime（等价于「人重新确认过」）→ 应回到 passed
     now = time.time()
-    os.utime(ctx.ws / "05-分镜" / "ep01_storyboard.md", (now, now))
-    A_(state_of(ctx, "board.script") == "passed", "刷新 mtime 后应回到 passed")
+    # 资产产物「旧」、导入产物「新」→ 资产必须报 stale（判定阈值是 1 秒）
+    os.utime(refs, (now - 600, now - 600))
+    for f in d.glob("*.json"):
+        os.utime(f, (now, now))
+    st = state_of(ctx, "asset.render")
+    A_(st == "stale", "上游更新后应报 stale，实际 %s（%s）" % (
+        st, N.node_state(ctx, N.NODE_BY_ID["asset.render"])["detail"]))
+    # 刷新资产产物 mtime（等价于「重新确认过」）→ 回到 passed
+    os.utime(refs, (now + 60, now + 60))
+    A_(state_of(ctx, "asset.render") == "passed",
+       "刷新后应 passed，实际 %s" % state_of(ctx, "asset.render"))
     return "stale → 刷新 → passed"
 
 
-@reg("B", "B05 skip 命令把它记成 skipped，可追溯理由")
+@reg("B", "B05 skip 记成 skipped，理由可追溯")
 def _():
     ctx = fresh()
     rc = N.main(["skip", "board.frame", "--reason", "本剧不用分镜图",
                  "--workspace", str(ctx.ws)])
     A_(rc == 0, "skip 应返回 0，实际 %d" % rc)
-    A_(state_of(ctx, "board.frame") == "skipped", "skip 后应为 skipped")
     rec = json.loads((ctx.ws / ".drama" / "_skip" / "board.frame.json").read_text(encoding="utf-8"))
-    A_(rec.get("reason") == "本剧不用分镜图", "理由没落盘")
+    A_(rec.get("reason") == "本剧不用分镜图", "理由没落盘：%s" % rec)
+    st = N.node_state(ctx, N.NODE_BY_ID["board.frame"])
+    A_(st["state"] == "skipped", "skip 后应为 skipped，实际 %s" % st["state"])
     return "skipped + 理由可追溯"
 
 
-# =========================================================================== C 判据
-@reg("C", "C01 ffs：夹具剧本通过；DUR 越界必不过")
+# =========================================================================== C 判据正反例
+@reg("C", "C01 imported：缺件点名；补齐报镜数")
 def _():
     ctx = fresh()
-    ok, detail = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
-    A_(ok, "夹具剧本应通过 ffs：%s" % detail)
-    # 把 DUR 改成 20 秒（越界）
-    f = ctx.ws / "03-剧本" / "ep_01.md"
-    t = f.read_text(encoding="utf-8").replace("DUR: 6", "DUR: 20")
-    f.write_text(t, encoding="utf-8", newline="")
-    ok2, d2 = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
-    A_(not ok2, "DUR=20 应判不过")
-    A_("越界" in d2, "理由要说明越界：%s" % d2)
-
-    # ★ 2026-11-01（P2-5 结论）：禁用字段只认**行首**。
-    #   带缩进的是续行（属于上一条 ACTION 的延续），报错会造成「合法剧本被判死」。
-    base = t.replace("DUR: 20", "DUR: 6")
-    f.write_text(base + "\n    MOOD: 紧张\n", encoding="utf-8", newline="")
-    ok3, d3 = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
-    A_(ok3, "缩进的 MOOD 是续行，不该判不过：%s" % d3)
-    f.write_text(base + "\nMOOD: 紧张\n", encoding="utf-8", newline="")
-    ok4, d4 = N.check_node(ctx, N.NODE_BY_ID["script.gate"])
-    A_((not ok4) and "禁用字段" in d4, "行首 MOOD 必须判不过：%s" % d4)
-    return detail[:40]
-
-
-@reg("C", "C02 board：5 字段齐全才过，缺一个就点名")
-def _():
-    ctx = fresh()
-    ok, detail = N.check_node(ctx, N.NODE_BY_ID["board.script"])
-    A_(ok, "夹具分镜应通过：%s" % detail)
-    f = ctx.ws / "05-分镜" / "ep01_storyboard.md"
-    t = f.read_text(encoding="utf-8")
-    # 删掉 shot_002 的 ratio 行
-    t = t.replace("- duration: 5\n- ratio: 9:16\n- refs: char_ava, char_ben",
-                  "- duration: 5\n- refs: char_ava, char_ben", 1)
-    f.write_text(t, encoding="utf-8", newline="")
-    ok2, d2 = N.check_node(ctx, N.NODE_BY_ID["board.script"])
-    A_(not ok2, "缺 ratio 应判不过")
-    A_("shot_002 缺 ratio" in d2, "应点名缺哪一镜哪个字段：%s" % d2)
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["import.pack"])
+    A_(not ok, "空 data 不该通过")
+    for name in ("shots.json", "boards.json", "h3_prompts.json"):
+        A_(name in detail, "报错没点名 %s：%s" % (name, detail))
+    put_data(ctx, shots=3)
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["import.pack"])
+    A_(ok and "3 镜" in detail, "补齐后应报 3 镜，实际 %s" % detail)
     return detail
 
 
-@reg("C", "C03 five：五文件缺一不过，齐了报镜数")
+@reg("C", "C02 boards：张数不足要卡，补足才过")
 def _():
     ctx = fresh()
-    d = ctx.data / "ep01"
-    d.mkdir(parents=True, exist_ok=True)
-    for n in ("shots.json", "boards.json", "h3_prompts.json", "characters.json"):
-        (d / n).write_text("{}", encoding="utf-8")
-    ok, detail = N.check_node(ctx, N.NODE_BY_ID["prompt.assemble"])
-    A_(not ok, "缺 scenes.json 应判不过")
-    A_("scenes.json" in detail, "应点名缺哪个：%s" % detail)
-    (d / "scenes.json").write_text("{}", encoding="utf-8")
-    ok2, d2 = N.check_node(ctx, N.NODE_BY_ID["prompt.assemble"])
-    A_(ok2, "补齐后应通过：%s" % d2)
-    return d2
-
-
-@reg("C", "C04 boards：张数少于镜数不过（缺镜会被静默放过）")
-def _():
-    ctx = fresh()
-    # 先造 shots.json（2 镜）
-    d = ctx.data / "ep01"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "shots.json").write_text(json.dumps([
-        {"shot_id": "shot_001"}, {"shot_id": "shot_002"}]), encoding="utf-8")
-    bdir = ctx.ws / "04-资产" / "boards" / "ep01"
-    png(bdir / "shot_001.png")
+    put_data(ctx, shots=2)
+    bd = ctx.ws / "04-资产" / "boards" / "ep01"
+    png(bd / "shot_001.png")
     ok, detail = N.check_node(ctx, N.NODE_BY_ID["board.frame"])
-    A_(not ok, "只有 1 张图、2 个镜，应判不过")
-    A_("1 / 镜数 2" in detail, "要报出比例：%s" % detail)
-    png(bdir / "shot_002.png")
-    ok2, d2 = N.check_node(ctx, N.NODE_BY_ID["board.frame"])
-    A_(ok2, "补齐应通过：%s" % d2)
-    return d2
+    A_(not ok, "1 张对 2 镜应不过，实际 %s" % detail)
+    png(bd / "shot_002.png")
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["board.frame"])
+    A_(ok, "补到 2 张应通过，实际 %s" % detail)
+    return detail
 
 
-@reg("C", "C05 assets：refs.json 的图缺一个就点名")
+@reg("C", "C03 assets：空 refs 不过；有图过；缺图点名")
 def _():
     ctx = fresh()
-    rj = ctx.ws / "04-资产" / "refs.json"
-    d = json.loads(rj.read_text(encoding="utf-8"))
-    for rel in d["characters"].values():
-        png(ctx.ws / "04-资产" / rel)
     ok, detail = N.check_node(ctx, N.NODE_BY_ID["asset.render"])
-    A_(not ok, "场景图还没造，应判不过")
-    A_("scene_room" in detail, "应点名缺哪张：%s" % detail)
-    for rel in d["scenes"].values():
-        png(ctx.ws / "04-资产" / rel)
-    ok2, d2 = N.check_node(ctx, N.NODE_BY_ID["asset.render"])
-    A_(ok2, "补齐应通过：%s" % d2)
-    return d2
+    A_(not ok, "空 refs 不该通过：%s" % detail)
+    png(ctx.ws / "04-资产" / "scenes" / "scene_01.png")
+    refs = ctx.ws / "04-资产" / "refs.json"
+    refs.write_text(json.dumps({"scenes": {"scene_01": "04-资产/scenes/scene_01.png"}},
+                               ensure_ascii=False), encoding="utf-8")
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["asset.render"])
+    A_(ok, "登记且图存在应通过，实际 %s" % detail)
+    refs.write_text(json.dumps({"scenes": {"scene_01": "04-资产/scenes/不存在.png"}},
+                               ensure_ascii=False), encoding="utf-8")
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["asset.render"])
+    A_(not ok and "scene_01" in detail, "缺图要点名，实际 %s" % detail)
+    return "空不过 / 有图过 / 缺图点名"
 
 
-# =========================================================================== D Loop
-@reg("D", "D01 variant_hash：同一方案重复失败判 stuck，不浪费第三次")
+@reg("C", "C04 five：参考表未回填时不算齐")
 def _():
     ctx = fresh()
-    payload = {"cmd": "same", "ep": "ep01"}
-    r1 = N.record_attempt(ctx, "board.frame", payload, False, "still failing")
-    A_(r1["verdict"] == "retry", "第一次应 retry，实际 %s" % r1["verdict"])
-    r2 = N.record_attempt(ctx, "board.frame", payload, False, "still failing")
-    A_(r2["verdict"] == "stuck", "同一方案第二次应 stuck，实际 %s" % r2["verdict"])
-    A_(r2["variant_hash"] == r1["variant_hash"], "两次 hash 应相同")
-    return "retry → stuck"
+    put_data(ctx, shots=2)
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["import.bind"])
+    A_(not ok, "characters/scenes 没回填不该通过")
+    A_("characters.json" in detail, "报错没点名 characters.json：%s" % detail)
+    d = ctx.data / "ep01"
+    (d / "characters.json").write_text("{}", encoding="utf-8")
+    (d / "scenes.json").write_text("{}", encoding="utf-8")
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["import.bind"])
+    A_(ok, "补两表后应通过，实际 %s" % detail)
+    return detail
 
 
-@reg("D", "D02 换一个变量后可以继续，不会立刻 stuck")
+# =========================================================================== D 调度
+@reg("D", "D01 next 跳过已通过项，指向第一个没过的")
 def _():
     ctx = fresh()
-    N.record_attempt(ctx, "board.frame", {"cmd": "a"}, False, "no")
-    N.record_attempt(ctx, "board.frame", {"cmd": "a"}, False, "no")
-    r = N.record_attempt(ctx, "board.frame", {"cmd": "b", "megapixels": 0.5}, False, "no")
-    A_(r["verdict"] == "retry", "换了变量应 retry，实际 %s" % r["verdict"])
-    return "变了变量就重新计数"
-
-
-@reg("D", "D03 L1 预算 3 次，第 4 次升级（escalate）")
-def _():
-    ctx = fresh()
-    verdicts = [N.record_attempt(ctx, "board.frame", {"cmd": "v%d" % i}, False, "no")["verdict"]
-                for i in range(1, 5)]
-    A_(verdicts[:3] == ["retry"] * 3, "前三次应 retry：%s" % verdicts)
-    A_(verdicts[3] == "escalate", "第四次应 escalate：%s" % verdicts)
-    return "retry×3 → escalate"
-
-
-@reg("D", "D04 通过时 verdict=ok，不再升级")
-def _():
-    ctx = fresh()
-    r = N.record_attempt(ctx, "board.frame", {"cmd": "x"}, True, "fine")
-    A_(r["verdict"] == "ok", "通过应 ok，实际 %s" % r["verdict"])
-    return "ok"
-
-
-@reg("D", "D05 L2 回流：白名单内的上游才有目标，白名单外返回 None")
-def _():
-    ctx = fresh()
-    # 分镜图的上游是分镜 md（不是 prompt 环节）—— 拓扑修过一次，这里锁住
-    A_(N.reflow_target(ctx, "board.frame") == "board.script",
-        "board.frame 应能回 board.script")
-    A_(N.reflow_target(ctx, "edit.release") == "edit.subtitle",
-        "edit.release 应能回 edit.subtitle")
-    # research.market 没有回流边
-    A_(N.reflow_target(ctx, "research.market") is None,
-        "research.market 不该有回流目标")
-    return "白名单命中 / 未命中都正确"
-
-
-# =========================================================================== E 执行
-@reg("E", "E01 内置判据节点（script.gate）可直接跑通并写 marker")
-def _():
-    ctx = fresh()
-    rc = N.main(["do", "script.gate", "--ep", "ep01", "--workspace", str(ctx.ws)])
-    A_(rc == 0, "script.gate 应返回 0，实际 %d" % rc)
-    mk = ctx.marker("script.gate")
-    A_(mk.is_file(), "marker 没写：%s" % mk)
-    rec = json.loads(mk.read_text(encoding="utf-8"))
-    A_(rec.get("node") == "script.gate", "marker 内容不对")
-    A_(state_of(ctx, "script.gate") == "passed", "写完 marker 应为 passed")
-    return "marker + passed"
-
-
-@reg("E", "E02 出片节点没有 --yes 时拒绝执行（计费闸门）")
-def _():
-    ctx = fresh()
-    rc = N.main(["do", "video.batch", "--ep", "ep01", "--workspace", str(ctx.ws)])
-    A_(rc != 0, "没有 --yes 不该返回 0")
-    return "exit %d（闸门生效）" % rc
-
-
-@reg("E", "E03 手写类节点：产物在=通过，产物不在=TODO（不假装能自动做）")
-def _():
-    ctx = fresh()
-    # 夹具里 roster.json 在 → 算完成（do 的语义是「确保这个节点通过」，幂等）
-    rc1 = N.main(["do", "asset.roster", "--workspace", str(ctx.ws)])
-    A_(rc1 == 0, "产物已在应返回 0，实际 %d" % rc1)
-    A_(state_of(ctx, "asset.roster") == "passed", "应记 passed")
-    # 删掉产物 → 必须返回 TODO，而不是「判据不过」或「假装做完了」
-    (ctx.ws / "04-资产" / "design" / "roster.json").unlink()
-    rc2 = N.main(["do", "asset.roster", "--workspace", str(ctx.ws)])
-    A_(rc2 == N.EXIT_TODO, "产物不在应返回 EXIT_TODO(6)，实际 %d" % rc2)
-    return "0 / EXIT_TODO 两态都正确"
-
-
-@reg("E", "E04 next 的语义：跳过所有已通过节点，指向第一个非通过项")
-def _():
-    ctx = fresh()
+    put_data(ctx)
     nx = N.next_node(ctx)
-    A_(nx is not None, "夹具未完成，不该返回 None")
-    # 不硬编码节点名 —— 那会把「夹具内容」写死进测试。
-    # 断言的是**语义**：它给的那个节点，状态必须是「非通过」，且它之前的都通过/跳过。
-    idx = N.ORDER.index(nx["node"]["id"])
-    for nid in N.ORDER[:idx]:
-        st = state_of(ctx, nid)
-        A_(st in ("passed", "skipped"), "next 跳过了未通过的 %s（%s）" % (nid, st))
-    A_(state_of(ctx, nx["node"]["id"]) not in ("passed", "skipped"),
-        "next 指向的 %s 其实已通过" % nx["node"]["id"])
-    # 全部 skip 之后应 DONE
-    for n in N.NODES:
-        N.main(["skip", n["id"], "--reason", "fixture done", "--workspace", str(ctx.ws)])
-    A_(N.next_node(ctx) is None, "全部跳过后 next 应返回 None")
-    return "next=%s，语义正确；全跳过 → DONE" % nx["node"]["id"]
+    A_(nx and nx["node"]["id"] == "asset.render", "next 应跳过 import.pack，实际 %s"
+       % (nx["node"]["id"] if nx else None))
+    N.main(["skip", "asset.render", "--reason", "复用上一部剧的资产", "--workspace", str(ctx.ws)])
+    nx = N.next_node(ctx)
+    A_(nx and nx["node"]["id"] == "import.bind", "跳过资产后 next 应到 import.bind，实际 %s"
+       % (nx["node"]["id"] if nx else None))
+    return "import.pack 通过 / 资产跳过后 → import.bind"
 
 
-@reg("E", "E05 status --json 结构稳定（给前端/脚本吃）")
+@reg("D", "D02 面板结构稳定：12 行、状态合法、counts 自洽")
 def _():
     ctx = fresh()
     ev = N.evaluate(ctx)
     for k in ("ws", "ep", "nodes", "counts"):
         A_(k in ev, "缺字段 %s" % k)
-    A_(len(ev["nodes"]) == 23, "节点数不对")
-    A_(sum(ev["counts"].values()) == 23, "counts 合计应 23")
+    A_(len(ev["nodes"]) == 12, "节点数不对：%d" % len(ev["nodes"]))
+    A_(sum(ev["counts"].values()) == 12, "counts 合计应 12")
     for r in ev["nodes"]:
         A_({"id", "state", "detail"} <= set(r), "节点行缺字段：%s" % r)
         A_(r["state"] in ("passed", "failed", "absent", "stale", "skipped", "blocked"),
             "非法状态 %s" % r["state"])
-    return "%d 节点 / counts 自洽" % len(ev["nodes"])
+    txt = N.render_status(ev)
+    A_("五环节 12 节点" in txt, "状态面板标题丢了环节/节点数")
+    graph = N.render_graph()
+    for n in N.NODES:
+        A_(n["id"] in graph, "流程图里没有 %s" % n["id"])
+    return "12 节点 / counts 自洽 / 面板与流程图覆盖全表"
+
+
+@reg("D", "D03 同一失败方案第二次判 stuck；换方案可继续")
+def _():
+    ctx = fresh()
+    payload = {"fix": "调低 steps"}
+    r1 = N.record_attempt(ctx, "video.batch", payload, False, "片段 3 缺音轨")
+    A_(r1["verdict"] == "retry", "第一次应 retry，实际 %s" % r1["verdict"])
+    r2 = N.record_attempt(ctx, "video.batch", payload, False, "片段 3 缺音轨")
+    A_(r2["verdict"] == "stuck", "同方案再失败应 stuck，实际 %s" % r2["verdict"])
+    A_(r2["variant_hash"] == r1["variant_hash"], "两次 hash 应相同")
+    r3 = N.record_attempt(ctx, "video.batch", {"fix": "换工作流"}, False, "还是不行")
+    A_(r3["verdict"] == "retry", "换了方案应重新计数，实际 %s" % r3["verdict"])
+    return "retry → stuck → 换方案 retry"
+
+
+@reg("D", "D04 L1 预算 3 次，第 4 次升级")
+def _():
+    ctx = fresh()
+    vs = [N.record_attempt(ctx, "video.batch", {"v": i}, False, "no")["verdict"] for i in range(1, 5)]
+    A_(vs[:3] == ["retry"] * 3, "前三次应 retry：%s" % vs)
+    A_(vs[3] == "escalate", "第四次应 escalate：%s" % vs)
+    return "retry×3 → escalate"
+
+
+@reg("D", "D05 回流只走白名单：命中给目标，未命中给 None")
+def _():
+    ctx = fresh()
+    A_(N.reflow_target(ctx, "board.frame") == "import.bind", "board.frame 应能回 import.bind")
+    A_(N.reflow_target(ctx, "edit.release") == "edit.subtitle", "edit.release 应能回 edit.subtitle")
+    A_(N.reflow_target(ctx, "import.pack") is None, "import.pack 没有上游，不该有回流目标")
+    return "命中两支 / 未命中返回 None"
+
+
+# =========================================================================== E 命令拼装
+@reg("E", "E01 干跑与真跑同一份 argv：{ws} 已展开、带 workspace 与 ep")
+def _():
+    ctx = fresh()
+    args = N._build_args(ctx, N.NODE_BY_ID["import.pack"])
+    A_(args[0] in ("python", "python3"), "首项应是解释器，实际 %s" % args[0])
+    A_(not any("{" in a for a in args), "占位符没展开：%s" % args)
+    A_(str(ctx.ws) in " ".join(args), "argv 里没有工作区路径：%s" % args)
+    A_("pack_import.py" in " ".join(args), "没指向 pack_import.py：%s" % args)
+    A_("--ep" in args and "ep01" in args, "带集号的节点应补 --ep ep01：%s" % args)
+    return " ".join(args[-4:])
+
+
+@reg("E", "E02 不带集号的节点不硬塞 --ep")
+def _():
+    ctx = fresh()
+    args = N._build_args(ctx, N.NODE_BY_ID["asset.render"])
+    A_("--ep" not in args, "非集节点不该带 --ep：%s" % args)
+    A_("--workspace" in args, "缺 --workspace：%s" % args)
+    return "asset.render 只带 --workspace"
 
 
 def main():
