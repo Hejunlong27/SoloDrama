@@ -125,17 +125,25 @@ def _():
     return "track/look/narrative/aspect 全对"
 
 
-@reg("B", "B03 名册模板能被 character_design 吃下（不是死数据）")
+@reg("B", "B03 名册模板结构完整（不再是死数据）")
 def _():
+    """原用例 import 了已删除的 character_design —— 2026-11 重构后改测模板自身结构。
+
+    名册现在只是**写给人和 LLM 的模板**，没有脚本消费它；能校验的是：
+    两个占位角色、必备字段齐、tier 分级正确。
+    """
     ws = fresh()
-    sys.path.insert(0, str(ROOT / "stages" / "assets" / "scripts"))
-    import character_design as CD                               # noqa: E402
     roster = json.loads((ws / "04-资产" / "design" / "roster.json").read_text(encoding="utf-8"))
-    bible = CD.design(roster)
-    A_(len(bible["characters"]) == 2, "应解析出 2 个占位角色")
-    A_(not [x for x in CD.check_rules(bible) if x[0] == "hard"],
-        "占位名册违反硬规则：%s" % CD.check_rules(bible))
-    return "2 角色 / 0 硬失败"
+    chars = roster.get("characters") or []
+    A_(len(chars) == 2, "应有 2 个占位角色，实际 %d" % len(chars))
+    for c in chars:
+        for k in ("name", "code", "tier", "identity"):
+            A_(c.get(k), "角色缺字段 %s：%s" % (k, c))
+    A_(sorted(c["tier"] for c in chars) == ["lead", "support"], "tier 分级不对")
+    note = json.dumps(roster, ensure_ascii=False)
+    A_("character_design" not in note or "移除" in note,
+       "名册注释还在引导调用已删除的 character_design.py")
+    return "2 角色 / 字段齐 / tier 正确"
 
 
 @reg("B", "B04 三个内容模板都带 STATUS: DRAFT 标记")
@@ -202,8 +210,12 @@ def _():
 
 
 # =========================================================================== D 与调度器对齐
-@reg("D", "D01 骨架必须被 nodes 判成「未完成」")
+@reg("D", "D01 新骨架判「没开工」：首节点 import.pack 缺料，next 停在它上面")
 def _():
+    """原用例断言 `script.blueprint` —— 该节点已在 2026-11 重构中移除（引擎从导入开始）。
+
+    现在能断言的是：空骨架下第一个节点判 failed，且 next 指向它。
+    """
     ws = fresh()
     os.environ["SOLODRAMA_WORKSPACE"] = str(ws)
     for m in [k for k in list(sys.modules) if k in ("_ws", "_layout", "nodes")]:
@@ -213,30 +225,28 @@ def _():
     import nodes as N                                           # noqa: E402
     ctx = N.Ctx(ws, "ep01")
 
-    st = lambda nid: N.node_state(ctx, N.NODE_BY_ID[nid])["state"]  # noqa: E731
-    A_(st("script.blueprint") == "failed", "蓝图骨架应判 failed，实际 %s" % st("script.blueprint"))
-    A_(st("script.episode") == "blocked", "剧本应被上游阻塞，实际 %s" % st("script.episode"))
-    # next 必须停在第一个骨架节点上
+    st = N.node_state(ctx, N.NODE_BY_ID["import.pack"])
+    # 空骨架下产物根本不存在 → 判据给的是 absent（不是 failed）。两者都算「没开工」。
+    A_(st["state"] in ("absent", "failed"),
+       "空骨架应判 absent/failed，实际 %s（%s）" % (st["state"], st.get("detail")))
     nx = N.next_node(ctx)
-    A_(nx and nx["node"]["id"] == "script.blueprint",
-        "next 应停在 script.blueprint，实际 %s" % (nx["node"]["id"] if nx else None))
-    return "failed / blocked / next 正确"
+    A_(nx and nx["node"]["id"] == "import.pack",
+        "next 应停在 import.pack，实际 %s" % (nx["node"]["id"] if nx else None))
+    return "absent / next=import.pack"
 
 
-@reg("D", "D02 删掉 DRAFT 标记后蓝图判据转通过（标记语义唯一）")
+@reg("D", "D02 判据必须点名缺哪个文件（不是只给一个 false）")
 def _():
+    """可诊断性：报错要说清缺什么。旧版只测「蓝图通过」，节点没了就改成测报错质量。"""
     ws = fresh()
-    p = ws / "03-剧本" / "blueprint.md"
-    t = p.read_text(encoding="utf-8").replace("STATUS: DRAFT", "STATUS: FINAL")
-    # 补足字数门槛（判据是 file>=800 字节）
-    t += "\n" + ("填充内容，说明这一节写完了。" * 60) + "\n"
-    p.write_text(t, encoding="utf-8")
-
     os.environ["SOLODRAMA_WORKSPACE"] = str(ws)
+    sys.path.insert(0, SCRIPTS)
+    sys.path.insert(0, str(ROOT / "stages"))
     import nodes as N                                           # noqa: E402
     ctx = N.Ctx(ws, "ep01")
-    ok, detail = N.check_node(ctx, N.NODE_BY_ID["script.blueprint"])
-    A_(ok, "去标记 + 补字数后应通过，实际：%s" % detail)
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["import.pack"])
+    A_(not ok, "空骨架不该判通过")
+    A_("shots.json" in detail, "报错没点名缺件：%s" % detail)
     return detail
 
 

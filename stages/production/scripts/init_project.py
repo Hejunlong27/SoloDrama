@@ -123,10 +123,10 @@ def _drama_json(a, ep: str) -> dict:
 
 
 def _roster(a) -> dict:
-    note = ("名册模板：只填**身份**与必要的 overrides，视觉参数（色签名/发型/锚）由 "
-            "character_design.py 分配。\n"
-            "不写 overrides.anchor 就自动分配；写 \"anchor\": \"none\" 表示这人不设锚。\n"
-            "下面两个是**占位角色**，替换成你自己的；人数不限，主演标 tier=lead。")
+    note = ("名册模板：填**身份**与必要的 overrides 即可。\n"
+            "视觉参数（色签名/发型/锚）按 docs/assets/角色差异化设计规范.md 的六维签名分配 ——\n"
+            "该文档里的 character_design.py 已于 2026-11 移除，方法照用、命令不跑。\n"
+            "不设锚写 \"anchor\": \"none\"。下面两个是**占位角色**，替换成你自己的；主演标 tier=lead。")
     return {
         "_note": note,
         "world": a.world,

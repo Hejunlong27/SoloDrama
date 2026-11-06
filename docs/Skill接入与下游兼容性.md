@@ -1,5 +1,10 @@
 # Skill 接入与下游兼容性（实测报告）
 
+> ⚠ **2026-11-06 · 文中提到的脚本可能已删除**
+> 2026-11 重构下线了创作层与部分门禁脚本。本文作为设计/分析材料保留，
+> 命令以 [`已退役脚本与现行入口`](operations/已退役脚本.md) 与 `drama.py next` 为准。
+
+
 > 日期：2026-11-05 17:00–17:20｜环境：RTX 4060 8G + 本地 ComfyUI 0.42.1 + DeepSeek（deepseek-chat）
 > 被测 Skill：`zhaidou-manju`（宅斗）、`tianchong-manju`（甜宠）
 > 产出物与中间文件：`D:/tmp/skillcompat/`（临时工作区，不进仓库）
