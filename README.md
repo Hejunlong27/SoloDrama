@@ -114,6 +114,7 @@ envs/solodrama-web/bin/python -m pip install -r requirements.txt
 
 它做的事和 A / B 完全一样，只是把「判断-重试-验证」交给助手。装上之后要开始做剧，
 换成 [`docs/新项目启动提示词.md`](docs/新项目启动提示词.md) 里那段。
+**老设备 / 低配机器**用同文件的第三节：先量显存再定档，别按满血配置往下跑。
 
 ### 启动
 
