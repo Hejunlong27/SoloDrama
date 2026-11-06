@@ -26,6 +26,8 @@ import json
 import re
 from pathlib import Path
 
+import prompt_marks as PM      # 台词标记判据的唯一真源（<d>[语种] …</d>）
+
 # ===========================================================================
 # 一、版本
 # ===========================================================================
@@ -500,6 +502,16 @@ def _norm_shots(shots: list, idx: int, assets: dict, pack: dict,
             rep.err("SHOT016", "%s（%s）video_prompt 里最大图号 {{Mixed %d}} 超过 cast 数 %d + 分镜图 1 张"
                     % (tag, sid, max(nums), len(cast)))
             continue
+
+        # ★ 2026-11-06：裸写在引号里的中文台词，H3 会当成「画面中应出现的文字」直接烧成
+        #   画面字幕 —— 出片后无法去除，只能重跑。规范写法是 `<d>[Chinese] 原句。</d>`。
+        #   **只告警不阻断**：标记不是硬约束，模型仍可能偶发画字；而拦下来会让
+        #   「本来能跑、只是字幕难看」的项目连导入都过不去。判据见 `prompt_marks.py`。
+        bare = PM.find_bare(video)
+        if bare:
+            rep.warn("SHOT018",
+                     "%s（%s）video_prompt 有 %d 处引号中文没包 <d> 标记，出片会烧成画面字幕：%s"
+                     % (tag, sid, len(bare), " / ".join(bare[:3])))
 
         out.append({
             "id": sid,

@@ -22,6 +22,7 @@ SCRIPTS = {
     # ★ 2026-11-02（分支 feat/pack-engine）：创作层已移出仓库，唯一入口是制作包导入。
     "pack_import": paths.IMPORT_SCRIPTS / "pack_import.py",
     "md2pack": paths.IMPORT_SCRIPTS / "md2pack.py",
+    "prompt_marks": paths.IMPORT_SCRIPTS / "prompt_marks.py",
     "preset_apply": paths.IMPORT_SCRIPTS / "preset_apply.py",
     "asset_md": paths.ASSETS_SCRIPTS / "asset_md.py",
     "ingest": paths.PROD_SCRIPTS / "ingest_check.py",
@@ -350,6 +351,19 @@ _add(_c("convert.apply", "1 导入", "创作稿 → 制作包（机械转换，�
         help="把 00-创作/ 的资产库与导演手册转成 pack（资产/分集 JSON），并写一份缺口报告。"
              "只做识别与搬运：不改台词、不改提示词、不补写。缺口一律写进 _import_report.md。",
         agent="转换后先读缺口报告：缺提示词的资产、被跳过的镜头、没认出来的台词，都要逐条告诉我。"))
+# ★ 2026-11-06：老项目补台词标记。裸写在引号里的中文会被 H3 烧成画面字幕，
+#   转换器只兜底「新转的包」，已经落盘的 `06-提示词/<ep>/h3_prompts.json` 要单独重写。
+_add(_c("prompt.fix", "1 导入", "老项目补台词标记（<d>，重写 h3_prompts.json）", "prompt_marks",
+        argv=[], billing=FREE, danger=WRITE,
+        flags={"--ep": "ep", "--lang": "lang"},
+        bools={"--apply": "apply"},
+        params=[Param("ep", "只处理这些集", "str", placeholder="ep01,ep02（留空全扫）"),
+                Param("lang", "台词语种标签", "str", placeholder="Chinese / Spanish"),
+                Param("apply", "真写盘（每份文件先落 .bak-时间戳）", "bool", default=False)],
+        help="把已落盘提示词里的裸引号台词包成 <d>[语种] 原句。</d>。幂等，只动提示词不动台词数组。"
+             "默认干跑。改完要重跑受影响的镜 —— 已烧进成片的字幕无法去除。",
+        agent="先干跑，告诉我多少镜会被改、还剩几条要人工判断（招牌/标语类不自动改）；"
+              "确认后再写盘。写盘前必须说明「旧成片只能重跑」。"))
 _add(_c("pack.check", "1 导入", "校验制作包（只读，不写盘）", "pack_import",
         argv=[], mode="sync", danger=READ,
         flags={"--pack": "pack", "--ep": "ep"},

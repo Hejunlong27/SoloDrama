@@ -5,6 +5,12 @@
 **它不创作**：不改台词、不改提示词、不补写、不翻译。只做三件事：
 识别（structure）→ 映射（字段）→ 报缺（report）。
 
+唯一的例外是**格式归一化**：台词会被包成 `<d>[Chinese] …</d>` 语音事件标记。
+这不是改内容（一个字都不动），而是换写法 —— 裸写在引号里的中文会被 H3 当成
+「画面中应出现的文字」直接烧成画面字幕，出片后无法去除，只能重跑
+（2026-11-06 实测，见 `docs/patches/2026-11-06_H3台词烧字幕_patch提案.md`）。
+判据与实现在 `prompt_marks.py`，三处调用同一份正则。
+
 为什么需要它
 ------------
 模板（Skill）产出的是**人读的 Markdown**，引擎吃的是 **pack JSON**（`solodrama-pack/1`）。
@@ -21,6 +27,7 @@
 用法
 ----
     python stages/import/md2pack.py --workspace <剧目录> [--out <dir>] [--ep 1] [--dry-run]
+    python stages/import/md2pack.py --workspace <剧目录> --aspect 16:9   # 横屏项目
 """
 from __future__ import annotations
 
@@ -37,6 +44,7 @@ for p in (HERE, HERE.parents[1] / "production" / "scripts"):
         sys.path.insert(0, str(p))
 
 import pack_spec as S  # noqa: E402
+import prompt_marks as PM  # noqa: E402
 
 ID_RE = re.compile(r"\b(P\d{2}|S\d{2}|D\d{2}|FX\d{2})\b")
 FENCE = re.compile(r"```[a-zA-Z]*\n(.*?)\n```", re.S)
@@ -248,8 +256,12 @@ def _strip_dropped(text: str, dropped_ids, allowed: int) -> str:
 
 def parse_episode(md: str, ep: int, ratio: str, name2id: dict,
                   known: set | None = None, strict_cast: bool = True,
-                  variants_of: dict | None = None) -> tuple:
-    """→ (episode_dict, gaps)。缺 A/B 段的镜头跳过并记入 gaps。"""
+                  variants_of: dict | None = None, lang: str = PM.LANG_DEFAULT) -> tuple:
+    """→ (episode_dict, gaps)。缺 A/B 段的镜头跳过并记入 gaps。
+
+    `lang` 是台词标记里的语种标签（默认 `Chinese`）。跨语种项目传 `Spanish` 等，
+    不传也能跑 —— 标签写错只影响配音语种，不会报错。
+    """
     timeline = _timeline(md)
     chunks = H3_SHOT.split(md)
     shots, gaps = [], []
@@ -303,10 +315,19 @@ def parse_episode(md: str, ep: int, ratio: str, name2id: dict,
             # 丢了参考图就必须把对应挂载点一起摘掉：留着既过不了 SHOT016，
             # 真出片时模型也在等一张没上传的图。allowed 按**实际 cast 数**算（分镜图不进 Mixed）。
             vp = _strip_dropped(vp, [c["asset"] for c in dropped_cast], len(cast))
+        # ★ 台词标记归一化（2026-11-06）：裸写在引号里的中文会被 H3 当成「画面中应出现的文字」
+        #   直接烧成画面字幕，出片后无法去除。只动两个 prompt 字段，**不动 dialogue 数组** ——
+        #   后者是字幕对齐用的纯文本，套标记会把 `<d>[Chinese]` 写进字幕。
+        board, n_board = PM.normalize_dialogue(a.group(1).strip(), lang)
+        vp, n_vp = PM.normalize_dialogue(vp, lang)
+        if n_board + n_vp:
+            gaps.append({"shot": sid,
+                         "reason": "台词已自动包 <d> 标记（%d 句），建议回源修正"
+                                   % (n_board + n_vp)})
         shots.append({
             "id": sid, "duration": int(round(dur)), "ratio": ratio,
             "cast": cast,
-            "board_prompt": a.group(1).strip(),
+            "board_prompt": board,
             "video_prompt": vp,
             "dialogue": dlg,
         })
@@ -334,8 +355,35 @@ def _name_map(assets: dict) -> dict:
     return out
 
 
+def _ratio_ok(s: str) -> bool:
+    w, _, h = str(s or "").partition(":")
+    return w.strip().isdigit() and h.strip().isdigit() and int(h.strip()) > 0
+
+
+def _detect_aspect(ws: pathlib.Path, meta: dict, explicit: str = "") -> str:
+    """画幅：`--aspect` > `drama.json` 的 `format.aspect` > `project.json` 的 `meta.aspect` > 空。
+
+    ★ 为什么不能写死 9:16（2026-11-06）：横屏项目会被按竖屏画幅出分镜图与人物/场景卡，
+    出片时构图被裁，而且**全程不报错**。此前每个横屏项目都要自带一份 `patch_aspect.py`。
+    """
+    cands = [explicit]
+    dj = ws / "drama.json"
+    if dj.is_file():
+        try:
+            cands.append(str(((json.loads(dj.read_text(encoding="utf-8-sig")) or {})
+                              .get("format") or {}).get("aspect") or ""))
+        except (OSError, ValueError):
+            pass
+    cands.append(str(meta.get("aspect") or ""))
+    for c in cands:
+        if _ratio_ok(c):
+            return str(c).strip()
+    return ""
+
+
 def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
-            strict_cast: bool = True) -> dict:
+            strict_cast: bool = True, lang: str = PM.LANG_DEFAULT,
+            aspect: str = "") -> dict:
     ws = pathlib.Path(ws)
     src = ws / "00-创作"
     assets_md = src / "02-资产库.md"
@@ -357,6 +405,16 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
     (pack_dir / "assets").mkdir(parents=True, exist_ok=True)
     (pack_dir / "episodes").mkdir(parents=True, exist_ok=True)
 
+    # 画幅：显式参数 > drama.json > project.json > 默认 9:16。
+    # ★ 2026-11-06 前这里写死 character/scene=16:9、board/video=9:16，与
+    #   pack_spec.DEFAULT_ASPECT（都是 9:16）互相打脸：md2pack 写进 pack.json 的显式值
+    #   会**盖掉**默认值，于是人物卡按 16:9 出图，再被当 9:16 的参考 —— 竖向拉伸 22%。
+    asp = dict(S.DEFAULT_ASPECT)
+    _r = _detect_aspect(ws, meta, aspect)
+    if _r:
+        for k in ("character", "scene", "board", "video"):
+            asp[k] = _r
+
     pack = {
         "spec": "solodrama-pack/1",
         "title": title or meta.get("title") or ws.name,
@@ -368,8 +426,7 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
                      "target_duration": int(meta.get("ep_seconds") or 60)},
         "style_lock": style,
         "negative": "text, watermark, extra fingers, distorted face",
-        "aspect": {"character": "16:9", "scene": "16:9", "prop": "1:1",
-                   "board": "9:16", "video": "9:16"},
+        "aspect": asp,
     }
     (pack_dir / "pack.json").write_text(json.dumps(pack, ensure_ascii=False, indent=2),
                                         encoding="utf-8", newline="")
@@ -394,6 +451,7 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
                                   idx, pack["aspect"]["video"], name2id,
                                   known=_all_ids(assets),
                                   strict_cast=strict_cast,
+                                  lang=lang,
                                   variants_of={it["id"]: [v["code"] for v in it["variants"]]
                                                for bucket in assets.values() for it in bucket})
         if not doc["shots"]:
@@ -408,7 +466,9 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
     _pack, _assets, _episodes, rep = S.load_pack(pack_dir)
 
     lines = ["# 转换报告（md2pack）", "",
-             "源：`%s`" % assets_md, "输出：`%s`" % pack_dir, ""]
+             "源：`%s`" % assets_md, "输出：`%s`" % pack_dir,
+             "画幅：video %s ｜ character/scene %s ｜ prop %s"
+             % (pack["aspect"]["video"], pack["aspect"]["character"], pack["aspect"]["prop"]), ""]
     for kind, bucket in assets.items():
         if bucket:
             lines.append("- %s：%d 条（%s）" % (
@@ -416,6 +476,10 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
                 "、".join("%s(%d变体)" % (b["id"], len(b["variants"])) for b in bucket)))
     if written:
         lines.append("- 分集：" + "、".join("ep%02d(%d镜/%ds)" % w for w in written))
+    n_mark = sum(1 for g in ep_gaps if "台词已自动包" in str(g.get("reason") or ""))
+    if n_mark:
+        lines.append("- 台词标记：%d 镜已自动补 `<d>[%s] …</d>`"
+                     "（裸引号中文会被烧成画面字幕；建议回源改导演手册）" % (n_mark, lang))
     if asset_gaps:
         lines += ["", "## 资产缺口（%d）" % len(asset_gaps), ""]
         lines += ["- %s / %s：%s" % (g["id"], g["code"], g["reason"]) for g in asset_gaps]
@@ -428,6 +492,7 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
                                                 encoding="utf-8", newline="")
     return {"ok": True, "pack": str(pack_dir), "assets": {k: len(v) for k, v in assets.items()},
             "episodes": written, "asset_gaps": asset_gaps, "ep_gaps": ep_gaps,
+            "aspect": pack["aspect"], "lang": lang,
             "report": str(pack_dir / "_import_report.md")}
 
 
@@ -438,6 +503,10 @@ def main(argv=None) -> int:
     ap.add_argument("--ep", default="", help="只转这些集（逗号分隔，如 1,2）")
     ap.add_argument("--drop-missing-cast", action="store_true",
                     help="资产库还没补齐时，把缺失的参考图从 cast 移除（会连 {{Mixed n}} 一起摘）")
+    ap.add_argument("--lang", default=PM.LANG_DEFAULT,
+                    help="台词标记的语种标签（默认 %s；西语项目传 Spanish）" % PM.LANG_DEFAULT)
+    ap.add_argument("--aspect", default="",
+                    help="画幅（如 16:9）。留空则读 drama.json 的 format.aspect，再退回 9:16")
     ap.add_argument("--dry-run", action="store_true", help="只解析并报告，不写文件")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
@@ -462,7 +531,8 @@ def main(argv=None) -> int:
 
     eps = [int(x) for x in re.split(r"[,\s]+", a.ep) if x.strip().isdigit()] or None
     res = convert(ws, out_dir=a.out, eps=eps,
-                  strict_cast=not a.drop_missing_cast)
+                  strict_cast=not a.drop_missing_cast,
+                  lang=a.lang, aspect=a.aspect)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0

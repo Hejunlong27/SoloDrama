@@ -1,6 +1,50 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-06 更新（V0.7.66 · H3 把台词烧成画面字幕：写法问题，不是工作流问题）**
+
+  实跑发现：成片在**有人开口的时间段**底部出现白字黑边字幕，文本与剧本逐字一致；
+  同一镜的闭口段没有。加「不生成任何字幕、文字、水印」、换 steps、找节点开关，**全都无效**
+  （BasicGuider 等价 cfg=1，负向不参与引导）。
+
+  根因：**台词裸写在引号里 → H3 把它当成「画面中应出现的文字」**。正确写法是
+  `<d>[Chinese] 原句。</d>` —— 语音事件标记，驱动口型与配音，不落到画面。
+  同实例三组对照（固定 seed 123456）：A 基线有字幕、B 官方六段式无、C 只换 `<d>` 无 ⇒
+  **关键变量是标记本身，不是六段式结构**。
+
+  影响面与处置：
+
+  | 层 | 位置 | 改动 |
+  |---|---|---|
+  | 模板（21 份） | `stages/creation/skills/*/SKILL.md` | 约束行 / 台词说明段 / B段示例 共 5 类写法统一改成 `<d>`；示例里的引号台词逐句包标记 |
+  | 提示 | `prompts/skill_director.md`、`convert_to_pack.md` | 明写「只许 `<d>` 写法」+ 反例；通道 C 的 6.5 条豁免「逐字保留」 |
+  | 转换 | `stages/import/md2pack.py` | 转换时**自动补标记**（幂等），并逐镜记进 `_import_report.md` |
+  | 判据 | **新增** `stages/import/prompt_marks.py` | 三处（转换/门禁/迁移）共用一份正则；`normalize_dialogue` / `find_bare` |
+  | 门禁 | `stages/import/pack_spec.py` | `SHOT018` **告警不阻断**（标记不是硬约束，且拦下来会让能跑的项目导不进） |
+  | 契约 | `docs/pack/PACK-SPEC.md` §5.3、`MD-TEMPLATE.md` | 写进规范；三条交付通道都指向同一判据 |
+  | 老项目 | `python stages/import/prompt_marks.py --workspace <剧目录> --apply` | 重写 `h3_prompts.json`，先落 `.bak-时间戳`；**已烧字幕的成片只能重跑** |
+
+  设计取舍两条：① 只自动包「有说话动词」和「口型对齐台词」两种高置信写法 ——
+  招牌/标语里的引号中文（`招牌写着："营业中"`）**不包**，把它改成台词是另一种错，只告警；
+  ② 归一化**只动 `board_prompt` / `video_prompt`**，`dialogue[].text` 保持纯文本 ——
+  套标记会让字幕里出现 `<d>[Chinese]`。
+
+  顺带修掉两处静默错误：
+
+  | # | 位置 | 症状 |
+  |---|---|---|
+  | 1 | `stages/production/scripts/gen_boards.py` | 分镜图提示词写死 `vertical 9:16`，横屏项目的分镜图仍是竖构图，出片被裁且**不报错** → 改为跟 `ratio` 走 |
+  | 2 | 同上 `_codes()` | 没有 `character-bible.json` 时裸代号 `P01` 不算角色 → 人数算成 0 兜底成 1，双人镜被写成 `exactly one person` |
+  | 3 | `stages/import/md2pack.py` | 写死 `character/scene=16:9` 并**盖掉** `pack_spec.DEFAULT_ASPECT` 的 9:16 → 人物卡按 16:9 出图再当 9:16 参考，竖向拉伸 22%；同时 `board/video` 改为读 `drama.json` 的 `format.aspect`（新增 `--aspect`） |
+
+  测试：`stages/import/tests/test_prompt_marks.py` 新增 12 例（幂等 / 只包高置信写法 /
+  门禁告警不阻断 / 迁移带备份），`test_md2pack.py` +5 例（台词只进提示词不进 dialogue、
+  语种参数、画幅三源优先级），`test_gen_boards.py` +1 例并强化 C05（画幅跟随 ratio）。
+  回归 **478 例全绿**（cloud 49 / import 50 / subtitle 47 / comfyui 42 / tools 6 /
+  web 138 / production 110 / assets 19 / gen_boards 17）。
+
+  文档：施工单 `docs/patches/2026-11-06_H3台词烧字幕_patch提案.md`。
+
 - **2026-11-05 更新（V0.7.65 · 对照 4090 镜像实测反馈加固）**
 
   在仙宫云 RTX 4090 D 24G + ComfyUI **0.43.2** 上跑通全链，带回 12 条坑，逐条对照改代码。

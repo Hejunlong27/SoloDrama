@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 
@@ -187,3 +188,67 @@ def test_convert_writes_pack_and_validates(tmp_path):
     assert '"kind": "turnaround"' in assets and '"kind": "look"' in assets
     report = pathlib.Path(res["report"]).read_text(encoding="utf-8")
     assert "分镜缺口" in report and "截断" in report
+
+
+# ---------------------------------------------------------------------------
+# 台词标记归一化（2026-11-06）：只动提示词，不动 dialogue
+# ---------------------------------------------------------------------------
+DIRECTOR_WITH_BARE = DIRECTOR_MD.replace(
+    "资产图锚定：\n角色 崔昭 的参考图是 {{Mixed 1}}\n场景 S09 的参考图是 {{Mixed 2}}",
+    "资产图锚定：\n角色 崔昭 的参考图是 {{Mixed 1}}\n场景 S09 的参考图是 {{Mixed 2}}\n"
+    "0-4秒：\n画面：中景。崔昭抬头说：\"父亲，三日盘缠。\"\n约束：口型对齐台词。",
+)
+
+
+def test_bare_dialogue_is_wrapped_in_prompt_only():
+    """裸引号中文会被 H3 烧成画面字幕 → 转换时自动包 <d>；而 dialogue 数组必须保持纯净。"""
+    assets, _ = md2pack.parse_assets(ASSETS_MD)
+    doc, gaps = md2pack.parse_episode(DIRECTOR_WITH_BARE, 1, "9:16",
+                                      md2pack._name_map(assets),
+                                      known=md2pack._all_ids(assets), strict_cast=True)
+    shot = doc["shots"][0]
+    assert "<d>[Chinese] 父亲，三日盘缠。</d>" in shot["video_prompt"], shot["video_prompt"]
+    assert '"父亲，三日盘缠。"' not in shot["video_prompt"], shot["video_prompt"]
+    # ★ 台词数组是字幕对齐用的纯文本：套标记会让字幕里出现 `<d>[Chinese]`
+    assert shot["dialogue"][0]["text"] == "父亲，三日盘缠。", shot["dialogue"]
+    assert "<d>" not in shot["dialogue"][0]["text"]
+    # 自动补标记必须留痕（用户要能回源改手册）
+    assert any("台词已自动包" in g["reason"] for g in gaps), gaps
+
+
+def test_dialogue_lang_follows_argument():
+    assets, _ = md2pack.parse_assets(ASSETS_MD)
+    doc, _ = md2pack.parse_episode(DIRECTOR_WITH_BARE, 1, "9:16",
+                                   md2pack._name_map(assets),
+                                   known=md2pack._all_ids(assets), lang="Spanish")
+    assert "<d>[Spanish] 父亲，三日盘缠。</d>" in doc["shots"][0]["video_prompt"]
+
+
+# ---------------------------------------------------------------------------
+# 画幅：不许写死 9:16（横屏项目会被按竖屏出资产卡与分镜图）
+# ---------------------------------------------------------------------------
+def test_aspect_defaults_match_pack_spec():
+    """默认画幅必须与 `pack_spec.DEFAULT_ASPECT` 同源 —— 两处各写一份必然漂。"""
+    assert md2pack.S.DEFAULT_ASPECT["character"] == "9:16"
+    assert md2pack.S.DEFAULT_ASPECT["scene"] == "9:16"
+    assert md2pack.S.DEFAULT_ASPECT["video"] == "9:16"
+
+
+def test_aspect_written_from_drama_json(tmp_path):
+    """`drama.json` 的 format.aspect 是横屏 → pack.json 里人物/场景/分镜/出片都跟它走。"""
+    ws = _write(tmp_path)
+    (ws / "drama.json").write_text(json.dumps(
+        {"format": {"aspect": "16:9"}}, ensure_ascii=False), encoding="utf-8")
+    res = md2pack.convert(str(ws), strict_cast=False)
+    asp = json.loads((pathlib.Path(res["pack"]) / "pack.json").read_text(encoding="utf-8"))["aspect"]
+    assert asp["video"] == "16:9" and asp["board"] == "16:9", asp
+    assert asp["character"] == "16:9" and asp["scene"] == "16:9", asp
+    assert asp["prop"] == "1:1", "道具卡保持方图：特写易裁，构图余量更大"
+
+
+def test_aspect_explicit_argument_wins(tmp_path):
+    ws = _write(tmp_path)
+    (ws / "drama.json").write_text(json.dumps({"format": {"aspect": "16:9"}}), encoding="utf-8")
+    res = md2pack.convert(str(ws), strict_cast=False, aspect="3:4")
+    asp = json.loads((pathlib.Path(res["pack"]) / "pack.json").read_text(encoding="utf-8"))["aspect"]
+    assert asp["video"] == "3:4", asp
