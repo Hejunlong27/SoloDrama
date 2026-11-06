@@ -388,6 +388,17 @@ class RunningHubClient:
         self._raise_business(payload, "查询任务(status)")
         d = payload.get("data") if isinstance(payload.get("data"), dict) else payload
         raw_status = _first_present(d, ("taskStatus", "task_status", "status", "state"))
+        if raw_status is None:
+            # ★ 2026-11-06（复盘 B4）：字段名始终没实测过。原来解析不到就返回 None，
+            #   外层把它当「还在排队」，于是一路轮询到超时 —— 真正的原因（这条通道的
+            #   响应结构和候选表对不上）被彻底盖住，查不出来。
+            #   现在直接抛，并把响应里**实际有的键**打出来：一次就能定位，也顺手能补表。
+            #   要收口这条 TODO：跑 `drama video rh.sample`（1 段小样），把这条响应贴回来。
+            raise RunningHubError(
+                "status 通道解析不出任务状态（字段名未实测，见复盘 B4）。"
+                "响应顶层键：%s ｜ data 键：%s"
+                % (sorted(payload.keys()),
+                   sorted(d.keys()) if isinstance(d, dict) else type(d).__name__))
         files = _first_present(d, ("fileList", "file_list", "results", "outputs")) or []
         results: List[Dict[str, Any]] = []
         if isinstance(files, list):

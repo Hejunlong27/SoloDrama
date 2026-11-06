@@ -1085,7 +1085,10 @@ def cmd_video_plan(args) -> int:
           '所以「图片」那部分不会真的发生）：')
     run_cmd([sys.executable, CHECK_BILLING, '--workspace', VP] + lim + only,
             'video_check_billing', quiet_ok=False)
-    print('  续跑同一批次（不重复扣费）：python scripts/drama.py video run --yes --resume <批次>')
+    # ★ 2026-11-06（复盘 B3）：这句原来不分通道地教用户 `--resume <批次>`，
+    #   而批次号只对 RunningHub 有意义 —— 本机/云端的续跑就是重跑同一条命令。
+    print('  中断后继续：重跑同一条命令即可（已有产物会跳过，不重复扣费）')
+    print('  平台通道（RunningHub）另可用：video run --engine workflow --yes --resume <批次>')
     print('  用历史台账校准单价：python scripts/drama.py video plan --calibrate --save-calibration')
     if getattr(args, 'save_calibration', False):
         # ★ 2026-11-06 修：这里原来读一个从未赋值的局部变量 `cal`，
@@ -1139,12 +1142,21 @@ def cmd_video_local(args) -> int:
     label = '云端 ComfyUI 镜像' if cloud else '本机 ComfyUI'
     lifecycle = ((getattr(args, 'cloud_lifecycle', None) or 'auto') if cloud else 'off')
 
-    # ★ 2026-11-06：这两个参数只有 RunningHub 那条链在用（批次号 / 并发数是 RH 引擎的概念）。
-    #   本机与云端 ComfyUI 的「续跑」就是重跑同一条命令：已有产物默认跳过、不会重复计费。
-    #   旧行为是静默忽略 —— 而 `video plan` 的结尾文案还在教用户 `--resume <批次>`。
-    if getattr(args, 'resume', None) or getattr(args, 'concurrency', None):
-        print('  [提示] --resume / --concurrency 只对 RunningHub 通道生效。')
-        print('         本机 / 云端 ComfyUI 的续跑 = 重跑同一条命令：已有产物会跳过，不会重复计费。')
+    # ★ 2026-11-06（复盘 B3）：这两个参数原本被**静默吞掉** —— 它们只有 RunningHub 那条链在
+    #   用（批次号 / 并发数是 RH 引擎的概念），而 `video plan` 的结尾文案还在教用户
+    #   `video run --yes --resume <批次>`，在默认（local）通道上那句话是假的。
+    #   现在按「能不能兑现」分开处理，不再假装接受：
+    #     · --resume   → 语义等价（本机/云端的续跑就是重跑，已有产物会跳过），接受并说清
+    #     · --concurrency > 1 → ComfyUI 单实例只能串行，兑现不了 → 直接拒绝
+    conc = getattr(args, 'concurrency', None)
+    if conc not in (None, 1):
+        print('[FAIL] --concurrency %s 在本机/云端 ComfyUI 上兑现不了：单实例只能串行出片。' % conc)
+        print('       要并发请走 RunningHub 通道（--engine workflow），它按 lane 提交。')
+        print('       本机/云端想去掉这个参数即可 —— 默认就是逐镜串行。')
+        return 2
+    if getattr(args, 'resume', None):
+        print('  [提示] --resume %s 已忽略：本机/云端的续跑 = 重跑同一条命令。' % args.resume)
+        print('         不加 --force 时已有产物会跳过，不会重复提交、也不会重复计费。')
 
     url = ''
     if cloud:

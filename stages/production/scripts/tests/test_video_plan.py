@@ -55,3 +55,39 @@ def test_save_calibration_with_calibrate_is_graceful():
     out = r.stdout + r.stderr
     assert r.returncode == 0, out[-800:]
     assert "Traceback" not in out
+
+
+# ---------------------------------------------------------------------------
+# B3（2026-11-06 复盘）：--resume / --concurrency 在 local/cloud 上必须「说清楚」
+# ---------------------------------------------------------------------------
+def _run_video(*args) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["SOLODRAMA_WORKSPACE"] = str(FIXTURE)
+    return subprocess.run([sys.executable, str(SCRIPTS / "drama.py"), "video", "run", *args],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env=env, cwd=str(SCRIPTS), timeout=120)
+
+
+def test_concurrency_gt1_is_rejected_on_local():
+    """本机 ComfyUI 是单实例，--concurrency >1 兑现不了 —— 必须拒绝，不能假装接受。
+
+    旧行为：参数被静默吞掉，用户以为在并发，其实一直串行。
+    """
+    r = _run_video("--engine", "local", "--concurrency", "4")
+    out = r.stdout + r.stderr
+    assert r.returncode == 2, out[-600:]
+    assert "RunningHub" in out, "拒绝时要指出哪条通道支持并发"
+
+
+def test_concurrency_1_is_accepted():
+    """给了 1（等价于默认）就别拦 —— 脚本里统一带上 --concurrency 1 不该报错。"""
+    r = _run_video("--engine", "local", "--concurrency", "1")
+    out = r.stdout + r.stderr
+    assert "兑现不了" not in out, out[-600:]
+
+
+def test_resume_is_explained_not_silently_eaten():
+    """--resume 在本机上语义等价（重跑即续跑），但必须**说出来**，不能静默忽略。"""
+    r = _run_video("--engine", "local", "--resume", "batch_20260101")
+    out = r.stdout + r.stderr
+    assert "已忽略" in out and "重跑" in out, out[-600:]

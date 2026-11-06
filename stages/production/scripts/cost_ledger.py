@@ -46,10 +46,15 @@ TOKEN_LEDGER = DSH_HOME / 'storages' / 'cost-meter' / 'ledger.json'
 CHECKPOINT = WS / 'docs' / 'cost-checkpoint.json'
 RH_RATE_JSON = WS / 'docs' / 'runninghub-runs.json'
 
-# 1 美元 = 2746 RH币（用户 2026-09-19 确认）。用于把美元钱包并回 RH币口径。
-RH_PER_USD_DEFAULT = 2746.0
-# 1 RH币 ≈ ¥0.0025（用户 2026-09-18）。暂维持：与 2746 自洽（隐含 USD/CNY ≈ 6.865）。
-CNY_PER_RH_DEFAULT = 0.0025
+# ★ 2026-11-06：两个锚点搬进 `stages/_rates.py`（唯一真源）——
+#   此前这里手写一份、展示层另写一份（7.2），同一笔钱会折出两个数字。
+#   锚点是用户给定的输入：1 美元 = 2746 RH 币（2026-09-19）、1 RH 币 = ¥0.0025（2026-09-18）；
+#   1 美元 = 6.865 元是**派生值**，别再手写。
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))   # stages/
+import _rates                                                          # noqa: E402
+
+RH_PER_USD_DEFAULT = _rates.RH_PER_USD
+CNY_PER_RH_DEFAULT = _rates.CNY_PER_RH
 
 TOKEN_KEYS = ('input', 'output', 'cacheRead', 'cacheWrite', 'reasoning', 'calls')
 

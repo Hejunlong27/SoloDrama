@@ -27,7 +27,7 @@ import os
 import time
 from pathlib import Path
 
-from . import paths
+from . import fx, paths
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 KINDS = ("characters", "scenes", "props")
@@ -217,6 +217,9 @@ def _inventory(ws: Path) -> dict:
         "spend": {
             "coins": round(coins, 2),
             "usd": round(money, 4),
+            # ★ 2026-11-06：折人民币只在这里算一次（复盘 B5/R3）。
+            #   此前 studio / ux / ui.js 各算一遍，且美元汇率用了两个值。
+            "cny": round(fx.cny(coins, money), 2),
             "tasks": len(ledger_tasks | wf_tasks) or (ledger_hits + wf_hits),
             "ledger_files": len(ledger_files),
             "ledger_hits": ledger_hits,
@@ -280,7 +283,7 @@ def discover(refresh: bool = False, max_depth: int = 3, limit: int = 40) -> dict
                         # 散图单列 `loose`，由界面自行相加显示。
                         "images": inv["images"]["total"] + inv["refs"],
                         "loose": inv["images"]["loose"],
-                        "yuan": round(inv["spend"]["coins"] * 0.0025, 4),
+                        "yuan": round(inv["spend"]["cny"], 4),
                         "coins": inv["spend"]["coins"],
                         "has_output": inv["has_output"],
                         "updated_at": inv["updated_at"],

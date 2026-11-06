@@ -507,7 +507,7 @@ _add(_c("ingest.check", "1 导入", "入 data/ 生成端门禁（G7）", "ingest
         agent="按缺陷类型分组列出（缺 <d> / 槽位超限 / duration 不一致），每类给出最小修法；本命令挡在计费之前，必须过。"))
 
 # ===== 环节 10 出片 ========================================================
-_add(_c("video.local", "4 出片", "本地出视频（H3，￥0，默认干跑）", "comfy_video",
+_add(_c("video.local", "4 出片", "单镜调试：本地出视频（H3，￥0，默认干跑）", "comfy_video",
         billing=GPU, danger=WRITE,
         flags={"--prompt": "prompt", "--ref": "ref", "--seconds": "seconds",
                "--mp": "mp", "--steps": "steps", "--out": "out",
@@ -526,10 +526,12 @@ _add(_c("video.local", "4 出片", "本地出视频（H3，￥0，默认干跑�
                       placeholder="留空读同名 <工作流>.map.json"),
                 Param("submit", "真的出片（占 GPU，不花钱）", "bool", default=False)],
         resources=["GPU"],
-        help="走 ComfyUI 的 H3 图生视频工作流（默认见 stages/video/comfyui/workflow_defaults.py）。"
-             "默认干跑；地址取连接中心（默认 127.0.0.1:8188）。"
-             "正式出片请用「真跑出片」（含预检与断点续跑），本命令是单镜调试通道。",
-        agent="先干跑给我看时长/帧数/槽位；确认后加 --submit。出片前先体检。"))
+        help="★ 调试通道，不是正式出片：单镜、逐条参数，**不过模型确认门禁、不出整集**，"
+             "也不进平台台账（本机不产生费用；批次记录见 07-成片/<ep>/_batch_local.json）。"
+             "正式出片用「真跑出片」（按集批次，含预检与断点续跑）。"
+             "工作流默认见 stages/video/comfyui/workflow_defaults.py；地址取连接中心。",
+        agent="这是单镜调试口：先干跑给我看时长/帧数/槽位，确认后加 --submit。"
+              "要出整集/要进台账，用「真跑出片」，别在这条上拼批次。"))
 _add(_c("video.local.check", "4 出片", "本地视频体检", "comfy_video",
         argv=["--check"], mode="sync", danger=READ, billing=GPU,
         flags={"--workflow": "workflow", "--map": "map"},

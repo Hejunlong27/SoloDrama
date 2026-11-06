@@ -63,8 +63,10 @@ export function esc(s) {
   ));
 }
 
-const COIN_TO_CNY = 0.0025;   /* 1 RH 点 ≈ ¥0.0025（引擎与旧控制台同一口径） */
-export const RATE = { coinToCny: COIN_TO_CNY, usdToCny: 7.2 };
+/* 汇率不在这里定义（2026-11-06 复盘 B5）：金额一律由后端算好再下发
+   （真源 stages/_rates.py → web/core/fx.py → inventory.spend.cny）。
+   原先这里有一份 COIN_TO_CNY=0.0025 / RATE.usdToCny=7.2 的副本，
+   与台账的锚点（隐含 6.865）不一致，而且**没有任何模块 import 它** —— 纯死代码。 */
 
 export function money(v) {
   const n = Number(v);

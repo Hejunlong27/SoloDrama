@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 
 from . import commands as CMD
+from . import fx
 from . import inventory
 from . import reader
 
@@ -70,8 +71,12 @@ STATE_TEXT = {
 # 花费口径：**只用于把台账里已发生的消耗折算成人话**，不做任何预估
 # （预估会低报约 4 倍，见 `cost_model._cost_lines` 的说明）。`COIN_PER_SHOT` 已删：
 # 那个 145 币/段 是单一 Key 档位的拟合值，真实台账中位数是 45 币/段。
-COIN_TO_CNY = 0.0025
-USD_TO_CNY = 7.2          # 仅用于把「美元钱包消耗」折算成人民币展示，界面上会注明是估算
+#
+# ★ 2026-11-06（复盘 B5）：汇率不再在这里写死，统一读 `stages/_rates.py`
+#   （两个锚点：2746 RH币/美元、¥0.0025/币 ⇒ 1 美元 = 6.865 元）。
+#   这两个名字保留是为了兼容既有引用与测试，值来自 fx。
+COIN_TO_CNY = fx.COIN_TO_CNY
+USD_TO_CNY = fx.USD_TO_CNY
 
 
 def yuan(v) -> str:
@@ -322,7 +327,8 @@ def spent_summary(ws, status_data=None) -> dict:
     """
     inv = inventory.inventory(ws)
     sp = inv["spend"]
-    cny = sp["coins"] * COIN_TO_CNY + sp["usd"] * USD_TO_CNY
+    # inventory 已经算好 cny（唯一聚合层）；取不到才退回本地换算
+    cny = float(sp.get("cny") or fx.cny(sp.get("coins"), sp.get("usd")))
     imgs = inv["images"]
 
     lines = []

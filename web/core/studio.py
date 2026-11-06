@@ -516,21 +516,23 @@ def cost(ws) -> dict:
 
     by_stage, by_ep = {}, {}
     by_stage_coins, by_ep_coins = {}, {}
-    total_coins = total_money = 0.0
     for r in ok_rows:
         st = r["stage"] or "其他"
         by_stage[st] = by_stage.get(st, 0.0) + r["sec"]
         by_stage_coins[st] = by_stage_coins.get(st, 0.0) + (r.get("coins") or 0.0)
-        total_coins += r.get("coins") or 0.0
-        total_money += r.get("money") or 0.0
         if r["episode"]:
             by_ep[r["episode"]] = by_ep.get(r["episode"], 0.0) + r["sec"]
             by_ep_coins[r["episode"]] = by_ep_coins.get(r["episode"], 0.0) + (r.get("coins") or 0.0)
 
-    # 1 RH币 ≈ ￥0.0025（2026-09-18 实测）；美元钱包按 7.2 折人民币。
-    # ★ 这两个系数只用于「把两种余额合成一个总花费」，不影响任何计费判断。
-    coin_to_cny, usd_cny = 0.0025, 7.2
-    total_cny = total_coins * coin_to_cny + total_money * usd_cny
+    # ★ 2026-11-06（复盘 R3/B5）：金额的**总数**一律取 inventory —— 它按 taskId 去重，
+    #   是唯一权威的聚合层；而且折人民币只在那里算一次。
+    #   此前这里按台账 attempt 求和、再自己乘一套汇率，导致同一个页面上
+    #   「耗时页的花费」与「工作台的花费」是两个数（rows 与 inventory 的去重口径不同）。
+    #   `by_stage / by_episode` 仍然是**尝试维度的分布**（合计不必等于总数），这是有意的。
+    spend = inv.get("spend") or {}
+    total_coins = float(spend.get("coins") or 0.0)
+    total_money = float(spend.get("usd") or 0.0)
+    total_cny = float(spend.get("cny") or 0.0)
 
     if ok_rows:
         source, source_text = "ledger", "来自本机耗时台账（逐次尝试的实际占用）"
@@ -709,7 +711,7 @@ def overview(ws) -> dict:
             "episodes": eps,
             "batches": sh["batches"][:5],
             "latest_batch": sh["latest_batch"],
-            "spend": {"cny": inv["spend"]["coins"] * 0.0025 + inv["spend"]["usd"] * 7.2,
+            "spend": {"cny": inv["spend"]["cny"],
                       "coins": inv["spend"]["coins"], "usd": inv["spend"]["usd"],
                       "source": inv["spend"]["source"],
                       "source_text": inv["spend"]["source_text"]},
