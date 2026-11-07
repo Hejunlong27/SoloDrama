@@ -1,6 +1,36 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-07 更新（V0.7.73 · 资产出图：种子逐条派生 + 负向词走真负向通道）**
+
+  用户反馈「做出来的剧，角色形象全部趋同」。查资产链路，两条机械成因：
+
+  | # | 病灶 | 证据 |
+  |---|---|---|
+  | 1 | 清单里**一条 `seed` 都没有**，`build()` 的 `if seed is not None` 永远为假 | 3 角色 + 6 场景共 9 张图实测拿到**同一个** `noise_seed`（工作流写死的 1001791701491090） |
+  | 2 | 卡片末尾 `EXCLUDE:` / `人物负面：` 段被当**正向提示词**提交 | 工作流 `negative_prompt` 为空、`cfg=1`；等于反复说「网红脸、削尖下颌、放大眼裂」 |
+
+  | # | 变更 | 说明 |
+  |---|---|---|
+  | 1 | `asset_md.derive_seed` | `seed = 基底 + hash(id)`，逐条不同、同一 id 可复现；新增 `--seed-base` / `--vary` |
+  | 2 | `asset_md.split_negative` | `EXCLUDE:` / `NEGATIVE:` / `人物负面：` / `排除：`（行首或句末标点后）整块拆出，正向提示词不再含否定块 |
+  | 3 | `comfy_client.build(negative=)` | 写进 `negative_prompt` 节点（`neg_node_of` 自动探测，`COMFYUI_NODE_NEG` 可覆盖）；无节点则告警不静默丢 |
+  | 4 | `gen_assets_local --neg-mode {auto,strip,block}` | `auto` 拆出并**说明是否生效**；`strip` 丢弃；`block` 用不上就拒绝出图 |
+  | 5 | 清单新增 `seed_base` / `negative` / `negative_effective` / `_workflow{cfg,negative_node}` | 结论可审计：这锅是谁的、负向到底生不生效 |
+  | 6 | `pack.json::negative` 终于被读 | 此前它没有任何消费方；现与每条卡片的否定块合并 |
+  | 7 | 21 份题材模板的「人物负面」行补一句 | cfg=1 下负向词不生效，压网红脸要写正面特征 |
+  | 8 | `drama.py assets` 增 `--seed-base / --vary / --neg-mode` | 文档让用户走这一层，参数到不了脚本等于没这功能 |
+
+  ⚠ **说清一件事**：默认出图工作流 `workflow_qwen21_t2i_hq.json` 的 `cfg` 是 **1**，
+  负向条件乘 0 —— 词写进 `negative_prompt` 也**物理无效**。所以清单记
+  `negative_effective: false`，运行时打 WARN。要真生效只有两条路：换 `cfg≥2` 的工作流
+  （`workflow_qwen21_t2i_hq_9x16.json` 是 2.0），或把否定改写成正向具体特征。
+  **本批修掉的是「否定词被当正向用」这个反向伤害，不是「负向词生效」。**
+
+  守卫：`stages/assets/scripts/tests/test_asset_seed_negative.py` 11 例
+  （拆词四种写法 / 空块不吃提示词 / 种子稳定且互不相同 / 清单记 seed_base 且哈希覆盖负向 /
+  写进 471 节点 / cfg 判据）。回归：pytest **519**（assets 11 新增）+ 脚本型 **121** 全绿。
+
 - **2026-11-06 更新（V0.7.72 · 视频提示词锁成 H3 多参六段式：`{{Mixed n}}` 从来就没被模型认过）**
 
   用户反馈「提示词生成的效果不佳」。查现有产物发现三件事叠在一起，根因是**参考图没被点名**：

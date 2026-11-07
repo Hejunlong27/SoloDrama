@@ -68,18 +68,53 @@ GET  /view?filename=&subfolder=&type=output  → 图片二进制
 {
   "style_lock": "统一风格串（会重复写进每条 prompt，保证系列一致）",
   "aspect": "2:3 (Portrait Photo)",
+  "seed_base": 20261106,
+  "negative": "清单级负向词（会与每条自带的合并）",
+  "negative_effective": false,
   "assets": [
     {
       "id": "char_01",                // 唯一 id，决定文件名前缀
       "kind": "char",                 // char | scene | prop（决定输出子目录）
       "name": "陆鸣",
-      "prompt": "……电影感写实风格……",
-      "seed": 12345,                  // 可选，固定种子便于复现
+      "prompt": "……电影感写实风格……",   // 已剔除 EXCLUDE/人物负面 段
+      "negative": "beauty face, …",   // 从卡片里拆出来的否定块
+      "seed": 20826930,               // 逐条派生：seed_base + hash(id)
       "aspect": "2:3 (Portrait Photo)" // 可选，覆盖全局
     }
   ]
 }
 ```
+
+### 两条 2026-11-07 起必须遵守的口径
+
+**① 种子逐条派生，不再「所有资产共用工作流那颗种子」。**
+`seed = seed_base + hash(id)`（`asset_md.derive_seed`）。用 id 而不是序号，是为了
+「加一个角色不会把其他人的脸全换掉」。同一 id 永远同一颗种子 ⇒ **重跑同一张图得到同一张图**；
+想换一套脸就给 `--seed-base <新值>`（或 `--vary`，它会打印本次用的基底，便于复现）。
+
+> 为什么必须这样：此前的清单里一条 `seed` 都没有，`comfy_client.build()` 的
+> `if seed is not None` 永远为假，所有资产沿用工作流写死的 `noise_seed`。
+> 实测 9 张图（3 角色 + 6 场景）拿到同一个种子 —— 配合 90% 同构的提示词骨架，
+> 模型先验一直锁在「平均脸」附近。这是「每个角色都长得像同一个人」最硬的机械原因之一。
+
+**② 负向词只走负向通道，绝不留在正向提示词里。**
+`asset_md.split_negative` 会把卡片末尾的 `EXCLUDE:` / `NEGATIVE:` / `人物负面：` / `排除：`
+整块拆出来（行首或句末标点之后才算标记），写进 `negative`；正向提示词里不再有它们。
+
+`gen_assets_local.py --neg-mode` 决定「用不上时怎么办」：
+
+| 档位 | 行为 |
+|---|---|
+| `auto`（默认） | 拆出来并尝试写入负向节点；**写不进去或写进去也不生效时明确告警** |
+| `strip` | 拆出来直接丢弃（不想要这些词时） |
+| `block` | 工作流用不上负向词就拒绝出图（要求「必须有负向控制」时） |
+
+⚠ **默认工作流 `workflow_qwen21_t2i_hq.json` 的 `cfg` 是 1**，此时负向条件乘 0、
+`negative_prompt` 完全不参与引导（2026-11 实测：「禁止东亚面孔」出图毫无变化）。
+所以清单会记 `negative_effective: false`，运行时会打一条 WARN。
+要让它真生效，只有两条路：换 `cfg≥2` 的工作流（如 `workflow_qwen21_t2i_hq_9x16.json`，cfg=2.0），
+或把否定改写成**正向具体特征**（「不要锥子脸」→「方下颌，咬肌明显」）。
+**后者是当前默认工作流下唯一可靠的办法。**
 
 输出目录按 `kind` 自动分：`char → characters/`、`scene → scenes/`、`prop → props/`。
 `id` 与既有通道同口径（`char_01` / `scene_01`），文件名形如 `char_01_陆鸣_00.png`。

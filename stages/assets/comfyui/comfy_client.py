@@ -460,6 +460,42 @@ def _warn_negation(prompt: str, wf: dict) -> None:
           % cfg, file=sys.stderr)
 
 
+def _warn_once(key: str, msg: str) -> None:
+    """同一类告警每次运行只打一次 —— 批量 24 张图刷 24 遍同样的字，等于没说。"""
+    if key in _CFG_WARNED:
+        return
+    _CFG_WARNED.add(key)
+    print(msg, file=sys.stderr)
+
+
+def neg_node_of(wf: dict) -> str:
+    """负向提示词节点 id：`COMFYUI_NODE_NEG` 优先，否则在工作流里按输入名自动找。"""
+    env = os.environ.get("COMFYUI_NODE_NEG")
+    if env:
+        return env
+    for nid, node in (wf or {}).items():
+        if "negative_prompt" in (((node or {}).get("inputs")) or {}):
+            return str(nid)
+    return ""
+
+
+def _warn_negative_inert(wf: dict, negative: str) -> None:
+    """负向词写进去了，但当前 cfg 用不上 —— 必须说，否则用户以为"修好了"。
+
+    机制：`SamplerCustom` 的 cfg=1 时负向条件乘 0，`negative_prompt` 完全不参与引导。
+    这与「提示词里写 no/not 无效」是同一条物理事实，只是位置不同。
+    """
+    if not (negative or "").strip():
+        return
+    cfg = _min_cfg(wf)
+    if cfg is None or cfg >= 2:
+        return
+    _warn_once("neg-inert",
+               "[WARN] 本工作流 cfg=%g < 2：负向词**写进了 negative_prompt 但不参与引导**，"
+               "等于没写。要让它生效：换 cfg>=2 的工作流（如 workflow_qwen21_t2i_hq_9x16.json "
+               "的 cfg=2.0），或把否定改写成正向具体特征。" % cfg)
+
+
 # 种子字段名：主流采样器节点用 noise_seed，KSampler 用 seed。
 # 写错键会**静默写进一个无效键** —— 看起来「设了种子但没生效」，极难排查（反馈 1.3）。
 _SEED_KEYS = ("noise_seed", "seed", "random_seed")
@@ -494,16 +530,31 @@ def normalize_aspect(value):
     return ASPECT_LABELS.get(v, v)
 
 
-def build(base, prompt, prefix, seed=None, aspect=None, count=1, refs=None):
-    """把「提示词 / 文件名前缀 / 种子 / 画幅 / 张数 / 参考图」写进工作流副本（不改原文件）。
+def build(base, prompt, prefix, seed=None, aspect=None, count=1, refs=None,
+          negative=None):
+    """把「提示词 / 负向词 / 文件名前缀 / 种子 / 画幅 / 张数 / 参考图」写进工作流副本。
 
     `refs` 非空即进入**图生图/编辑**模式：写进 LoadImage 节点，并把 MODE_NODE 置 False。
     工作流没有 MODE_NODE 时（纯文生图），refs 会被忽略并告警 —— 不静默丢参数。
+
+    ★ 2026-11-07：`negative` 是**真正的负向通道**。此前卡片末尾的 `EXCLUDE:` 段被当正向
+      提示词提交（等于反复说「网红脸、放大眼裂」），是「人物越长越像同一个网红」的成因之一。
+      现在负向词只走这里；工作流没有负向节点时明确告警，不静默丢弃。
     """
     wf = json.loads(json.dumps(base))
     wf[PROMPT_NODE]["inputs"]["value"] = prompt
     wf[PREFIX_NODE]["inputs"]["filename_prefix"] = prefix
     _warn_negation(prompt, wf)
+    neg = str(negative or "").strip()
+    if neg:
+        nid = neg_node_of(wf)
+        if not nid:
+            _warn_once("neg-nonode",
+                       "[WARN] 清单给了负向词，但工作流里没有 negative_prompt 节点："
+                       "这些词会被丢弃（没有可写的负向通道）。已记录在清单里备查。")
+        else:
+            wf[nid]["inputs"]["negative_prompt"] = neg
+            _warn_negative_inert(wf, neg)
     if refs:
         if not LOAD_NODES:
             print("[WARN] 给了 ref_images 但未设 COMFYUI_NODE_LOADIMAGE，参考图被忽略（当前工作流是纯文生图）",
@@ -552,7 +603,7 @@ def run_one(base, item, out_dir):
             raise FileNotFoundError("参考图不存在：%s" % p)
         refs.append(upload_image(p))
     wf = build(base, item["prompt"], prefix, item.get("seed"), item.get("aspect"),
-               item.get("count", 1), refs=refs)
+               item.get("count", 1), refs=refs, negative=item.get("negative"))
     miss = check_required_inputs(wf)
     if miss:
         raise RuntimeError("工作流缺必需输入（提交必被拒）：\n" + "\n".join(
@@ -683,6 +734,8 @@ def main():
     ap.add_argument("--image", action="append", default=None,
                     help="（单张模式）参考图路径，给了就走图生图/编辑；可重复，或用逗号分隔")
     ap.add_argument("--prompt")
+    ap.add_argument("--negative", default="",
+                    help="负向词（单张模式）；写进工作流的 negative_prompt 节点。cfg=1 的工作流下不生效，会告警")
     ap.add_argument("--prefix")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--aspect", help="画幅，如 9:16 / 16:9 / 3:4（自动补成节点认的枚举）")
@@ -768,6 +821,7 @@ def main():
         print("[done] generated={} skipped={} failed={}".format(done, skipped, failed), flush=True)
     else:
         it = {"id": args.prefix or "out", "prefix": args.prefix or "out", "prompt": args.prompt,
+              "negative": args.negative,
               "seed": args.seed, "aspect": args.aspect, "count": args.count,
               "ref_images": [x.strip() for chunk in (args.image or []) for x in str(chunk).split(",") if x.strip()]}
         outs = run_one(base, it, args.out)

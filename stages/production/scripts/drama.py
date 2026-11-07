@@ -957,6 +957,14 @@ def cmd_assets_local(args) -> int:
         cmd += ['--force']
     if args.submit:
         cmd += ['--submit']
+    # ★ 2026-11-07：种子与负向词必须能从 drama.py 这一层传下去 ——
+    #   文档让用户走 `drama.py assets --engine local`，参数到不了脚本等于没这个功能。
+    if getattr(args, 'seed_base', None) is not None:
+        cmd += ['--seed-base', str(args.seed_base)]
+    if getattr(args, 'vary', False):
+        cmd += ['--vary']
+    if getattr(args, 'neg_mode', None):
+        cmd += ['--neg-mode', args.neg_mode]
     if cloud:
         import gen_preflight as GP
         target = GP.resolve('image', WS)
@@ -1879,6 +1887,14 @@ def main() -> int:
     p.add_argument('--only', default=None, help='只做这些（名字或序号 / 资产 id，逗号分隔）')
     p.add_argument('--force', action='store_true', help='已生成的也重跑（rh 通道会重复计费）')
     p.add_argument('--check', action='store_true', help='仅 local：体检 ComfyUI 是否在线，不出图')
+    p.add_argument('--seed-base', dest='seed_base', type=int, default=None,
+                   help='仅 local：种子基底（默认 20261106）。每条资产种子 = 基底 + hash(id)，'
+                        '逐条不同；换这个数=换一整套脸')
+    p.add_argument('--vary', action='store_true',
+                   help='仅 local：随机换一套种子（会打印本次基底，便于复现）')
+    p.add_argument('--neg-mode', dest='neg_mode', default=None,
+                   choices=('auto', 'strip', 'block'),
+                   help='仅 local：负向词处置（auto=拆出并说明是否生效｜strip=丢弃｜block=用不上就拒绝出图）')
     p.set_defaults(fn=cmd_assets)
 
     p = sub.add_parser('refs', help='参考图瘦身')

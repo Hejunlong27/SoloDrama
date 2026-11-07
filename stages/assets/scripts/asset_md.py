@@ -66,6 +66,68 @@ KIND_CN = {'char': '角色资产库', 'scene': '场景资产', 'prop': '道具�
 # 各 kind 的默认画幅（与 stages/assets/scripts/prompt_templates.py 的 RATIO 同口径：人物/场景 16:9，道具 1:1）
 ASPECT_DEFAULT = {'char': '16:9 (Widescreen)', 'scene': '16:9 (Widescreen)', 'prop': '1:1 (Square)'}
 
+# ── 种子 ──────────────────────────────────────────────────────────────────
+# ★ 2026-11-07：为什么必须逐条派生
+#   曾经 manifest 里**一条 seed 都没有**，`comfy_client.build()` 的 `if seed is not None`
+#   永远为假 ⇒ 所有资产沿用工作流里那个写死的 `noise_seed`。实测 9 张图（3 角色 + 6 场景）
+#   拿到的是同一个种子，配合 90% 同构的提示词骨架，模型先验一直锁在「平均脸」附近 ——
+#   这是「每个角色都长得像同一个人」最硬的机械原因之一。
+#   派生规则：`base + sha256(id)`。用 id 而不是序号，是为了**加一个人物不会改变其他人的脸**
+#   （按序号的写法，插一个角色会把它后面所有人的种子全部平移）。
+SEED_BASE = 20261106
+SEED_SPAN = 900000          # 派生偏移量上界（base + 0..899999，远小于 2^63）
+
+
+def derive_seed(asset_id: str, base: int = SEED_BASE) -> int:
+    """资产 id → 稳定种子。同一 id 永远同一颗，不同 id 几乎不可能相同。"""
+    h = hashlib.sha256(str(asset_id or '').encode('utf-8')).hexdigest()[:10]
+    return int(base) + int(h, 16) % SEED_SPAN
+
+
+# ── 负向词 ────────────────────────────────────────────────────────────────
+# 作者会把「不要网红脸 / 削尖下颌」写成卡片末尾的 `EXCLUDE:` / `人物负面：` 段。
+# 2026-11-07 实测发现这些词被**原样当正向提示词**提交（工作流 cfg=1、negative_prompt 为空）
+# —— 等于在提示词里反复说「网红脸、放大眼裂」。所以这里必须先把它们拆出来：
+# 正向永远不含否定块；否定块交给真正能用的通道（cfg≥2 的负向节点），用不上就明说。
+NEG_MARKER_RE = re.compile(
+    r'(?im)(?:^|(?<=[。；;.!！?？]))[ \t]*(?:EXCLUDE|NEGATIVE(?:\s+PROMPT)?)[ \t]*[:：]'
+    r'|(?:^|(?<=[。；;.!！?？]))[ \t]*(?:人物|角色)?负面(?:词|提示词)?[ \t]*[:：]'
+    r'|(?:^|(?<=[。；;.!！?？]))[ \t]*(?:排除|不要出现|禁止出现)[ \t]*[:：]'
+)
+
+
+def split_negative(prompt: str) -> tuple:
+    """把提示词里的否定块拆出来 → `(正向, 负向)`。
+
+    只认**行首**的标记（`EXCLUDE:` / `NEGATIVE:` / `人物负面：` / `排除：`），
+    取**最后一处**（作者的否定清单惯例写在末尾）。正文中间的 "no text" 之类不动 ——
+    那些是句子成分，拆走会破坏语法。
+
+    负向块为空时返回 `(原文, '')`，保证「没写否定块」与「写了空块」行为一致。
+    """
+    src = str(prompt or '')
+    hits = list(NEG_MARKER_RE.finditer(src))
+    if not hits:
+        return src, ''
+    m = hits[-1]
+    pos = src[:m.start()].rstrip(' \t\r\n；;，,、')
+    neg = src[m.end():].strip()
+    if not neg:
+        return pos or src, ''
+    return pos, neg
+
+
+def merge_negative(*parts) -> str:
+    """多段负向词合并（去空、去重、保序），用逗号连接。"""
+    seen, out = set(), []
+    for p in parts:
+        for token in re.split(r'[,，;；\n]+', str(p or '')):
+            t = token.strip().strip('.。')
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                out.append(t)
+    return ', '.join(out)
+
 
 def sanitize(name: str) -> str:
     """文件名安全化：md 里存在 `黑狐 / 暗影刺客` 这类带斜杠的名字，直接用会写出非法路径。"""
@@ -146,8 +208,15 @@ def parse_md(md_path: pathlib.Path, kinds=KINDS) -> list:
 
 
 def to_assets(entries: list, variant_label: str = '基础造型',
-              all_variants: bool = False, aspects: dict | None = None) -> list:
-    """资产条目 → manifest 的 assets 数组。一条资产一个 id，决定文件名前缀与输出子目录。"""
+              all_variants: bool = False, aspects: dict | None = None,
+              seed_base: int = SEED_BASE) -> list:
+    """资产条目 → manifest 的 assets 数组。一条资产一个 id，决定文件名前缀与输出子目录。
+
+    每条带三样「引擎侧才需要知道」的字段：
+    * `seed`     —— 由 id 派生（见 `derive_seed`），不再让所有资产共用工作流里那颗种子；
+    * `negative` —— 从提示词里拆出来的否定块（见 `split_negative`），绝不留在正向里；
+    * `prompt`   —— 已剔除否定块的正向提示词。
+    """
     aspects = aspects or ASPECT_DEFAULT
     assets = []
     for e in entries:
@@ -159,6 +228,7 @@ def to_assets(entries: list, variant_label: str = '基础造型',
             suffix = '' if (len(picks) == 1) else '_v%d' % (k + 1)
             aid = base + suffix
             label = '' if (len(picks) == 1 and v['label'] == '基础造型') else '_' + sanitize(v['label'])
+            pos, neg = split_negative(v['prompt'])
             assets.append({
                 'id': aid,
                 'kind': kind,
@@ -167,7 +237,9 @@ def to_assets(entries: list, variant_label: str = '基础造型',
                 'section': no,
                 'variant': v['label'],
                 'prefix': '%s_%s%s' % (aid, e['name'], label),
-                'prompt': v['prompt'],
+                'prompt': pos,
+                'negative': neg,
+                'seed': derive_seed(aid, seed_base),
                 'aspect': aspects.get(kind) or '',
                 **({'style': e['style']} if e.get('style') else {}),
             })
@@ -176,8 +248,16 @@ def to_assets(entries: list, variant_label: str = '基础造型',
 
 
 def build_manifest(md_path: pathlib.Path, assets: list, style_lock: str = '',
-                   aspect: str = '') -> dict:
-    prompt_sha = hashlib.sha256(''.join(a['prompt'] for a in assets).encode('utf-8')).hexdigest()[:16]
+                   aspect: str = '', seed_base: int | None = None,
+                   negative: str = '') -> dict:
+    """组装 manifest。
+
+    `_prompts_sha256_16` 把**负向词也算进去**：否定块同样影响出图结果，只哈希正向会让
+    「只改了 EXCLUDE」这种改动在 `--diff` 里看不见。
+    """
+    prompt_sha = hashlib.sha256(
+        ''.join(a['prompt'] + '|' + (a.get('negative') or '') for a in assets)
+        .encode('utf-8')).hexdigest()[:16]
     return {
         '_note': '由 asset_md.py 从「资产提示词 md」自动生成，供本地 ComfyUI 通道使用（勿手改）',
         '_source': str(md_path),
@@ -185,6 +265,8 @@ def build_manifest(md_path: pathlib.Path, assets: list, style_lock: str = '',
         '_prompts_sha256_16': prompt_sha,
         'style_lock': style_lock,
         'aspect': aspect,
+        'seed_base': int(seed_base if seed_base is not None else SEED_BASE),
+        'negative': negative,
         'assets': assets,
     }
 
@@ -204,6 +286,11 @@ def diff_manifest(old: dict | None, new: dict) -> list:
                              % (k, len(o.get('prompt') or ''), len(n.get('prompt') or '')))
             if (o.get('aspect') or '') != (n.get('aspect') or ''):
                 lines.append('  ~ 画幅   %-18s %s → %s' % (k, o.get('aspect'), n.get('aspect')))
+            if (o.get('negative') or '') != (n.get('negative') or ''):
+                lines.append('  ~ 负向词 %-18s (%d → %d 字)'
+                             % (k, len(o.get('negative') or ''), len(n.get('negative') or '')))
+            if o.get('seed') != n.get('seed'):
+                lines.append('  ~ 种子   %-18s %s → %s' % (k, o.get('seed'), n.get('seed')))
     for k in old_map:
         if k not in new_map:
             lines.append('  - 删除   %-18s %s' % (k, old_map[k].get('name', '')))
@@ -250,6 +337,11 @@ def main() -> int:
     ap.add_argument('--aspect-char', default=None, help='人物画幅（默认 16:9 (Widescreen)）')
     ap.add_argument('--aspect-scene', default=None, help='场景画幅（默认 16:9 (Widescreen)）')
     ap.add_argument('--aspect-prop', default=None, help='道具画幅（默认 1:1 (Square)）')
+    ap.add_argument('--seed-base', dest='seed_base', type=int, default=SEED_BASE,
+                    help='种子基底（默认 %d）；每条资产的种子 = 基底 + hash(id)。'
+                         '想让全剧换一套脸就换这个数' % SEED_BASE)
+    ap.add_argument('--negative', default='',
+                    help='全局负向词（会与各卡片自带的 EXCLUDE 段合并）')
     args = ap.parse_args()
 
     kinds = tuple(k.strip() for k in args.kind.split(',') if k.strip())
@@ -277,8 +369,11 @@ def main() -> int:
     if args.aspect:
         aspects = {k: args.aspect for k in KINDS}
 
-    assets = to_assets(entries, args.variant, args.all_variants, aspects)
-    man = build_manifest(md_path, assets, args.style_lock, args.aspect)
+    assets = to_assets(entries, args.variant, args.all_variants, aspects,
+                       seed_base=getattr(args, 'seed_base', SEED_BASE))
+    man = build_manifest(md_path, assets, args.style_lock, args.aspect,
+                         seed_base=getattr(args, 'seed_base', SEED_BASE),
+                         negative=getattr(args, 'negative', '') or '')
 
     if not args.out:
         print('[预览] 解析到 %d 个资产（未落盘）。加 --out <路径> 生成清单。' % len(assets))

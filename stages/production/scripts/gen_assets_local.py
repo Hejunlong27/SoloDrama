@@ -121,7 +121,7 @@ EXTS = ('.png', '.jpg', '.jpeg', '.webp')
 KIND_SHORT = {'character': 'char', 'scene': 'scene', 'prop': 'prop'}
 
 
-def assets_from_pack(pack_dir: pathlib.Path) -> list:
+def assets_from_pack(pack_dir: pathlib.Path, seed_base: int = None) -> list:
     """制作包 → 出图清单（与 `asset_md.to_assets()` 同结构，便于复用同一条出图链）。
 
     关键在 `prefix`：它是**产物文件名的主干**，也是 `_scan_outputs` 回扫时的唯一依据。
@@ -140,6 +140,12 @@ def assets_from_pack(pack_dir: pathlib.Path) -> list:
         print(rep.render())
         raise SystemExit(2)
 
+    # 包级负向词（pack.json 的 `negative`）：与每条卡片自带的否定块合并。
+    # ★ 2026-11-07：它此前只存在于 pack.json 里，**没有任何人读它**，而卡片末尾的
+    #   `EXCLUDE:` 段却被当正向提示词提交。这里一并收口，见 `AM.split_negative`。
+    global_neg = str(pack.get('negative') or '').strip()
+    seed_base = int(AM.SEED_BASE if seed_base is None else seed_base)
+
     out = []
     for kind in S.ASSET_KINDS:
         bucket = assets.get(kind) or {}
@@ -153,6 +159,7 @@ def assets_from_pack(pack_dir: pathlib.Path) -> list:
                 prefix = '%s_%s' % (aid, item['name'])
                 if not base:
                     prefix += '_%s' % code
+                pos, neg = AM.split_negative(v['prompt'])
                 out.append({
                     'id': S.variant_key(aid, code),
                     'kind': KIND_SHORT[kind],
@@ -162,7 +169,9 @@ def assets_from_pack(pack_dir: pathlib.Path) -> list:
                     'variant': code,
                     'vkind': vkind,
                     'prefix': prefix,
-                    'prompt': v['prompt'],
+                    'prompt': pos,
+                    'negative': AM.merge_negative(neg, global_neg),
+                    'seed': AM.derive_seed(S.variant_key(aid, code), seed_base),
                     'aspect': v.get('aspect') or '',
                     'post_only': item.get('post_only', False),
                 })
@@ -199,6 +208,7 @@ def _scan_outputs(assets: list) -> list:
         items.append({
             'section': a['section'], 'name': a['name'], 'key': a['id'], 'kind': a['kind'],
             'variant': a.get('variant', ''), 'channel': 'comfyui-local',
+            'seed': a.get('seed'),
             'prompt_sha256': hashlib.sha256(a['prompt'].encode('utf-8')).hexdigest()[:16],
             'files': files, 'usage': {}, 'billed': False,
             'created_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -287,6 +297,71 @@ def cmd_check() -> int:
     return rc
 
 
+def _image_wf_facts() -> dict:
+    """默认出图工作流的三件事：路径、最小 cfg、负向节点 id。
+
+    ★ 2026-11-07：为什么要问「cfg 是多少」
+      默认工作流 `workflow_qwen21_t2i_hq.json` 的 `SamplerCustom.cfg` 是 **1**，
+      在这个值下负向条件不参与引导 —— 把负向词写进 `negative_prompt` 节点是**物理无效**的
+      （2026-11 实测：`禁止东亚面孔` 出图毫无变化）。所以不能只把词搬过去就宣布修好了，
+      必须判断它到底会不会生效，并把结论说出来。
+
+    读不到工作流时返回 `cfg=None`（按「不确定」处理，不阻断）。
+    """
+    facts = {'path': '', 'cfg': None, 'neg_node': ''}
+    try:
+        import gen_preflight as GP                       # 同目录
+        wf_path = GP.default_workflow('image')
+        facts['path'] = str(wf_path)
+        wf = json.loads(pathlib.Path(wf_path).read_text(encoding='utf-8-sig'))
+    except Exception as exc:                             # noqa: BLE001
+        facts['error'] = '%s: %s' % (type(exc).__name__, exc)
+        return facts
+    cfgs = []
+    for nid, node in wf.items():
+        ins = (node or {}).get('inputs') or {}
+        for k in ('cfg', 'guidance'):
+            v = ins.get(k)
+            if isinstance(v, (int, float)):
+                cfgs.append(float(v))
+        if 'negative_prompt' in ins and not facts['neg_node']:
+            facts['neg_node'] = str(nid)
+    facts['cfg'] = min(cfgs) if cfgs else None
+    return facts
+
+
+def _apply_negative_policy(assets: list, mode: str, facts: dict) -> tuple:
+    """按 `--neg-mode` 处理负向词 → `(生效与否, 问题列表)`。
+
+    三档的差别只在「用不上时怎么办」：拆出来这件事**永远做**（否定块留在正向提示词里
+    就是反向拉，2026-11-07 实测）。
+    """
+    has_neg = sum(1 for a in assets if (a.get('negative') or '').strip())
+    if mode == 'strip' or not has_neg:
+        for a in assets:
+            a['negative'] = ''
+        return False, []
+
+    cfg = facts.get('cfg')
+    effective = bool(facts.get('neg_node')) and cfg is not None and cfg >= 2
+    if effective:
+        return True, []
+
+    reason = ('工作流没有 negative_prompt 节点' if not facts.get('neg_node')
+              else ('读不到工作流的 cfg（%s）' % (facts.get('error') or '未知')
+                    if cfg is None else '工作流 cfg=%g < 2，负向条件不参与引导' % cfg))
+    msg = ('  [%s] %d 条资产带负向词，但%s —— 这些词**不会起作用**。\n'
+           '         正确做法：把「不要网红脸 / 不要锥子脸」改写成**正向具体特征**\n'
+           '         （例：不写 "not Korean straight brows"，写 "thick natural arched brows"）。\n'
+           '         本次已从正向提示词中剔除（留在里面等于反向拉），负向词仍记录在清单里备查。'
+           % ('FAIL' if mode == 'block' else 'WARN', has_neg, reason))
+    if mode == 'block':
+        print(msg)
+        return False, [msg]
+    print(msg)
+    return False, []
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description='本地 ComfyUI 资产出图（￥0；默认 dry-run，需 --submit 才真跑）')
@@ -302,6 +377,15 @@ def main() -> int:
     ap.add_argument('--aspect-scene', default=None)
     ap.add_argument('--aspect-prop', default=None)
     ap.add_argument('--style-lock', default='', help='统一风格串，会拼进每条提示词')
+    ap.add_argument('--seed-base', dest='seed_base', type=int, default=AM.SEED_BASE,
+                    help='种子基底（默认 %d）。每条资产的种子 = 基底 + hash(资产 id)，'
+                         '逐条不同、可复现；想让全剧换一套脸就换这个数' % AM.SEED_BASE)
+    ap.add_argument('--vary', action='store_true',
+                    help='随机换一套种子（= 给 --seed-base 一个随机值，会打印出来，便于复现某一次）')
+    ap.add_argument('--neg-mode', dest='neg_mode', default='auto',
+                    choices=('auto', 'strip', 'block'),
+                    help='负向词怎么办：auto=拆出来交给负向通道并说明是否生效（默认）｜'
+                         'strip=直接丢弃｜block=工作流用不上负向就拒绝出图')
     ap.add_argument('--submit', action='store_true', help='★ 真的调用 ComfyUI 出图（不花钱，但会占 GPU）')
     ap.add_argument('--force', action='store_true', help='已出图的重跑（默认跳过已有产物，断点续跑）')
     ap.add_argument('--check', action='store_true', help='只体检 ComfyUI 是否在线，然后退出')
@@ -316,6 +400,12 @@ def main() -> int:
     if args.no_boot:
         # 一个开关管三层：本脚本的 ensure()、以及它 spawn 出去的 comfy_client 子进程
         os.environ['SOLODRAMA_COMFY_AUTOSTART'] = '0'
+
+    if args.vary:
+        # 换一套脸：只换基底，仍是「逐条派生」，所以复现只需记下这个数。
+        args.seed_base = int(time.time()) % 1000000
+        print('[i] --vary：本次种子基底 = %d（要复现这一套就加 --seed-base %d）'
+              % (args.seed_base, args.seed_base))
 
     applied = _apply_model_plan_env()
     if applied:
@@ -349,7 +439,7 @@ def main() -> int:
         if not src.is_dir():
             print('[FAIL] --pack 指向的目录不存在：%s' % src)
             return 2
-        assets = [a for a in assets_from_pack(src) if a['kind'] in kinds]
+        assets = [a for a in assets_from_pack(src, args.seed_base) if a['kind'] in kinds]
         # 制作包里的每个变体都是剧本要用的图，不做 --variant 筛选；
         # 画幅也以包内为准（`aspect` 只在包内没写时生效）。
         for a in assets:
@@ -370,7 +460,8 @@ def main() -> int:
             print('[FAIL] 在 %s 里没解析到任何资产节（章节标题需为「一、角色资产库」等，节内含 ``` 提示词块）。'
                   % ASSET_MD.name)
             return 2
-        assets = AM.to_assets(entries, args.variant, args.all_variants, aspects)
+        assets = AM.to_assets(entries, args.variant, args.all_variants, aspects,
+                              seed_base=args.seed_base)
         source_label = str(ASSET_MD)
         source_path = ASSET_MD
 
@@ -385,7 +476,18 @@ def main() -> int:
         print('[FAIL] 没有选中任何资产')
         return 1
 
-    manifest = AM.build_manifest(source_path, assets, args.style_lock, args.aspect)
+    # ★ 2026-11-07：负向词先过策略，再写清单 —— 顺序反了会把「已剔除」的旧值写进去。
+    facts = _image_wf_facts()
+    neg_found = sum(1 for a in assets if (a.get('negative') or '').strip())
+    neg_ok, neg_problems = _apply_negative_policy(assets, args.neg_mode, facts)
+    manifest = AM.build_manifest(source_path, assets, args.style_lock, args.aspect,
+                                 seed_base=args.seed_base)
+    manifest['negative_effective'] = neg_ok
+    manifest['_workflow'] = {'path': facts.get('path') or '', 'cfg': facts.get('cfg'),
+                             'negative_node': facts.get('neg_node') or ''}
+    if args.neg_mode == 'block' and neg_problems:
+        print('[FAIL] --neg-mode block：负向词在当前工作流里不生效，已中止（未写清单、未出图）')
+        return 2
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 
@@ -399,11 +501,21 @@ def main() -> int:
           % (len(assets), '、'.join('%s %d' % (KIND_CN[k], sum(1 for a in assets if a['kind'] == k))
                                    for k in AM.KINDS if any(a['kind'] == k for a in assets))))
     print('成本      : ￥0（本机 GPU 出图，不产生任何平台费用）')
+    print('种子基底  : %d（每条 = 基底 + hash(id)，逐条不同；重跑同一条得到同一张图）'
+          % args.seed_base)
+    print('负向词    : %d 条资产带（%s）'
+          % (neg_found,
+             '已交给负向通道且生效' if neg_ok
+             else ('已按 --neg-mode strip 丢弃' if args.neg_mode == 'strip' and neg_found
+                   else ('工作流用不上，已从正向剔除并记录' if neg_found else '无'))))
     print('-' * 84)
+    print('  %-18s %-4s %-12s %-20s %-11s %-9s %s'
+          % ('id', '类型', '名字', '画幅', '层别', '种子', '提示词'))
     for a in assets:
-        print('  %-18s %-4s %-14s %-22s %-11s %s'
-              % (a['id'], KIND_CN[a['kind']], a['name'], a['aspect'] or '—',
-                 a.get('vkind') or 'base', a['prompt'][:22] + '…'))
+        print('  %-18s %-4s %-12s %-20s %-11s %-9s %s'
+              % (a['id'], KIND_CN[a['kind']], a['name'][:10], a['aspect'] or '—',
+                 a.get('vkind') or 'base', a.get('seed') or '—',
+                 a['prompt'][:20] + '…'))
 
     if not args.submit:
         print()
@@ -456,6 +568,7 @@ def main() -> int:
                       error=None if got else 'no output produced',
                       extra={'channel': 'comfyui-local', 'name': it['name'],
                              'variant': it.get('variant', ''), 'billed': False,
+                             'seed': it.get('seed'),
                              'prompt_sha256': it['prompt_sha256']})
 
     print()
