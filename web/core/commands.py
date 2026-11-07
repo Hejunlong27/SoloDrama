@@ -30,6 +30,7 @@ SCRIPTS = {
     "compliance": paths.PROD_SCRIPTS / "compliance_precheck.py",
     "prepare_refs": paths.PROD_SCRIPTS / "prepare_refs.py",
     "release_export": paths.PROD_SCRIPTS / "release_export.py",
+    "copyright_kit": paths.PROD_SCRIPTS / "copyright_kit.py",
     "time_model": paths.PROD_SCRIPTS / "time_model.py",
     "time_report": paths.PROD_SCRIPTS / "time_report.py",
     "preflight_ep": paths.PROD_SCRIPTS / "episode_preflight.py",
@@ -714,6 +715,24 @@ _add(_c("episode.preflight", "6 验收", "集级前置体检", "preflight_ep",
         help="交付前的集级体检。",
         agent="列出未过项与其影响的交付物。"))
 
+_add(_c("release.copyright", "7 发行", "生成版权资料三件套（两入口 + 权利声明）", "copyright_kit",
+        argv=[], billing=FREE, danger=WRITE,
+        flags={"--what": "what", "--shots": "shots", "--count": "count",
+               "--entity": "entity", "--registration": "registration"},
+        params=[Param("what", "生成哪几套", "str", default="all",
+                      placeholder="all / ai-process / source-files / rights"),
+                Param("shots", "入口 A 用哪些镜", "str",
+                      placeholder="6（自动挑）或 ep01:shot_007,ep13:shot_002"),
+                Param("count", "自动挑几个镜（默认 6，平台区间 4–20）", "int", default=6),
+                Param("entity", "权利主体全称（与平台商务认证逐字一致）", "str",
+                      placeholder="留空=声明书留空待签"),
+                Param("registration", "营业执照号", "str")],
+        help="产出版权资料：入口 A `AI生成过程/ai-gen-*`（提示词+分镜图+成片帧+资产卡）、"
+             "入口 B `原始文件/src-*`、权利声明 `权利声明/rights-01..07`。"
+             "前两类是截图，第三类是**打印签章**的 A4 声明书。",
+        agent="先报「每套各几张、缺哪些前置数据（剧本/提示词/成片）」，再提醒用户："
+              "声明书必须打印签字盖章，主体名要与平台商务认证逐字一致。"
+              "不要替用户编公司名或注册号。"))
 _add(_c("release.export", "7 发行", "导出发布版（EpisodeNN.mp4）", "release_export",
         argv=[], billing=FREE, danger=WRITE,
         flags={"--ep": "ep", "--target": "target", "--digits": "digits"},

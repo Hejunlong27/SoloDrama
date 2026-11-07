@@ -10,7 +10,8 @@
 
 本脚本把「发行资料 = 剧集 + 封面 + 文案 + 发布清单 + 版权资料」固化为**可机器校验**的关卡：
 结构齐不齐、尺寸档对不对、发布版成片是否严格 `EpisodeNN.mp4`（2026-10-19 用户要求）、
-版权资料是不是 4 张「AI 生成过程截图」+ 4 张「原始文件/素材文件信息」。
+版权资料是否覆盖平台的两个入口（AI 生成过程 / 原始文件素材，各 ≥4 张）**加**权利声明
+（权属 / 原创性 / AI 披露 / 第三方素材 / 逐集清单 / 索引，2026-11-07 按驳回诊断改口径）。
 **零网络、零第三方依赖（图片尺寸读文件头，不依赖 Pillow）**。
 
 唯一真源：`docs/distribution/发行资料清单.md`
@@ -41,23 +42,28 @@ from datetime import datetime
 # ---- 口径常量（与 docs/distribution/发行资料清单.md 一致）----
 REQUIRED_COVER_RATIOS = ("9x16", "3x4")     # 必须存在
 OPTIONAL_COVER_RATIOS = ("16x9", "1x1")
-AI_PROCESS_IDS = (1, 2, 3, 4)               # 4 张「AI 生成过程截图」（编号即证据序号，不得缺号）
-SOURCE_FILE_IDS = (1, 2, 3, 4)              # 4 张「原始文件/素材文件信息」
-MIN_LONG_SIDE = 1200                        # 版权资料长边下限（太小看不清任务 ID / 时间戳）
+# ★ 2026-11-07 改口径：平台两个入口都是「至少 4 张、最多 20 张」，没有固定张数；
+#   旧版把 `ai-process-01..04` / `source-file-01..04` 写死成「必须这 8 张」，
+#   而那 8 张正是被驳回的那一版（数据面板，无画面/角色/场景）。现在的判据是
+#   「**每类至少 4 张、不超过 20 张、每张都要有实质内容**」，编号只需连续。
+ENTRY_MIN, ENTRY_MAX = 4, 20
+RIGHTS_REQUIRED = ("01", "02", "03", "04", "05", "07")   # 06 视上传账号是否同一主体
+RIGHTS_OPTIONAL = ("06",)
+MIN_LONG_SIDE = 1200                        # 版权资料长边下限（太小看不清文件信息 / 提示词）
 RATIO_TOLERANCE = 0.02                      # 封面比例容差 ±2%
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 
-AI_PROCESS_LABEL = {
-    1: "出图/出片平台任务页（含任务 ID + 提交时间）",
-    2: "提示词或工作流节点（含节点号/字段名）",
-    3: "生成结果列表（含数量 + 生成时间）",
-    4: "用量/计费记录页（含任务 ID + 消耗量）",
-}
-SOURCE_FILE_LABEL = {
-    1: "项目工作区目录树（展开到阶段目录）",
-    2: "剧本原稿文件信息（文件名/大小/修改时间）",
-    3: "分镜或提示词源文件信息",
-    4: "成片母版文件信息（分辨率/编码/时长）",
+# 旧口径（2026-11-07 前）：这两类文件**不再作为主材料**，出现即告警
+LEGACY_PREFIXES = ("ai-process", "source-file")
+
+RIGHTS_LABEL = {
+    "01": "权属声明（作品标识 + 独占所有权 + 无权利负担）",
+    "02": "原创性证明（按文件日期排的创作链 + 人类创作贡献）",
+    "03": "AI 使用披露（模型与许可基础 + 提示词作者 + 标注情况）",
+    "04": "第三方素材声明（音乐/素材/字体/肖像/商标/场地）",
+    "05": "逐集清单（文件名 + 时长 + 分辨率）",
+    "06": "发行授权书（上传账号 ≠ 权利人时必填）",
+    "07": "提交索引（每页证明什么 + 常见驳回对照）",
 }
 
 
@@ -136,8 +142,8 @@ def scan_covers(release: pathlib.Path):
     return found
 
 
-def scan_evidence(release: pathlib.Path, prefix: str, ids):
-    """按固定前缀 + 两位序号找证据图。返回 {序号: [条目]}。"""
+def scan_prefixed(release: pathlib.Path, prefix: str):
+    """按前缀找证据图 → {序号: [条目]}；序号只用于排序与连续性判断，不预设张数。"""
     found: dict = {}
     pat = re.compile(r"^%s[_-](\d{1,2})(?:[_-].*)?$" % re.escape(prefix), re.IGNORECASE)
     for p in release.rglob("*"):
@@ -146,11 +152,25 @@ def scan_evidence(release: pathlib.Path, prefix: str, ids):
         m = pat.match(p.stem)
         if not m:
             continue
-        n = int(m.group(1))
-        if n not in ids:
+        w, h = image_size(p) or (0, 0)
+        found.setdefault(int(m.group(1)), []).append(
+            {"path": p, "w": w, "h": h, "long_side": max(w, h)})
+    return found
+
+
+def scan_rights(release: pathlib.Path):
+    """权利声明按两位编号找（`rights-01-*.png`…）→ {编号: [条目]}。"""
+    found: dict = {}
+    pat = re.compile(r"^rights[_-](\d{2})(?:[_-].*)?$", re.IGNORECASE)
+    for p in release.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in IMG_EXT:
+            continue
+        m = pat.match(p.stem)
+        if not m:
             continue
         w, h = image_size(p) or (0, 0)
-        found.setdefault(n, []).append({"path": p, "w": w, "h": h, "long_side": max(w, h)})
+        found.setdefault(m.group(1), []).append(
+            {"path": p, "w": w, "h": h, "long_side": max(w, h)})
     return found
 
 
@@ -269,31 +289,75 @@ def main() -> int:
             except OSError:
                 pass
 
-    # ---- 2. 版权资料：4 + 4 ----
-    ai = scan_evidence(release, "ai-process", AI_PROCESS_IDS)
-    src = scan_evidence(release, "source-file", SOURCE_FILE_IDS)
-    for label, found, ids in (("AI 生成过程截图", ai, AI_PROCESS_IDS),
-                              ("原始文件/素材文件信息", src, SOURCE_FILE_IDS)):
-        for n in ids:
-            items = found.get(n)
-            if not items:
-                hint = (AI_PROCESS_LABEL if found is ai else SOURCE_FILE_LABEL)[n]
-                fails.append("版权资料缺第 %d 张「%s」：%s ⇒ 命名 `%s-%02d-<slug>.png`"
-                             % (n, label, hint, "ai-process" if found is ai else "source-file", n))
-                continue
-            best = max(items, key=lambda i: i["long_side"])
+    # ---- 2. 版权资料：两个平台入口 + 权利声明（2026-11-07 改口径）----
+    #   旧判据要求固定 8 张（`ai-process-01..04` + `source-file-01..04`），而那 8 张
+    #   正是被平台驳回的一版：数据面板，没有画面、没有角色、没有场景，也不回答
+    #   「发行权在谁手上」。新判据按平台原文的两条入口来：
+    #     入口 A（AI 生成过程）≥4 张，每张必须把「提示词 → 分镜图 → 成片帧」指向同一镜；
+    #     入口 B（原始文件/素材）≥4 张，覆盖剧本 / 角色 / 场景 / 分镜文档 / video raw；
+    #     权利声明 01–05 + 07 必须（06 视上传账号）。
+    entry_a = scan_prefixed(release, "ai-gen")
+    entry_b = scan_prefixed(release, "src")
+    rights = scan_rights(release)
+
+    for label, found, prefix, tip in (
+            ("入口 A · AI 生成过程", entry_a, "ai-gen",
+             "每张 = 同一镜的提示词 + 分镜图 + 成片抽帧 + 该镜用到的资产卡；"
+             "缺画面/角色/场景是最常见的驳回原因"),
+            ("入口 B · 原始文件/素材", entry_b, "src",
+             "覆盖剧本 / 角色设计 / 场景设计 / 导演手册 / video raw / 素材清单，"
+             "每张顶上要有文件信息条（名字+大小+时间）")):
+        n = len(found)
+        if n == 0:
+            fails.append("版权资料缺「%s」整类（≥%d 张）：%s ⇒ 命名 `%s-NN-<slug>.png`，"
+                         "生成器 `copyright_kit.py`"
+                         % (label, ENTRY_MIN, tip, prefix))
+            continue
+        if n < ENTRY_MIN:
+            fails.append("「%s」只有 %d 张（平台下限 %d）：%s ⇒ 补到 4–20 张"
+                         % (label, n, ENTRY_MIN, tip))
+        if n > ENTRY_MAX:
+            warns.append("「%s」有 %d 张，超过平台上限 %d ⇒ 挑最能对应的 %d 张上传"
+                         % (label, n, ENTRY_MAX, ENTRY_MAX))
+        for k in sorted(found):
+            best = max(found[k], key=lambda i: i["long_side"])
             if best["long_side"] and best["long_side"] < a.min_side:
-                fails.append("版权资料 `%s` 长边仅 %d px（下限 %d）⇒ 重新截图，放大后会糊到看不清任务 ID"
-                             % (best["path"].name, best["long_side"], a.min_side))
+                fails.append("版权资料 `%s` 长边仅 %d px（下限 %d）⇒ 重新渲染/截图，"
+                             "放大后看不清提示词与文件信息" % (best["path"].name,
+                                                              best["long_side"], a.min_side))
             elif not best["long_side"]:
                 warns.append("版权资料 `%s` 尺寸无法从文件头解析（格式异常？）" % best["path"].name)
-        # 该类别是否整体缺失，单独给一条更醒目的话
-        if not found:
-            notes.append("%s：**整类缺失**（8 张里缺 4 张）" % label)
+        # 编号连续性：只提示，不阻断（平台不要求连续，但缺号通常是漏传）
+        gap = [i for i in range(1, max(found) + 1) if i not in found]
+        if gap:
+            warns.append("「%s」序号缺 %s ⇒ 多半是漏传，核对一下再上传"
+                         % (label, "、".join("%02d" % g for g in gap)))
+
+    for k in RIGHTS_REQUIRED:
+        if k not in rights:
+            fails.append("版权资料缺 `权利声明/rights-%s-*.png`：%s ⇒ 这是驳回的主因层"
+                         "（截图证明不了权利归属），必须签章后上传"
+                         % (k, RIGHTS_LABEL[k]))
+    if not rights:
+        notes.append("权利声明：**整类缺失** —— 平台驳回原文是「不足以证明本剧所需的相关权利」，"
+                     "缺的就是这一层")
+    for k in sorted(rights):
+        best = max(rights[k], key=lambda i: i["long_side"])
+        if best["long_side"] and best["long_side"] < a.min_side:
+            fails.append("`%s` 长边仅 %d px（下限 %d）⇒ A4 声明书请用 1654×2339 渲染"
+                         % (best["path"].name, best["long_side"], a.min_side))
+
+    # 旧口径：文件在就留着（追询时可当补充材料），但不能再当主材料上传
+    legacy = [p.name for pre in LEGACY_PREFIXES for p in release.rglob("*")
+              if p.is_file() and p.stem.lower().startswith(pre)]
+    if legacy:
+        warns.append("版权资料里有 %d 个旧口径文件（%s）⇒ 它们是「创作过程台账」，只能当补充材料，"
+                     "**不要**作为主材料上传（上一版就是这样被驳回的）"
+                     % (len(legacy), "、".join(sorted(legacy)[:3]) + ("…" if len(legacy) > 3 else "")))
 
     checklist = release / "版权资料" / "版权资料清单.md"
     if not checklist.is_file() and not (release / "版权资料清单.md").is_file():
-        fails.append("缺 `版权资料/版权资料清单.md`（八张图逐张一句说明；外部人靠它读懂举证链）")
+        fails.append("缺 `版权资料/版权资料清单.md`（逐张一句说明；外部人靠它读懂举证链）")
 
     # ---- 3. 文案 ----
     copy_json = release / "文案" / "copy.json"
@@ -307,11 +371,16 @@ def main() -> int:
 
     # ---- 5. 必须人工确认的三件事（机器替不了）----
     notes.append("需人工确认：①封面抓马度六抓手 ≥5/6 且 cover_spec.json 已填 reviewer；"
-                 "②版权资料可辨认性（任务 ID / 时间戳肉眼可读，未被打码）；"
-                 "③AIGC 标注已落在片头/片尾/文案位（整剧统一）")
+                 "②权利声明 rights-01..05 已**逐页签字盖章**（主体名与平台商务认证逐字一致）；"
+                 "③上传账号与权利人是否同一主体（否 → rights-06 必填）；"
+                 "④截图可辨认性（提示词/文件信息肉眼可读，未被打码）；"
+                 "⑤AIGC 标注已落在片头/片尾/文案位（整剧统一）")
 
     return _report(a, ws, release, fails, warns, notes,
-                   {"covers": sorted(covers), "ai_process": sorted(ai), "source_file": sorted(src),
+                   {"covers": sorted(covers),
+                    "entry_a": sorted(entry_a), "entry_b": sorted(entry_b),
+                    "rights": sorted(rights),
+                    "legacy": sorted(legacy),
                     "episodes": [f.name for _n, f in sorted(eps.items())]}, downstream)
 
 
@@ -371,8 +440,9 @@ def _report(a, ws, release, fails, warns, notes, summary, downstream=None) -> in
                   % ("发布版成片", ("已备 %d 集" % have_eps) if have_eps else "缺",
                      "" if have_eps else "  ← 属下游依赖，不是物料缺项"))
             print("  %-12s 已备 %s" % ("封面档位", ", ".join(summary["covers"]) or "（无）"))
-            row("AI 生成过程", len(summary["ai_process"]), 4)
-            row("原始文件信息", len(summary["source_file"]), 4)
+            row("入口 A 生成过程", len(summary.get("entry_a") or []), ENTRY_MIN)
+            row("入口 B 原始文件", len(summary.get("entry_b") or []), ENTRY_MIN)
+            row("权利声明", len(summary.get("rights") or []), len(RIGHTS_REQUIRED))
         for w in warns:
             print("  [WARN] %s" % w)
         for b in fails:

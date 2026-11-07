@@ -116,9 +116,14 @@ def _mk_release_ws(with_episode: bool) -> pathlib.Path:
     (rel / "发布清单.md").write_text("# x", encoding="utf-8")
     (rel / "版权资料").mkdir()
     (rel / "版权资料" / "版权资料清单.md").write_text("# x", encoding="utf-8")
-    for pfx in ("ai-process", "source-file"):
+    # ★ 2026-11-07：版权资料改口径为「平台两入口 + 权利声明」，旧前缀已不作主材料
+    for sub, pfx in (("AI生成过程", "ai-gen"), ("原始文件", "src")):
+        (rel / "版权资料" / sub).mkdir(parents=True, exist_ok=True)
         for n in (1, 2, 3, 4):
-            (rel / "版权资料" / ("%s-%02d-x.png" % (pfx, n))).write_bytes(png)
+            (rel / "版权资料" / sub / ("%s-%02d-x.png" % (pfx, n))).write_bytes(png)
+    (rel / "版权资料" / "权利声明").mkdir(parents=True, exist_ok=True)
+    for k in ("01", "02", "03", "04", "05", "07"):
+        (rel / "版权资料" / "权利声明" / ("rights-%s-x.png" % k)).write_bytes(png)
     if with_episode:
         (rel / "剧集" / "Episode01.mp4").write_bytes(b"\x00" * 64)
     return ws
@@ -148,15 +153,22 @@ def t_model_gate_executor() -> None:
     ws = pathlib.Path(tempfile.mkdtemp(prefix="sd_gate_"))
     wf = ws / "wf.json"
     wf.write_text("{}", encoding="utf-8")
+    # ★ 2026-11-07 更新：`local_comfyui` 自 2026-11-04 起**有执行器了**
+    #   （`comfy_local_video.py`），所以「无执行器」的例子换成 `closed_source`。
+    #   本条要守的是**机制**（没有执行器就拦），不是「本机通道永远跑不了」这个当时的事实。
     doc = gate.MODEL_OPTIONS["video"]
     local = next(o for o in doc if o["id"] == "local_comfyui")
-    check("P1-1 video=local_comfyui 标注为无执行器",
-          local.get("executor") is None and not local.get("manual"), local)
-    check("P1-1 菜单显式写「暂无执行器」",
-          "暂无执行器" in gate.render_menu("video"))
-    rc = gate._do_set(ws, "video", "local_comfyui", {"comfy_workflow": str(wf)})
-    check("P1-1 无执行器的选项被拦下（退出码 4）", rc == 4, rc)
-    ok, msg = gate.require(ws, "video", expected_engine="workflow")
+    check("P1-1 本机出片已有执行器（2026-11-04 起）", bool(local.get("executor")), local)
+    closed = next(o for o in doc if o["id"] == "closed_source")
+    check("P1-1 闭源模型标为「人工产出」而不是「无执行器」",
+          bool(closed.get("manual")) and not closed.get("executor"), closed)
+    menu = gate.render_menu("video")
+    check("P1-1 菜单把「有执行器」与「人工产出」分开写",
+          "执行器：" in menu and "人工产出后落盘" in menu, menu[:200])
+    rc = gate._do_set(ws, "video", "closed_source", {})
+    check("P1-1 人工通道可登记（人工产出后落盘）", rc == 0, rc)
+    ws2 = pathlib.Path(tempfile.mkdtemp(prefix="sd_gate2_"))
+    ok, msg = gate.require(ws2, "video", expected_engine="workflow")
     check("P1-1 未确认时门禁不放行", not ok)
 
 
@@ -238,7 +250,13 @@ def t_cost_model() -> None:
 
 # ---------------------------------------------------------------- P2-3
 def t_outline() -> None:
-    m = load(ROOT / "stages" / "creation" / "scripts" / "script_rewrite.py", "sr_t")
+    src = ROOT / "stages" / "creation" / "scripts" / "script_rewrite.py"
+    if not src.is_file():
+        # 2026-11 重构把创作层整层移除（口径见 docs/operations/已退役脚本.md）。
+        # 保留这条记录，但不再假装它还能跑 —— 一条永远红的用例等于没有用例。
+        check("P2-7 大纲解析（已退役：script_rewrite.py 于 2026-11 移除）", True)
+        return
+    m = load(src, "sr_t")
     p = pathlib.Path(tempfile.mkdtemp(prefix="sd_out_")) / "o.md"
     p.write_text("| 集 | 开场 | 冲突 | 反转 | 钩子 |\n|---|---|---|---|---|\n"
                  "| EP01 | 被赶出家门 | 家族夺产 | 亮出股权书 | 门口站着生父 |\n"
@@ -253,7 +271,11 @@ def t_outline() -> None:
 
 # ---------------------------------------------------------------- P2-9
 def t_light() -> None:
-    m = load(PROD / "convert_storyboard.py", "cs_t")
+    src = PROD / "convert_storyboard.py"
+    if not src.is_file():
+        check("P2-9 光线短语（已退役：convert_storyboard.py 于 2026-11 移除，改走 md2pack）", True)
+        return
+    m = load(src, "cs_t")
     check("P2-9 夜→单灯深影", "lamp" in m.light_phrase("夜"), m.light_phrase("夜"))
     check("P2-9 日→窗光柔补", "daylight" in m.light_phrase("白天"), m.light_phrase("白天"))
     check("P2-9 黄昏优先于日（避免子串误判）",

@@ -7,6 +7,9 @@
 
 夹具说明：为不引入 Pillow，测试用「合法的 PNG/JPEG 文件头」（含正确 IHDR/SOF0 与 CRC）
 构造图片，因为 release_check 只从文件头读尺寸、不解码像素。
+
+2026-11-07：版权部分改按平台两个入口（`ai-gen-*` / `src-*`）+ 权利声明（`rights-*`）造夹具 ——
+旧夹具是 `ai-process-*` / `source-file-*`，那恰好是被驳回的那一版，门禁改了也测不出差别。
 """
 from __future__ import annotations
 
@@ -72,9 +75,17 @@ def build_full(ws: pathlib.Path) -> pathlib.Path:
     png(rel / "封面" / "cover_9x16.png", 1080, 1920)
     png(rel / "封面" / "cover_3x4.png", 900, 1200)
     jpeg(rel / "封面" / "cover_16x9.jpg", 1920, 1080)
+    # ★ 2026-11-07 新结构：平台两个入口（各 ≥4 张）+ 7 页权利声明。
+    #   旧夹具用的是 `ai-process-01..04` / `source-file-01..04` —— 那正是被驳回的那一版，
+    #   如果测试还按它造夹具，门禁改了也测不出来。
+    (rel / "版权资料" / "AI生成过程").mkdir(parents=True, exist_ok=True)
+    (rel / "版权资料" / "原始文件").mkdir(parents=True, exist_ok=True)
+    (rel / "版权资料" / "权利声明").mkdir(parents=True, exist_ok=True)
     for n in (1, 2, 3, 4):
-        png(rel / "版权资料" / ("ai-process-%02d-step.png" % n), 1600, 900)
-        png(rel / "版权资料" / ("source-file-%02d-info.png" % n), 1600, 900)
+        png(rel / "版权资料" / "AI生成过程" / ("ai-gen-%02d-ep%02d-shot_00%d.png" % (n, n, n)), 1654, 2339)
+        png(rel / "版权资料" / "原始文件" / ("src-%02d-item.png" % n), 1654, 2339)
+    for k in ("01", "02", "03", "04", "05", "07"):
+        png(rel / "版权资料" / "权利声明" / ("rights-%s-item.png" % k), 1654, 2339)
     (rel / "版权资料" / "版权资料清单.md").write_text("# 清单\n", encoding="utf-8", newline="\n")
     (rel / "文案" / "copy.json").write_text(
         json.dumps({"title": "离婚后我成了首富", "tags": ["逆袭"]}, ensure_ascii=False),
@@ -112,17 +123,20 @@ def main() -> int:
         check("齐备发行资料通过（退出码 0）", rc == 0, "rc=%s fails=%s" % (rc, out.get("fails")))
         check("封面识别到 3 档", set(out.get("found", {}).get("covers", [])) >= {"9x16", "3x4", "16x9"},
               str(out.get("found")))
-        check("版权资料识别 4 + 4", out.get("found", {}).get("ai_process") == [1, 2, 3, 4]
-              and out.get("found", {}).get("source_file") == [1, 2, 3, 4], str(out.get("found")))
+        fd = out.get("found", {})
+        check("版权资料识别两入口各 4 张",
+              fd.get("entry_a") == [1, 2, 3, 4] and fd.get("entry_b") == [1, 2, 3, 4], str(fd))
+        check("权利声明识别 01–05 + 07",
+              set(fd.get("rights") or []) == {"01", "02", "03", "04", "05", "07"}, str(fd))
 
-        # ---- 3. 缺一张 source-file-03 ----
+        # ---- 3. 入口 B 只剩 3 张（低于平台下限 4）----
         ws3 = pathlib.Path(tmp) / "miss_src"
         ws3.mkdir(parents=True)
         rel3 = build_full(ws3)
-        (rel3 / "版权资料" / "source-file-03-info.png").unlink()
+        (rel3 / "版权资料" / "原始文件" / "src-03-item.png").unlink()
         rc, out = run(ws3)
-        check("缺 source-file-03 被拦下", rc == 2 and any("source-file" in x for x in out.get("fails", [])),
-              str(out.get("fails")))
+        check("入口 B 只剩 3 张被拦下",
+              rc == 2 and any("只有 3 张" in x for x in out.get("fails", [])), str(out.get("fails")))
 
         # ---- 4. 封面比例与档位不符 ----
         ws4 = pathlib.Path(tmp) / "bad_ratio"
@@ -138,8 +152,8 @@ def main() -> int:
         ws5 = pathlib.Path(tmp) / "small_img"
         ws5.mkdir(parents=True)
         rel5 = build_full(ws5)
-        (rel5 / "版权资料" / "ai-process-02-step.png").unlink()
-        png(rel5 / "版权资料" / "ai-process-02-step.png", 800, 500)   # 长边 800 < 1200
+        (rel5 / "版权资料" / "AI生成过程" / "ai-gen-02-ep02-shot_002.png").unlink()
+        png(rel5 / "版权资料" / "AI生成过程" / "ai-gen-02-ep02-shot_002.png", 800, 500)   # 长边 800 < 1200
         rc, out = run(ws5)
         check("版权资料长边过小被拦下",
               rc == 2 and any("长边仅" in x for x in out.get("fails", [])), str(out.get("fails")))
@@ -198,6 +212,25 @@ def main() -> int:
         rc, out = run(ws11)
         check("集号不连续只告警",
               rc == 0 and any("集号不连续" in x for x in out.get("warns", [])), str(out.get("warns"))[:200])
+
+        # ---- 11.5 缺 rights-03 → 被拦（权利层是驳回主因）----
+        ws11b = pathlib.Path(tmp) / "miss_rights"
+        ws11b.mkdir(parents=True)
+        rel11b = build_full(ws11b)
+        (rel11b / "版权资料" / "权利声明" / "rights-03-item.png").unlink()
+        rc, out = run(ws11b)
+        check("缺 rights-03 被拦下",
+              rc == 2 and any("rights-03" in x for x in out.get("fails", [])), str(out.get("fails"))[:300])
+
+        # ---- 11.6 旧口径文件只告警，不拦 ----
+        ws11c = pathlib.Path(tmp) / "legacy"
+        ws11c.mkdir(parents=True)
+        rel11c = build_full(ws11c)
+        png(rel11c / "版权资料" / "ai-process-01-tasklist.png", 1600, 900)
+        png(rel11c / "版权资料" / "source-file-01-tree.png", 1600, 900)
+        rc, out = run(ws11c)
+        check("旧口径文件只告警不阻断",
+              rc == 0 and any("旧口径" in x for x in out.get("warns", [])), str(out.get("warns"))[:300])
 
         # ---- 12. EpisodeNN 命名被正确识别 ----
         rc, out = run(ws2)
