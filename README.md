@@ -10,6 +10,8 @@
 所以换一套题材模板，引擎一行不用改。
 
 在线镜像地址：[https://www.xiangongyun.com/register/PNLH4L](https://www.xiangongyun.com/image/detail/aede014f-b098-4b8a-86e0-15b5039615e7?r=PNLH4L)
+runninghub主页：https://www.runninghub.cn?inviteCode=cn-v1122 
+海外版RH（宽审核）：https://www.runninghub.ai/zh-cn?inviteCode=rh-v1727
 
 ---
 
