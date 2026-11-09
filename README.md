@@ -9,6 +9,8 @@
 创作交给可插拔的题材模板，执行交给本机或云端的 ComfyUI，两者之间只隔一份文件契约 ——
 所以换一套题材模板，引擎一行不用改。
 
+在线镜像地址：[https://www.xiangongyun.com/register/PNLH4L](https://www.xiangongyun.com/image/detail/aede014f-b098-4b8a-86e0-15b5039615e7?r=PNLH4L)
+
 ---
 
 ## 装起来
