@@ -52,9 +52,13 @@ def jpeg(path: pathlib.Path, w: int, h: int) -> None:
 
 
 def run(ws: pathlib.Path):
+    return run_with(ws)
+
+
+def run_with(ws: pathlib.Path, *extra: str):
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"        # 子进程管道不走 GBK，否则 JSON 解析失败
-    p = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(ws), "--json"],
+    p = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(ws), "--json"] + list(extra),
                        capture_output=True, text=True, encoding="utf-8", env=env)
     try:
         return p.returncode, json.loads(p.stdout)
@@ -86,6 +90,11 @@ def build_full(ws: pathlib.Path) -> pathlib.Path:
         png(rel / "版权资料" / "原始文件" / ("src-%02d-item.png" % n), 1654, 2339)
     for k in ("01", "02", "03", "04", "05", "07"):
         png(rel / "版权资料" / "权利声明" / ("rights-%s-item.png" % k), 1654, 2339)
+    # ★ 2026-11-10：第三入口「剪辑工程」—— 机器板 4 张 + 人工时间轴截图 1 张
+    (rel / "版权资料" / "剪辑工程").mkdir(parents=True, exist_ok=True)
+    for n in (1, 2, 3, 4):
+        png(rel / "版权资料" / "剪辑工程" / ("draft-%02d-board.png" % n), 1654, 2339)
+    png(rel / "版权资料" / "剪辑工程" / "draft-shot-01-ep01.png", 1600, 900)
     (rel / "版权资料" / "版权资料清单.md").write_text("# 清单\n", encoding="utf-8", newline="\n")
     (rel / "文案" / "copy.json").write_text(
         json.dumps({"title": "离婚后我成了首富", "tags": ["逆袭"]}, ensure_ascii=False),
@@ -237,6 +246,47 @@ def main() -> int:
         check("发布版 EpisodeNN 被识别",
               out.get("found", {}).get("episodes") == ["Episode01.mp4", "Episode02.mp4", "Episode03.mp4"],
               str(out.get("found")))
+
+        # ---- 13. 剪辑工程（第三入口）：缺整类被拦 / 张数不足被拦 / --no-draft 放行 ----
+        ws13 = pathlib.Path(tmp) / "no_draft"
+        ws13.mkdir(parents=True)
+        rel13 = build_full(ws13)
+        for f in (rel13 / "版权资料" / "剪辑工程").glob("draft-*.png"):
+            f.unlink()
+        rc, out = run(ws13)
+        check("缺剪辑工程整类被拦下",
+              rc == 2 and any("剪辑工程" in x for x in out.get("fails", [])),
+              str(out.get("fails"))[:240])
+
+        ws13b = pathlib.Path(tmp) / "few_draft"
+        ws13b.mkdir(parents=True)
+        rel13b = build_full(ws13b)
+        (rel13b / "版权资料" / "剪辑工程" / "draft-04-board.png").unlink()
+        (rel13b / "版权资料" / "剪辑工程" / "draft-03-board.png").unlink()
+        rc, out = run(ws13b)
+        check("剪辑工程只剩 2 张被拦下",
+              rc == 2 and any("只有 2 张" in x for x in out.get("fails", [])),
+              str(out.get("fails"))[:240])
+
+        ws13c = pathlib.Path(tmp) / "nodraft_flag"
+        ws13c.mkdir(parents=True)
+        rel13c = build_full(ws13c)
+        for f in (rel13c / "版权资料" / "剪辑工程").glob("draft-*.png"):
+            f.unlink()
+        rc, out = run_with(ws13c, "--no-draft")
+        check("--no-draft 放行（退出码 0）",
+              rc == 0 and any("--no-draft" in x for x in out.get("notes", [])),
+              "rc=%s fails=%s" % (rc, out.get("fails")))
+
+        # ---- 14. 时间轴截图缺失只告警（引擎不伪造 UI，只能人工截）----
+        ws14 = pathlib.Path(tmp) / "no_shot"
+        ws14.mkdir(parents=True)
+        rel14 = build_full(ws14)
+        (rel14 / "版权资料" / "剪辑工程" / "draft-shot-01-ep01.png").unlink()
+        rc, out = run(ws14)
+        check("缺时间轴截图只告警",
+              rc == 0 and any("draft-shot-01" in x for x in out.get("warns", [])),
+              "rc=%s warns=%s" % (rc, str(out.get("warns"))[:220]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

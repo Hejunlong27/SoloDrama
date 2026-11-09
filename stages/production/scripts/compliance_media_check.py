@@ -44,9 +44,40 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import delivery_spec as DS          # noqa: E402
 
-# 字幕带：与 config.subtitle.json 的 placement.anchor_top=0.6 对齐（6:4 落点）
+# 字幕带：默认与 config.subtitle.json 的 placement.anchor_top=0.6 对齐（6:4 落点）
+# ★ 2026-11-07 修（缺陷 R32）：此前写死 0.60，竖屏项目把字幕压在 84%（MarginV 底部安全区）
+#   时会被判「不像硬字幕」而误杀；反过来画面里有吊灯高光的横屏项目又会假阳性通过。
+#   现改为 run() 时按项目 config.subtitle.json 的 placement 推导，逐集带在 check_subtitle 里算。
 SUB_BAND_CENTER = 0.60
 SUB_BAND_HALF = 0.10
+
+
+def sub_band_for_ws(ws):
+    """从项目 config.subtitle.json 推导字幕带中心与半宽。
+
+    placement.anchor=ratio → 中心 = anchor_top，半宽 0.10（6:4 落点）
+    placement.anchor=pixel → 用 margin_v_pct 距底反推（竖屏短剧常见 0.84）
+    """
+    if not ws:
+        return SUB_BAND_CENTER, SUB_BAND_HALF
+    cfg = _read_json(os.path.join(ws, "video-pipeline", "config.subtitle.json"))
+    pl = (cfg or {}).get("placement") or {}
+    if pl.get("anchor") == "ratio":
+        try:
+            return float(pl.get("anchor_top") or SUB_BAND_CENTER), SUB_BAND_HALF
+        except (TypeError, ValueError):
+            return SUB_BAND_CENTER, SUB_BAND_HALF
+    if pl.get("anchor") == "pixel":
+        # 取各语种 margin_v_pct 的中位/单值，反推中心（1 - pct 即距顶比例）
+        langs = cfg.get("languages") or {}
+        pcts = []
+        for v in langs.values():
+            if isinstance(v, dict) and v.get("margin_v_pct"):
+                pcts.append(float(v["margin_v_pct"]))
+        if pcts:
+            pct = sum(pcts) / len(pcts)
+            return max(0.50, min(0.95, 1.0 - pct)), SUB_BAND_HALF
+    return SUB_BAND_CENTER, SUB_BAND_HALF
 # 字幕带内「近白像素」的相对亮度下限（Y，TV range 235 为白）
 SUB_WHITE_Y = 210.0
 
@@ -97,15 +128,17 @@ def _read_json(p):
         return None
 
 
-def _sub_band_stats(path):
+def _sub_band_stats(path, center=None, half=None):
     """字幕带的亮度分布（零依赖：crop + signalstats）。"""
     try:
         p = DS.probe(path)
     except RuntimeError:
         return None
     h, w = p["height"], p["width"]
-    top = int(h * (SUB_BAND_CENTER - SUB_BAND_HALF))
-    hh = int(h * SUB_BAND_HALF * 2)
+    c = SUB_BAND_CENTER if center is None else center
+    hf = SUB_BAND_HALF if half is None else half
+    top = int(h * (c - hf))
+    hh = int(h * hf * 2)
     vf = ("select='not(mod(n\\,40))',crop=%d:%d:0:%d,signalstats,metadata=print:file=-"
           % (w, hh, top))
     try:
@@ -162,15 +195,16 @@ def check_subtitle(ws, ep, path, out_dir=None):
         evidence["report_render"] = None
 
     # ③ 像素启发式：字幕带是否出现近白像素（白字）
-    st = _sub_band_stats(path)
+    band_c, band_h = sub_band_for_ws(ws)
+    st = _sub_band_stats(path, band_c, band_h)
     evidence["band"] = st
     if st:
         ratio = st["frames_with_white"] / float(st["frames"] or 1)
         evidence["band_white_ratio"] = round(ratio, 3)
         if ratio < 0.25:
             reasons.append("字幕带（画面 %.0f%%–%.0f%% 高）仅 %.0f%% 的抽样帧出现近白像素，"
-                           "不像是硬字幕" % ((SUB_BAND_CENTER - SUB_BAND_HALF) * 100,
-                                            (SUB_BAND_CENTER + SUB_BAND_HALF) * 100, ratio * 100))
+                           "不像是硬字幕" % ((band_c - band_h) * 100,
+                                            (band_c + band_h) * 100, ratio * 100))
     else:
         reasons.append("字幕带无法取样")
 

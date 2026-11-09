@@ -124,6 +124,12 @@ def _mk_release_ws(with_episode: bool) -> pathlib.Path:
     (rel / "版权资料" / "权利声明").mkdir(parents=True, exist_ok=True)
     for k in ("01", "02", "03", "04", "05", "07"):
         (rel / "版权资料" / "权利声明" / ("rights-%s-x.png" % k)).write_bytes(png)
+    # ★ 2026-11-10：平台第三个入口「剪辑工程」（机器板 ≥4 张，长边 ≥1200）
+    #   本用例守的是 P0-6「成片缺项归 downstream、物料齐时不 blocked」，
+    #   口径一变（V0.7.75 新增 draft-*）夹具就得跟上；否则它测的是「旧口径物料齐」。
+    (rel / "版权资料" / "剪辑工程").mkdir(parents=True, exist_ok=True)
+    for n in (1, 2, 3, 4):
+        (rel / "版权资料" / "剪辑工程" / ("draft-%02d-board.png" % n)).write_bytes(png)
     if with_episode:
         (rel / "剧集" / "Episode01.mp4").write_bytes(b"\x00" * 64)
     return ws

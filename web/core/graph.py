@@ -73,6 +73,7 @@ _KIND_BY_ID = {
     "edit.master": "edit",
     "edit.upscale": "edit",
     "edit.subtitle": "edit",
+    "edit.draft": "edit",
     "edit.release": "release",
 }
 
@@ -89,6 +90,7 @@ _CMD_BY_ID = {
     "edit.master": "media.master",
     "edit.upscale": "media.upscale",
     "edit.subtitle": "media.render",
+    "edit.draft": "media.draft",
     "edit.release": "release.export",
 }
 
@@ -105,6 +107,7 @@ _TITLE = {
     "edit.master": "母版拼接",
     "edit.upscale": "高清放大",
     "edit.subtitle": "字幕烧录",
+    "edit.draft": "剪映工程",
     "edit.release": "导出发布版",
 }
 
@@ -120,6 +123,7 @@ HINT = {
     "edit.master": "拼接前校验帧数，不足会重编码",
     "edit.upscale": "1080×1920 交付规格",
     "edit.subtitle": "字幕时间只认对齐结果",
+    "edit.draft": "剪映草稿：逐镜+字幕+BGM，与成片同源",
     "edit.release": "EpisodeNN.mp4 落 09-发行/剧集/",
 }
 
@@ -311,6 +315,7 @@ def _progress(ws, ep: str) -> dict:
         "edit.master": pair(1 if master else 0, 1),
         "edit.upscale": pair(1 if upsc else 0, 1),
         "edit.subtitle": pair(1 if subbed else 0, 1),
+        "edit.draft": pair(1 if row.get("draft") else 0, 1),
         "edit.release": pair(1 if row.get("release") else 0, 1),
     }
 

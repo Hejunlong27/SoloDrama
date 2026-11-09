@@ -527,8 +527,10 @@ def board_ai(ws: pathlib.Path, cfg: dict, rec: dict, out: pathlib.Path,
 
 
 # ── 入口 B：原始文件 / 素材文件信息 ─────────────────────────────────────────
-def _hdr(img, d, title_en: str, title_zh: str, tag: str) -> int:
-    d.text((M, 84), "SOURCE FILE RECORD", font=_font(LATB, 24), fill=ACCENT)
+def _hdr(img, d, title_en: str, title_zh: str, tag: str,
+         kicker: str = "SOURCE FILE RECORD") -> int:
+    # kicker 可按材料类别换（剪辑工程页用 EDITING PROJECT RECORD），别让所有页都自称原始文件
+    d.text((M, 84), kicker, font=_font(LATB, 24), fill=ACCENT)
     d.text((W - M - d.textlength(tag, font=_font(LATB, 24)), 84), tag,
            font=_font(LATB, 24), fill=GREY)
     d.line([M, 128, W - M, 128], fill=LINE, width=3)
@@ -1194,6 +1196,309 @@ def cmd_source_files(ws: pathlib.Path, cfg: dict, args) -> tuple:
     return done, problems
 
 
+# ── 剪辑工程（平台第三入口，★ 2026-11-10）────────────────────────────────────
+def _film_dir(ws: pathlib.Path) -> pathlib.Path:
+    """成片阶段目录（走 `_layout` 真源；取不到就用编号目录兜底）。"""
+    try:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+        import _layout as L                                       # noqa: PLC0415
+        return pathlib.Path(L.stage_dir(ws, "film"))
+    except Exception:                                             # noqa: BLE001
+        return ws / "07-成片"
+
+
+def _draft_manifests(ws: pathlib.Path, ep: str = "") -> list:
+    """扫 `<成片>/<ep>/_draft/draft_manifest.json`，按集号排序。
+
+    只认**生成器自己写的清单**（`edit_draft.py` 的产物）：它有 sha256、有自检结论，
+    而 `draft_content.json` 只有结构 —— 拿它当证据时说不清「这份工程对应哪一集」。
+    """
+    out = []
+    for p in sorted(_film_dir(ws).glob("*/_draft/draft_manifest.json")):
+        d = _read_json(p)
+        if not isinstance(d, dict):
+            continue
+        d["_manifest"] = str(p)
+        out.append(d)
+    if ep:
+        want = re.sub(r"[^0-9]", "", ep) or "01"
+        out = [d for d in out if (re.sub(r"[^0-9]", "", str(d.get("ep") or "")) or "") == want]
+    return out
+
+
+def _table(d, y: int, cols: list, rows: list, widths: list, *, size: int = 17,
+           lh: int = 30, max_rows: int = 40, zebra: bool = True) -> int:
+    """画一张表（列名 + 若干行，超长截断并注明）。返回结束 y。"""
+    x0 = M
+    total_w = sum(widths)
+    if total_w > W - 2 * M:                       # 超宽按比例压回版面
+        k = (W - 2 * M) / float(total_w)
+        widths = [int(w * k) for w in widths]
+    # 表头
+    d.rectangle([x0, y, x0 + sum(widths), y + lh + 8], fill=(238, 238, 241), outline=LINE)
+    x = x0
+    for c, w in zip(cols, widths):
+        # ⚠ 列名可能是中文（「镜号」「起点s」）——LATB 没有汉字字形，会渲染成方框。
+        #   必须走 `_f` 按内容选字体，这是本仓踩过一次的坑。
+        d.text((x + 8, y + 6), str(c), font=_f(c, size, bold=True), fill=INK)
+        x += w
+    y += lh + 8
+    for i, row in enumerate(rows[:max_rows]):
+        if i % 2 == 1 and zebra:
+            d.rectangle([x0, y, x0 + sum(widths), y + lh], fill=PANEL)
+        x = x0
+        for cell, w in zip(row, widths):
+            txt = str(cell)
+            fp = _f(txt, size)
+            while txt and d.textlength(txt, font=fp) > w - 14:
+                txt = txt[:-1]
+            d.text((x + 8, y + 5), txt, font=fp, fill=INK)
+            x += w
+        y += lh
+        if y > H - 200:
+            break
+    d.line([x0, y, x0 + sum(widths), y], fill=LINE, width=2)
+    if len(rows) > max_rows:
+        d.text((x0, y + 10), "（共 %d 行，此处显示前 %d 行；全量见 draft_manifest.json）"
+               % (len(rows), max_rows), font=_f("共", 17), fill=GREY)
+        y += 34
+    return y + 14
+
+
+def _stats(d, y: int, items: list) -> int:
+    """一排「标签 + 数值」格子（给时间轴页补上轨汇总，避免 A4 大片空白）。"""
+    n = max(1, len(items))
+    gap = 20
+    cw = int((W - 2 * M - gap * (n - 1)) / n)
+    for i, (label, value) in enumerate(items):
+        x = M + i * (cw + gap)
+        d.rectangle([x, y, x + cw, y + 118], fill=PANEL, outline=LINE)
+        d.text((x + 16, y + 14), label, font=_f(label, 17), fill=GREY)
+        d.text((x + 16, y + 50), str(value), font=_f(str(value), 30, bold=True), fill=INK)
+    return y + 146
+
+
+def _proves(d, y: int, lines: list) -> int:
+    """「这一页证明什么 + 怎么核对」块，返回结束 y。
+
+    为什么要有：A4 证据板只有一张小表时，审核看到的是**大半页白纸** ——
+    既不像材料，也没告诉对方「该从这页得出什么结论」。这里只写
+    **可核对的事实与命令**（与 rights 页的措辞纪律一致：不写承诺、不写形容词），
+    顺带把版面下半页占住。
+    """
+    if not lines:
+        return y
+    items = []
+    for ln in lines:
+        fp = _f(ln, 18)
+        items.append((fp, wrap_chars(ln, fp, W - 2 * M - 64)))
+    n = sum(len(p) for _fp, p in items)
+    head = "这一页证明什么 · 怎么核对"
+    box_h = 58 + 28 * n + 18
+    d.rectangle([M, y, W - M, y + box_h], fill=PANEL, outline=LINE, width=2)
+    d.text((M + 18, y + 16), head, font=_f(head, 19, bold=True), fill=INK)
+    yy = y + 54
+    for fp, pieces in items:
+        d.text((M + 16, yy), "·", font=fp, fill=GREY)
+        for piece in pieces:
+            d.text((M + 40, yy), piece, font=fp, fill=INK)
+            yy += 28
+    return y + box_h + 18
+
+
+
+def cmd_edit_draft(ws: pathlib.Path, cfg: dict, args) -> tuple:
+    """剪辑工程证据板：机器能产的四张（工程树 / 时间轴 / 字幕 / 素材哈希）。
+
+    ⚠ **不画时间轴截图**。本机不装剪映、也不该用假 UI 冒充截图 ——
+      素材截图由人在剪映里截一张，命名 `draft-shot-01-<ep>.png` 放进同目录，
+      门禁（release_check）会认它并作为补充材料。
+    """
+    out_dir = ws / "09-发行" / "版权资料" / "剪辑工程"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    mans = _draft_manifests(ws, getattr(args, "ep", "") or "")
+    if not mans:
+        print("  [FAIL] 没找到任何 draft_manifest.json ⇒ 先跑：")
+        print("         python stages/edit/scripts/edit_draft.py --workspace \"%s\" --ep ep01" % ws)
+        return [], ["缺剪辑工程清单（<成片>/<ep>/_draft/draft_manifest.json）"]
+
+    first = mans[0]
+    ep = str(first.get("ep") or "ep01")
+    canvas = first.get("canvas") or {}
+    total = 4
+    done, problems = [], []
+
+    def emit(name, fn, *a, **kw):
+        try:
+            fn(*a, **kw)
+            done.append(name)
+            print("  %s  %s" % (name, fmt_size((out_dir / name).stat().st_size)))
+        except Exception as exc:                                 # noqa: BLE001
+            print("  [FAIL] %s：%s: %s" % (name, type(exc).__name__, exc))
+            problems.append("%s 渲染失败（%s）" % (name, exc))
+
+    # ① 工程总览：一季有多少工程、画布、总时长、自检结论
+    def board_overview(path: pathlib.Path):
+        img = Image.new("RGB", (W, H), PAPER)
+        d = ImageDraw.Draw(img)
+        y = _hdr(img, d, "Editing project — overview",
+                 "剪辑工程总览（%d 个剪映工程）" % len(mans), "1 / %d" % total,
+                 kicker="EDITING PROJECT RECORD")
+        y = _file_bar(d, y, "draft_manifest.json × %d" % len(mans),
+                      fmt_size(sum(pathlib.Path(m["_manifest"]).stat().st_size for m in mans)),
+                      fmt_time(pathlib.Path(first["_manifest"])),
+                      "%s/<ep>/_draft/draft_manifest.json" % _film_dir(ws).name)
+        rows = [[str(m.get("ep") or "-"),
+                 pathlib.Path(str(m.get("draft_dir") or "")).name or "-",
+                 "%sx%s" % ((m.get("canvas") or {}).get("width"), (m.get("canvas") or {}).get("height")),
+                 "%s" % m.get("fps"),
+                 "%.2fs" % float(m.get("total_duration_s") or 0),
+                 "视频 %s / 字幕 %s / BGM %s" % (
+                     ((m.get("verdict") or {}).get("counts") or {}).get("video"),
+                     ((m.get("verdict") or {}).get("counts") or {}).get("text"),
+                     ((m.get("verdict") or {}).get("counts") or {}).get("audio")),
+                 "PASS" if (m.get("verdict") or {}).get("pass") else "FAIL"]
+                for m in mans]
+        y = _table(d, y, ["集", "工程目录", "画布", "fps", "总时长", "轨道内容", "自检"],
+                   rows, [90, 420, 150, 70, 140, 470, 100], size=17)
+        note = ("每个工程 = 逐镜素材 + 逐条字幕 + BGM 的可编辑时间轴，与发行版 EpisodeNN.mp4 同源同序；"
+                "工程内素材为项目内文件，sha256 见第 4 页。")
+        for line in wrap_chars(note, _f(note, 19), W - 2 * M):
+            d.text((M, y), line, font=_f(line, 19), fill=GREY)
+            y += 28
+        y = _proves(d, y + 20, [
+            "本表每行对应一集，由 edit_draft.py 读「成片目录 + 字幕线索 + BGM 计划」后生成，不是手填。",
+            "「自检」列是引擎回读 draft_content.json 逐项比对（画布 / 段起止 / 字幕起点 / 素材可读）的结论，"
+            "PASS 才算可提交。",
+            "核对：打开 <集>/_draft/epNN_剪映工程/draft_content.json，tracks 里的 target_timerange 应能与本表总时长对上。",
+        ])
+        _footer(d, "Source: draft_manifest.json written by stages/edit/scripts/edit_draft.py", 1, total)
+        img.save(path)
+
+    # ② 时间轴结构（取第一集，逐镜）
+    def board_timeline(path: pathlib.Path):
+        img = Image.new("RGB", (W, H), PAPER)
+        d = ImageDraw.Draw(img)
+        y = _hdr(img, d, "Timeline — shot by shot",
+                 "时间轴结构：%s（逐镜起止与素材）" % ep, "2 / %d" % total,
+                 kicker="EDITING PROJECT RECORD")
+        vid = (first.get("tracks") or {}).get("video") or []
+        y = _file_bar(d, y, "video track · %d segments" % len(vid),
+                      fmt_size(sum(int(v.get("bytes") or 0) for v in vid)),
+                      fmt_time(pathlib.Path(first["_manifest"])),
+                      "%s/%s/_draft/draft_manifest.json" % (_film_dir(ws).name, ep))
+        rows = [[str(i + 1),
+                 ("封面" if v.get("kind") == "photo" else str(v.get("shot_id") or "-")),
+                 "%.2f" % float(v.get("start_s") or 0),
+                 "%.2f" % (float(v.get("start_s") or 0) + float(v.get("dur_s") or 0)),
+                 "%.2f" % float(v.get("dur_s") or 0),
+                 str(v.get("name") or "-"),
+                 "%.1f KB" % (int(v.get("bytes") or 0) / 1024.0)]
+                for i, v in enumerate(vid)]
+        y = _table(d, y, ["#", "镜号", "起点s", "终点s", "时长s", "素材文件", "大小"],
+                   rows, [60, 150, 110, 110, 110, 640, 150], size=17)
+        tr = first.get("tracks") or {}
+        y = _stats(d, y + 6, [
+            ("视频轨", "%d 段" % len(vid)),
+            ("字幕轨", "%d 条" % len(tr.get("text") or [])),
+            ("BGM 轨", "%d 段" % len(tr.get("audio") or [])),
+            ("封面片头", "%.2fs" % (float((first.get("cover") or {}).get("seconds") or 0))),
+            ("总时长", "%.2fs" % float(first.get("total_duration_s") or 0)),
+        ])
+        note = ("时间轴按 shot_id 顺序拼接，段长取自 ffprobe 实测；封面片头 0.8s 计在第 1 行。"
+                "字幕完整条目见第 3 页，BGM 与素材哈希见第 4 页，全量字段在 draft_manifest.json。")
+        for line in wrap_chars(note, _f(note, 19), W - 2 * M):
+            d.text((M, y), line, font=_f(line, 19), fill=GREY)
+            y += 28
+        y = _proves(d, y + 20, [
+            "每行就是一镜，终点 = 起点 + 时长，逐段累加不做四舍五入（微秒取整，0.2s 不会被截成 0）。",
+            "段长不是素材清单上的计划值，而是对 final.mp4 实测的结果；缺镜会在生成时被判为不合格，不会静默少一段。",
+            "核对：逐镜跑 ffprobe -v error -show_entries format=duration，各段之和应等于本页总时长。",
+        ])
+        _footer(d, "Source: draft_manifest.json · tracks.video", 2, total)
+        img.save(path)
+
+    # ③ 字幕对照（条数 + 前若干条）
+    def board_subtitles(path: pathlib.Path):
+        img = Image.new("RGB", (W, H), PAPER)
+        d = ImageDraw.Draw(img)
+        y = _hdr(img, d, "Subtitles — time, text, alignment source",
+                 "字幕对照：%s（%d 条）" % (ep, len(((first.get("tracks") or {}).get("text") or []))),
+                 "3 / %d" % total, kicker="EDITING PROJECT RECORD")
+        txt = (first.get("tracks") or {}).get("text") or []
+        y = _file_bar(d, y, "text track · %d segments" % len(txt), "-",
+                      fmt_time(pathlib.Path(first["_manifest"])),
+                      "字幕时间来自 CTC/ASR 强制对齐（cues.json），非估算")
+        rows = [[str(i + 1),
+                 "%.2f" % float(t.get("start_s") or 0),
+                 "%.2f" % float(t.get("end_s") or 0),
+                 str(t.get("text") or ""),
+                 str(t.get("source") or "-")]
+                for i, t in enumerate(txt)]
+        y = _table(d, y, ["#", "起s", "止s", "字幕文本", "对齐来源"],
+                   rows, [60, 100, 100, 1000, 260], size=17, max_rows=34)
+        note = ("字幕起点已含封面片头偏移（%d µs）；与 EpisodeNN.mp4 的烧录时间轴一致。"
+                % int(first.get("cue_offset_us") or 0))
+        for line in wrap_chars(note, _f(note, 19), W - 2 * M):
+            d.text((M, y), line, font=_f(line, 19), fill=GREY)
+            y += 28
+        y = _proves(d, y + 20, [
+            "字幕文本与时间是 cues.json 的原样搬运，工程生成过程不改写、不润色、不补句。",
+            "「对齐来源」列标明每条时间是 CTC/ASR 强制对齐得来，不是按字数估算。",
+            "核对：在 EpisodeNN.mp4 的对应时刻应有同一句字幕；工程内该条起点 = 成片时刻 + 封面片头偏移。",
+        ])
+        _footer(d, "Source: draft_manifest.json · tracks.text", 3, total)
+        img.save(path)
+
+    # ④ 素材哈希（可回原文件核对）
+    def board_digest(path: pathlib.Path):
+        img = Image.new("RGB", (W, H), PAPER)
+        d = ImageDraw.Draw(img)
+        y = _hdr(img, d, "Source assets — SHA-256 ledger",
+                 "素材哈希台账：%s（可回原文件逐项核对）" % ep, "4 / %d" % total,
+                 kicker="EDITING PROJECT RECORD")
+        items = []
+        for v in (first.get("tracks") or {}).get("video") or []:
+            items.append(("画面", v))
+        for a in (first.get("tracks") or {}).get("audio") or []:
+            items.append(("BGM", a))
+        y = _file_bar(d, y, "referenced assets · %d files" % len(items),
+                      fmt_size(sum(int(i[1].get("bytes") or 0) for i in items)),
+                      fmt_time(pathlib.Path(first["_manifest"])),
+                      "工程引用绝对路径；换机器需重链，或用 edit_draft --copy-media")
+        rows = [[k, str(v.get("name") or "-"), "%.1f KB" % (int(v.get("bytes") or 0) / 1024.0),
+                 (str(v.get("sha256") or "")[:32] + "…") if v.get("sha256") else "（未计算）"]
+                for k, v in items]
+        y = _table(d, y, ["轨", "文件", "大小", "SHA-256（前 32 位）"],
+                   rows, [80, 520, 160, 760], size=16, max_rows=26)
+        note = ("完整 64 位哈希见 draft_manifest.json。同一文件两次生成的哈希不变，说明工程可复现；"
+                "如果素材被替换，哈希会先变，而成片肉眼看不出来。")
+        # ⚠ 别在图上写 `⇒` / `→`：Arial 没有这些字形，会渲染成方框（本条已实测踩一次）
+        for line in wrap_chars(note, _f(note, 19), W - 2 * M):
+            d.text((M, y), line, font=_f(line, 19), fill=GREY)
+            y += 28
+        y = _proves(d, y + 20, [
+            "每个被工程引用的文件一行，哈希是对磁盘文件实测的结果，不是文件名或时间戳的派生值。",
+            "同一素材两次生成哈希不变，说明工程可复现；素材被替换时哈希先变，而成片肉眼看不出来。",
+            "核对：Windows 用 certutil -hashfile <文件> SHA256，Linux/macOS 用 sha256sum <文件>，与左列前缀逐字比对。",
+        ])
+        _footer(d, "Source: draft_manifest.json · tracks.{video,audio}.sha256", 4, total)
+        img.save(path)
+
+    emit("draft-01-overview.png", board_overview, out_dir / "draft-01-overview.png")
+    emit("draft-02-timeline.png", board_timeline, out_dir / "draft-02-timeline.png")
+    emit("draft-03-subtitles.png", board_subtitles, out_dir / "draft-03-subtitles.png")
+    emit("draft-04-digest.png", board_digest, out_dir / "draft-04-digest.png")
+
+    bad = [m for m in mans if not (m.get("verdict") or {}).get("pass")]
+    if bad:
+        problems.append("%d 集的工程自检没过（%s）⇒ 先修工程再上传，面板上会印 FAIL"
+                        % (len(bad), "、".join(str(m.get("ep")) for m in bad[:5])))
+    print("  · 还缺一张**剪映时间轴截图**：在剪映里打开草稿截一张，命名 "
+          "`draft-shot-01-%s.png` 放进 %s（引擎不伪造 UI，只能人工截）" % (ep, out_dir))
+    return done, problems
+
+
 def cmd_rights(ws: pathlib.Path, cfg: dict, args) -> tuple:
     out_dir = ws / "09-发行" / "版权资料" / "权利声明"
     try:
@@ -1210,19 +1515,22 @@ def cmd_rights(ws: pathlib.Path, cfg: dict, args) -> tuple:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="版权资料三件套（平台两个入口 + 权利声明）")
+    ap = argparse.ArgumentParser(
+        description="版权资料四件套（平台两个入口 + 剪辑工程 + 权利声明）")
     ap.add_argument("what", nargs="?", default="all",
-                    choices=("all", "ai-process", "source-files", "rights"))
+                    choices=("all", "ai-process", "source-files", "edit-draft", "rights"))
     # `--what` 与位置参数等价：控制台的命令面板按「带 -- 的开关」拼 argv，
     # 只留位置参数会出现 `... what all` 这种非法的命令行。
     ap.add_argument("--what", dest="what_flag", default=None,
-                    choices=("all", "ai-process", "source-files", "rights"))
+                    choices=("all", "ai-process", "source-files", "edit-draft", "rights"))
     ap.add_argument("--workspace", default=None, help="剧目录（默认取 SOLODRAMA_WORKSPACE）")
     ap.add_argument("--shots", default=None,
                     help="AI 生成过程用哪些镜：`6`（自动挑 6 个）或 `ep01:shot_007,ep13:shot_002`")
     ap.add_argument("--count", type=int, default=None, help="自动挑几个镜（默认 6，平台区间 4–20）")
     ap.add_argument("--entity", default=None, help="权利主体名称（写入 DOC 1 / DOC 6）")
     ap.add_argument("--registration", default=None, help="注册号 / 营业执照号")
+    ap.add_argument("--ep", default=None,
+                    help="剪辑工程面板只画某一集（默认取扫到的第一集，其余集在总览表里）")
     a = ap.parse_args(argv)
 
     if Image is None:
@@ -1270,6 +1578,12 @@ def main(argv=None) -> int:
         problems += p2
         print("  合计 %d 张" % len(done))
         print()
+    if a.what in ("all", "edit-draft"):
+        print("[剪辑工程] 工程树 / 时间轴结构 / 字幕对照 / 素材哈希（4 张）")
+        done, p4 = cmd_edit_draft(ws, cfg, a)
+        problems += p4
+        print("  合计 %d 张" % len(done))
+        print()
     if a.what in ("all", "rights"):
         print("[权利声明] 7 页 A4（打印 → 签字 → 盖章 → 拍照上传）")
         done, p3 = cmd_rights(ws, cfg, a)
@@ -1284,11 +1598,12 @@ def main(argv=None) -> int:
             print("  - %s" % p)
         print("\n落点：09-发行/版权资料/{AI生成过程,原始文件,权利声明}/")
         return 2
-    print("[OK] 三套已产出。下一步：")
+    print("[OK] 四套已产出。下一步：")
     print("     1) 打开 权利声明/rights-01..07 打印、签字、盖章（主体名要与平台商务认证逐字一致）")
-    print("     2) 上传时按「入口 A 01→NN」「入口 B 01→NN」「DOC 1→7」三个顺序，别混着传")
+    print("     1b) 在剪映里打开草稿，截一张时间轴图存 剪辑工程/draft-shot-01.png（人工项）")
+    print("     2) 上传时按「入口 A 01→NN」「入口 B 01→NN」「剪辑工程 01→NN」「DOC 1→7」分开传，别混")
     print("     3) python stages/production/scripts/release_check.py --workspace \"%s\"" % ws)
-    print("落点：09-发行/版权资料/{AI生成过程,原始文件,权利声明}/")
+    print("落点：09-发行/版权资料/{AI生成过程,原始文件,剪辑工程,权利声明}/")
     return 0
 
 

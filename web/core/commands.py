@@ -35,6 +35,7 @@ SCRIPTS = {
     "time_report": paths.PROD_SCRIPTS / "time_report.py",
     "preflight_ep": paths.PROD_SCRIPTS / "episode_preflight.py",
     "subtitle": paths.SUBTITLE_SCRIPTS / "subtitle.py",
+    "edit_draft": paths.EDIT_SCRIPTS / "edit_draft.py",
     "upscale": paths.SUBTITLE_SCRIPTS / "upscale.py",
     "layout": paths.STAGES_DIR / "_layout.py",
     "comfy_check": paths.COMIFY_SCRIPTS / "comfy_client.py",
@@ -261,6 +262,7 @@ WS_FLAG = {
     "prepare_refs": ("--workspace", "suffix"),
     "release_export": ("--workspace", "suffix"),
     "subtitle": ("--workspace", "suffix"),
+    "edit_draft": ("--workspace", "suffix"),
     "upscale": ("--workspace", "suffix"),
     "workflow": ("--workspace", "suffix"),
     "setup": ("--workspace", "suffix"),
@@ -678,6 +680,17 @@ _add(_c("media.render", "5 剪辑", "③ 字幕生成与烧录", "subtitle",
         resources=["GPU"],
         help="三语规范锁死（configs/subtitle-styles.json）：zh 58px/12 字、en 52px/26、es 50px/26。",
         agent="执行前先问我「要不要烧字幕」；我说不要就只交付无字幕母版，不要自己决定。"))
+_add(_c("media.draft", "5 剪辑", "④ 剪映工程（草稿）", "edit_draft",
+        danger=WRITE,
+        flags={"--ep": "ep"},
+        bools={"--copy-media": "copy_media", "--no-cover": "no_cover",
+               "--no-bgm": "no_bgm", "--json": "as_json"},
+        params=[P_EP(required=True),
+                Param("copy_media", "素材拷进草稿目录", "bool", default=False)],
+        help="逐镜视频 + 字幕 + BGM 的可编辑时间轴，与发布版同源同序；"
+             "工程是版权资料第三入口，**不替代** MP4 导出（剪映 7+ 已隐藏导出控件）。",
+        agent="生成后告我段数/字幕条数/BGM 段数/总时长，以及自检是否通过；"
+              "自检不过就不要拿去送审，先看失败项。"))
 _add(_c("media.preview", "5 剪辑", "字幕快速预览", "subtitle",
         argv=["--stage", "render", "--preview", "{n}"], danger=WRITE,
         flags={"--ep": "ep"}, params=[P_EP(required=True), Param("n", "预览段数", "int", default=3)],

@@ -160,3 +160,24 @@ def test_legacy_prefixes_are_not_treated_as_primary():
     """旧口径前缀只能告警，不能进入「必须」清单。"""
     assert "ai-process" in RC.LEGACY_PREFIXES and "source-file" in RC.LEGACY_PREFIXES
     assert not hasattr(RC, "AI_PROCESS_IDS"), "旧的固定 4 张清单不该还在"
+
+
+def test_edit_draft_boards_are_scanned_by_gate():
+    """剪辑工程（第三入口）的命名契约：机器板 `draft-NN`、人工截图 `draft-shot-NN`。
+
+    两条约束都是实测必要的：
+      1. 机器板必须被 `draft` 前缀扫到 —— 否则生成器出图了、门禁还说缺；
+      2. 人工截图**不能**被当成机器板计数 —— 否则截 4 张图就能绕过「工程自检通过」这一层。
+    """
+    machine = re.compile(r"^%s[_-](\d{1,2})(?:[_-].*)?$" % re.escape(RC.DRAFT_PREFIX), re.I)
+    shot = re.compile(r"^%s[_-](\d{1,2})(?:[_-].*)?$" % re.escape(RC.DRAFT_SHOT_PREFIX), re.I)
+
+    for i in (1, 2, 3, 4):
+        assert machine.match("draft-%02d-overview" % i), i
+    assert machine.match("draft-04-digest")
+
+    # 人工截图归 `draft-shot` 一类，且**故意**不被 `draft` 正则匹配
+    assert shot.match("draft-shot-01-ep01")
+    assert not machine.match("draft-shot-01-ep01"), "截图被算成机器板，会让工程自检形同虚设"
+    # 两类前缀不能互相污染
+    assert not shot.match("draft-01-overview")

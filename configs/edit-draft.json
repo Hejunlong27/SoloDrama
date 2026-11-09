@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "_note": "剪映工程（草稿）生成的默认参数。项目可复制到 <ws>/video-pipeline/config.edit.json 覆盖（深合并）。",
+
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "_desc": "与交付规格一致（docs/production/剪辑与字幕规范.md 第五节）。改这里等于改工程画布，成片规格不受影响。"
+  },
+
+  "fps": 30,
+  "_fps_note": "剪映工程帧率。成片以 ffmpeg 链为准；此项只影响工程内的时间轴显示精度。",
+
+  "cover_seconds": 0.8,
+  "_cover_note": "首帧封面片头时长。必须与 config.subtitle.json 的 master.cover_seconds 一致，否则工程与成片差这一段。",
+
+  "text": {
+    "size": {
+      "zh": 15.0,
+      "en": 13.5,
+      "es": 13.0
+    },
+    "_size_note": "【近似映射，必须在剪映内目视校对】剪映的 TextStyle.size 是相对画布的档位，ASS 的 Fontsize 是像素，两者没有可推导的换算关系。这里的值是按 1080×1920 竖屏给的起点，首集打开工程看一眼再改这份配置——不要把它当成规范。",
+    "border_width": 40.0,
+    "_border_note": "描边宽度（剪映单位）。三语规范要求描边 3px @1080 宽，目视接近即可。",
+    "shadow": {
+      "diffuse": 15.0,
+      "distance": 5.0,
+      "angle": -45.0
+    }
+  },
+
+  "audio": {
+    "volume_ceiling": 1.0,
+    "_desc": "BGM 音量上限（线性倍数）。剪映内部把 volume 当线性增益，计划里的 gain_db 按 10^(dB/20) 换算后 clamp 到此上限。"
+  }
+}

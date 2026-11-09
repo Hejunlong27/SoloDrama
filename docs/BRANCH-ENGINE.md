@@ -36,6 +36,7 @@
 | 剪辑 | 母版拼接（帧数校验） | `subtitle.py --stage master` |
 | 剪辑 | 高清放大（Topaz） | `upscale.py` |
 | 剪辑 | 字幕对齐 / 生成 / 烧录 | `subtitle.py --stage align/cues/ass/render` |
+| 剪辑 | 剪映工程（草稿，与 MP4 并行） | `stages/edit/scripts/edit_draft.py` |
 | 交付 | 交付规格归一（crop-to-fill） | `delivery_spec.py` |
 | 交付 | 画面合规门禁 C1–C4 | `compliance_media_check.py` |
 | 交付 | 发行资料盘点 + 发布版导出 | `release_check.py` / `release_export.py` |

@@ -3,11 +3,11 @@
 
 为什么要有它
 ------------
-12 节点状态机是整条链的调度真源。验收不能靠「真跑一部剧」——那等于用
+13 节点状态机是整条链的调度真源。验收不能靠「真跑一部剧」——那等于用
 「我做出一部短剧」证明「引擎没坏」，两件事不是一回事。
 
 > ⚠ **2026-11-06 重写**：旧版按 23 节点 / 七环节写；重构后节点表缩成
-> **5 环节 12 节点**（引擎只从导入开始，创作层已移出），旧用例 12/25 全红。
+> **5 环节 13 节点**（引擎只从导入开始，创作层已移出），旧用例 12/25 全红。
 > 现在按当前 `NODES` 表重写。**节点增删时这份测试应当跟着红**，那是它对的地方。
 
 分组：
@@ -107,9 +107,9 @@ def put_data(ctx, shots: int = 2):
 
 
 # =========================================================================== A 表结构
-@reg("A", "A01 12 节点 / 5 环节，顺序与环节归属自洽")
+@reg("A", "A01 13 节点 / 5 环节，顺序与环节归属自洽")
 def _():
-    A_(len(N.NODES) == 12, "节点数 %d ≠ 12" % len(N.NODES))
+    A_(len(N.NODES) == 13, "节点数 %d ≠ 13" % len(N.NODES))
     A_(len(N.STAGES) == 5, "环节数 %d ≠ 5" % len(N.STAGES))
     stage_ids = {s["id"] for s in N.STAGES}
     for n in N.NODES:
@@ -318,6 +318,36 @@ def _():
     return detail
 
 
+@reg("C", "C05 draft：只认生成器自检结论，不认目录存在")
+def _():
+    ctx = fresh()
+    node = N.NODE_BY_ID["edit.draft"]
+    ok, detail = N.check_node(ctx, node)
+    A_(not ok, "没有清单不该通过")
+    A_("edit_draft" in detail or "draft_manifest" in detail, "报错没指向生成器：%s" % detail)
+
+    base = ctx.out / "ep01" / "_draft"
+    base.mkdir(parents=True, exist_ok=True)
+    man = base / "draft_manifest.json"
+    man.write_text(json.dumps({"verdict": {"pass": False,
+                                           "fails": ["字幕起点 500000 µs ≠ 预期 1000000 µs"]}},
+                              ensure_ascii=False), encoding="utf-8")
+    ok, detail = N.check_node(ctx, node)
+    A_(not ok, "verdict.pass=False 不该通过（目录在也不行）")
+    A_("字幕起点" in detail, "失败理由没透出：%s" % detail)
+
+    man.write_text(json.dumps({
+        "draft_dir": "%s/ep01_剪映工程" % base,
+        "total_duration_s": 4.3,
+        "verdict": {"pass": True, "fails": [],
+                    "counts": {"video": 3, "text": 2, "audio": 0, "materials": 3}}},
+        ensure_ascii=False), encoding="utf-8")
+    ok, detail = N.check_node(ctx, node)
+    A_(ok, "自检通过后应放行，实际 %s" % detail)
+    A_("4.3s" in detail, "详情没带总时长：%s" % detail)
+    return detail
+
+
 # =========================================================================== D 调度
 @reg("D", "D01 next 跳过已通过项，指向第一个没过的")
 def _():
@@ -333,24 +363,24 @@ def _():
     return "import.pack 通过 / 资产跳过后 → import.bind"
 
 
-@reg("D", "D02 面板结构稳定：12 行、状态合法、counts 自洽")
+@reg("D", "D02 面板结构稳定：13 行、状态合法、counts 自洽")
 def _():
     ctx = fresh()
     ev = N.evaluate(ctx)
     for k in ("ws", "ep", "nodes", "counts"):
         A_(k in ev, "缺字段 %s" % k)
-    A_(len(ev["nodes"]) == 12, "节点数不对：%d" % len(ev["nodes"]))
-    A_(sum(ev["counts"].values()) == 12, "counts 合计应 12")
+    A_(len(ev["nodes"]) == 13, "节点数不对：%d" % len(ev["nodes"]))
+    A_(sum(ev["counts"].values()) == 13, "counts 合计应 13")
     for r in ev["nodes"]:
         A_({"id", "state", "detail"} <= set(r), "节点行缺字段：%s" % r)
         A_(r["state"] in ("passed", "failed", "absent", "stale", "skipped", "blocked"),
             "非法状态 %s" % r["state"])
     txt = N.render_status(ev)
-    A_("五环节 12 节点" in txt, "状态面板标题丢了环节/节点数")
+    A_("五环节 13 节点" in txt, "状态面板标题丢了环节/节点数")
     graph = N.render_graph()
     for n in N.NODES:
         A_(n["id"] in graph, "流程图里没有 %s" % n["id"])
-    return "12 节点 / counts 自洽 / 面板与流程图覆盖全表"
+    return "13 节点 / counts 自洽 / 面板与流程图覆盖全表"
 
 
 @reg("D", "D03 同一失败方案第二次判 stuck；换方案可继续")

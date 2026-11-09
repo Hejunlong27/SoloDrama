@@ -373,6 +373,16 @@ def _ep_artifacts(ws, ep: str) -> dict:
     return out
 
 
+def _ep_draft(ws, ep: str) -> str:
+    """剪辑工程（剪映草稿）的清单路径。★ 2026-11-10
+
+    工程不在 `subs/<ep>/` 而在 `<成片>/<ep>/_draft/`（与逐段成片同层：它是由这些段拼的），
+    所以不能塞进 `_ART_GLOBS` —— 那一组全是「按文件名 glob」，这是「按固定相对路径找」。
+    """
+    p = out_dir(ws) / ep / "_draft" / "draft_manifest.json"
+    return _rel(ws, p) if p.is_file() else ""
+
+
 def _release_index(ep: str):
     m = re.match(r"^ep(\d+)$", ep, re.I)
     return int(m.group(1)) if m else None
@@ -402,6 +412,7 @@ def episodes(ws) -> list:
                       ("fail" if e["fail"] else ("doing" if e["ok"] else "todo"))),
             "master": art["master"], "upscaled": art["upscaled"],
             "mix": art["mix"], "subbed": art["subbed"], "ass": art["ass"],
+            "draft": _ep_draft(ws, ep),
             "release": rel_map.get(idx, "") if idx is not None else "",
         })
     # 只有母版/字幕、没有批次记录的集（早期出片或人工整理过的项目）也要列出来，
@@ -424,6 +435,7 @@ def episodes(ws) -> list:
                 "state": "done" if art["subbed"] else "doing",
                 "master": art["master"], "upscaled": art["upscaled"],
                 "mix": art["mix"], "subbed": art["subbed"], "ass": art["ass"],
+                "draft": _ep_draft(ws, ep),
                 "release": rel_map.get(idx, "") if idx is not None else "",
                 "note": "无批次记录（按 subs/ 目录列出）",
             })

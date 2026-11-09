@@ -447,13 +447,29 @@ def episode_segments(ws, ep):
     shots = load_json(_sp) if os.path.isfile(_sp) else []
     ids = [s["shot_id"] for s in shots if _belongs_to_ep(s.get("shot_id"), ep)]
     outdir = out_dir_of(ws)
+    # ★ 2026-11-07：段 id 在**各集之间是重名的**（每集都有 shot_001），而下面的 glob
+    #   会扫描 outdir 下所有批次目录，`max(mtime)` 于是跨集选中了「最近生成的那一集的
+    #   shot_001」。实测事故：ep01 的母版拼进了 ep19 的画面（法庭戏），而 ep01 本身是
+    #   产房 + 发布会走廊；因为 ep19 当时正在出片，mtime 最新。
+    #   ⇒ 只要 outdir 下存在以集号命名的目录（ep01 / 01 / EP01），就**只在它里面找**，
+    #     彻底杜绝跨集串素材。老结构（h3_free/h3_free_acc2 两层）没有集号目录，仍走原路径。
+    ep_dirs = [d for d in glob.glob(os.path.join(outdir, "*"))
+               if os.path.isdir(d) and os.path.basename(d).lower().lstrip("ep") ==
+               str(ep).lower().lstrip("ep")]
     segs, missing = [], []
     for sid in ids:
-        cands = [f for f in glob.glob(os.path.join(outdir, "*", "*", sid, "final.mp4"))
-                 if os.path.getsize(f) > 2048]
-        legacy = [f for f in glob.glob(os.path.join(outdir, "*", sid, "final.mp4"))
-                  if os.path.getsize(f) > 2048]
-        cands += legacy
+        if ep_dirs:
+            cands = []
+            for d in ep_dirs:
+                cands += [f for f in glob.glob(os.path.join(d, "*", sid, "final.mp4"))
+                          if os.path.getsize(f) > 2048]
+                cands += [f for f in glob.glob(os.path.join(d, sid, "final.mp4"))
+                          if os.path.getsize(f) > 2048]
+        else:
+            cands = [f for f in glob.glob(os.path.join(outdir, "*", "*", sid, "final.mp4"))
+                     if os.path.getsize(f) > 2048]
+            cands += [f for f in glob.glob(os.path.join(outdir, "*", sid, "final.mp4"))
+                      if os.path.getsize(f) > 2048]
         if cands:
             best = max(cands, key=os.path.getmtime)
             rel = os.path.relpath(os.path.dirname(best), outdir)
@@ -1450,22 +1466,64 @@ def split_two_lines(text, cfg):
 
 
 def split_long_cue(text, cfg):
-    """整句超过 max_cue_chars 时，按标点拆成多条（因为一条字幕最多两行）。"""
-    mc = cfg["max_cue_chars"]
+    """整句超过 max_cue_chars 时拆成多条（一条字幕最多两行）。
+
+    ★ 2026-11-07 重写（西语实跑事故）：旧实现逐字符累加到 mc 就断，
+      `. . . el hombro izquierdo tiembla.` 被切成 `...izquierdo t` / `iembla.`
+      —— 单词从中间断掉，成片字幕少一个字母。
+      现在分两种口径：
+        · wrap=word（西语/英语）：只在**空格**处切，且优先挑「紧跟标点的切点」，
+          让 `Labios azules, uñas blancas,` / `y el hombro izquierdo tiembla.`
+          这样语义完整的形状出现，而不是把名词和动词拆开；
+        · wrap=char（中文）：保持原样，按标点断。
+    """
+    mc = int(cfg["max_cue_chars"])
     if len(text) <= mc:
         return [text]
     punct = cfg.get("break_punct", "")
-    chunks, cur = [], ""
-    for ch in text:
-        cur += ch
-        if len(cur) >= mc or (ch in punct and len(cur) >= mc * 0.55):
-            chunks.append(cur)
-            cur = ""
-    if cur:
-        if chunks and len(cur) < 6:
-            chunks[-1] += cur
-        else:
-            chunks.append(cur)
+    if cfg.get("wrap") != "word":
+        chunks, cur = [], ""
+        for ch in text:
+            cur += ch
+            if len(cur) >= mc or (ch in punct and len(cur) >= mc * 0.55):
+                chunks.append(cur)
+                cur = ""
+        if cur:
+            if chunks and len(cur) < 6:
+                chunks[-1] += cur
+            else:
+                chunks.append(cur)
+        return chunks
+
+    # ---- 西语/英语：只在词边界切 ----
+    chunks, rest = [], text.strip()
+    while len(rest) > mc:
+        cands = []          # (优先级, 距理想长度的偏差, 切点)
+        for i, ch in enumerate(rest):
+            if ch != " ":
+                continue
+            left = rest[:i].rstrip()
+            if not (mc * 0.45 <= len(left) <= mc):
+                continue
+            tier = 0 if left[-1:] in ".!?…" else (1 if left[-1:] in ",;:" else 2)
+            # 均衡优先：左右两段长度越接近越自然（左 29 / 右 25 好过 左 45 / 右 9）
+            cands.append((tier, abs(len(left) - (len(rest) - i - 1)), i))
+        if not cands:
+            sp = rest.rfind(" ", 0, mc)
+            if sp <= 0:
+                break
+            chunks.append(rest[:sp].rstrip())
+            rest = rest[sp + 1:].lstrip()
+            continue
+        _, _, cut = min(cands)
+        chunks.append(rest[:cut].rstrip())
+        rest = rest[cut + 1:].lstrip()
+    if rest:
+        chunks.append(rest)
+    # 最后一片太短就往回并（避免单蹦一个词）
+    if len(chunks) >= 2 and len(chunks[-1]) < 6:
+        chunks[-2] = (chunks[-2] + " " + chunks[-1]).strip()
+        chunks.pop()
     return chunks
 
 
@@ -1871,8 +1929,17 @@ def qa_safe_area(ass_path, cfg):
             "max_text_width_pct": lim["max_text_width_pct"]}
 
 
-def write_ass(cues, cfg, out_path, lang=None, canvas=None):
+def write_ass(cues, cfg, out_path, lang=None, canvas=None, offset_s=0.0):
     """canvas=(W,H)：字幕实际要烧上去的分辨率。
+
+    offset_s：整体后移量（秒）。★ 2026-11-10 新增 —— 见下方「封面片头」说明。
+
+    **为什么需要 offset_s**：`cues` 的时间轴是「片段轴」，从第一段画面算起
+    （`build_cues` 的 `t0` 从 0 开始累加）。而母版前面还有 `master.cover_seconds`
+    的封面片头（默认 0.8s）。旧实现两处都不加偏移 ⇒ 只要封面存在，**每条字幕都早
+    0.8 秒**：第 3 句台词出在第 2 句的画面上，肉眼看着像「对齐又错了一点」，
+    而所有断言都过（因为断言比较的是 cues 与 cues）。
+    现在由调用方把真实偏移传进来，ASS、剪映工程、渲染自检三处用同一个值。
 
     为什么必须显式传：高清放大后画布从 1440x832 变成 2560x1480，
     PlayResX/Y 与实际分辨率不一致会让 libass 拉伸/偏移字幕（本项目踩过：
@@ -1916,12 +1983,13 @@ def write_ass(cues, cfg, out_path, lang=None, canvas=None):
         if _m["pos"]:
             txt = "{\\an5\\pos(%d,%d)}%s" % (_m["pos"][0], _m["pos"][1], txt)
         body.append("Dialogue: 0,%s,%s,Default,,0,0,0,,%s" % (
-            ass_time(c["start"]), ass_time(c["end"]), txt))
+            ass_time(c["start"] + offset_s), ass_time(c["end"] + offset_s), txt))
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(head + body) + "\n")
     return {"font": lc["font"], "font_size_px": font_size,
             "font_size_pct": lc.get("font_size_pct"),
+            "offset_s": round(float(offset_s), 3),
             "margin_v_px": margin_v, "margin_lr_px": margin_lr,
             "margin_v_pct": lc.get("margin_v_pct"),
             "anchor": _m["anchor"], "anchor_top": _m["anchor_top"],
@@ -2102,6 +2170,23 @@ def build_cover_lead(cfg, cover, ref, out_path, seconds, has_audio):
     return out_path
 
 
+def cover_lead_seconds(ws, ep, cfg, enabled=True):
+    """母版封面片头的**实际**时长（秒）＋命中的封面路径；没有封面/关闭则 (0.0, 原因)。
+
+    ★ 2026-11-10：这是「封面片头到底占多长时间」的唯一真源。
+      此前这个数字散在 `stage_master` 一处，而字幕时间、渲染自检、剪映工程都需要它 ——
+      各算一份的下场是「母版加了 0.8s，字幕不知道」，全部字幕早 0.8 秒而无人报警。
+      任何需要「母版时间轴 = 片段轴 + 片头」的地方都必须调这里。
+    """
+    if not enabled:
+        return 0.0, "已关闭封面（--no-cover）"
+    cpath, cmsg = find_cover(ws, ep, cfg)
+    if not cpath:
+        return 0.0, cmsg
+    secs = float((cfg.get("master") or {}).get("cover_seconds") or COVER_LEAD_DEFAULT_S)
+    return secs, cpath
+
+
 def stage_master(ws, ep, cfg, segs, subs_dir, cover=True, bgm=True):
     """拼接母版 —— 剪辑第一道工序，一次产出 `<ep>_master.mp4`。
 
@@ -2141,8 +2226,8 @@ def stage_master(ws, ep, cfg, segs, subs_dir, cover=True, bgm=True):
         else:
             ref = _seg_video_info(tools["ffprobe"], seg_files[0])
             _, has_audio = _seg_probe(tools, seg_files[0])
-            secs = float((cfg.get("master") or {}).get("cover_seconds")
-                         or COVER_LEAD_DEFAULT_S)
+            secs, _ = cover_lead_seconds(ws, ep, cfg, enabled=True)
+            secs = secs or COVER_LEAD_DEFAULT_S
             lead = build_cover_lead(cfg, cpath, ref, os.path.join(
                 subs_dir, "_cover_lead.mp4"), secs, has_audio)
             files.append(lead)
@@ -2373,13 +2458,16 @@ def ensure_delivery_spec(cfg, src, subs_dir, ep, *, target=None, force=False):
     return dst, "已归一化到 %d×%d SAR 1:1" % (w, h)
 
 
-def verify_render(cfg, master, subbed, cues, subs_dir, canvas=None):
+def verify_render(cfg, master, subbed, cues, subs_dir, canvas=None, offset_s=0.0):
     """机器断言字幕【真的画出来了】—— 本机无 vision provider，不能靠眼睛。
 
     原理：同一时间点分别抽「母版（无字幕）」与「成片（有字幕）」一帧，
     比较【字幕带】与【画面其余部分】的像素差异。
       * 字幕带差异应显著大于画面其余部分（证明变化是局部发生在字幕区）
       * 字幕带内的【近白像素】数量应明显增加（字幕是白字黑边）
+
+    offset_s：与 `write_ass` 同一个封面片头偏移。抽帧时刻若不加这个偏移，
+    就会去「字幕还没出现的画面」上找字幕差异，自检随机失败（或被误判通过）。
     """
     try:
         import numpy as np
@@ -2406,7 +2494,7 @@ def verify_render(cfg, master, subbed, cues, subs_dir, canvas=None):
 
     results, best = [], None
     for c in cand:
-        t = (c["start"] + c["end"]) / 2.0
+        t = (c["start"] + c["end"]) / 2.0 + float(offset_s)
         fa = os.path.join(subs_dir, "_vfy_master.png")
         fb = os.path.join(subs_dir, "_vfy_subbed.png")
         for src, dst in ((master, fa), (subbed, fb)):
@@ -2634,9 +2722,23 @@ def main():
         if bad:
             raise SystemExit("断言失败：%d 条字幕时间非法，例：%s" % (len(bad), bad[0]))
 
+    # ★ 2026-11-10：字幕时间必须对齐「母版有没有封面片头」
+    #   cues 的时间从第一段画面算起，母版前面却可能压着 0.8s 封面。旧实现不加偏移 ⇒
+    #   有封面时每条字幕都早 0.8s，而所有断言都通过（它们只比较 cues 自己）。
+    #   这里先探一次封面，把真实偏移算出来，供 ASS / 渲染自检 / 剪映工程共用。
+    cover_lead_s = 0.0
+    if args.stage in ("ass", "all", "render"):
+        cover_lead_s, _cmsg = cover_lead_seconds(
+            ws, args.ep, cfg, enabled=not getattr(args, "no_cover", False))
+        if cover_lead_s > 0:
+            print("③.0 封面片头 %.2fs ⇒ 字幕整体后移同量（%s）"
+                  % (cover_lead_s, os.path.basename(_cmsg)))
+        else:
+            print("③.0 无封面片头，字幕不偏移（%s）" % _cmsg)
+
     ass = os.path.join(subs_dir, "%s.ass" % args.ep)
     if args.stage in ("ass", "all", "render"):
-        info = write_ass(cues, cfg, ass, canvas=canvas)
+        info = write_ass(cues, cfg, ass, canvas=canvas, offset_s=cover_lead_s)
         print("③ ASS：%s" % ass)
         if info.get("anchor") == "ratio":
             print("   字体=%s 字号=%dpx(%s) 落点=视觉中心 %s(y=%dpx) 块高=%dpx "
@@ -2747,7 +2849,7 @@ def main():
                 print("   ⚠ 母版实际 %dx%d ≠ 预期 %dx%d，按实际分辨率重写 ASS"
                       % (real[0], real[1], canvas[0], canvas[1]))
                 canvas = real
-            info2 = write_ass(cues, cfg, ass, canvas=canvas)
+            info2 = write_ass(cues, cfg, ass, canvas=canvas, offset_s=cover_lead_s)
             report["canvas_corrected"] = "%dx%d" % canvas
             qa2 = qa_safe_area(ass, cfg)
             _y = ("落点 %s y=%dpx" % (info2["anchor_label"], info2["center_y"])
@@ -2791,7 +2893,8 @@ def main():
                             "base": base_video, "canvas": "%dx%d" % canvas}
 
         if not args.soft:
-            v = verify_render(cfg, base_video, out, cues, subs_dir, canvas=canvas)
+            v = verify_render(cfg, base_video, out, cues, subs_dir, canvas=canvas,
+                              offset_s=cover_lead_s)
             report["verify_render"] = v
             if "skipped" in v:
                 print("⑦ 渲染自检：跳过（%s）" % v["skipped"])

@@ -56,6 +56,15 @@ IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 # 旧口径（2026-11-07 前）：这两类文件**不再作为主材料**，出现即告警
 LEGACY_PREFIXES = ("ai-process", "source-file")
 
+# ★ 2026-11-10：平台第三个入口 —— 剪辑工程（剪映草稿）。
+#   为什么加：平台驳回原文是「不足以证明本剧所需的相关权利」，其中一层问的是
+#   **「这几十秒是怎么被剪出来的」**：素材顺序、字幕何时进、BGM 铺多长。
+#   成片只能证明「有一段视频」，工程能证明「这一段是逐镜拼的、可回改」。
+#   机器能产的是四张结构板（工程树 / 时间轴 / 字幕对照 / 素材哈希）；
+#   **时间轴截图必须人截**（本机不装剪映、也不该用假 UI 冒充截图）⇒ `draft-shot-*` 只告警不阻断。
+DRAFT_PREFIX = "draft"
+DRAFT_SHOT_PREFIX = "draft-shot"
+
 RIGHTS_LABEL = {
     "01": "权属声明（作品标识 + 独占所有权 + 无权利负担）",
     "02": "原创性证明（按文件日期排的创作链 + 人类创作贡献）",
@@ -185,6 +194,8 @@ def main() -> int:
                     help="只算不写：不落 09-发行/release-manifest.json（给只读接口用）")
     ap.add_argument("--material-only", dest="material_only", action="store_true",
                     help="只校验物料：连载/未杀青阶段把「成片未出」降为 WARN（反馈 P0-6）")
+    ap.add_argument("--no-draft", dest="no_draft", action="store_true",
+                    help="不校验「剪辑工程」这一类（老项目 / 只需母版的内部预览）")
     a = ap.parse_args()
 
     # 先解析参数再导入工作区模块（见文件头的 ¶ 说明）；显式 --workspace 必须**覆盖**环境变量。
@@ -359,6 +370,38 @@ def main() -> int:
     if not checklist.is_file() and not (release / "版权资料清单.md").is_file():
         fails.append("缺 `版权资料/版权资料清单.md`（逐张一句说明；外部人靠它读懂举证链）")
 
+    # ---- 2.5 剪辑工程（平台第三入口，★ 2026-11-10）----
+    #   机器板 `draft-01..NN`：工程树 / 时间轴结构 / 字幕对照 / 素材哈希，由 copyright_kit 出；
+    #   人工截图 `draft-shot-01..NN`：在剪映里打开草稿截时间轴，引擎不伪造 UI。
+    drafts = scan_prefixed(release, DRAFT_PREFIX)
+    shots = scan_prefixed(release, DRAFT_SHOT_PREFIX)
+    draft_note = ("覆盖工程树 / 时间轴结构 / 字幕对照 / 素材哈希，"
+                  "由 `copyright_kit.py edit-draft` 出")
+    if getattr(a, "no_draft", False):
+        notes.append("剪辑工程：已按 --no-draft 跳过校验%s"
+                     % ("（目录里有 %d 张，未计入结论）" % len(drafts) if drafts else ""))
+    elif not drafts:
+        fails.append("版权资料缺「剪辑工程」整类（≥%d 张）：%s ⇒ 先跑 "
+                     "`python stages/edit/scripts/edit_draft.py --workspace \"<ws>\" --ep ep01`，"
+                     "再跑 `python stages/production/scripts/copyright_kit.py "
+                     "--workspace \"<ws>\" edit-draft`" % (ENTRY_MIN, draft_note))
+    else:
+        n = len(drafts)
+        if n < ENTRY_MIN:
+            fails.append("「剪辑工程」只有 %d 张（下限 %d）：%s ⇒ 补到 4–20 张"
+                         % (n, ENTRY_MIN, draft_note))
+        if n > ENTRY_MAX:
+            warns.append("「剪辑工程」有 %d 张，超过上限 %d ⇒ 挑最能对应的 %d 张上传"
+                         % (n, ENTRY_MAX, ENTRY_MAX))
+        for k in sorted(drafts):
+            best = max(drafts[k], key=lambda i: i["long_side"])
+            if best["long_side"] and best["long_side"] < a.min_side:
+                fails.append("`%s` 长边仅 %d px（下限 %d）⇒ 板要按 A4 1654×2339 渲染"
+                             % (best["path"].name, best["long_side"], a.min_side))
+    if not shots:
+        warns.append("未见剪映时间轴截图（`draft-shot-01*.png`）⇒ 工程文件本身平台打不开，"
+                     "建议在剪映里打开草稿截一张时间轴图作为补充（引擎不伪造 UI，只能人工截）")
+
     # ---- 3. 文案 ----
     copy_json = release / "文案" / "copy.json"
     copy_md = release / "文案" / "copy.md"
@@ -374,12 +417,14 @@ def main() -> int:
                  "②权利声明 rights-01..05 已**逐页签字盖章**（主体名与平台商务认证逐字一致）；"
                  "③上传账号与权利人是否同一主体（否 → rights-06 必填）；"
                  "④截图可辨认性（提示词/文件信息肉眼可读，未被打码）；"
-                 "⑤AIGC 标注已落在片头/片尾/文案位（整剧统一）")
+                 "⑤AIGC 标注已落在片头/片尾/文案位（整剧统一）；"
+                 "⑥剪辑工程与成片**逐集对应**（同一集、同一时长；工程打开时间轴总长应等于该集成片）")
 
     return _report(a, ws, release, fails, warns, notes,
                    {"covers": sorted(covers),
                     "entry_a": sorted(entry_a), "entry_b": sorted(entry_b),
                     "rights": sorted(rights),
+                    "drafts": sorted(drafts), "draft_shots": sorted(shots),
                     "legacy": sorted(legacy),
                     "episodes": [f.name for _n, f in sorted(eps.items())]}, downstream)
 
@@ -442,6 +487,7 @@ def _report(a, ws, release, fails, warns, notes, summary, downstream=None) -> in
             print("  %-12s 已备 %s" % ("封面档位", ", ".join(summary["covers"]) or "（无）"))
             row("入口 A 生成过程", len(summary.get("entry_a") or []), ENTRY_MIN)
             row("入口 B 原始文件", len(summary.get("entry_b") or []), ENTRY_MIN)
+            row("剪辑工程", len(summary.get("drafts") or []), ENTRY_MIN)
             row("权利声明", len(summary.get("rights") or []), len(RIGHTS_REQUIRED))
         for w in warns:
             print("  [WARN] %s" % w)

@@ -1,6 +1,53 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-10 更新（V0.7.75 · 新增第 13 节点 `edit.draft`：产出剪映工程，版权资料加第三入口）**
+
+  需求原话是「把现在的剪辑方案板块全部替换掉，产出完整剪映工程文件」。
+  **不能全替换**，理由写进代码而不是口头：剪映 7+ 把「导出」控件藏了，
+  `pyJianYingDraft` 的自动导出只支持 Windows + 剪映 ≤6.8；模板加载在 7+ 也已失效。
+  所以是**双轨并行**——MP4 仍由 ffmpeg 出（唯一发布版来源），剪映工程是**并行的可举证物**。
+
+  | # | 变更 | 说明 |
+  |---|---|---|
+  | 1 | 新增 `stages/edit/scripts/edit_draft.py` | 读 `cues.json` + `bgm-plan.json` + `_master/` 造草稿：视频轨（封面+逐镜 final.mp4）、字幕轨（逐条 cue）、BGM 轨；三轨共用**母版轴** |
+  | 2 | 新增节点 `edit.draft` | 13 节点：`edit.subtitle → edit.draft → edit.release`；判据 `draft` **只认** `draft_manifest.json` 的 `verdict.pass`，不认目录存在 |
+  | 3 | `subtitle.py` 抽 `cover_lead_seconds()` | 唯一真源；`write_ass(offset_s=)`、`verify_render(offset_s=)` 共用 |
+  | 4 | `copyright_kit.py --what edit-draft` | 出口 C 四张 A4：`draft-01-overview / 02-timeline / 03-subtitles / 04-digest`；人工截 `draft-shot-01-<ep>.png` |
+  | 5 | `release_check.py` 加第三类 | `draft-*` 必过（≥4，≤20，长边 ≥1200）；`draft-shot-*` 缺只告警；`--no-draft` 给老项目 |
+  | 6 | Studio | 命令 `media.draft`、`edit.draft` 节点/环节映射、episodes 记录加 `draft` 字段 |
+  | 7 | 依赖 | `requirements-edit.txt`：`pyJianYingDraft==0.3.1`（MIT）；生成草稿在 Linux/macOS 也可用，自动导出不支持 |
+
+  **顺手修掉一个既有静默 bug**：母版封面片头（`master.cover_seconds`，默认 0.8s）从来没被计入
+  ASS/字幕时间 —— `cues.json` 是「片段轴」，母版是「母版轴」。有封面的项目每条字幕早 0.8 秒，
+  而所有断言都通过。现在三处（ASS、剪映工程、渲染自检）都用 `cover_lead_seconds()`。
+
+  防复发：
+  - `test_edit_draft.py` 45 例：亚秒精度（禁用 `trange()`，`0.2→0`、`1.6→2` 会截断）、
+    封面偏移、dB→线性、空 cues 拒绝、**空画面拒绝生成**、**缺镜判不合格**、端到端、
+    **篡改 `draft_content.json` 与断链必须被 `verify()` 抓到**；
+  - `test_copyright_kit` 新增「`draft-NN` 被门禁扫到 / `draft-shot-NN` 不被 `draft` 正则匹配」——
+    防「截 4 张图绕过工程自检」；
+  - `test_feedback_20261020` 的发布资料夹具补 4 张 `draft-*`（口径一变夹具必须跟上，
+    否则它测的是「旧口径物料齐」）。这条正是本次唯一被测试抓到的回归。
+
+  另：`compliance_media_check.py` 字幕带不再写死 0.60，改按项目 `config.subtitle.json` 的
+  `placement` 推导（缺陷 R32：竖屏 0.84 落点被误判成「不像硬字幕」）。
+
+  已知边界（`[待核实]`）：本机**未安装剪映**，字号/落点只能算近似值（`configs/edit-draft.json`
+  的 `text.size` 三语值 + `_size_note`），必须目视校对一次；工程写进剪映草稿目录要 `--drafts-dir`，
+  未实测打开。
+
+  实跑还抓出两个「看起来成功」的坑，一并堵掉：**一段画面都没有**时原来会生成
+  「视频 0 段 / 字幕 9 条」的空壳草稿并报「自检通过」（现在直接拒绝，退出码 3）；
+  **缺镜**原来只打 WARN 就判 pass（现在照落草稿给人看，但结论判不合格）。
+  四张证据板末尾加「这一页证明什么 · 怎么核对」块（只写可核对的事实与命令）。
+
+  回归：pytest **562**（prod 135 / subtitle+web 193 / cloud+video+import+engine+tools 234）
+  ＋ 脚本型（edit 45 / feedback 40 / nodes 22 / release_check 22 / thin_one 16 / asset_md 19）全绿。
+  干净 HEAD 上同样红的 6 个脚本型用例（`test_repo_paths` P01、`workflow_map` 1、
+  `web` 的 connections/new_actions/pipeline/skill_library/llm_e2e）属**既有环境问题**，与本次无关。
+
 - **2026-11-07 更新（V0.7.74 · 版权资料改口径：平台两个入口 + 权利声明，旧 4+4 废止）**
 
   真实驳回：TikTok Drama Center **「材料不足：提交的版权材料不足以证明本剧所需的相关权利。」**

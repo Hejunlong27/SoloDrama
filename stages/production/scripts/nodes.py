@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""nodes.py —— 五环节 12 节点的状态机（调度器的唯一真源）
+"""nodes.py —— 五环节 13 节点的状态机（调度器的唯一真源）
 
 它替代了什么
 ------------
@@ -8,7 +8,7 @@
 `workflow.py` 里再写一遍 S1–S11，三份文档各自声称自己是真源。三套编号对不上，
 于是「现在该干什么」这个问题有三个答案。
 
-现在只有一份：**五环节 12 节点**，每个节点六个字段齐全（触发 / 读 / 产物 / 判据 / 接替 / 回流）。
+现在只有一份：**五环节 13 节点**，每个节点六个字段齐全（触发 / 读 / 产物 / 判据 / 接替 / 回流）。
 
 为什么流程归代码、内容归模型
 ----------------------------
@@ -94,7 +94,7 @@ STAGES = [
 ]
 
 # ===========================================================================
-# 12 节点（导入 3 / 资产 1 / 分镜图 1 / 出片 3 / 剪辑 4）
+# 13 节点（导入 3 / 资产 1 / 分镜图 1 / 出片 3 / 剪辑 5）
 # ---------------------------------------------------------------------------
 # 每个节点六个字段：
 #   trigger  触发命令（唯一入口，重复执行结果相同）
@@ -182,13 +182,23 @@ NODES: list = [
     {"id": "edit.subtitle", "stage": "edit", "ep": True,
      "trigger": "drama do edit.subtitle --ep ep01",
      "reads": ["edit.upscale"], "output": "07-成片/<ep>/*_subbed.mp4",
-     "check": "subtitled", "next": "edit.release", "reflow": ["edit.upscale"],
+     "check": "subtitled", "next": "edit.draft", "reflow": ["edit.upscale"],
      # 字幕时间只认对齐结果（ASR/CTC）。cues=0 直接拒绝出片 —— 旧行为会静默烧一条空字幕
      # 还叫 `_subbed.mp4`，与「已加字幕」从文件名上分不出来。
      "run": "python stages/subtitle/scripts/subtitle.py --stage render"},
+    {"id": "edit.draft", "stage": "edit", "ep": True,
+     "trigger": "drama do edit.draft --ep ep01",
+     "reads": ["edit.subtitle"], "output": "07-成片/<ep>/_draft/",
+     "check": "draft", "next": "edit.release", "reflow": ["edit.subtitle"],
+     # 剪映工程（草稿）：逐镜视频 + 字幕 + BGM 的可编辑时间轴，与发布版同源同序。
+     # ★ 它是**并行产物**，不是替代品：剪映 7+ 已隐藏导出控件，MP4 仍由 ffmpeg 链出。
+     #   两轨必须一致 ⇒ 本节点判据读 manifest 里的 verdict.pass（生成器自己核过结构）。
+     #   确实不需要工程（例如只要一条母版做内部预览）时用 `drama skip edit.draft` 放行，
+     #   跳过会连带让 release 的上游按 skipped 处理，不阻塞导出。
+     "run": "python stages/edit/scripts/edit_draft.py"},
     {"id": "edit.release", "stage": "edit", "ep": True,
      "trigger": "drama do edit.release --ep ep01",
-     "reads": ["edit.subtitle"], "output": "09-发行/剧集/EpisodeNN.mp4",
+     "reads": ["edit.draft"], "output": "09-发行/剧集/EpisodeNN.mp4",
      "check": "release", "next": "", "reflow": ["edit.subtitle"],
      # 按集导出，不是 --all：节点本身是 ep 级的，--all 会把其它集一起过一遍。
      "run": "python stages/production/scripts/release_export.py --apply"},
@@ -536,6 +546,25 @@ def check_node(ctx: Ctx, node: dict) -> tuple:
             return False, "找不到 %s" % pat
         return True, "%s（%.1f MB）" % (hits[0].name, hits[0].stat().st_size / 1048576.0)
 
+    if spec == "draft":
+        # 剪映工程：判据不是「目录在不在」，而是**生成器自己的自检结论**。
+        # 理由：草稿写成功了但时间轴错位（字幕没加封面偏移、片段被改），
+        # 目录照样在 —— 那种工程拿去送审比没有更糟。所以只认 verdict.pass。
+        base = ctx.out / (ctx.ep or "ep01") / "_draft"
+        man = base / "draft_manifest.json"
+        if not man.is_file():
+            return False, "找不到 %s ⇒ `drama do edit.draft --ep %s`" % (man, ctx.ep or "ep01")
+        d = _read_json(man, {}) or {}
+        v = d.get("verdict") or {}
+        if not v.get("pass"):
+            why = "；".join((v.get("fails") or [])[:3]) or "自检未通过（报告里没有失败项，可疑）"
+            return False, "剪映工程自检不过：%s" % why
+        c = v.get("counts") or {}
+        return True, "剪映工程 %s（视频 %s 段 / 字幕 %s 条 / BGM %s 段 / %.1fs）" % (
+            (d.get("draft_dir") or "").split(os.sep)[-1] or "draft",
+            c.get("video"), c.get("text"), c.get("audio"),
+            float(d.get("total_duration_s") or 0))
+
     if spec == "release":
         d = ctx.ws / "09-发行" / "剧集"
         got = {p.name for p in d.glob("Episode*.mp4")} if d.is_dir() else set()
@@ -583,7 +612,8 @@ def _run_checker_cmd(ctx: Ctx, node: dict, cmd: str) -> tuple:
         cand = [HERE / script,
                 ROOT / "stages" / "assets" / "scripts" / script,
                 ROOT / "stages" / "import" / script,
-                ROOT / "stages" / "subtitle" / "scripts" / script]
+                ROOT / "stages" / "subtitle" / "scripts" / script,
+                ROOT / "stages" / "edit" / "scripts" / script]
         path = next((x for x in cand if x.is_file()), cand[0])
     args = [sys.executable, str(path)] + extra
     if "--workspace" not in extra:
@@ -723,7 +753,7 @@ def _node_state_uncached(ctx: Ctx, node: dict, _memo: dict | None = None) -> dic
 
 def evaluate(ctx: Ctx) -> dict:
     """全量状态快照。★ 2026-11-01：每条节点带 `stage`，并附 `stages` 定义 ——
-    Studio 的流程视图（adapters.norm_workflow）据此把 12 节点聚合成 5 环节，
+    Studio 的流程视图（adapters.norm_workflow）据此把 13 节点聚合成 5 环节，
     不再依赖已删除的 `workflow.py`（S1–S11 那套）。"""
     memo = {}                    # 一轮评估一份备忘录：上游节点会被反复问
     rows = []
@@ -992,7 +1022,7 @@ ICON = {"passed": "OK  ", "failed": "FAIL", "absent": "--  ", "stale": "OLD ",
 
 
 def render_status(ev: dict) -> str:
-    L_ = ["五环节 12 节点 · 状态", "=" * 92]
+    L_ = ["五环节 13 节点 · 状态", "=" * 92]
     counts = ev["counts"]
     L_.append("通过 %d ｜ 不过 %d ｜ 缺失 %d ｜ 过期 %d ｜ 阻塞 %d ｜ 跳过 %d"
               % (counts["passed"], counts["failed"], counts["absent"],
@@ -1013,7 +1043,7 @@ def render_status(ev: dict) -> str:
 
 
 def render_graph() -> str:
-    L_ = ["五环节 12 节点 · 触发与接替", "=" * 100]
+    L_ = ["五环节 13 节点 · 触发与接替", "=" * 100]
     for st in STAGES:
         L_.append("")
         L_.append("【%s】%s" % (st["name"], st["why"]))
@@ -1043,7 +1073,7 @@ def _resolve_ws(v) -> pathlib.Path:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="五环节 12 节点状态机（只读磁盘，确定性）")
+    ap = argparse.ArgumentParser(description="五环节 13 节点状态机（只读磁盘，确定性）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("next", help="打印下一步该做什么（不执行）")
@@ -1077,7 +1107,7 @@ def main(argv=None) -> int:
     if a.cmd == "next":
         nx = next_node(ctx)
         if not nx:
-            print("[DONE] 12 节点全部通过。")
+            print("[DONE] 13 节点全部通过。")
             return EXIT_OK
         if a.json:
             print(json.dumps({"node": nx["node"]["id"], "stage": nx["node"]["stage"],

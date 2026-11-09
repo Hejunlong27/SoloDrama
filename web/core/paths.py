@@ -25,6 +25,8 @@ ASSETS_SCRIPTS = STAGES_DIR / "assets" / "scripts"
 COMIFY_SCRIPTS = STAGES_DIR / "assets" / "comfyui"
 VIDEO_SCRIPTS = STAGES_DIR / "video" / "workflow" / "scripts"
 SUBTITLE_SCRIPTS = STAGES_DIR / "subtitle" / "scripts"
+# ★ 2026-11-10：剪辑工程（剪映草稿）生成器从此独立成阶段，不再塞进 subtitle/scripts
+EDIT_SCRIPTS = STAGES_DIR / "edit" / "scripts"
 TOOLS_DIR = REPO_ROOT / "tools"
 CONFIGS_DIR = REPO_ROOT / "configs"
 

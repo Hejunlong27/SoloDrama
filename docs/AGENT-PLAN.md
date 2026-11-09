@@ -34,7 +34,7 @@
 
 | 环节 | 现在 | 缺什么 |
 |---|---|---|
-| 流程状态 | `nodes.py` 12 节点状态机，只读磁盘 | 缺「循环执行」的驱动 —— 现在靠人 `next` 一次 `do` 一次 |
+| 流程状态 | `nodes.py` 13 节点状态机，只读磁盘 | 缺「循环执行」的驱动 —— 现在靠人 `next` 一次 `do` 一次 |
 | 执行 | 每个节点有独立脚本，能单独跑 | 缺统一的「下一次重试换什么」策略 |
 | 判定 | 每个节点有机器判据（退出码 0/2/3/4） | 判据不过时，谁来修、修什么，全靠人 |
 | 成本 | `cost_model` 能预估，`cost_ledger` 能记账 | 缺「预授权额度」——现在每笔都要确认 |
@@ -75,7 +75,7 @@
 
 ### 4.1 流程由确定性状态机定，不由 LLM 定
 
-`nodes.py` 的 12 节点已经写好「谁读谁、判据是什么、不过能回哪」。
+`nodes.py` 的 13 节点已经写好「谁读谁、判据是什么、不过能回哪」。
 Runner 的 Supervisor 只做一件事：`while True: node = next(); run(node); check(node)`。
 
 LLM 只在**一个局部**出现：`Critic` —— 判据不过时，读错误日志与产物，产出「这次改什么」
@@ -130,7 +130,7 @@ LLM 只在**一个局部**出现：`Critic` —— 判据不过时，读错误�
 
 | 交付 | 内容 |
 |---|---|
-| `stages/agent/runner.py` | CLI：`python -m stages.agent.runner --ws <ws> --ep ep01`，循环 12 节点直到 release |
+| `stages/agent/runner.py` | CLI：`python -m stages.agent.runner --ws <ws> --ep ep01`，循环 13 节点直到 release |
 | `stages/agent/journal.py` | jsonl 追加 + 断点恢复 |
 | 复用 | `nodes.py`（状态机）、`commands.py`（命令声明与 argv 构造）、`cost_model`（预估） |
 

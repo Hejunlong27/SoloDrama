@@ -1,0 +1,18 @@
+# 剪辑工程（剪映草稿）依赖 · 单独一份，不进主 requirements.txt
+#
+# 为什么分开：
+#   主 requirements.txt 是「跑得动整条引擎」的最小集（httpx + Pillow）。
+#   这个是 opt-in：只有要产剪映工程 / 出剪辑工程版权板时才需要。
+#   装它会拉进 uiautomation（仅 Windows 用于自动导出，本仓库**不用**那条链路）、
+#   comtypes、pymediainfo、imageio，多 4 个包。
+#
+# 安装：pip install -r requirements-edit.txt
+#
+# 已验证环境：Windows 10/11 + Python 3.13.14（实测可生成 draft_content.json 并通过自检）
+#   ⚠ `pyJianYingDraft.__init__` 里 `JianyingController` 只在 `sys.platform == "win32"` 时导入
+#     （见包内 __init__.py 的 ISWIN 分支），所以**生成草稿**在 Linux/macOS 也可用；
+#     自动导出只能在 Windows + 剪映 6.8 及以下，本仓库不接。
+#
+# 版本锁定说明：0.3.1 是实测版本（`append_track(TrackSpec)` 新接口，旧的 `add_track` 已删）。
+# 升级前先跑 `python stages/edit/scripts/tests/test_edit_draft.py`。
+pyJianYingDraft==0.3.1
