@@ -272,6 +272,120 @@ def case_end_to_end(tmp: pathlib.Path):
     check("自检结论落在清单里", man["verdict"]["pass"] is True, str(man["verdict"]))
 
 
+def _not_black(jpg: pathlib.Path) -> bool:
+    try:
+        from PIL import Image
+        im = Image.open(jpg).convert("L")
+        px = list(im.getdata())
+        return (sum(px) / max(1, len(px))) > 8
+    except Exception:                     # noqa: BLE001  没装 Pillow 就不判，别让环境问题伪装成缺陷
+        return True
+
+
+def case_meta_for_jianying_home(tmp: pathlib.Path):
+    """首页的「时长 + 缩略图」只读 `draft_meta_info.json` —— 不补就是 00:00 + 黑块。
+
+    本机实测（剪映专业版 10.8.0.14162）：这份元信息写成**明文 JSON** 剪映照样读得进去
+    （补上 tm_duration/draft_cover 后，首页卡片立刻从「00:00 + 黑块」变成「00:03 + 真实画面」）。
+    这条用例守的是「送审时对方在首页看到的是不是一份像样的工程」。
+    """
+    if not (FFMPEG and HAS_LIB):
+        skip("首页元信息（时长 + 缩略图）", "缺 ffmpeg 或 pyJianYingDraft")
+        return
+    ws = build_ws(tmp / "meta")
+    rc, out, err = run_cli(ws, "--ep", "ep01")
+    ddir = ws / "07-成片" / "ep01" / "_draft" / "ep01_剪映工程"
+    check("元信息用例：生成成功", rc == 0, "rc=%s err=%s" % (rc, err[-300:]))
+    mp = ddir / "draft_meta_info.json"
+    if not mp.is_file():
+        check("draft_meta_info.json 存在", False, str(mp))
+        return
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    # 封面 0.8s + 2.0s + 1.5s = 4.3s
+    check("meta 时长 = 时间轴总时长（4.3s）", meta.get("tm_duration") == 4_300_000,
+          str(meta.get("tm_duration")))
+    check("meta 草稿名正确", meta.get("draft_name") == "ep01_剪映工程",
+          str(meta.get("draft_name")))
+    cvp_s = meta.get("draft_cover") or ""
+    cvp = pathlib.Path(cvp_s)
+    check("meta 缩略图指向真实文件", bool(cvp_s) and cvp.is_file(), cvp_s or "（空）")
+    if cvp.is_file():
+        check("缩略图不是纯黑（抽的是画面中段，不是淡入黑场）", _not_black(cvp), str(cvp))
+    check("自检结论里点了元信息", "草稿首页元信息" in out, out[-160:])
+
+
+def case_meta_tamper_detected(tmp: pathlib.Path):
+    """首页时长被改成 0 时必须判不合格 —— 否则「生成成功」只是一句话。"""
+    if not (FFMPEG and HAS_LIB):
+        skip("自检抓到首页时长被改", "缺 ffmpeg 或 pyJianYingDraft")
+        return
+    import edit_draft as E
+    ws = build_ws(tmp / "metatamper")
+    rc, _out, err = run_cli(ws, "--ep", "ep01")
+    ddir = ws / "07-成片" / "ep01" / "_draft" / "ep01_剪映工程"
+    mp = ddir / "draft_meta_info.json"
+    if rc != 0 or not mp.is_file():
+        check("篡改用例：生成成功", False, "rc=%s err=%s" % (rc, err[-200:]))
+        return
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    meta["tm_duration"] = 0                       # 模拟首页显示 00:00
+    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    cfg = E.load_edit_config(ws)
+    tl = E.build_timeline(E.collect(ws, "ep01"), cfg)
+    v = E.verify(ddir, tl, cfg)
+    check("首页时长为 0 时自检判不合格", v["pass"] is False, str(v.get("fails")))
+    check("失败原因点名 tm_duration",
+          any("tm_duration" in f for f in (v.get("fails") or [])), str(v.get("fails")))
+
+
+def case_no_draft_cover(tmp: pathlib.Path):
+    """`--no-draft-cover` 只是不画缩略图，不许把自检搞成不过。"""
+    if not (FFMPEG and HAS_LIB):
+        skip("--no-draft-cover", "缺 ffmpeg 或 pyJianYingDraft")
+        return
+    ws = build_ws(tmp / "nocover")
+    rc, _out, err = run_cli(ws, "--ep", "ep01", "--no-draft-cover")
+    ddir = ws / "07-成片" / "ep01" / "_draft" / "ep01_剪映工程"
+    check("--no-draft-cover：不生成 draft_cover.jpg",
+          not (ddir / "draft_cover.jpg").is_file(), str(ddir))
+    meta = json.loads((ddir / "draft_meta_info.json").read_text(encoding="utf-8"))
+    check("--no-draft-cover：meta 的 draft_cover 为空", meta.get("draft_cover") == "",
+          str(meta.get("draft_cover")))
+    check("--no-draft-cover：自检仍通过", rc == 0, "rc=%s err=%s" % (rc, err[-300:]))
+
+
+def case_detect_jianying_root(tmp: pathlib.Path):
+    """草稿根目录要按 `draft_root_path` 众数取，不能信 `root_path`。
+
+    本机实测的坑：35 条草稿全在 `D:\\Program Files (x86)\\JianyingPro Drafts`，
+    而索引里的 `root_path` 还写着 C 盘默认位置 —— 照它生成，剪映首页根本看不见。
+    """
+    import edit_draft as E
+    root = tmp / "jydetect"
+    a = root / "D_drive_drafts"
+    b = root / "C_default_drafts"
+    a.mkdir(parents=True)
+    b.mkdir(parents=True)
+    idx = root / "root_meta_info.json"
+    idx.write_text(json.dumps({
+        "root_path": str(b).replace("\\", "/"),        # 默认位置，不算数
+        "all_draft_store": [
+            {"draft_name": "x", "draft_root_path": str(a)},
+            {"draft_name": "y", "draft_root_path": str(a)},
+            {"draft_name": "z", "draft_root_path": str(b)},
+        ]}, ensure_ascii=False), encoding="utf-8")
+    got, why = E.detect_jianying_root(idx)
+    check("探测取 draft_root_path 众数而非 root_path", got == a, "%s <- %s" % (got, why))
+
+    idx.write_text(json.dumps({"root_path": str(b).replace("\\", "/"),
+                               "all_draft_store": []}, ensure_ascii=False), encoding="utf-8")
+    got2, why2 = E.detect_jianying_root(idx)
+    check("一条草稿都没有时退回 root_path", got2 == b, "%s <- %s" % (got2, why2))
+
+    got3, why3 = E.detect_jianying_root(root / "nope.json")
+    check("索引缺失时返回 None 并说明原因", got3 is None and "没找到" in why3, why3)
+
+
 def case_verify_catches_tamper(tmp: pathlib.Path):
     if not (FFMPEG and HAS_LIB):
         skip("自检能抓到篡改", "缺 ffmpeg 或 pyJianYingDraft")
@@ -404,13 +518,20 @@ def main() -> int:
             case_no_shots_refused(tmp)
             case_missing_shot_fails_verdict(tmp)
             case_end_to_end(tmp)
+            case_meta_for_jianying_home(tmp)
+            case_meta_tamper_detected(tmp)
+            case_no_draft_cover(tmp)
+            case_detect_jianying_root(tmp)
             case_verify_catches_tamper(tmp)
             case_copy_media(tmp)
             case_bgm(tmp)
             case_dry_run_writes_nothing(tmp)
         else:
             for n in ("空 cues 被拒绝", "没有画面时拒绝生成", "缺镜时判不合格",
-                      "端到端生成 + 自检", "自检能抓到篡改",
+                      "端到端生成 + 自检", "首页元信息（时长 + 缩略图）",
+                      "自检抓到首页时长被改", "--no-draft-cover",
+                      "草稿根目录探测（draft_root_path 众数）",
+                      "自检能抓到篡改",
                       "--copy-media 让工程可搬走", "BGM 轨（含 dB→线性换算）",
                       "dry-run 不写盘"):
                 skip(n, "无 ffmpeg")

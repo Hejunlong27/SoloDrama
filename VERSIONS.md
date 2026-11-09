@@ -23,9 +23,10 @@
   而所有断言都通过。现在三处（ASS、剪映工程、渲染自检）都用 `cover_lead_seconds()`。
 
   防复发：
-  - `test_edit_draft.py` 45 例：亚秒精度（禁用 `trange()`，`0.2→0`、`1.6→2` 会截断）、
+  - `test_edit_draft.py` **59 例**：亚秒精度（禁用 `trange()`，`0.2→0`、`1.6→2` 会截断）、
     封面偏移、dB→线性、空 cues 拒绝、**空画面拒绝生成**、**缺镜判不合格**、端到端、
-    **篡改 `draft_content.json` 与断链必须被 `verify()` 抓到**；
+    **篡改 `draft_content.json` 与断链必须被 `verify()` 抓到**、**首页时长被改成 0 必须判不合格**、
+    **草稿根目录探测取 `draft_root_path` 众数而非 `root_path`**；
   - `test_copyright_kit` 新增「`draft-NN` 被门禁扫到 / `draft-shot-NN` 不被 `draft` 正则匹配」——
     防「截 4 张图绕过工程自检」；
   - `test_feedback_20261020` 的发布资料夹具补 4 张 `draft-*`（口径一变夹具必须跟上，
@@ -34,9 +35,26 @@
   另：`compliance_media_check.py` 字幕带不再写死 0.60，改按项目 `config.subtitle.json` 的
   `placement` 推导（缺陷 R32：竖屏 0.84 落点被误判成「不像硬字幕」）。
 
-  已知边界（`[待核实]`）：本机**未安装剪映**，字号/落点只能算近似值（`configs/edit-draft.json`
-  的 `text.size` 三语值 + `_size_note`），必须目视校对一次；工程写进剪映草稿目录要 `--drafts-dir`，
-  未实测打开。
+  ### 剪映专业版 10.8.0.14162 实测（当日补测，已改口径）
+
+  上一版记的「本机未安装剪映」是**错的**：剪映装在公开目录而非 `AppData\Local\JianyingPro\Apps`。
+  实测四条，都写进 `docs/production/剪映工程.md §七`：
+
+  | 事项 | 实测 |
+  |---|---|
+  | 安装 / 索引 | `D:\Program Files (x86)\JianyingPro`（10.8.0.14162）；索引在 `%LOCALAPPDATA%\...\com.lveditor.draft\root_meta_info.json` |
+  | **真实草稿根目录** | `D:\Program Files (x86)\JianyingPro Drafts` —— 索引里的 `root_path` 仍指 C 盘默认位置，**照它生成剪映看不见** |
+  | 剪映自己写的草稿 | `draft_content.json` / `draft_meta_info.json` 均为加密串，不是明文 |
+  | 剪映读明文 meta | **能**。补 `tm_duration`/`draft_cover` 后首页卡片从「00:00 + 黑块」变「01:01 + 真实画面」 |
+  | 自动发现新草稿 | **会**。草稿目录放进根目录，启动 3 秒内注册进索引（35→36），无需手改索引 |
+
+  据此新增：`--to-jianying`（自动探测草稿根目录，生成完开剪映就能看见）、
+  `detect_jianying_root()`（取 `draft_root_path` 众数）、`_patch_meta()` + `_make_cover_jpg()`（首页时长与缩略图）。
+  清单/报告改为落两处（`07-成片/<ep>/_draft/` 供节点判据 + 草稿目录内随草稿搬走），
+  不再把 `draft_manifest.json` 扔进剪映草稿**根目录**。
+
+  仍缺一步：**双击打开后时间轴是否完整**需要人在桌面确认一次（脚本所在会话没有交互桌面，
+  不能模拟点击），验证前只能说「剪映已列出工程且时长/缩略图正确」，不能说「一定能打开」。
 
   实跑还抓出两个「看起来成功」的坑，一并堵掉：**一段画面都没有**时原来会生成
   「视频 0 段 / 字幕 9 条」的空壳草稿并报「自检通过」（现在直接拒绝，退出码 3）；
@@ -44,7 +62,7 @@
   四张证据板末尾加「这一页证明什么 · 怎么核对」块（只写可核对的事实与命令）。
 
   回归：pytest **562**（prod 135 / subtitle+web 193 / cloud+video+import+engine+tools 234）
-  ＋ 脚本型（edit 45 / feedback 40 / nodes 22 / release_check 22 / thin_one 16 / asset_md 19）全绿。
+  ＋ 脚本型（edit **59** / feedback 40 / nodes 22 / release_check 22 / thin_one 16 / asset_md 19）全绿。
   干净 HEAD 上同样红的 6 个脚本型用例（`test_repo_paths` P01、`workflow_map` 1、
   `web` 的 connections/new_actions/pipeline/skill_library/llm_e2e）属**既有环境问题**，与本次无关。
 

@@ -684,11 +684,17 @@ _add(_c("media.draft", "5 剪辑", "④ 剪映工程（草稿）", "edit_draft",
         danger=WRITE,
         flags={"--ep": "ep"},
         bools={"--copy-media": "copy_media", "--no-cover": "no_cover",
-               "--no-bgm": "no_bgm", "--json": "as_json"},
+               "--no-bgm": "no_bgm", "--to-jianying": "to_jianying",
+               "--no-draft-cover": "no_draft_cover", "--json": "as_json"},
         params=[P_EP(required=True),
-                Param("copy_media", "素材拷进草稿目录", "bool", default=False)],
+                Param("copy_media", "素材拷进草稿目录", "bool", default=False),
+                Param("to_jianying", "直接生成到剪映草稿位置（自动探测）", "bool",
+                      default=False),
+                Param("no_draft_cover", "不生成首页缩略图", "bool", default=False)],
         help="逐镜视频 + 字幕 + BGM 的可编辑时间轴，与发布版同源同序；"
-             "工程是版权资料第三入口，**不替代** MP4 导出（剪映 7+ 已隐藏导出控件）。",
+             "工程是版权资料第三入口，**不替代** MP4 导出（剪映 7+ 已隐藏导出控件）。"
+             "加 --to-jianying 会读剪映索引里的 draft_root_path 众数，"
+             "把工程直接落进剪映草稿位置，启动剪映首页即可见。",
         agent="生成后告我段数/字幕条数/BGM 段数/总时长，以及自检是否通过；"
               "自检不过就不要拿去送审，先看失败项。"))
 _add(_c("media.preview", "5 剪辑", "字幕快速预览", "subtitle",

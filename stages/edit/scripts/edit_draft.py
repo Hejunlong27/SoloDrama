@@ -45,10 +45,16 @@
 用法
 ----
     python stages/edit/scripts/edit_draft.py --workspace "<剧目录>" --ep ep01
+    python stages/edit/scripts/edit_draft.py --workspace "<剧目录>" --ep ep01 --to-jianying
     python stages/edit/scripts/edit_draft.py --workspace "<剧目录>" --ep ep01 \\
-        --drafts-dir "C:/Users/me/AppData/Local/JianyingPro/User Data/Projects/com.lveditor.draft"
+        --drafts-dir "D:/Program Files (x86)/JianyingPro Drafts"
     python stages/edit/scripts/edit_draft.py --workspace "<剧目录>" --ep ep01 --dry-run
     python stages/edit/scripts/edit_draft.py --workspace "<剧目录>" --ep ep01 --copy-media
+
+`--to-jianying` 会自己去 `%LOCALAPPDATA%\\JianyingPro\\User Data\\Projects\\com.lveditor.draft
+\\root_meta_info.json` 里读各草稿的 `draft_root_path`，取众数当草稿根目录 —— 因为
+剪映「全局设置-草稿位置」改过之后，`root_path` 字段并不会跟着变（本机实测：`root_path`
+指 C 盘，35 条草稿全在 D 盘，照 `root_path` 生成等于白干）。
 
 退出码
 ------
@@ -66,6 +72,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 
 try:
@@ -334,8 +341,101 @@ def _volume_of(gain_db: float, ceiling: float = 1.0) -> float:
 
 
 # ---------------------------------------------------------------- 写草稿
+JIANYING_INDEX_TAIL = ("JianyingPro", "User Data", "Projects",
+                       "com.lveditor.draft", "root_meta_info.json")
+
+
+def detect_jianying_root(index_path=None) -> tuple:
+    """探测剪映「全局设置-草稿位置」指向的**真实**目录。
+
+    为什么不能只看 `root_path`：那只是默认安装位置，用户改过草稿位置后它不跟着变。
+    本机实测（2026-11-10，剪映专业版 10.8.0.14162）：`root_path` 写的是
+    `C:/Users/.../AppData/Local/.../com.lveditor.draft`，而 35 条草稿的
+    `draft_root_path` 全是 `D:\\Program Files (x86)\\JianyingPro Drafts`。
+    照 `root_path` 生成，剪映首页根本看不见这份工程。
+
+    唯一可信的证据是每条草稿记的 `draft_root_path`，取众数。没有草稿可投票时才退回
+    `root_path`（新装剪映、一条草稿都没有的情况）。
+    """
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    cands = []
+    if index_path is not None:
+        cands.append(pathlib.Path(index_path))
+    elif base:
+        cands.append(pathlib.Path(base).joinpath(*JIANYING_INDEX_TAIL))
+    for p in cands:
+        js = _read_json(p, None)
+        if not isinstance(js, dict):
+            continue
+        votes = {}
+        for e in js.get("all_draft_store") or []:
+            rp = (e or {}).get("draft_root_path") or ""
+            if rp:
+                votes[rp] = votes.get(rp, 0) + 1
+        for rp, n in sorted(votes.items(), key=lambda kv: -kv[1]):
+            cand = pathlib.Path(rp)
+            if cand.is_dir():
+                return cand, "取 %d 条草稿的 draft_root_path 众数" % sum(votes.values())
+        rp = js.get("root_path") or ""
+        if rp and pathlib.Path(rp).is_dir():
+            return pathlib.Path(rp), "取自 root_meta_info.root_path（还没有草稿可投票）"
+    return None, "没找到剪映草稿索引：%s" % (cands[0] if cands else "环境变量 LOCALAPPDATA 缺失")
+
+
+def _make_cover_jpg(clip: dict, draft_dir: pathlib.Path, width: int = 436) -> str:
+    """抽首段画面的一帧当草稿缩略图。
+
+    剪映首页的卡片缩略图只认 `draft_cover.jpg`，不认 `draft_content.json` 里的素材。
+    没有它卡片就是黑块 —— 送审时对方在首页看到一排黑块，第一印象就是「空的」。
+    抽帧失败不算不合格（缩略图不是必要条件），返回 "" 由调用方记录。
+    """
+    out = draft_dir / "draft_cover.jpg"
+    exe = shutil.which("ffmpeg") or "ffmpeg"
+    # 取中段而不是第 0 帧：很多片子首帧是黑场/淡入，抽出来还是黑块
+    dur = float(clip.get("dur_us") or 0) / 1e6
+    ss = min(0.5, max(0.0, dur / 2.0)) if dur > 0 else 0.0
+    cmd = [exe, "-y", "-ss", "%.3f" % ss, "-i", str(clip["path"]),
+           "-frames:v", "1", "-vf", "scale=%d:-1" % int(width),
+           "-update", "1", str(out)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if r.returncode != 0 or not out.is_file():
+        return ""
+    return str(out)
+
+
+def _patch_meta(draft_dir: pathlib.Path, name: str, drafts_dir: pathlib.Path,
+                total_us: int, cover_jpg: str) -> dict:
+    """补 `draft_meta_info.json` 的首页元信息：名称 / 路径 / 时长 / 缩略图。
+
+    剪映首页的「时长」和「封面」来自这份 meta，与 `draft_content.json` 无关。
+    pyJianYingDraft 拷的是空白模板（`tm_duration=0`、`draft_cover` 指向不存在的文件），
+    所以不补的话卡片一律显示 `00:00` + 黑块。
+
+    本机实测（剪映 10.8.0.14162）：补写成**明文 JSON** 后剪映照样读得进去 ——
+    它是「先尝试解密，失败再按明文解析」，不是只认一种。所以这里不做加密。
+    """
+    p = draft_dir / "draft_meta_info.json"
+    meta = _read_json(p, None)
+    if not isinstance(meta, dict):
+        return {"written": False,
+                "reason": "draft_meta_info.json 不是明文 JSON（被第三方加密过），未改写"}
+    meta["draft_name"] = name
+    # 实测口径：fold 用正斜杠，root 用反斜杠 —— 跟剪映自己写的一致
+    meta["draft_fold_path"] = str(draft_dir).replace("\\", "/")
+    meta["draft_root_path"] = str(drafts_dir)
+    meta["draft_cover"] = (str(cover_jpg).replace("\\", "/") if cover_jpg else "")
+    meta["tm_duration"] = int(total_us)
+    _write_json(p, meta)
+    return {"written": True, "tm_duration": int(total_us),
+            "draft_cover": meta["draft_cover"]}
+
+
 def write_draft(data: dict, tl: dict, edit_cfg: dict, drafts_dir: pathlib.Path,
-                name: str, *, allow_replace: bool = True, copy_media: bool = False) -> dict:
+                name: str, *, allow_replace: bool = True, copy_media: bool = False,
+                make_draft_cover: bool = True) -> dict:
     d = _draft_lib()
     drafts_dir.mkdir(parents=True, exist_ok=True)
     W = int(edit_cfg["canvas"]["width"])
@@ -416,12 +516,22 @@ def write_draft(data: dict, tl: dict, edit_cfg: dict, drafts_dir: pathlib.Path,
             atrack = None
 
     script.save()
+
+    # 缩略图要从**真实画面**抽，不能拿片头封面（那张是静帧，抽帧超出时长会得到空文件）
+    first_real = next((c for c in tl["video"] if c.get("kind") == "video"), None)
+    cover_jpg = ""
+    if make_draft_cover and first_real:
+        cover_jpg = _make_cover_jpg(first_real, draft_dir)
+    meta = _patch_meta(draft_dir, name, drafts_dir, tl["total_us"], cover_jpg)
+
     return {"draft_dir": str(draft_dir), "canvas": [W, H], "fps": fps,
-            "tracks": {"video": 1, "text": 1 if ttrack else 0, "audio": 1 if atrack else 0}}
+            "tracks": {"video": 1, "text": 1 if ttrack else 0, "audio": 1 if atrack else 0},
+            "cover_jpg": cover_jpg, "meta": meta}
 
 
 # ---------------------------------------------------------------- 自检
-def write_draft_safe(data, tl, edit_cfg, drafts_dir, name, *, allow_replace, copy_media):
+def write_draft_safe(data, tl, edit_cfg, drafts_dir, name, *, allow_replace, copy_media,
+                     make_draft_cover=True):
     """`write_draft` 的外壳：把「同名草稿已存在」翻译成人能读的处置方式。
 
     为什么不让 `FileExistsError` 直接冒到终端：它的栈顶在第三方库里，
@@ -429,7 +539,8 @@ def write_draft_safe(data, tl, edit_cfg, drafts_dir, name, *, allow_replace, cop
     """
     try:
         return write_draft(data, tl, edit_cfg, drafts_dir, name,
-                           allow_replace=allow_replace, copy_media=copy_media)
+                           allow_replace=allow_replace, copy_media=copy_media,
+                           make_draft_cover=make_draft_cover)
     except FileExistsError:
         raise SystemExit(
             "草稿已存在且指定了 --no-replace：%s\n"
@@ -533,6 +644,22 @@ def verify(draft_dir: pathlib.Path, tl: dict, edit_cfg: dict,
     notes.append("素材条目 %d 个全部可读" % checked)
     notes.append("视频 %d 段 / 字幕 %d 条 / BGM %d 段 / 总时长 %.3fs"
                  % (len(vsegs), len(tsegs), len(asegs), got_total / 1e6))
+
+    # 首页元信息：剪映列表页的时长与缩略图只读这份 meta。
+    # 写错不会让工程打不开，但会让卡片显示 00:00 + 黑块 —— 送审时等于自证「空工程」。
+    meta = _read_json(draft_dir / "draft_meta_info.json", None)
+    meta_note = "非明文 JSON（未改写）"
+    if isinstance(meta, dict):
+        tm = int(meta.get("tm_duration") or 0)
+        if abs(tm - want_total) > 1000:
+            fails.append("draft_meta_info.tm_duration=%d µs ≠ 时间轴 %.3fs"
+                         " ⇒ 剪映首页会显示错误时长" % (tm, want_total / 1e6))
+        cvp = meta.get("draft_cover") or ""
+        if cvp and not pathlib.Path(cvp).is_file():
+            fails.append("草稿缩略图断链：%s" % cvp)
+        meta_note = "时长 %.3fs / 缩略图 %s" % (tm / 1e6, "有" if cvp else "无")
+    notes.append("草稿首页元信息：%s" % meta_note)
+
     return {"pass": not fails, "fails": fails, "notes": notes,
             "total_s": round(got_total / 1e6, 3),
             "counts": {"video": len(vsegs), "text": len(tsegs), "audio": len(asegs),
@@ -626,6 +753,11 @@ def main(argv=None) -> int:
     ap.add_argument("--drafts-dir", default=None,
                     help="剪映草稿根目录（剪映「全局设置-草稿位置」那个目录）；"
                          "不给则落 <ws>/07-成片/<ep>/_draft/")
+    ap.add_argument("--to-jianying", dest="to_jianying", action="store_true",
+                    help="直接生成到剪映「全局设置-草稿位置」（自动探测），"
+                         "启动剪映首页就能看到这份工程")
+    ap.add_argument("--no-draft-cover", dest="no_draft_cover", action="store_true",
+                    help="不生成草稿缩略图 draft_cover.jpg（首页卡片会是黑块）")
     ap.add_argument("--name", default=None, help="草稿名，默认 <ep>_剪映工程")
     ap.add_argument("--canvas", default=None, help="覆盖画布，如 1080x1920")
     ap.add_argument("--fps", type=int, default=None, help="覆盖帧率，默认 30")
@@ -667,10 +799,22 @@ def main(argv=None) -> int:
 
     drafts_dir = pathlib.Path(a.drafts_dir).expanduser().resolve() if a.drafts_dir \
         else (data["out_root"] / ep / "_draft")
+    drafts_src = "命令行 --drafts-dir"
+    if not a.drafts_dir and a.to_jianying:
+        root, why = detect_jianying_root()
+        if root is None:
+            print("[FAIL] --to-jianying 没能定位剪映草稿目录：%s\n"
+                  "  改用 --drafts-dir 显式指定剪映「全局设置-草稿位置」。"
+                  % why, file=sys.stderr)
+            return EXIT_NOINPUT
+        drafts_dir, drafts_src = root, "剪映草稿根目录（%s）" % why
+    elif not a.drafts_dir:
+        drafts_src = "项目内 _draft/（默认；加 --to-jianying 可直接进剪映）"
     name = a.name or ("%s_剪映工程" % ep)
     try:
         draft = write_draft_safe(data, tl, edit_cfg, drafts_dir, name,
-                                 allow_replace=not a.no_replace, copy_media=a.copy_media)
+                                 allow_replace=not a.no_replace, copy_media=a.copy_media,
+                                 make_draft_cover=not a.no_draft_cover)
     except SystemExit as e:
         print("[FAIL] %s" % e, file=sys.stderr)
         return EXIT_FAIL
@@ -678,15 +822,29 @@ def main(argv=None) -> int:
                      missing=data["missing_segments"])
 
     manifest = build_manifest(data, tl, draft, verdict)
-    mpath = drafts_dir / DRAFT_DIR_NAME
+    # 清单/报告落两处，各管一件事：
+    #   ① 项目内 `07-成片/<ep>/_draft/` —— 节点判据只认这里（nodes.py::_is_draft），
+    #      而且送审打包时材料要跟着剧目录走，不能只存在剪映的草稿库里；
+    #   ② 草稿目录内 —— 草稿被整体搬走/拷给别人时，哈希清单跟着一起走。
+    # 早先只写 `drafts_dir`，`--to-jianying` 时会把 draft_manifest.json 直接扔进剪映
+    # 草稿**根目录**，等于在别人的库里丢垃圾。
+    proj_draft = data["out_root"] / ep / "_draft"
+    proj_draft.mkdir(parents=True, exist_ok=True)
+    mpath = proj_draft / DRAFT_DIR_NAME
     _write_json(mpath, manifest)
+    ddir = pathlib.Path(draft["draft_dir"])
+    if ddir.resolve() != proj_draft.resolve():
+        _write_json(ddir / DRAFT_DIR_NAME, manifest)
     report = {"at": _now(), "ep": ep, "draft": draft, "verify": verdict,
-              "manifest": str(mpath), "cue_offset_us": tl["cue_offset_us"],
+              "manifest": str(mpath), "draft_manifest_in_draft": str(ddir / DRAFT_DIR_NAME),
+              "cue_offset_us": tl["cue_offset_us"],
               "skipped": list(tl.get("skipped") or []),
               "totals": {"segments": len(data["clips"]), "cues": len(data["cues"]),
                          "bgm": len(tl["audio"]),
                          "total_s": _s(tl["total_us"])}}
-    _write_json(drafts_dir / REPORT_NAME, report)
+    _write_json(proj_draft / REPORT_NAME, report)
+    if ddir.resolve() != proj_draft.resolve():
+        _write_json(ddir / REPORT_NAME, report)
 
     if a.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -695,6 +853,7 @@ def main(argv=None) -> int:
         print("剪映工程 · %s" % ep)
         print("=" * 74)
         print("  草稿目录  %s" % draft["draft_dir"])
+        print("  位置来源  %s" % drafts_src)
         print("  画布      %dx%d @ %dfps" % (draft["canvas"][0], draft["canvas"][1], draft["fps"]))
         print("  视频轨    %d 段（封面 %s）" % (len(tl["video"]),
                                           ("%.2fs" % data["cover_s"]) if data["cover_path"] else "无"))
@@ -702,8 +861,15 @@ def main(argv=None) -> int:
               % (len(tl["text"]), tl["cue_offset_us"], tl["cue_offset_reason"]))
         print("  BGM 轨    %d 段%s" % (len(tl["audio"]), ("（%s）" % data["bgm_msg"]) if data["bgm_msg"] else ""))
         print("  总时长    %.3fs" % (tl["total_us"] / 1e6))
+        _meta = draft.get("meta") or {}
+        if _meta.get("written"):
+            print("  首页信息  时长 %s / 缩略图 %s"
+                  % ("%.3fs" % (_meta.get("tm_duration", 0) / 1e6),
+                     "已生成" if _meta.get("draft_cover") else "未生成（首页显示黑块）"))
+        else:
+            print("  首页信息  [WARN] %s" % (_meta.get("reason") or "未写入"))
         print("  清单      %s" % mpath)
-        print("  报告      %s" % (drafts_dir / REPORT_NAME))
+        print("  报告      %s" % (proj_draft / REPORT_NAME))
         for w in (tl.get("skipped") or []):
             print("  [WARN] %s" % w)
         if verdict["pass"]:
@@ -712,8 +878,10 @@ def main(argv=None) -> int:
             print("\n[FAIL] 自检不过 —— 这份工程**不能**作为送审材料：")
             for f in verdict["fails"]:
                 print("       · %s" % f)
-        print("\n  打开方式：把草稿目录放进剪映「全局设置-草稿位置」，或在剪映里"
-              "「导入草稿」选 %s" % draft["draft_dir"])
+        print("\n  打开方式：① 加 --to-jianying 重新生成，工程直接落进剪映草稿位置，"
+              "启动剪映首页即可见；\n"
+              "            ② 手工把 %s 整个目录搬进剪映「全局设置-草稿位置」。"
+              % draft["draft_dir"])
         print("  字幕字号为近似映射（%s）" % TEXT_SIZE_NOTE)
 
     return EXIT_OK if verdict["pass"] else EXIT_FAIL
