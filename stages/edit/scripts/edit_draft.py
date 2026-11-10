@@ -104,6 +104,11 @@ TEXT_SIZE_FALLBACK = {"zh": 15.0, "en": 13.5, "es": 13.0}
 TEXT_SIZE_NOTE = ("剪映字号单位与 ASS 像素不同源，本值为近似起点；"
                   "首集需在剪映内目视校对后写回 configs/edit-draft.json")
 
+# 固定字幕字体：不指定时剪映按模板默认字体渲染，换机器/换版本就可能换脸。
+#   送审材料里「字体前后一致」是对方能直接用眼睛看出来的，所以要钉死一个内置字体。
+#   选思源黑体 CN Medium：中英西三种字形都覆盖，且是剪映内置（`FontType` 里有）。
+DEFAULT_TEXT_FONT = "SourceHanSansCN_Medium"
+
 
 # ---------------------------------------------------------------- 模块加载
 def _load_sibling(name: str, path: pathlib.Path):
@@ -293,7 +298,7 @@ def collect(ws: pathlib.Path, ep: str, *, with_cover: bool = True, with_bgm: boo
 
 
 # ---------------------------------------------------------------- 时间轴
-def build_timeline(data: dict, edit_cfg: dict) -> dict:
+def build_timeline(data: dict, edit_cfg: dict, with_subtitle: bool = True) -> dict:
     """→ 纯数据的时间轴（不碰第三方库，便于单测）。单位一律微秒整数。"""
     cover_us = _us(data["cover_s"]) if data["cover_path"] else 0
     cursor = cover_us
@@ -309,18 +314,23 @@ def build_timeline(data: dict, edit_cfg: dict) -> dict:
         cursor += dur
     total_us = cursor
 
-    # 字幕：cues 是「片段轴」，工程是「母版轴」⇒ 整体后移封面片头（坑 2）
+    # 字幕：cues 的时间是【整集绝对时间】（= 全部镜头累加轴，不含封面片头），
+    #   工程轴 = 母版轴（含封面片头）⇒ 整体后移 cover_us。
+    #   ★ 2026-11-10：此前这里是对的，但上游 build_cues 漏算了「无台词镜头」的时长，
+    #   于是 cues 本身就少了 10 秒；本处加法没有错，错在基准。上游已修。
+    # `with_subtitle=False` 时不出字幕轨 —— 留给剪映「识别字幕」，见 --no-subtitle。
     text = []
-    for c in data["cues"]:
-        st = _us(float(c["start"]) ) + cover_us
-        en = _us(float(c["end"])) + cover_us
-        if en - st <= 0:
-            continue
-        text.append({"start_us": st, "dur_us": en - st,
-                     "text": str(c.get("text") or ""),
-                     "lines": list(c.get("lines") or []),
-                     "shot_id": c.get("shot_id") or "",
-                     "source": c.get("source") or ""})
+    if with_subtitle:
+        for c in data["cues"]:
+            st = _us(float(c["start"])) + cover_us
+            en = _us(float(c["end"])) + cover_us
+            if en - st <= 0:
+                continue
+            text.append({"start_us": st, "dur_us": en - st,
+                         "text": str(c.get("text") or ""),
+                         "lines": list(c.get("lines") or []),
+                         "shot_id": c.get("shot_id") or "",
+                         "source": c.get("source") or ""})
 
     audio = []
     for a in data["bgm_items"]:
@@ -334,10 +344,110 @@ def build_timeline(data: dict, edit_cfg: dict) -> dict:
                                   % data["cover_s"]) if cover_us else "无封面片头，字幕不偏移"}
 
 
+def sync_check(data: dict, min_voiced_s: float = 0.25) -> dict:
+    """量化「字幕有没有压到静音上」：每条字幕窗口里**最长连续有声区间**的时长。
+
+    为什么要有这一步：对齐错了不会报错，只会「看起来怪」。实测 海外剧/28 ep01
+    第一句标在 0.35s，而人声 4.25s 才出现。人眼得逐帧比对才知道，机器算一次
+    能量就能点名。它**只诊断不改时间** —— 改时间的事归 `subtitle.py`
+    （`--from-srt` 走外部 SRT，或重调 aligner）。
+
+    ★ 2026-11-10 口径修正：判据从「窗口内有声**占比**」换成「窗口内**有没有一段
+      连续 >=0.25s 的人声**」。原因：占比判据在两条已知正确的字幕上误报：
+        · shot_005「Es la diseñadora del año.」人声实际是 0.08–0.6 与 2.5–3.9 两段，
+          中间 2 秒空（AI 配音的换气/停顿）；whisper 词级时间戳把 `diseñadora`
+          拉成 0.6–2.7，于是窗口 0.08–2.71 里占比只有 9%。
+        · 首尾是对的、中间空洞是词级时间戳的固有抖动，不是错位。
+      字幕的职责是「有人说话时它在场」，不是「在场时一直有人说话」；
+      用占比判会把正确的全判成错的，人就再也不看这个告警了。
+    """
+    sub = _sub()
+    starts, t = {}, 0.0
+    for c in data["clips"]:
+        starts[c["shot_id"]] = t
+        t += float(c["dur_s"])
+
+    suspects, checked, skipped = [], 0, 0
+    for c in data["cues"]:
+        sid = str(c.get("shot_id") or "")
+        if sid not in starts:
+            skipped += 1
+            continue
+        wav = pathlib.Path(data["subs_dir"]) / "asr" / (sid + ".wav")
+        if not wav.is_file():
+            skipped += 1
+            continue
+        # ★ cues 的时间是**整集绝对时间**（build_cues 已把段内相对时间加上段起点），
+        #   而 asr/<sid>.wav 是**单镜切片** ⇒ 必须减回该段起点再用。少了这一步
+        #   会在完全正确的字幕上报「最长连续人声 0.02s」，把体检变成噪声。
+        #   实测踩点：shot_003 字幕 24.39–26.78，段起点 21.05 ⇒ 切片内 3.34–5.73，
+        #   而那一段的人声在 4.58–6.53（本句起点确实是 4.58）。
+        base = starts[sid]
+        a = max(0.0, float(c["start"]) - base)
+        b = float(c["end"]) - base
+        if b - a <= 0.05:
+            continue
+        voiced = _longest_voiced(str(wav), a, b)
+        if voiced is None:
+            skipped += 1
+            continue
+        checked += 1
+        if voiced < float(min_voiced_s):
+            suspects.append({"shot_id": sid,
+                             "start": round(float(c["start"]), 3),
+                             "end": round(float(c["end"]), 3),
+                             "voiced_s": round(float(voiced), 3),
+                             "text": str(c.get("text") or "")[:24]})
+    return {"checked": checked, "skipped": skipped, "min_voiced_s": float(min_voiced_s),
+            "suspects": suspects}
+
+
+def _longest_voiced(wav: str, a: float, b: float, frame_s: float = 0.02):
+    """窗口 [a,b) 内最长**连续**有声区间的秒数；读不出音频返回 None。
+
+    阈值口径复用 `subtitle._loud_threshold`（p90 相对 30% 与绝对下限 600 取大），
+    与覆盖检查、ASR 幻觉拦截共用同一套 —— 三处各算一套阈值迟早互相矛盾。
+    """
+    sub = _sub()
+    fr, fs = sub._frame_rms(wav, frame_s)
+    if not fr:
+        return None
+    thr = sub._loud_threshold(fr)
+    if thr is None:
+        return None                       # 全段数字静音，没有可判依据
+    i0 = max(0, int(a / fs))
+    i1 = min(len(fr), max(i0 + 1, int(round(b / fs))))
+    best = run = 0
+    for v in fr[i0:i1]:
+        if v >= thr:
+            run += 1
+            best = max(best, run)
+        else:
+            run = 0
+    return best * fs
+
+
 def _volume_of(gain_db: float, ceiling: float = 1.0) -> float:
     """dB → 线性增益（剪映 volume 是线性倍数）。clamp 到 [0, ceiling]。"""
     v = 10.0 ** (float(gain_db) / 20.0)
     return max(0.0, min(float(ceiling), round(v, 4)))
+
+
+def _font_of(name) -> tuple:
+    """字体名 → (FontType 或 None, 说明)。未知字体不硬崩，只是退回剪映默认。
+
+    为什么返回元组而不是裸值：字体名写错是配置错误，必须让人看见，
+    但**不能因此中断出片** —— 工程里少一个字体字段仍然可用，报错只会挡住交付。
+    """
+    want = str(name or DEFAULT_TEXT_FONT).strip()
+    if not want:
+        return None, "未指定字体，剪映用模板默认"
+    try:
+        d = _draft_lib()
+        ft = getattr(d.FontType, want)
+    except (AttributeError, ImportError):
+        return None, "字体 `%s` 不在剪映内置字体表里，已退回默认（改 configs/edit-draft.json）" % want
+    return ft, "字体 `%s`" % want
 
 
 # ---------------------------------------------------------------- 写草稿
@@ -445,6 +555,7 @@ def write_draft(data: dict, tl: dict, edit_cfg: dict, drafts_dir: pathlib.Path,
     folder = d.DraftFolder(str(drafts_dir))
     script = folder.create_draft(name, W, H, fps, allow_replace=allow_replace)
     draft_dir = drafts_dir / name
+    font_notes = []      # 字体/样式类告警（不致命，随结果带回主流程打印）
 
     def _path(p: str) -> str:
         """--copy-media 时把素材拷进草稿目录，草稿才可整体搬走。"""
@@ -472,6 +583,8 @@ def write_draft(data: dict, tl: dict, edit_cfg: dict, drafts_dir: pathlib.Path,
         size = float((tcfg.get("size") or {}).get(lang) or TEXT_SIZE_FALLBACK.get(lang, 15.0))
         border_w = float(tcfg.get("border_width") or 40.0)
         sh = tcfg.get("shadow") or {}
+        font, font_note = _font_of(tcfg.get("font"))
+        font_notes.append(font_note)
         # 落点：文字块中心 = 0.6 × 画布高（与三语规范同一条），换算成剪映的归一化位移。
         #   剪映 transform.y 的 1.0 = 画布高的一半 ⇒ ty = -(center_ratio - 0.5) × 2。
         _m = _sub().style_metrics(data["cfg"], lang, (W, H))
@@ -482,6 +595,7 @@ def write_draft(data: dict, tl: dict, edit_cfg: dict, drafts_dir: pathlib.Path,
             body = "\n".join(c["lines"]) if c["lines"] else c["text"]
             script.add_segment(
                 d.TextSegment(body, d.Timerange(c["start_us"], c["dur_us"]),
+                              font=font,
                               style=d.TextStyle(size=size, bold=True,
                                                 color=(1.0, 1.0, 1.0)),
                               border=d.TextBorder(width=border_w),
@@ -526,7 +640,10 @@ def write_draft(data: dict, tl: dict, edit_cfg: dict, drafts_dir: pathlib.Path,
 
     return {"draft_dir": str(draft_dir), "canvas": [W, H], "fps": fps,
             "tracks": {"video": 1, "text": 1 if ttrack else 0, "audio": 1 if atrack else 0},
-            "cover_jpg": cover_jpg, "meta": meta}
+            "cover_jpg": cover_jpg, "meta": meta,
+            "text_font": (str((edit_cfg.get("text") or {}).get("font") or DEFAULT_TEXT_FONT)
+                          if ttrack else ""),
+            "notes": list(font_notes)}
 
 
 # ---------------------------------------------------------------- 自检
@@ -740,7 +857,7 @@ def plan(ws: pathlib.Path, ep: str, opts) -> tuple:
         edit_cfg = _deep_merge(edit_cfg, {"canvas": {"width": w, "height": h}})
     if opts.fps:
         edit_cfg = _deep_merge(edit_cfg, {"fps": int(opts.fps)})
-    tl = build_timeline(data, edit_cfg)
+    tl = build_timeline(data, edit_cfg, with_subtitle=not getattr(opts, "no_subtitle", False))
     return data, edit_cfg, tl
 
 
@@ -765,6 +882,9 @@ def main(argv=None) -> int:
                     help="把素材拷进草稿目录（工程可整体搬走；体积翻倍）")
     ap.add_argument("--no-cover", dest="no_cover", action="store_true", help="工程不加首帧封面")
     ap.add_argument("--no-bgm", dest="no_bgm", action="store_true", help="工程不加 BGM 轨")
+    ap.add_argument("--no-subtitle", dest="no_subtitle", action="store_true",
+                    help="不出字幕轨（画面 + BGM 的干净工程）—— 留给剪映「识别字幕」；"
+                         "识别出来的时间来自剪映自己的 ASR，通常比本仓库的 CTC/whisper 对齐更贴人声")
     ap.add_argument("--allow-empty-subtitles", dest="allow_empty_subtitles",
                     action="store_true", help="本集确实没有字幕时放行（默认拒绝）")
     ap.add_argument("--no-replace", dest="no_replace", action="store_true",
@@ -820,8 +940,14 @@ def main(argv=None) -> int:
         return EXIT_FAIL
     verdict = verify(pathlib.Path(draft["draft_dir"]), tl, edit_cfg,
                      missing=data["missing_segments"])
+    # 字幕与音频的同步体检：只诊断不改时间（改时间归 subtitle.py）。
+    #   对齐错位是「沉默的错」—— 不断言、不报错，只在画面里静静错着。
+    #   所以每次出工程都算一遍，把「哪条压静音」写进 manifest，让审核能追。
+    sync = (sync_check(data) if tl["text"]
+            else {"checked": 0, "skipped": 0, "suspects": [], "min_voiced_s": 0.25})
 
     manifest = build_manifest(data, tl, draft, verdict)
+    manifest["sync"] = sync
     # 清单/报告落两处，各管一件事：
     #   ① 项目内 `07-成片/<ep>/_draft/` —— 节点判据只认这里（nodes.py::_is_draft），
     #      而且送审打包时材料要跟着剧目录走，不能只存在剪映的草稿库里；
@@ -837,7 +963,7 @@ def main(argv=None) -> int:
         _write_json(ddir / DRAFT_DIR_NAME, manifest)
     report = {"at": _now(), "ep": ep, "draft": draft, "verify": verdict,
               "manifest": str(mpath), "draft_manifest_in_draft": str(ddir / DRAFT_DIR_NAME),
-              "cue_offset_us": tl["cue_offset_us"],
+              "cue_offset_us": tl["cue_offset_us"], "sync": sync,
               "skipped": list(tl.get("skipped") or []),
               "totals": {"segments": len(data["clips"]), "cues": len(data["cues"]),
                          "bgm": len(tl["audio"]),
@@ -857,8 +983,22 @@ def main(argv=None) -> int:
         print("  画布      %dx%d @ %dfps" % (draft["canvas"][0], draft["canvas"][1], draft["fps"]))
         print("  视频轨    %d 段（封面 %s）" % (len(tl["video"]),
                                           ("%.2fs" % data["cover_s"]) if data["cover_path"] else "无"))
-        print("  字幕轨    %d 条（整体后移 %d µs：%s）"
-              % (len(tl["text"]), tl["cue_offset_us"], tl["cue_offset_reason"]))
+        if tl["text"]:
+            print("  字幕轨    %d 条（整体后移 %d µs：%s）"
+                  % (len(tl["text"]), tl["cue_offset_us"], tl["cue_offset_reason"]))
+            if not sync.get("checked"):
+                print("  字幕同步  未核（缺 <subs>/asr/<shot>.wav，没有声学依据）")
+            else:
+                print("  字幕同步  %d 条已核，%d 条找不到连续人声"
+                      % (sync["checked"], len(sync["suspects"])))
+                for s in sync["suspects"][:5]:
+                    print("    ⚠ %s %.2f–%.2f 最长连续人声仅 %.2fs：「%s」—— "
+                          "用 subtitle.py --from-srt 或重跑对齐"
+                          % (s["shot_id"], s["start"], s["end"],
+                             s["voiced_s"], s["text"]))
+        else:
+            print("  字幕轨    未生成（--no-subtitle：留给剪映「识别字幕」，"
+                  "识别完照样式卡统一位置与字体）")
         print("  BGM 轨    %d 段%s" % (len(tl["audio"]), ("（%s）" % data["bgm_msg"]) if data["bgm_msg"] else ""))
         print("  总时长    %.3fs" % (tl["total_us"] / 1e6))
         _meta = draft.get("meta") or {}

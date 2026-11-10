@@ -685,18 +685,38 @@ _add(_c("media.draft", "5 剪辑", "④ 剪映工程（草稿）", "edit_draft",
         flags={"--ep": "ep"},
         bools={"--copy-media": "copy_media", "--no-cover": "no_cover",
                "--no-bgm": "no_bgm", "--to-jianying": "to_jianying",
-               "--no-draft-cover": "no_draft_cover", "--json": "as_json"},
+               "--no-draft-cover": "no_draft_cover", "--no-subtitle": "no_subtitle",
+               "--json": "as_json"},
         params=[P_EP(required=True),
                 Param("copy_media", "素材拷进草稿目录", "bool", default=False),
                 Param("to_jianying", "直接生成到剪映草稿位置（自动探测）", "bool",
                       default=False),
-                Param("no_draft_cover", "不生成首页缩略图", "bool", default=False)],
+                Param("no_draft_cover", "不生成首页缩略图", "bool", default=False),
+                Param("no_subtitle", "不出字幕轨（留给剪映「识别字幕」）", "bool",
+                      default=False)],
         help="逐镜视频 + 字幕 + BGM 的可编辑时间轴，与发布版同源同序；"
              "工程是版权资料第三入口，**不替代** MP4 导出（剪映 7+ 已隐藏导出控件）。"
              "加 --to-jianying 会读剪映索引里的 draft_root_path 众数，"
-             "把工程直接落进剪映草稿位置，启动剪映首页即可见。",
+             "把工程直接落进剪映草稿位置，启动剪映首页即可见。"
+             "字幕时间对不上时走这条路：--no-subtitle 出干净工程 → 剪映「识别字幕」→ "
+             "导出 SRT → subtitle.py --from-srt 喂回。",
         agent="生成后告我段数/字幕条数/BGM 段数/总时长，以及自检是否通过；"
-              "自检不过就不要拿去送审，先看失败项。"))
+              "自检不过就不要拿去送审，先看失败项。若打印了「N 条找不到连续人声」，"
+              "要明确告诉我那几条的时间不可信，并建议改用剪映识别字幕或 --from-srt。"))
+_add(_c("media.subtitle_from_srt", "5 剪辑", "③b 导入外部字幕（剪映识别结果）", "subtitle",
+        argv=["--stage", "cues", "--from-srt", "{srt}"], danger=WRITE,
+        flags={"--ep": "ep", "--srt-axis": "srt_axis"},
+        params=[P_EP(required=True),
+                Param("srt", "SRT 文件路径（剪映「导出字幕」得到的文件）", "path",
+                      required=True),
+                Param("srt_axis", "SRT 时间轴", "enum", default="master",
+                      choices=["master", "shots"])],
+        help="用外部 SRT 替换字幕时间（例如剪映「智能字幕-识别字幕」导出）。"
+             "给了它就不跑 whisper/CTC 对齐 —— 外部 ASR 已经定过时间，别再覆盖。"
+             "srt_axis=master 表示 SRT 含封面片头（会自动减回）；shots 表示从第一段画面算起。",
+        agent="先问清 SRT 是在哪导出的（带封面工程的选 master，无封面/别的工具选 shots）；"
+              "跑完告我条数、被丢弃的纯音乐标记数，以及有没有「超出镜头总长」的告警 —— "
+              "有那条告警就是轴选错了。"))
 _add(_c("media.preview", "5 剪辑", "字幕快速预览", "subtitle",
         argv=["--stage", "render", "--preview", "{n}"], danger=WRITE,
         flags={"--ep": "ep"}, params=[P_EP(required=True), Param("n", "预览段数", "int", default=3)],

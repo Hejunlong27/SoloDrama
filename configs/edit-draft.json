@@ -15,6 +15,8 @@
   "_cover_note": "首帧封面片头时长。必须与 config.subtitle.json 的 master.cover_seconds 一致，否则工程与成片差这一段。",
 
   "text": {
+    "font": "SourceHanSansCN_Medium",
+    "_font_note": "固定字幕字体（剪映内置字体名，取自 pyJianYingDraft 的 FontType 枚举）。不填则剪映用模板默认字体，换机器/换版本可能不一致。思源黑体 CN Medium 覆盖中英西字形。名字写错不崩，只在结果里告警并退回默认。",
     "size": {
       "zh": 15.0,
       "en": 13.5,

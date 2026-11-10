@@ -254,6 +254,246 @@ class TestAsrFill(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- H. 台词提取
+class TestWordAlignment(unittest.TestCase):
+    """词级 whisper 对齐（2026-11-10）—— 替掉「CTC 没配 ⇒ 全部等分估算」这条死路。"""
+
+    LC = {"wrap": "word", "max_cue_chars": 48, "max_duration_s": 6.0,
+          "min_duration_s": 0.8, "cps_ok": [3.0, 8.0], "cps_hard_max": 12.0}
+
+    def test_maps_each_line_to_real_words(self):
+        words = [(0.35, 0.49, "El"), (0.49, 2.44, "contrato"), (2.44, 4.44, "está"),
+                 (4.44, 5.96, "cumplido,"), (5.96, 7.37, "Firmaste."),
+                 (7.37, 7.82, "quien"), (7.82, 8.23, "firma"),
+                 (8.23, 9.06, "no"), (9.06, 9.68, "tiene"),
+                 (9.68, 10.0, "derecho.")]
+        got = S.align_by_words(["El contrato está cumplido.", "Firmaste. Quien firma, no tiene derecho."],
+                               words, self.LC)
+        self.assertIsNotNone(got)
+        self.assertEqual(len(got), 2)
+        self.assertAlmostEqual(got[0]["start"], 0.35, places=2)
+        self.assertAlmostEqual(got[0]["end"], 5.96, places=2)
+        self.assertAlmostEqual(got[1]["start"], 5.96, places=2)
+        self.assertEqual(got[0]["source"], "whisper-word")
+
+    def test_gives_up_instead_of_half_matching(self):
+        """匹配不上就返回 None —— 宁可让别的档位接手，也不给半对半错的时间。"""
+        words = [(0.0, 1.0, "uno"), (1.0, 2.0, "dos")]
+        self.assertIsNone(S.align_by_words(["Completamente distinto del audio."],
+                                           words, self.LC))
+
+    def test_partial_keeps_matched_head_and_reports_tail(self):
+        """shot_006 现场：第一句能对上、第二句 whisper 漏词。
+
+        必须保留第一句的真时间，并把漏掉的那句**原样报出来**（进 problems），
+        不许退化成等分估算 —— 等分给的是假时间，比少一条更难查。
+        """
+        words = [(0.2, 1.04, "Valentina"), (1.04, 2.0, "Ríos.")]
+        got = S.align_by_words(["Valentina Ríos.", "Espérame."], words,
+                               self.LC, allow_partial=True)
+        self.assertIsNotNone(got)
+        self.assertEqual(len(got), 1)
+        self.assertAlmostEqual(got[0]["start"], 0.2, places=2)
+        self.assertEqual(got[0]["_unmatched"], ["Espérame."])
+
+    def test_strict_mode_rejects_partial(self):
+        words = [(0.2, 1.04, "Valentina"), (1.04, 2.0, "Ríos.")]
+        self.assertIsNone(S.align_by_words(["Valentina Ríos.", "Espérame."],
+                                           words, self.LC, allow_partial=False))
+
+    def test_never_overlaps_next_line(self):
+        words = [(0.0, 1.0, "Si"), (1.0, 2.0, "puedes"),
+                 (2.0, 3.0, "venir"), (3.0, 4.0, "ahora")]
+        got = S.align_by_words(["Si puedes venir ahora"], words, self.LC)
+        self.assertIsNotNone(got)
+        for a, b in zip(got, got[1:]):
+            self.assertLessEqual(a["end"], b["start"] + 1e-6)
+
+
+class TestSilenceOverlap(unittest.TestCase):
+    """字幕压在静音上的时长 —— 评分口径的另一半（2026-11-10）。"""
+
+    def test_counts_quiet_window(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav",
+                            [(0.0, 1.0, 8000), (1.0, 4.0, 0)])
+            recs = [{"start": 0.0, "end": 1.0, "text": "uno"},
+                    {"start": 1.0, "end": 4.0, "text": "dos"}]
+            got = S.silence_overlap(recs, str(wav))
+            # 后一条 3 秒全静音 ⇒ 近似 3.0；前一条有声 ⇒ 近似 0
+            self.assertGreater(got, 2.4)
+            self.assertLess(got, 3.2)
+
+    def test_zero_when_all_voiced(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [(0.0, 4.0, 8000)])
+            recs = [{"start": 0.0, "end": 3.0, "text": "uno"}]
+            self.assertLess(S.silence_overlap(recs, str(wav)), 0.3)
+
+
+class TestFillHallucination(unittest.TestCase):
+    """whisper 在静音上编台词（shot_002 现场）必须被丢弃，不许进字幕。"""
+
+    def test_quiet_shot_rejects_asr_text(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            # asr_fill_segment 取的是 `<tmp>/<sid>_full.wav`（tmp 是工作目录）
+            wav = _tone_wav(tmp / "shot_002_full.wav",
+                            [(0.0, 0.5, 8000), (0.5, 10.0, 0)])
+            orig = S.asr_entries
+            S.asr_entries = lambda *a, **k: [
+                (0.0, 9.6, "La demandante firmó una renuncia total dos veces.")]
+            try:
+                got = S.asr_fill_segment(
+                    {"tools": {}}, {"file": "x.mp4", "shot_id": "shot_002"},
+                    "shot_002", tmp, tmp,
+                    {"max_cue_chars": 48, "max_duration_s": 6.0, "wrap": "word"},
+                    trim=False)
+            finally:
+                S.asr_entries = orig
+            self.assertIsNone(got, "近乎全程静音的段不许出 ASR 字幕")
+            self.assertTrue(wav.is_file())
+
+
+class TestCueOrderCursor(unittest.TestCase):
+    """★ 2026-11-10：无台词镜头必须占住自己的时长。
+
+    旧实现 `t0 += _d` 在段末，而「本段没台词」会 `continue` 提前跳下一段，
+    于是 shot_002（10.125s，无对白）的时长从未计入 —— 其后所有字幕整集提前 10 秒。
+    """
+
+    def test_silent_shot_still_advances_timeline(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            subs = tmp / "subs"
+            (subs / "align").mkdir(parents=True)
+            # 两段各 2s：第一段无台词，第二段有一句
+            vids = []
+            for i in (1, 2):
+                p = tmp / ("s%d.mp4" % i)
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                                "-i", "color=c=black:s=64x64:d=2:r=10",
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(p)],
+                               check=True, capture_output=True)
+                vids.append(p)
+            (subs / "align" / "s2.json").write_text(json.dumps(
+                {"shot_id": "s2", "audio_duration": 2.0, "method": "asr-word",
+                 "lines": [{"text": "Hola.", "start": 0.2, "end": 1.0,
+                            "source": "whisper-word"}]}), encoding="utf-8")
+            cfg = {"default_language": "es",
+                   "languages": {"es": {"wrap": "word", "max_cue_chars": 40,
+                                        "max_duration_s": 6.0, "min_duration_s": 0.5,
+                                        "cps_ok": [3.0, 8.0], "cps_hard_max": 12.0,
+                                        "cps_impossible": 20.0}},
+                   "tools": {"ffprobe": "ffprobe", "ffmpeg": "ffmpeg"}}
+            segs = [{"shot_id": "s1", "file": str(vids[0])},
+                    {"shot_id": "s2", "file": str(vids[1])}]
+            cues, _warn, total, _cps = S.build_cues(
+                tmp, "ep01", cfg, segs, {"s1": [], "s2": ["Hola."]}, str(subs))
+            self.assertTrue(cues, "第二段应当有字幕")
+            # 第二段起点应是 2.0s（第一段占满），而不是 0.2s
+            self.assertGreaterEqual(cues[0]["start"], 1.9,
+                                    "无台词镜头的时长必须计入时间轴，否则字幕整体提前")
+
+
+class TestSrtImport(unittest.TestCase):
+    """剪映「识别字幕」导出 SRT → cues（--from-srt）。"""
+
+    CFG = {"default_language": "es",
+           "languages": {"es": {"wrap": "word", "max_cue_chars": 40}},
+           "tools": {"ffprobe": "ffprobe"}}
+
+    def test_master_axis_subtracts_cover_lead(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            p = tmp / "s.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                            "-i", "color=c=black:s=64x64:d=3:r=10",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(p)],
+                           check=True, capture_output=True)
+            srt = _write_srt(tmp / "in.srt", [(1.0, 2.0, "Hola.")])
+            cues, notes, total = S.load_cues_from_srt(
+                str(srt), self.CFG, [{"shot_id": "s1", "file": str(p)}], offset_s=0.8)
+            self.assertEqual(len(cues), 1)
+            self.assertAlmostEqual(cues[0]["start"], 0.2, places=2)
+            self.assertAlmostEqual(cues[0]["end"], 1.2, places=2)
+            self.assertEqual(cues[0]["shot_id"], "s1")
+            self.assertEqual(cues[0]["source"], "srt")
+            self.assertAlmostEqual(total, 3.0, places=1)
+            self.assertTrue(any("SRT" in n for n in notes))
+
+    def test_drops_music_markers(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            p = tmp / "s.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                            "-i", "color=c=black:s=64x64:d=3:r=10",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(p)],
+                           check=True, capture_output=True)
+            srt = _write_srt(tmp / "in.srt", [(0.0, 1.0, "[Música]"),
+                                              (1.0, 2.0, "Hola.")])
+            cues, _n, _t = S.load_cues_from_srt(
+                str(srt), self.CFG, [{"shot_id": "s1", "file": str(p)}], offset_s=0.0)
+            self.assertEqual(len(cues), 1)
+            self.assertEqual(cues[0]["text"], "Hola.")
+
+    def test_warns_when_srt_runs_past_shot_total(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            p = tmp / "s.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                            "-i", "color=c=black:s=64x64:d=2:r=10",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(p)],
+                           check=True, capture_output=True)
+            srt = _write_srt(tmp / "in.srt", [(0.0, 1.0, "Hola."), (20.0, 21.0, "Tarde.")])
+            _c, notes, _t = S.load_cues_from_srt(
+                str(srt), self.CFG, [{"shot_id": "s1", "file": str(p)}], offset_s=0.0)
+            self.assertTrue(any("超出镜头总长" in n for n in notes),
+                            "轴给错时必须提示，不能静默产出越界字幕")
+
+
+class TestAlignCacheFreshness(unittest.TestCase):
+    """缓存失效口径：指纹对不上就不许命中（2026-11-10 实测事故）。"""
+
+    def test_fingerprint_mismatch_invalidates(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            seg = tmp / "final.mp4"
+            seg.write_bytes(b"x" * 100)
+            cache = tmp / "s1.json"
+            cache.write_text(json.dumps({
+                "shot_id": "s1", "method": "asr-word",
+                "src_fingerprint": "1:1",          # 与真实指纹不同
+                "lines": []}), encoding="utf-8")
+            self.assertFalse(S._align_cache_ok(str(cache), str(seg)))
+
+    def test_missing_fingerprint_is_stale(self):
+        """旧缓存没有指纹字段 ⇒ 一律重建（本次实测的错缓存恰好「mtime 更新」。）"""
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            seg = tmp / "final.mp4"
+            seg.write_bytes(b"x" * 100)
+            cache = tmp / "s1.json"
+            cache.write_text(json.dumps({"shot_id": "s1", "method": "asr-word",
+                                         "lines": []}), encoding="utf-8")
+            self.assertFalse(S._align_cache_ok(str(cache), str(seg)))
+
+    def test_matching_fingerprint_hits(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            seg = tmp / "final.mp4"
+            seg.write_bytes(b"x" * 100)
+            cache = tmp / "s1.json"
+            cache.write_text(json.dumps({
+                "shot_id": "s1", "method": "asr-word",
+                "src_fingerprint": S._src_fingerprint(str(seg)),
+                "lines": []}), encoding="utf-8")
+            self.assertTrue(S._align_cache_ok(str(cache), str(seg)))
+
+
 class TestDialogueLines(unittest.TestCase):
     def _ws(self, td, prompts):
         ws = pathlib.Path(td)
@@ -444,7 +684,12 @@ class TestCpsAndDuration(unittest.TestCase):
         """源码里不许再出现「帧数 ÷ 24」推算段起点（会用实际时长）。"""
         src = (SCRIPTS / "subtitle.py").read_text(encoding="utf-8")
         self.assertNotIn("/ fps", src)
-        self.assertEqual(S.REAL_ALIGN_METHODS[-1], "asr-only")
+        # 真对齐档至少包含这几个；不锁「最后一个是谁」（2026-11-10 加 asr-word 时
+        # 旧断言按位置取值直接红了 —— 断言要表达语义，不要表达顺序）
+        for m in ("ctc-sequential", "ctc-piecewise", "asr-whisper", "asr-only", "asr-word"):
+            self.assertIn(m, S.REAL_ALIGN_METHODS)
+        self.assertNotIn("fallback-estimate", S.REAL_ALIGN_METHODS)
+        self.assertNotIn("script_estimate", S.REAL_ALIGN_METHODS)
 
 
 if __name__ == "__main__":

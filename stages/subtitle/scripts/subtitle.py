@@ -527,6 +527,12 @@ def align_in_window(cfg_tools, full, win_path, txt_path, out_txt, cursor, text, 
         run([cfg_tools["aligner"], "--audio_path", win_path, "--text_path", txt_path,
              "--language", iso] + extra, env=cfg_tools.get("aligner_env"),
             timeout=cfg_tools.get("aligner_timeout_s") or 180)
+    except OSError as e:
+        # ★ 2026-11-10：aligner 路径是**项目配置**，没配就只是个占位符字符串。
+        #   `subprocess` 找不到可执行文件时抛的是 FileNotFoundError（OSError 子类），
+        #   不是 RuntimeError —— 旧实现只接 RuntimeError，于是一路 traceback 打穿整集，
+        #   而不是降级到 whisper/ASR 档。降级链存在的意义就是"缺件也能出字幕"。
+        return None, "对齐器不可用（%s）：%s" % (cfg_tools.get("aligner"), e)
     except RuntimeError as e:
         msg = str(e)
         if "命令超时" in msg:
@@ -785,6 +791,10 @@ def stage_align(ws, ep, cfg, segs, lines, subs_dir, force=False, asr_fill=True, 
                              [(r["start"], r["end"]) for r in recs],
                              asr_dir, sid, min_gap=0.5, wav=full)
         score = sum(g[2] for g in gaps)
+        # ★ 2026-11-10：加上「字幕压在静音上」的时长（假覆盖）。
+        #   只算缺口会让「等分铺满整段」的估算档恒得 0 分而永远胜出，
+        #   见 `silence_overlap` 的说明与 shot_004 实测。
+        score += silence_overlap(recs, full)
         # 生理上限之外的语速是硬错误，额外重罚
         for r in recs:
             d = max(r["end"] - r["start"], 1e-6)
@@ -804,7 +814,9 @@ def stage_align(ws, ep, cfg, segs, lines, subs_dir, force=False, asr_fill=True, 
             #   真正的 CTC 对齐**一次都没跑过**，整集字幕位置全靠猜。
             #   实测 ep26_sc02：估算 0.56–6.75s，CTC 真值 3.32–6.26s —— 起点偏 2.8 秒。
             #   ⇒ 只有真对齐结果才算命中缓存；估算档一律重建。
-            if _align_cache_ok(dst):
+            if _align_cache_ok(dst, seg["file"],
+                               deps=[os.path.join(asr_dir, sid + ".wav"),
+                                     os.path.join(asr_dir, sid + ".srt")]):
                 skipped += 1
                 continue
             rebuilt += 1
@@ -847,7 +859,30 @@ def stage_align(ws, ep, cfg, segs, lines, subs_dir, force=False, asr_fill=True, 
                 gaps3 = coverage_gaps(cfg, seg["file"],
                                       [(r["start"], r["end"]) for r in cal],
                                       asr_dir, sid, min_gap=0.5, wav=full)
-                cand.append(("asr-whisper", sum(g[2] for g in gaps3), cal, []))
+                cand.append(("asr-whisper",
+                             sum(g[2] for g in gaps3) + silence_overlap(cal, full),
+                             cal, []))
+        # ★ S4 词级 whisper（2026-11-10 加）：段级时间不可信、CTC 未必装，
+        #   这条是「没有 CTC 也能拿到真实对齐」的主力档。
+        #   打分口径与前几档完全一致（同一覆盖分），所以它不会靠"身份"顶替谁，
+        #   只能靠「有语音却没字幕的时长更少」赢 —— 赢不了就说明段级更好，正常。
+        words = asr_words(cfg, seg["file"], asr_dir, sid)
+        if words:
+            wal = align_by_words(txts, words, langcfg, allow_partial=True)
+            if wal:
+                _lost = wal[0].pop("_unmatched", None) or []
+                # 词级边界贴到真实有声区间（只动边界，不动文本/顺序）
+                _snap = snap_to_voiced(wal, full, langcfg) if trim else 0
+                gaps4 = coverage_gaps(cfg, seg["file"],
+                                      [(r["start"], r["end"]) for r in wal],
+                                      asr_dir, sid, min_gap=0.5, wav=full)
+                cand.append(("asr-word",
+                             sum(g[2] for g in gaps4) + silence_overlap(wal, full),
+                             wal,
+                             [{"i": 0, "text": t[:16],
+                               "reason": "词级 ASR 里找不到这句（可能有声但漏转写），"
+                                         "未给时间，请人工补或改用 --from-srt"}
+                              for t in _lost]))
         # 默认取 wide；后续档位要「好 0.5 秒以上」才顶替
         strat, score, recs, bad = cand[0]
         for sname, sc, rc, bd in cand[1:]:
@@ -878,6 +913,7 @@ def stage_align(ws, ep, cfg, segs, lines, subs_dir, force=False, asr_fill=True, 
         n_trim = tighten_to_audio(recs, full, langcfg) if trim else 0
         dump_json(dst, {"shot_id": sid, "audio_duration": round(dur, 3),
                         "method": strat, "strategy": strat,
+                        "src_fingerprint": _src_fingerprint(seg["file"]),
                         "trimmed": n_trim,
                         "gap_score": scores,
                         "lines": recs, "problems": bad})
@@ -959,23 +995,52 @@ def text_similarity(a, b):
 
 
 # 真对齐产出的 method 值；其余（script_estimate / fallback-estimate）都算"没对齐"
-REAL_ALIGN_METHODS = ("ctc-sequential", "ctc-piecewise", "asr-whisper", "asr-only")
+REAL_ALIGN_METHODS = ("ctc-sequential", "ctc-piecewise", "asr-whisper", "asr-only",
+                      "asr-word")
 
 
-def _align_cache_ok(path):
-    """对齐缓存是否可信：必须存在且 method 属于真对齐档。
+def _align_cache_ok(path, seg_file=None, deps=None):
+    """对齐缓存是否可信：必须存在、method 属于真对齐档，且**不比源媒体旧**。
 
     ★ 2026-10-22（实跑排障）：这是"字幕时间不可信"的根因。项目侧
       `tools/gen_align_estimate.py` 按镜长 × 经验话音模型写了 method=script_estimate
       的近似记录，旧实现只看 `os.path.exists()` 就 skip，于是 CTC **一次都没跑**。
       实测 ep26_sc02：估算 0.56–6.75s vs CTC 真值 3.32–6.26s，起点偏 2.8 秒；
       表现为「字幕凭空提前、念完还在屏幕上」。
+
+    ★ 2026-11-10（第二个根因）：重出成片后，`align/*.json` 仍按旧素材的时间挂着。
+      素材换了、对白换了、静音段换了，而这个文件还是「真对齐档」，
+      于是 `_align_cache_ok` 返回 True，一切照旧 —— 字幕与音频错位且毫无告警。
+      实测 海外剧/28 ep01：asr 切片 22:39 生成，final.mp4 17:00 前就换过，sha256 不同。
+      ⇒ 源媒体比缓存新就必须重建（素材重出的代价远小于送审被驳回）。
+
+    `deps` 是这份对齐**依赖的输入**清单：源媒体 + 该段的 ASR 切片/转写。
+    任一比缓存新就重建 —— 只比源媒体是不够的：asr 切片被重抽后（换的是转写证据、
+    不是素材本身），旧对齐同样是错的，而且它的 mtime 完全看不出来。
     """
     try:
         rec = load_json(path)
     except Exception:                                                       # noqa: BLE001
         return False
-    return str(rec.get("method") or "") in REAL_ALIGN_METHODS
+    if str(rec.get("method") or "") not in REAL_ALIGN_METHODS:
+        return False
+    # ★ 优先用指纹（能抓到「mtime 更新但内容错了」）。
+    #   旧记录**没有** src_fingerprint —— 一律视为过期，理由与 `_asr_cache_fresh` 相同：
+    #   本次实测的错误缓存恰好「mtime 更新 + 时长一致 + 内容错位」，
+    #   所有基于时间的判据都会放行它。缺指纹就重建一次，之后就一直有指纹了。
+    if seg_file:
+        rec_src = str(rec.get("src_fingerprint") or "")
+        if not rec_src or rec_src != _src_fingerprint(seg_file):
+            return False
+    for dep in [seg_file] + list(deps or []):
+        if not dep:
+            continue
+        try:
+            if os.path.getmtime(path) < os.path.getmtime(dep):
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def group_asr_lines(entries, lc):
@@ -1017,6 +1082,13 @@ def asr_fill_segment(cfg, seg, sid, asr_dir, tmp, langcfg, trim=True):
       · 只在剧本确实没有台词时用，**绝不覆盖**剧本原文；
       · source 标 `asr-unscripted`，report 里单独统计，供人工复核；
       · 一旦 ASR 只给出非语音标记（`[Música]`），返回 None。
+
+    ★ 2026-11-10（实测抓到幻觉）：whisper 会在**几乎全程静音**的镜头上编出整段台词。
+      实测 海外剧/28 ep01 shot_002：音频 10.05s，能量只有前 0.5s（峰值 2899，其余无），
+      而 whisper 给出 `0.00–9.60` 的「La demandante firmó una renuncia total dos veces…」
+      —— 剧本里根本没这句，画面里也没有人声。
+      ⇒ 补位前必须过声学门槛：字幕窗口的**有声覆盖率**低于 15% 就判为幻觉，不给时间。
+      这与 `coverage_gaps` 里对 whisper 假区间的处理同一口径（那里也是 <0.15 丢弃）。
     """
     entries = asr_entries(cfg, seg["file"], asr_dir, sid)
     if not entries:
@@ -1027,12 +1099,26 @@ def asr_fill_segment(cfg, seg, sid, asr_dir, tmp, langcfg, trim=True):
     if not recs:
         return None
     full = os.path.join(tmp, sid + "_full.wav")
+    if os.path.exists(full):
+        kept, dropped = [], 0
+        for r in recs:
+            frac = window_loud_fraction(full, r["start"], r["end"])
+            if frac is not None and frac < 0.15:
+                dropped += 1
+                continue
+            kept.append(r)
+        if dropped:
+            print("   ⚠ %s ASR 补位丢弃 %d 条「有字无声」的疑似幻觉" % (sid, dropped))
+        recs = kept
+        if not recs:
+            return None
     n_trim = 0
     if trim and os.path.exists(full):
         n_trim = tighten_to_audio(recs, full, langcfg)
     return {"shot_id": sid, "audio_duration": round(entries[-1][1], 3),
-            "method": "asr-only", "strategy": "asr-only", "trimmed": n_trim,
-            "gap_score": {}, "lines": recs, "problems": []}
+            "method": "asr-only", "strategy": "asr-only",
+            "src_fingerprint": _src_fingerprint(seg["file"]),
+            "trimmed": n_trim, "gap_score": {}, "lines": recs, "problems": []}
 
 
 # ---------------------------------------------------------------- 声学与非语音识别
@@ -1091,11 +1177,306 @@ def parse_srt_file(path):
     return out
 
 
+def _src_fingerprint(path):
+    """源媒体指纹：size + mtime_ns + 时长。用来判定缓存切片是否仍对应当前素材。
+
+    ★ 为什么 mtime 比较不够（2026-11-10 实测）：
+      `asr/shot_001.wav` 的 mtime（22:39）比 `final.mp4`（15:54）**更新**，
+      所以「缓存比源旧就重建」这种判据会放行 —— 但两边内容根本不同：
+      缓存里的人声在 6.00s，成片里在 4.25s，整条错位 1.75 秒。
+      音频时长、帧数完全一样，只有内容不一样，肉眼与元数据都看不出来。
+      原因是这份 wav 当初是从别的东西抽的（或者抽完以后成片被原样重写过）。
+      ⇒ 只能记「抽的时候源长什么样」，对不上就重抽。指纹放过期文件的概率极低，
+        而且重抽本身很便宜（10 秒素材 ~0.2s）。
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return "%d:%d" % (st.st_size, st.st_mtime_ns)
+
+
+def _asr_cache_fresh(wav, path):
+    """asr 切片是否仍对应当前源媒体（指纹一致才算）。缺指纹一律视为过期。
+
+    缺指纹为什么判过期而不是判有效：历史缓存全都没有指纹，
+    而本次实测证明「有文件 + mtime 看着合理」恰恰是错的来源。
+    宁可多抽一次，也不能让错误的时间轴一路进 ASS、进工程、进送审材料。
+    """
+    side = wav + ".src"
+    if not os.path.isfile(wav) or not os.path.isfile(side):
+        return False
+    try:
+        with open(side, encoding="utf-8") as fh:
+            return fh.read().strip() == _src_fingerprint(path)
+    except OSError:
+        return False
+
+
+def asr_words(cfg, path, asr_dir=None, tag=None):
+    """该段的**词级** ASR 条目 [(start, end, word)]；拿不到返回 []。
+
+    ★ 2026-11-10 新增，用途是替掉「CTC 没配 ⇒ 全部 fallback-estimate」这条死路。
+      实测 海外剧/28 ep01：`config.subtitle.json` 的 `tools.aligner` 还是占位符
+      （`<ctc-forced-aligner 可执行文件绝对路径…>`），CTC 从来没跑过，
+      每段都走 `fallback-estimate`；而 `build_cues` 只对 `fallback-estimate`
+      做「等分剩余时长」，于是字幕位置与真实人声毫无关系 —— 这就是用户看到的
+      「字幕跟音频没有对齐」，且全程无告警。
+
+      为什么词级时间可信：whisper 的**段级**时间戳在有音乐时会被拉长到整段
+      （实测 shot_001 一条 `0.00–9.68`），但**词级**时间戳是逐 token 的，
+      同一段能给出 `El 0.35–0.49 / contrato 0.49–2.44 / está 2.44–4.44 / …`，
+      与实测人声能量吻合。所以段级不可信、词级可用。
+
+    实现要点：
+      · `-sow`（split-on-word）必须开，否则会按 token 切（`contr`/`ato` 两半）；
+      · `-ml 1` 每词一条；纯空白/标点条目丢弃；
+      · 只抽一次，结果单独存 `<sid>.words.srt`，与段级 `<sid>.srt` 互不覆盖
+        （段级那份被覆盖检查与 ASR 补位用着，不能动）。
+    """
+    wc = cfg["tools"].get("whisper_cli")
+    model = cfg["tools"].get("whisper_model")
+    if not (wc and model and os.path.exists(wc) and os.path.exists(model)):
+        return []
+    adir = asr_dir or os.path.dirname(path)
+    tag = tag or "asr"
+    wav = os.path.join(adir, tag + ".wav")
+    out_base = os.path.join(adir, tag + ".words")
+    out_srt = out_base + ".srt"
+    if not _asr_cache_fresh(wav, path):
+        # 音频过期就别用旧词表；让 asr_entries 负责重抽（它会写指纹）
+        return []
+    if not os.path.exists(out_srt):
+        try:
+            run([wc, "-m", model, "-f", wav, "-l", cfg["tools"].get("whisper_lang", "zh"),
+                 "-sow", "-ml", "1", "-osrt", "-of", out_base, "-np"], check=False,
+                timeout=cfg["tools"].get("whisper_timeout_s") or 900)
+        except RuntimeError as e:
+            print("   ⚠ %s 词级转写失败：%s" % (os.path.basename(out_base), str(e)[:80]))
+            return []
+    words = []
+    for a, b, t in parse_srt_file(out_srt):
+        t = (t or "").strip()
+        if not t or not re.search(r"\w", t):
+            continue
+        words.append((round(float(a), 3), round(float(b), 3), t))
+    return words
+
+
+def silence_overlap(recs, wav, frame_s=0.05):
+    """字幕「压在静音上」的总时长（秒）；读不出音频返回 0.0。
+
+    ★ 2026-11-10（评分口径缺陷，实测后果很严重）：
+      原来档位只用 `coverage_gaps`（有语音却没字幕的时长）打分。而
+      `fallback-estimate` 的操作恰恰是「把台词等分铺满整段」—— 铺满当然没有缺口，
+      于是它的缺口分恒为 **0，永远是最优**，真对齐的 asr-word（0.6–2.4s 缺口）
+      反而输掉。实测 shot_004：`gap_score` 里 wide/tight/tighter 全 0、
+      asr-word 2.4 ⇒ 估算档胜出，字幕位置与人声毫无关系。
+      ⇒ 必须加上「假覆盖」这一半：字幕亮着但没人在说话的时间也是错。
+
+    单条覆盖率 < 0.25 的直接整条计入（`window_loud_fraction` 已按 p90 归一，
+    所以这 0.25 是「基本没声」而非「声音小」）。
+    """
+    tot = 0.0
+    for r in recs:
+        a, b = float(r["start"]), float(r["end"])
+        if b - a <= 0.05:
+            continue
+        frac = window_loud_fraction(wav, a, b, frame_s)
+        if frac is None:
+            continue
+        tot += (1.0 - frac) * (b - a)
+    return round(tot, 3)
+
+
+def align_by_words(txts, words, lc, allow_partial=False):
+    """用**词级** ASR 时间把台词按序映射成字幕条目；映射不成立返回 None。
+
+    做法（与 `asr_calibrate` 同族，但基准是词而不是段）：
+      逐条台词，在剩余词序列里找相似度最高的一段连续词窗口（从当前位置起、
+      长度取「台词的词数 ± 40%」），取其首词起点与末词终点。
+      任一条台词找不到 >= 0.42 的匹配 ⇒ 整段放弃（返回 None），
+      交给别的档位 —— 宁可用段级结果，也不要半对半错。
+
+    时间只取**匹配到的词**的首尾，不做等分、不按字数估 —— 这正是旧实现错的地方。
+    最小时长保底与段级一致（0.6s 或 0.28s/发音字），但**不越过下一个词**，
+    否则会把字幕拖到静音里。
+
+    ★ 2026-11-10 补：`allow_partial=True` 时，匹配不到的**尾部**台词不参与对齐，
+      并把它们原样返回（调用方读 `_unmatched`）—— 用于 shot_006 这种
+      「第一句能对上、第二句 whisper 没转出来（Esperame 是人声但模型漏词）」的段。
+      为什么不能退化成等分估算：等分给出的时间与人声无关，比"少一条字幕"更坏的
+      是"给出一个错的时间还声称对齐成功"。漏的那句会进 problems 让人补，而不是被掩盖。
+    """
+    if not words or not txts:
+        return None
+    _punct = re.compile(r"[，。！？；：…—、（）「」《》\s\"'!?.,;:\-¿¡]")
+
+    def norm(s):
+        return _punct.sub("", str(s or "")).lower().strip()
+
+    def _nword(t):
+        """台词的大致词数。
+
+        ★ 必须用**原始**文本切词，不能先 `norm()` —— `norm` 会把空格一起去掉，
+        于是 `"El contrato está cumplido."` 变成 `elcontratoestácumplido`（一个 token），
+        词数恒为 1，窗口搜索只能在 1–2 词之间打转，永远匹配不到整句。
+        实测后果：首条字幕只覆盖 `El contrato`（0.35–2.44），后半句整段丢失。
+        中文没有空格，按字数算；拼音文字按「字母串」个数算（不受标点影响）。
+        """
+        s = str(t or "")
+        latin = re.findall(r"[A-Za-zÀ-ÿ]+", s)
+        if latin:
+            return max(1, len(latin))
+        return max(1, len(norm(s)))
+
+    def window_score(core, i, n):
+        cand = norm(" ".join(w[2] for w in words[i:i + n]))
+        return text_similarity(core, cand)
+
+    out, j, unmatched = [], 0, []
+    for k, t in enumerate(txts):
+        core = norm(t)
+        if not core:
+            return None
+        nword = _nword(t)
+        # 先求全表最高分，再在「分差 ≤0.12」的窗口里取**起点最早**的一个。
+        #   ★ 2026-11-10 实测反例：台词「El contrato está cumplido.」（5 词），
+        #   从 `El` 起的 5 词窗口末尾多带一个 `Firmaste.`，相似度被拉低约 0.1；
+        #   从 `contrato` 起的 4 词窗口反而整句被包含、分最高 ⇒ 起点落到 0.49，
+        #   白丢开头 `El`（0.35–0.49）。差 0.14s 看着不多，但「首词不亮」是观众
+        #   第一眼就能感觉到的那种错。容差 0.12 是「一整句里多带/少带一个短词」的
+        #   典型分差量级，再大就说明是两个不同窗口，不能让步。
+        cands = []
+        for i in range(j, len(words)):
+            for n in {max(1, nword - 1), nword, nword + 1, max(1, int(nword * 1.4))}:
+                if i + n > len(words):
+                    continue
+                cands.append((window_score(core, i, n), i, n))
+        if not cands:
+            if allow_partial:
+                unmatched = list(txts[k:])
+                break
+            return None
+        best = max(c[0] for c in cands)
+        if best < 0.42:
+            if allow_partial:
+                unmatched = list(txts[k:])
+                break
+            return None
+        bi, bn = min(((i, n) for sc, i, n in cands if sc >= best - 0.12),
+                     key=lambda p: (p[0], p[1]))
+        a = words[bi][0]
+        b = words[bi + bn - 1][1]
+        # 最小时长保底：按**语言的字/词单位**算，不能一律用「字符数 × 0.28」。
+        #   ★ 2026-11-10 踩到：西语「Firmaste. Quien firma, no tiene derecho.」是 32 个字符、
+        #   真实时长约 3.5s，按 0.28×32 = 8.96s 保底 ⇒ 字幕挂到 14.92s，
+        #   越过词表末尾（10.0s）三倍多，直接盖住后半段画面。
+        #   中文按字（3.5 字/秒 ≈ 0.28s/字）成立，拼音文字必须按**词**算（≈0.30s/词）。
+        if (lc or {}).get("wrap") == "char":
+            floor_s = 0.28 * len(_punct.sub("", t))
+        else:
+            floor_s = 0.30 * _nword(t)
+        b = max(b, a + max(0.6, floor_s))
+        # 保底不许越过该段音频末尾（词表最后一项就是它），否则字幕会拖到静音/下一段
+        b = min(b, max(words[-1][1], a + 0.6))
+        out.append({"text": t, "start": round(a, 3), "end": round(b, 3),
+                    "source": "whisper-word"})
+        j = bi + bn
+    if not out:
+        return None
+    # 顺序单调 + 不越过下一条起点（越过就砍到下一条起点，砍没了才放弃）
+    for k, r in enumerate(out):
+        if k:
+            r["start"] = max(r["start"], out[k - 1]["end"])
+        nxt = out[k + 1]["start"] if k + 1 < len(out) else None
+        if nxt is not None and r["end"] > nxt:
+            r["end"] = nxt
+        if r["end"] - r["start"] <= 0.02:
+            return None
+    if unmatched:
+        # 尾部没匹配上的台词挂在这份返回里，调用方负责写进 problems（不许静默丢）
+        for r in out[:1]:
+            r["_unmatched"] = unmatched
+    return out
+
+
+def snap_to_voiced(recs, wav, lc, head_keep=0.04, tail_keep=0.08):
+    """把每条字幕的首尾**贴到真实有声区间**上；返回调整条数。
+
+    ★ 2026-11-10（第三次修）：词级 whisper 的边界在「人声分段 + 长静音」的素材上仍会偏。
+      实测 海外剧/28 ep01：
+        · shot_003 第二句词级给 4.58–6.53，而该镜人声实际在 6.50–7.40（偏 2 秒）；
+        · shot_005「Es la diseñadora del año.」词级把 `diseñadora` 拉成 0.6–2.70，
+          真人是 0.10–0.70 一句、2.70–3.90 一句，中间两秒空。
+      为什么会这样：whisper 的时间是按 token 均摊回声学段的，遇到长静音会把某个 token
+      拉长去盖住静音。文本对不对是一回事，边界对不对是另一回事。
+
+      修法（只动边界，不动文本、不动顺序、不做等分）：
+        ① 取该段的声学有声区间（`loud_intervals`，同一套阈值）；
+        ② 与该字幕区间**有交叠**的区间 → 首尾取这些区间的并集端点；
+        ③ 一条都不交叠 → 找第一个起点落在 [start-0.3, end+2.0] 的区间接上去；
+        ④ 仍找不到 → 原样保留（宁可不动，也不要凭空挪）。
+      ②的作用是把「跨过静音的两段人声」正确地一起罩住；③的作用是把整句挪到
+      真正有声音的位置。前后各留 40/80ms 让字幕不要卡着声波起止闪。
+
+    护栏：调整后若短于 `min_duration_s` 或短于「念得完」所需，就**放弃调整** ——
+    与 `tighten_to_audio` 同一原则：宁可多停留，不产出念不完的字幕。
+    """
+    loud = loud_intervals(wav)
+    if not loud:
+        return 0
+    changed = 0
+    safe_cps = max(8.0, float((lc or {}).get("cps_hard_max", 12.0)) * 0.85)
+    prev_end = 0.0
+    for i, r in enumerate(recs):
+        a, b = float(r["start"]), float(r["end"])
+        hit = [(x, y) for (x, y) in loud if y > a + 0.02 and x < b - 0.02]
+        if hit:
+            na = min(x for x, _ in hit)
+            nb = max(y for _, y in hit)
+        else:
+            nxt = [iv for iv in loud if a - 0.3 <= iv[0] <= b + 2.0]
+            if not nxt:
+                prev_end = max(prev_end, b)
+                continue
+            na, nb = nxt[0][0], nxt[0][1]
+        na = max(0.0, na - head_keep)
+        nb = nb + tail_keep
+        # 不许回退越过上一条（顺序约束）——动边界不能把顺序搞乱
+        na = max(na, prev_end)
+        # ★ 也不许盖住**下一条**已经校验过的起点：shot_004 现场，
+        #   第一句贴到 3.58–5.12，而第二句「No.」贴着 4.0–4.6（人声确实在 4.0），
+        #   不管顺序就会重叠，剪映里两条字幕同一时刻抢同一行，看起来像花屏。
+        #   这里把上一条的尾巴收到下一条起点，收完不足最小时长就整条放弃调整。
+        nxt_floor = None
+        if i + 1 < len(recs):
+            nxt_floor = float(recs[i + 1]["start"])
+        if nxt_floor is not None and nb > nxt_floor:
+            nb = max(na, nxt_floor)
+        if nb - na < float((lc or {}).get("min_duration_s", 0.5)):
+            prev_end = max(prev_end, b)
+            continue
+        if nb - na < spoken_len(r.get("text") or "") / safe_cps:
+            prev_end = max(prev_end, b)
+            continue
+        if abs(na - a) > 0.03 or abs(nb - b) > 0.03:
+            r["start"], r["end"] = round(na, 3), round(nb, 3)
+            r["snapped"] = True
+            changed += 1
+        prev_end = float(r["end"])
+    return changed
+
+
 def asr_entries(cfg, path, asr_dir=None, tag=None):
     """该段的 ASR 条目 [(start, end, text)]，**已剔除非语音标记**。
 
     语音检测的正源仍是 whisper（它只会为真的词给出条目），但必须过 `is_nonspeech`：
     音乐段的 `[Música]` 一旦混进来，覆盖检查与段首修复都会做错事。
+
+    ★ 缓存口径（2026-11-10 第二次修）：判据从「文件存在 / mtime 更新」改成
+      **源媒体指纹一致**。理由见 `_src_fingerprint` 的说明 —— mtime 更新也可能内容错位，
+      而错位的音频会让 whisper 转写出错误时间、让覆盖检查把对齐好的判成「压静音」。
     """
     wc = cfg["tools"].get("whisper_cli")
     model = cfg["tools"].get("whisper_model")
@@ -1104,9 +1485,17 @@ def asr_entries(cfg, path, asr_dir=None, tag=None):
     base = os.path.join(asr_dir or os.path.dirname(path), tag or "asr")
     srt, wav = base + ".srt", base + ".wav"
     # whisper-cli 只接受 16k 单声道 WAV；直接喂 mp4 会静默失败（踩过的坑）
-    if not os.path.exists(wav):
+    if not _asr_cache_fresh(wav, path):
         run([cfg["tools"]["ffmpeg"], "-hide_banner", "-nostats", "-v", "error", "-y",
              "-i", path, "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav])
+        with open(wav + ".src", "w", encoding="utf-8") as fh:
+            fh.write(_src_fingerprint(path))
+        if os.path.exists(srt):
+            # 音频换了，旧 srt 的时间全部作废 —— 留着比没有更危险
+            try:
+                os.remove(srt)
+            except OSError:
+                pass
     if not os.path.exists(srt):
         try:
             run([wc, "-m", model, "-f", wav, "-l", cfg["tools"].get("whisper_lang", "zh"),
@@ -1149,11 +1538,23 @@ def _frame_rms(wav, frame_s=0.02):
 
 
 def _loud_threshold(fr, rel_frac=0.30, abs_floor=600.0):
-    """有声判定的 RMS 阈值：p90 的相对比例与绝对下限取大者。"""
+    """有声判定的 RMS 阈值：p90 的相对比例与绝对下限取大者。
+
+    ★ 2026-11-10：p90 == 0 时不能直接判「无法判断」。
+      p90 = 0 的含义是「90% 的帧完全静音」，这在**短镜头 / 只有片头有声音**的段里
+      很常见（实测 海外剧/28 ep01 shot_002：前 0.5s 有声、其余 9.5s 全静音，
+      p90 恰为 0）。旧实现此时返回 None，`window_loud_fraction` 也跟着返回 None，
+      于是所有「这窗口是不是静音」的判据全部失效 —— 包括 ASR 补位的幻觉拦截，
+      结果 whisper 在静音上编出的整段台词照样进字幕。
+      ⇒ p90 为 0 时改用**峰值**作参照；连峰值都是 0 才是真的全静音（返回 None）。
+    """
     vals = sorted(fr)
     p90 = vals[min(len(vals) - 1, int(len(vals) * 0.9))]
     if p90 <= 0:
-        return None
+        peak = vals[-1] if vals else 0.0
+        if peak <= 0:
+            return None                     # 全段数字静音，没有任何可判依据
+        return max(abs_floor, rel_frac * peak)
     return max(abs_floor, rel_frac * p90)
 
 
@@ -1407,7 +1808,11 @@ def split_two_lines(text, cfg):
       * 标点断点若略微超出行宽，允许 line_tolerance_chars 的容差 —— 宁可行长一点，
         也不要把词切开（实测：允许 +3 字容差后，「…怎么可能得癌症！」能整段落在一行）
     """
-    ml = cfg["max_line_chars"]
+    # 缺 max_line_chars 不崩：退回 max_cue_chars（两者在标准配置里本就接近）。
+    #   ★ 2026-11-10：外部 SRT 导入路径（`load_cues_from_srt`）会构造精简的语言配置，
+    #   旧实现在这里 `KeyError: max_line_chars` 直接崩 —— 一个可推导的字段缺省，
+    #   不值得让整集字幕不出来。
+    ml = int(cfg.get("max_line_chars") or cfg.get("max_cue_chars") or 40)
     tol = cfg.get("line_tolerance_chars", 0)
     n = len(text)
     if n <= ml:
@@ -1527,6 +1932,80 @@ def split_long_cue(text, cfg):
     return chunks
 
 
+def load_cues_from_srt(path, cfg, segs, offset_s=0.0):
+    """把外部 SRT 读成 cues（整集绝对时间，**镜头轴**）。
+
+    为什么需要它：本仓库的自动对齐要过 whisper + CTC 两道，遇到「整段一条时间戳」
+    或底噪被当人声时，台词会整条挂到静音上（实测 海外剧/28 ep01：第一句标 0.35s，
+    而人声 4.25s 才出现）。这时最省事、质量最稳的做法是**让剪映识别字幕**：
+    剪映的 ASR 对带 BGM 的对白明显更稳，识别完在剪映里「导出字幕」得到 SRT。
+
+    轴的处理（必须显式声明，不能猜）：
+      剪映导出的 SRT 起点是**工程/成片轴**（前面可能压着封面片头），
+      而 cues 的语义是**镜头轴**（第一段画面 = 0）。所以要把片头减回去。
+      `offset_s` 就是这段片头：由调用方用 `cover_lead_seconds()` 算好传进来，
+      不在这里猜 —— 猜错就是「整体早/晚 0.8 秒」这种最难查的错。
+
+    返回 (cues, 说明列表, 镜头总长秒)。文本为空的、纯音乐标记的条目直接丢弃（沿用 `is_nonspeech`）。
+
+    ★ 调用方传进来的必须是**完整**的语言配置（`cfg["languages"][lang]`），
+      不能只给 `{"wrap": "word"}` —— `split_two_lines` 要读 `max_line_chars`，
+      缺了会 `KeyError` 而不是给个默认值。缺字段就补默认，比崩掉合理。
+    """
+    lc = dict(cfg["languages"][cfg["default_language"]])
+    lc.setdefault("max_line_chars", int(lc.get("max_cue_chars") or 40))
+    lc.setdefault("max_lines", 2)
+    lc.setdefault("line_tolerance_chars", 0)
+    lc.setdefault("wrap", "word")
+    lc.setdefault("min_duration_s", 0.5)
+    recs = parse_srt_file(path)
+    notes = []
+    if not recs:
+        return [], ["SRT 里没读到任何字幕块：%s" % path], 0.0
+
+    # 段起点表（用于把每条字幕归属到镜头，覆盖检查与证据板要它）
+    bounds, t = [], 0.0
+    for seg in segs:
+        d = media_duration(cfg["tools"]["ffprobe"], seg["file"])
+        if d <= 0:
+            d = ffprobe_frames(cfg["tools"]["ffprobe"], seg["file"]) / 24.0
+        bounds.append((seg["shot_id"], t, t + d))
+        t += d
+    total_seg = t
+
+    cues, dropped = [], 0
+    for a, b, txt in recs:
+        txt = (txt or "").strip()
+        if not txt or is_nonspeech(txt):
+            dropped += 1
+            continue
+        st = max(0.0, float(a) - float(offset_s))
+        en = max(st, float(b) - float(offset_s))
+        if en - st <= 0.05:
+            dropped += 1
+            continue
+        sid = ""
+        for _sid, s0, s1 in bounds:
+            if s0 - 0.05 <= st < s1:
+                sid = _sid
+                break
+        if not sid and bounds:
+            sid = bounds[-1][0]
+        cues.append({"shot_id": sid, "start": round(st, 3), "end": round(en, 3),
+                     "text": txt, "lines": split_two_lines(txt, lc),
+                     "source": "srt"})
+
+    cues.sort(key=lambda c: c["start"])
+    notes.append("外部 SRT：%d 块 → %d 条字幕（丢弃空/纯音乐 %d 条），"
+                 "轴=工程轴减 %.2fs 片头" % (len(recs), len(cues), dropped, offset_s))
+    over = [c for c in cues if c["end"] > total_seg + 0.5]
+    if over:
+        notes.append("%d 条字幕超出镜头总长 %.2fs（例 %.2f–%.2f），"
+                     "多半是 SRT 轴给错了：工程的片头没减" %
+                     (len(over), total_seg, over[0]["start"], over[0]["end"]))
+    return cues, notes, total_seg
+
+
 def build_cues(ws, ep, cfg, segs, lines, subs_dir):
     """产出该集全部字幕条目（时间已换算成【整集绝对时间】）。"""
     lang = cfg["default_language"]
@@ -1538,7 +2017,19 @@ def build_cues(ws, ep, cfg, segs, lines, subs_dir):
     seg_offsets = {}
     for seg in segs:
         sid = seg["shot_id"]
-        seg_offsets[sid] = t0        # 记录该段在整集里的起点（覆盖检查要用）
+        # ★ 2026-11-10 修：段起点与游标推进**必须在任何 continue 之前**完成。
+        #   旧实现把 `t0 += _d` 放在段末，而「本段没有台词/没有对齐产物」时会
+        #   `continue` 提前跳下一段 ⇒ 该段时长从未计入 ⇒ **其后所有字幕整体提前**。
+        #   实测 海外剧/28 ep01：shot_002 无对白（10.125s）被跳过，此后每条字幕
+        #   早 10.125 秒；而 ASS 与剪映工程都照旧「生成成功」，只有肉眼看得出来。
+        #   这是既有 bug（不是剪映工程引入的）：ASS 烧录同样错，只是没人逐帧比对。
+        _d = media_duration(cfg["tools"]["ffprobe"], seg["file"])
+        if _d <= 0:
+            _d = ffprobe_frames(cfg["tools"]["ffprobe"], seg["file"]) / 24.0
+            warn.append("%s 读不到实际时长，按 24fps 帧数估算（%.2fs）" % (sid, _d))
+        seg_start = t0                 # 本段在整集里的起点（后面换算字幕绝对时间用）
+        seg_offsets[sid] = seg_start   # 覆盖检查要用同口径
+        t0 = seg_start + _d            # 无条件推进 —— 有没有台词都要占这 10 秒
         ap = os.path.join(subs_dir, "align", sid + ".json")
         if not os.path.exists(ap):
             # ★ 2026-10-22：剧本本来就没有台词的段（H3 也没在里头说话）不该报
@@ -1564,7 +2055,15 @@ def build_cues(ws, ep, cfg, segs, lines, subs_dir):
         for it in rec.get("lines", []):
             if _prev_end is not None:
                 _gap = float(it["start"]) - _prev_end
-                if 0.05 < _gap <= 2.5:
+                # ★ 2026-11-10：这条约束**只用于 CTC 档**。
+                #   它的由来是「CTC 有起点偏晚倾向」（真值 0.00 被放到 1.84 之类），
+                #   而 CTC 恰好没有可靠的声学边界。ASR 档（asr-word / asr-whisper）
+                #   的时间来自实测声学，并且已经过 `snap_to_voiced` 贴过边界 ——
+                #   再拉平就是把对的改成错的。实测 海外剧/28 ep01：
+                #   shot_003 第二句 asr-word 给 6.48–7.58（人声就在 6.5–7.4），
+                #   被这条规则拉到 4.16 起，字幕亮了 3.4 秒却只有 1 秒有声。
+                _acoustic = str(rec.get("method") or "").startswith("asr-")
+                if not _acoustic and 0.05 < _gap <= 2.5:
                     it["start"] = round(_prev_end, 3)
                     it["pulled_back"] = True
             _prev_end = float(it["end"])
@@ -1623,21 +2122,13 @@ def build_cues(ws, ep, cfg, segs, lines, subs_dir):
                     pen = min(pst + lc["min_duration_s"], en)
                 cues.append({
                     "shot_id": sid,
-                    "start": round(t0 + pst, 3),
-                    "end": round(t0 + pen, 3),
+                    "start": round(seg_start + pst, 3),
+                    "end": round(seg_start + pen, 3),
                     "text": p,
                     "lines": split_two_lines(p, lc),
                     "source": it.get("source", "ctc-sequential")
                 })
                 cur = pen
-        # ★ 2026-10-22：段落在整集里的起点改用**实际时长**，不再「帧数 ÷ 写死的 24fps」。
-        #   旧实现一旦素材是 25/30fps，每段偏移 0.15–0.2s，30 段后累计 4–6 秒，
-        #   表现为「越往后字幕越早」。帧数除法只作读不到时长时的兜底。
-        _d = media_duration(cfg["tools"]["ffprobe"], seg["file"])
-        if _d <= 0:
-            _d = ffprobe_frames(cfg["tools"]["ffprobe"], seg["file"]) / 24.0
-            warn.append("%s 读不到实际时长，按 24fps 帧数估算（%.2fs）" % (sid, _d))
-        t0 += _d
     # 排序 → 延长过短条目 → 去重叠（后一条不得早于前一条结束）
     #   注意：延长必须受【下一条起点】约束，否则会把两条字幕叠在一起
     cues.sort(key=lambda c: c["start"])
@@ -2563,6 +3054,13 @@ def main():
                     help="不混 BGM（默认检测到 <ep>_bgm-plan.json 就在母版拼接时混音；2026-11-01）")
     ap.add_argument("--no-cover", dest="no_cover", action="store_true",
                     help="母版不加首帧封面（默认用 09-发行/封面/cover_9x16*.png 做 0.8s 片头）")
+    ap.add_argument("--from-srt", dest="from_srt", default=None, metavar="PATH",
+                    help="用外部 SRT 作为字幕时间源（例如剪映「识别字幕」后导出的字幕文件）；"
+                         "给了它就不跑 whisper/CTC 对齐 —— 外部 ASR 已经定过时间，别再覆盖")
+    ap.add_argument("--srt-axis", dest="srt_axis", default="master",
+                    choices=["master", "shots"],
+                    help="外部 SRT 的时间轴：master=工程/成片轴（含封面片头，默认，会自动减回）；"
+                         "shots=镜头轴（第一段画面=0，不减）")
 
     args = ap.parse_args()
     args.ep = canon_ep(args.ep)          # 26 / EP26 / ep026 → ep26（否则路径对不上）
@@ -2668,7 +3166,20 @@ def main():
         print("  ⚠ %s" % report["warnings_align"])
 
     if args.stage in ("cues", "all", "ass", "render"):
-        cues, warn, total, cps = build_cues(ws, args.ep, cfg, segs, lines, subs_dir)
+        if getattr(args, "from_srt", None):
+            # ★ 2026-11-10：外部字幕（剪映「识别字幕」后导出）作为时间源。
+            #   走这条路时**不跑** whisper/CTC —— 用户已经用更强的 ASR 定过时间，
+            #   再用本仓库的退化对齐覆盖它，等于把好的换回坏的。
+            _cov_s, _cmsg = cover_lead_seconds(
+                ws, args.ep, cfg, enabled=not getattr(args, "no_cover", False))
+            _axis = getattr(args, "srt_axis", "master") or "master"
+            _off = 0.0 if _axis == "shots" else _cov_s
+            cues, warn, total = load_cues_from_srt(
+                args.from_srt, cfg, segs, offset_s=_off)
+            cps = {"cps_hard": [], "cps_soft": [], "cps_outliers": [], "coverage_gaps": []}
+            print("②.0 时间源：外部 SRT（轴=%s，减片头 %.2fs；%s）" % (_axis, _off, _cmsg))
+        else:
+            cues, warn, total, cps = build_cues(ws, args.ep, cfg, segs, lines, subs_dir)
 
         # ★ 短字幕修整（2026-10-07）：时长 < 0.3s 的条目（真实发音极短，如
         #   ep81「誰？」0.08s）优先向后延长，撞到下一条起点再向前延伸，
