@@ -1405,7 +1405,10 @@ def cmd_edit_draft(ws: pathlib.Path, cfg: dict, args) -> tuple:
             ("封面片头", "%.2fs" % (float((first.get("cover") or {}).get("seconds") or 0))),
             ("总时长", "%.2fs" % float(first.get("total_duration_s") or 0)),
         ])
-        note = ("时间轴按 shot_id 顺序拼接，段长取自 ffprobe 实测；封面片头 0.8s 计在第 1 行。"
+        # 封面时长必须从 manifest 读，不能写死数字 —— 数字一变，这张送审材料就说了假话。
+        _cover_s = float((first.get("cover") or {}).get("seconds") or 0)
+        note = ("时间轴按 shot_id 顺序拼接，段长取自 ffprobe 实测；封面片头 %.2fs 计在第 1 行。"
+                % _cover_s +
                 "字幕完整条目见第 3 页，BGM 与素材哈希见第 4 页，全量字段在 draft_manifest.json。")
         for line in wrap_chars(note, _f(note, 19), W - 2 * M):
             d.text((M, y), line, font=_f(line, 19), fill=GREY)

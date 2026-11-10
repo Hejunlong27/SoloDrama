@@ -2776,7 +2776,11 @@ def release_dir_of(ws):
     return os.path.join(ws, rel)
 
 
-COVER_LEAD_DEFAULT_S = 0.8       # 首帧封面停留时长（短剧常用 0.5–1.0s；太长会被判「片头拖沓」）
+# 首帧封面停留时长。0.06s 是**一帧级**的闪封（24fps 下恰好 1 帧 = 0.0417s），
+# 用户明确要求「封面别拖，0.06 秒够了」。
+# ★ 注意：配置值是**期望值**，实际落地时长受帧率取整影响（见 `cover_lead_seconds` 的
+#   实测口径）—— 0.06s@24fps 只有 1 帧 = 0.0417s，字幕偏移必须用实测值而不是这个数。
+COVER_LEAD_DEFAULT_S = 0.06
 
 
 def _seg_video_info(ffprobe, path):
@@ -2891,6 +2895,21 @@ def cover_lead_seconds(ws, ep, cfg, enabled=True):
     cpath, cmsg = find_cover(ws, ep, cfg)
     if not cpath:
         return 0.0, cmsg
+
+    # ★ 2026-11-10（第二次修）：配置值是**期望值**，真正落进母版的是**取整到帧之后**的时长。
+    #   实测 0.06s @ 24fps → ffmpeg 只出 1 帧 = 0.0417s（`-t 0.06` 不足两帧）。
+    #   如果字幕偏移还用 0.06，整条字幕就会晚 0.018s —— 数值小，但它是**系统性**的，
+    #   而且和「贴边」这类随机误差不同，永远不会自己消失。
+    #   ⇒ 母版拼完后把实测时长写进 `<subs>/_cover_lead.json`，这里优先读它。
+    try:
+        _m = load_json(os.path.join(out_dir_of(ws), "subs", ep, "_cover_lead.json"))
+    except Exception:                                                       # noqa: BLE001
+        _m = None
+    if isinstance(_m, dict) and _m.get("secs"):
+        # 封面图换过（mtime 或大小变了）⇒ 实测值作废，退回配置值
+        if (str(_m.get("image") or "") == os.path.abspath(cpath)
+                and int(_m.get("image_size") or 0) == os.path.getsize(cpath)):
+            return float(_m["secs"]), cpath
     secs = float((cfg.get("master") or {}).get("cover_seconds") or COVER_LEAD_DEFAULT_S)
     return secs, cpath
 
@@ -2939,8 +2958,22 @@ def stage_master(ws, ep, cfg, segs, subs_dir, cover=True, bgm=True):
             lead = build_cover_lead(cfg, cpath, ref, os.path.join(
                 subs_dir, "_cover_lead.mp4"), secs, has_audio)
             files.append(lead)
-            notes.append("① 首帧封面：%s → %.1fs 片头（%dx%d %s）"
-                         % (cmsg, secs, ref["width"], ref["height"], ref["codec"]))
+            # ★ 2026-11-10：把**实测**时长落盘，供 cover_lead_seconds 回读。
+            #   配置 0.06s 在 24fps 下只有 1 帧 = 0.0417s；字幕偏移若按 0.06 算，
+            #   整条字幕会晚 0.018s —— 小，但是系统性偏差，永远不消失。
+            _actual = media_duration(tools["ffprobe"], lead)
+            try:
+                dump_json(os.path.join(subs_dir, "_cover_lead.json"),
+                          {"secs": round(_actual or 0.0, 6),
+                           "requested_s": round(float(secs), 6),
+                           "fps": ref["fps"],
+                           "image": os.path.abspath(cpath),
+                           "image_size": os.path.getsize(cpath)})
+            except OSError:
+                pass
+            notes.append("① 首帧封面：%s → 请求 %.3fs / 实际 %.3fs 片头（%dx%d %s，%gfps）"
+                         % (cmsg, secs, _actual or 0.0, ref["width"], ref["height"],
+                            ref["codec"], ref["fps"]))
     # ② 视频片段
     files += seg_files
 

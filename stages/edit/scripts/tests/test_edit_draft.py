@@ -88,6 +88,13 @@ def build_ws(root: pathlib.Path, *, cover: bool = True, cues: bool = True,
     (ws / "06-提示词" / "ep01" / "shots.json").write_text(json.dumps(
         [{"shot_id": "shot_001", "duration": 2.0},
          {"shot_id": "shot_002", "duration": 1.5}], ensure_ascii=False), encoding="utf-8")
+    # ★ 2026-11-10：夹具**显式**写一份 0.8s 的封面配置。
+    #   不写的话会落到 `COVER_LEAD_DEFAULT_S`（现为 0.06，一帧级闪封），
+    #   而下面几条断言用的是 0.8 —— 测试就会因为「默认值改了」变红，
+    #   那测的不是代码错，是测试在依赖默认值。
+    #   显式给一个**非默认值**反而更有价值：它验的是「配置 → 时间轴」这条管线通不通。
+    (ws / "video-pipeline" / "config.subtitle.json").write_text(json.dumps(
+        {"master": {"cover_seconds": 0.8}}, ensure_ascii=False), encoding="utf-8")
     _mk_media(ws / "07-成片" / "ep01" / "b0001" / "shot_001" / "final.mp4", "red", 2.0)
     _mk_media(ws / "07-成片" / "ep01" / "b0001" / "shot_002" / "final.mp4", "blue", 1.5)
     if cover:

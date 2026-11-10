@@ -36,8 +36,8 @@
    0.2 秒的偏移和 1.6 秒的时长被四舍五入吃掉。字幕时间全部要靠亚秒精度，
    所以本文件**一律用 `Timerange(start_us, duration_us)` 直接给微秒整数**，不碰 `trange`。
 2. **字幕时间是「片段轴」，母版带封面片头**。`cues.json` 的起点从第一段画面算起，
-   而母版前面还有 0.8s 封面（`master.cover_seconds`）。工程里字幕必须**整体后移**这个量，
-   否则工程与成片差 0.8 秒 —— 送审时「工程和成片对不上」比没工程更糟。
+   而母版前面还有一帧级封面（`master.cover_seconds`，默认 0.06s→实际 1 帧）。工程里字幕必须**整体后移**这个量，
+   否则工程与成片差这一段 —— 送审时「工程和成片对不上」比没工程更糟。
 3. **素材路径是绝对路径**。`draft_content.json` 里存的是绝对路径，换机器就断链。
    `--copy-media` 会把素材拷进草稿目录并改引用；默认只落 `draft_manifest.json`
    记全量 sha256，供外部逐项核对。
@@ -92,7 +92,7 @@ DRAFT_DIR_NAME = "draft_manifest.json"       # 清单文件名（与草稿目录
 REPORT_NAME = "report.json"
 DEFAULT_CANVAS = (1080, 1920)
 DEFAULT_FPS = 30
-DEFAULT_COVER_SECONDS = 0.8
+DEFAULT_COVER_SECONDS = 0.06      # 一帧级闪封（与 subtitle.COVER_LEAD_DEFAULT_S 同口径）
 MEDIA_DIR_NAME = "media"
 
 # 剪映文本字号的近似映射。
@@ -243,7 +243,7 @@ def collect(ws: pathlib.Path, ep: str, *, with_cover: bool = True, with_bgm: boo
     cover_path, cover_msg, cover_s = "", "", 0.0
     if with_cover:
         # 复用 subtitle.cover_lead_seconds：封面片头时长只有一处真源，
-        # 否则「母版加了 0.8s、工程不知道」这类错位会再次发生。
+        # 否则「母版加了片头、工程不知道」这类错位会再次发生。
         secs, hit = S.cover_lead_seconds(str(ws), ep, cfg, enabled=True)
         if secs > 0 and hit and os.path.isfile(hit):
             cover_path = str(pathlib.Path(hit).resolve())
@@ -691,7 +691,7 @@ def verify(draft_dir: pathlib.Path, tl: dict, edit_cfg: dict,
         return {"pass": False, "fails": ["草稿里没有 draft_content.json：%s" % p], "notes": []}
     js = _read_json(p, {}) or {}
 
-    # 结构性检查①：必须有真实画面段（封面图不算，cover 只是片头 0.8s）
+    # 结构性检查①：必须有真实画面段（封面图不算，cover 只是片头那一帧）
     real = [c for c in (tl.get("video") or []) if c.get("kind") == "video"]
     if not real:
         fails.append("时间轴里一段真实画面都没有（只有封面或空）⇒ 空工程不能作为送审材料")

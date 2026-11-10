@@ -487,6 +487,58 @@ class TestSnapToSingleBlock(unittest.TestCase):
             self.assertLess(recs[0]["end"], 6.40, "尾巴不许拖进 6.10–6.48 的静音")
 
 
+class TestCoverLeadMeasured(unittest.TestCase):
+    """封面偏移必须用**实测**时长，不是配置的期望值（2026-11-10）。"""
+
+    def test_measured_file_wins_over_config(self):
+        """0.06s @ 24fps 落地只有 1 帧 = 0.0417s。
+
+        配置值 0.06 与落地值 0.0417 差 0.018s。若字幕偏移按配置算，
+        整条字幕会晚 0.018s —— 小，但是**系统性**偏差，不会自己消失。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            ws = pathlib.Path(td)
+            ep = "ep01"
+            (ws / "07-成片" / "subs" / ep).mkdir(parents=True)
+            (ws / "09-发行" / "封面").mkdir(parents=True)
+            (ws / "video-pipeline").mkdir()
+            (ws / "layout.json").write_text(json.dumps({
+                "layout_version": 1, "engine_root": "video-pipeline",
+                "data_rel": "../06-提示词", "out_rel": "../07-成片",
+                "assets_rel": "../04-资产"}), encoding="utf-8")
+            img = ws / "09-发行" / "封面" / "cover_9x16.png"
+            img.write_bytes(b"x" * 100)
+            (ws / "07-成片" / "subs" / ep / "_cover_lead.json").write_text(json.dumps({
+                "secs": 0.041667, "requested_s": 0.06, "fps": 24.0,
+                "image": str(img.resolve()), "image_size": 100}), encoding="utf-8")
+            cfg = {"master": {"cover_seconds": 0.06},
+                   "tools": {"ffprobe": "ffprobe", "ffmpeg": "ffmpeg"}}
+            secs, _hit = S.cover_lead_seconds(ws, ep, cfg)
+            self.assertAlmostEqual(secs, 0.041667, places=6)
+
+    def test_stale_metadata_falls_back_to_config(self):
+        """封面图换过（大小变了）⇒ 实测值作废，退回配置值。"""
+        with tempfile.TemporaryDirectory() as td:
+            ws = pathlib.Path(td)
+            ep = "ep01"
+            (ws / "07-成片" / "subs" / ep).mkdir(parents=True)
+            (ws / "09-发行" / "封面").mkdir(parents=True)
+            (ws / "video-pipeline").mkdir()
+            (ws / "layout.json").write_text(json.dumps({
+                "layout_version": 1, "engine_root": "video-pipeline",
+                "data_rel": "../06-提示词", "out_rel": "../07-成片",
+                "assets_rel": "../04-资产"}), encoding="utf-8")
+            img = ws / "09-发行" / "封面" / "cover_9x16.png"
+            img.write_bytes(b"x" * 999)          # 大小已不同于记录里的 100
+            (ws / "07-成片" / "subs" / ep / "_cover_lead.json").write_text(json.dumps({
+                "secs": 0.041667, "requested_s": 0.06, "fps": 24.0,
+                "image": str(img.resolve()), "image_size": 100}), encoding="utf-8")
+            cfg = {"master": {"cover_seconds": 0.06},
+                   "tools": {"ffprobe": "ffprobe", "ffmpeg": "ffmpeg"}}
+            secs, _hit = S.cover_lead_seconds(ws, ep, cfg)
+            self.assertAlmostEqual(secs, 0.06, places=3)
+
+
 class TestFindRecentSrt(unittest.TestCase):
     """`--from-srt auto`：剪映导出的 SRT 落在下载目录，按修改时间取最新。"""
 

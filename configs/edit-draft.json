@@ -11,8 +11,8 @@
   "fps": 30,
   "_fps_note": "剪映工程帧率。成片以 ffmpeg 链为准；此项只影响工程内的时间轴显示精度。",
 
-  "cover_seconds": 0.8,
-  "_cover_note": "首帧封面片头时长。必须与 config.subtitle.json 的 master.cover_seconds 一致，否则工程与成片差这一段。",
+  "cover_seconds": 0.06,
+  "_cover_note": "首帧封面片头时长（0.06 = 一帧级闪封；24fps 下实际落地 1 帧 = 0.0417s）。必须与 config.subtitle.json 的 master.cover_seconds 一致，否则工程与成片差这一段。实际偏移以 <subs>/_cover_lead.json 的实测值为准。",
 
   "text": {
     "font": "SourceHanSansCN_Medium",
