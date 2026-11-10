@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core import (adapters, agent, artifacts, canvas, comfy_launcher, comfy_probe, comfy_store,
+from core import (adapters, agent, artifacts, canvas, characters, comfy_launcher, comfy_probe, comfy_store,
                   creation, graph, monitor, timing, updater,
                   skills as SKILLS, commands as CMD,
                     connections, generators,
@@ -773,8 +773,9 @@ def studio_overview(ws: str = Query(...)):
 
 
 @app.get("/api/studio/workflow")
-def studio_workflow(ws: str = Query(...)):
-    return adapters.norm_workflow(adapters.workflow_status(str(_require_ws(ws))))
+def studio_workflow(ws: str = Query(...), ep: str = Query(default="")):
+    """节点状态。`ep` 可选：不传则引擎按 ep01 评估（引擎口径，不在这里改）。"""
+    return adapters.norm_workflow(adapters.workflow_status(str(_require_ws(ws)), ep))
 
 
 @app.get("/api/studio/setup")
@@ -801,9 +802,123 @@ def studio_episodes(ws: str = Query(...)):
     return {"items": items, "count": len(items)}
 
 
+@app.get("/api/studio/view-sheet")
+def studio_view_sheet(ws: str = Query(...), apply: bool = Query(default=False)):
+    """把角色身份卡提示词统一成「16:9 三视图 + 表情四宫格」。**默认干跑**。
+
+    只改 `02-资产库.md` 里的「三视图 / 表情四态」两个块，造型与表格一字不动；
+    改写结果先过 13 项结构自检，任一项缺失就整体不写（rc=3）。
+    `apply=True` 时才落盘，写前自动备份 `.bak_<时间戳>`。
+    """
+    if apply and READONLY_MODE:
+        raise HTTPException(status_code=423,
+                            detail="只读模式：不允许改写资产库（SOLODRAMA_CONSOLE_READONLY=1）")
+    w = str(_require_ws(ws))
+    args = ["--workspace", w, "--json"]
+    if apply:
+        args.append("--apply")
+    res = adapters.run_json("view_sheet", args, w, timeout=90, ttl=0)
+    data = res.get("data")
+    if isinstance(data, dict):
+        data["rc"] = res.get("rc")
+        if apply and data.get("applied"):
+            studio.clear_cache()
+        return data
+    return {"ok": False, "reason": res.get("reason") or "no_json",
+            "rc": res.get("rc"), "text_tail": res.get("text_tail", "")}
+
+
+@app.get("/api/studio/image-channel")
+def studio_image_channel(ws: str = Query(...)):
+    """资产出图这次会走哪条通道、要不要花钱 —— 按项目 `model-plan.json` 判定，只读。
+
+    单张重出**不允许**界面自己选通道：`drama.py` 的门禁会拿确认单比对，
+    选错就是退出码 4，而用户只看到「按钮没反应」。
+    """
+    return generators.image_channel(str(_require_ws(ws)))
+
+
+@app.get("/api/studio/characters")
+def studio_characters(ws: str = Query(...)):
+    """角色档案：同一角色的三视图 / 多套造型 / 表情归并成一张卡。**只读**。
+
+    数据只来自磁盘：资产提示词 md + `04-资产/characters/*` + `refs.json`。
+    不落盘、不建索引 —— 档案是派生视图，硬编一份索引只会和磁盘分叉。
+    """
+    w = str(_require_ws(ws))
+    d = characters.roster(w)
+    for c in d.get("items", []):
+        if c.get("cover"):
+            c["cover_url"] = "/media?ws=%s&rel=%s" % (urllib.parse.quote(w),
+                                                     urllib.parse.quote(c["cover"]))
+        for v in c.get("variants", []):
+            v["urls"] = ["/media?ws=%s&rel=%s" % (urllib.parse.quote(w), urllib.parse.quote(r))
+                         for r in v.get("images", [])]
+    return d
+
+
 @app.get("/api/studio/prompt")
-def studio_prompt(ws: str = Query(...), shot: str = Query(...)):
-    return studio.prompt_of(str(_require_ws(ws)), shot)
+def studio_prompt(ws: str = Query(...), shot: str = Query(...), ep: str = Query(default="")):
+    """单镜提示词 + 六段解析 + 规则校验（只读）。
+
+    `ep` 不给时若该镜在多个集里都存在，返回 `ambiguous` + 候选集号 ——
+    `shot_001` 每集都有，猜第一份等于把 A 集的词改到 B 集去。
+    """
+    return studio.prompt_of(str(_require_ws(ws)), shot, ep)
+
+
+@app.post("/api/studio/prompt")
+def studio_prompt_save(payload: dict = Body(...)):
+    """写回单镜提示词：引擎侧备份 + 原子替换 + 复检。
+
+    校验规则与 CLI 完全同源（`stages/import/prompt_edit.py`）：
+    结构级 / 标签级错误默认**拒绝落盘**（`rc=3`），要存半成品必须显式 `force`。
+    """
+    if READONLY_MODE:
+        raise HTTPException(status_code=423,
+                            detail="只读模式：不允许写提示词（SOLODRAMA_CONSOLE_READONLY=1）")
+    w = str(_require_ws(payload.get("ws")))
+    shot = str(payload.get("shot") or "")
+    ep = str(payload.get("ep") or "")
+    text = payload.get("text")
+    parts = payload.get("parts")
+    if parts is not None and not isinstance(parts, dict):
+        raise HTTPException(status_code=422, detail="parts 必须是对象")
+    if text is not None and not isinstance(text, str):
+        raise HTTPException(status_code=422, detail="text 必须是字符串")
+    if text is None and parts is None:
+        raise HTTPException(status_code=422, detail="需要 text（原文）或 parts（按段）之一")
+    if isinstance(text, str) and len(text) > 200000:
+        raise HTTPException(status_code=413, detail="提示词过长（>200KB），拒绝写入")
+
+    tmpdir = paths.VAR_DIR / "tmp"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    tmp = tmpdir / ("prompt-%d.txt" % int(time.time() * 1000))
+    try:
+        if parts is not None:
+            tmp.write_text(json.dumps(parts, ensure_ascii=False), encoding="utf-8")
+            args = ["save", "--workspace", w, "--shot", shot, "--parts-file", str(tmp), "--json"]
+        else:
+            tmp.write_text(text, encoding="utf-8")
+            args = ["save", "--workspace", w, "--shot", shot, "--text-file", str(tmp), "--json"]
+        if ep:
+            args += ["--ep", ep]
+        if payload.get("force"):
+            args.append("--force")
+        res = adapters.run_json("prompt_edit", args, w, timeout=60, ttl=0)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    data = res.get("data")
+    if isinstance(data, dict):
+        if data.get("changed"):
+            studio.clear_cache()          # 写成功后让派生聚合失效（不留一份旧缓存）
+        data["rc"] = res.get("rc")
+        return data
+    return {"ok": False, "reason": res.get("reason") or "no_json",
+            "rc": res.get("rc"), "text_tail": res.get("text_tail", "")}
 
 
 @app.get("/api/studio/release")
@@ -836,6 +951,16 @@ def studio_release_export_preview(ws: str = Query(...)):
             "warns": d.get("warns") or [],
             "verdict": d.get("verdict") or "",
             "text_tail": res.get("text_tail") if not d else ""}
+
+
+@app.get("/api/studio/cover")
+def studio_cover(ws: str = Query(...)):
+    """首页海报用的一张代表性图（只读）。取不到就 ok=False，前端用场记板占位。"""
+    w = str(_require_ws(ws))
+    d = studio.cover(w)
+    if d.get("rel"):
+        d["url"] = "/media?ws=%s&rel=%s" % (urllib.parse.quote(w), urllib.parse.quote(d["rel"]))
+    return d
 
 
 @app.get("/api/studio/cost")
@@ -1427,6 +1552,31 @@ def api_create_read(ws: str = Query(...), stage: str = Query(...)):
         return creation.read(str(_require_ws(ws)), stage)
     except KeyError:
         raise HTTPException(status_code=404, detail="没有这个环节：%s" % stage) from None
+
+
+@app.get("/api/create/versions")
+def api_create_versions(ws: str = Query(...), stage: str = Query(...),
+                        name: str = Query(default="")):
+    """某个创作产物的版本清单（当前 + 全部 `.bak_<时间戳>.md`）。**只读**。
+
+    不新建版本库：`creation.write()` 每次覆盖前已经把旧内容落成备份文件，那就是版本。
+    """
+    try:
+        return creation.versions(str(_require_ws(ws)), stage, name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个环节：%s" % stage) from None
+
+
+@app.get("/api/create/version")
+def api_create_version(ws: str = Query(...), stage: str = Query(...),
+                       name: str = Query(default=""), file: str = Query(default="")):
+    """读某个版本的正文（`file` 空 = 当前文件）。只读，且只许读该产物自己的备份。"""
+    try:
+        return creation.read_version(str(_require_ws(ws)), stage, name, file)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="没有这个环节：%s" % stage) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @app.post("/api/create/idea")

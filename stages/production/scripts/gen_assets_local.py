@@ -135,10 +135,26 @@ def assets_from_pack(pack_dir: pathlib.Path, seed_base: int = None) -> list:
     import pack_spec as S                                    # noqa: PLC0415
 
     pack, assets, _eps, rep = S.load_pack(pack_dir)
-    if not rep.ok:
+
+    # ★ 2026-11-10：分镜级门禁（SHOT0xx）**不阻断资产出图**。
+    #   资产卡天生早于分镜提示词定稿 —— 出资产图的时点，episodes 里要么还没写提示词、
+    #   要么仍是旧格式（`{{Mixed n}}` + 「资产图锚定」）。把 SHOT019/020 当阻断，
+    #   结果是「本机任何项目都出不了资产图」，而它们与资产卡本身毫无关系。
+    #   这里只放过分镜级；PACK / ASSET / STYLE 这些**资产级**错误照旧阻断（那些真会毁图）。
+    shot_errs = [e for e in rep.errors if str(e.get('code', '')).startswith('SHOT')]
+    asset_errs = [e for e in rep.errors if not str(e.get('code', '')).startswith('SHOT')]
+    if asset_errs:
         print('[FAIL] 制作包校验不过，不进入出图：')
-        print(rep.render())
+        print('  ' + '\n  '.join('[E] %-10s %s' % (e['code'], e['msg']) for e in asset_errs))
         raise SystemExit(2)
+    if shot_errs:
+        # 不能静默：这些提示词问题会在「导入 / 出片」环节真实阻断，得让人知道现在绕过了什么。
+        print('[注意] 制作包里有 %d 条分镜提示词问题（SHOT0xx），本次出资产图不受影响；'
+              '它们会在导入/出片环节阻断：' % len(shot_errs))
+        for e in shot_errs[:5]:
+            print('  [E] %-10s %s' % (e['code'], e['msg']))
+        if len(shot_errs) > 5:
+            print('  … 另有 %d 条（完整清单跑 drama pack check）' % (len(shot_errs) - 5))
 
     # 包级负向词（pack.json 的 `negative`）：与每条卡片自带的否定块合并。
     # ★ 2026-11-07：它此前只存在于 pack.json 里，**没有任何人读它**，而卡片末尾的
@@ -189,6 +205,59 @@ def _size(p: pathlib.Path) -> tuple:
             return im.size
     except Exception:                                            # noqa: BLE001
         return (0, 0)
+
+
+def _backup_existing(assets: list) -> list:
+    """出图前把**将被覆盖**的旧图存一份到 `<目录>/_bak/`。只在 `--backup` 时调用。
+
+    为什么需要它（2026-11-10）：`comfy_client` 落盘是 `os.replace(tmp, final)`，
+    **直接覆盖、不留旧版**。整批出图时这是对的（一次跑完整套，旧版没意义）；
+    但「单张重出」是用来修一张不满意的图的 —— 重出来更难看时，原图已经没了，
+    用户无法退回。所以单张重出必须能反悔。
+
+    为什么备份目录里的文件**必须是非图片扩展名**（`.bak`）：
+      · `_scan_outputs()` 用 `iterdir()` + `startswith(prefix + '_')` 判产物，
+        备份名 `P01_Elena_LOOK-B_00.png.xxx.bak` 不会被当成 `.png` 产物（后缀不符）；
+      · `pack_import._scan_asset_images()` 是 **rglob**，会递归进 `_bak/`；
+        若备份是 `.png`，它的 stem 会被解析成 `P01` + `LOOK-B`，**和真产物抢**参考图。
+      用 `.bak` 后缀两处都天然跳过。代价是找回时要手动去掉 `.bak` —— 对「防后悔」够用。
+
+    为什么只在这个开关下做：整批出图也备份的话，资产目录体积直接翻倍。
+    """
+    import shutil as _sh
+
+    ts = time.strftime('%Y%m%d-%H%M%S')
+    saved = []
+    for a in assets:
+        d = OUT_DIR / SUBDIR.get(a['kind'], '')
+        if not d.is_dir():
+            continue
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for f in entries:
+            if not f.is_file() or f.suffix.lower() not in EXTS:
+                continue
+            # 与 `_scan_outputs` 同一条判定：这才是「这次会被覆盖」的文件
+            if not (f.name.startswith(a['prefix'] + '_') or f.stem == a['prefix']):
+                continue
+            bdir = d / '_bak'
+            try:
+                bdir.mkdir(exist_ok=True)
+            except OSError:
+                continue
+            dest = bdir / ('%s.%s.bak' % (f.name, ts))
+            i = 1
+            while dest.exists():
+                dest = bdir / ('%s.%s-%d.bak' % (f.name, ts, i))
+                i += 1
+            try:
+                _sh.copy2(f, dest)
+                saved.append(str(dest))
+            except OSError as exc:
+                print('[WARN] 备份旧图失败（继续出图，但这一张无法退回）：%s — %s' % (f.name, exc))
+    return saved
 
 
 def _scan_outputs(assets: list) -> list:
@@ -388,6 +457,8 @@ def main() -> int:
                          'strip=直接丢弃｜block=工作流用不上负向就拒绝出图')
     ap.add_argument('--submit', action='store_true', help='★ 真的调用 ComfyUI 出图（不花钱，但会占 GPU）')
     ap.add_argument('--force', action='store_true', help='已出图的重跑（默认跳过已有产物，断点续跑）')
+    ap.add_argument('--backup', action='store_true',
+                    help='出图前把将被覆盖的旧图存到 <目录>/_bak/（单张重出用；整批别开，体积翻倍）')
     ap.add_argument('--check', action='store_true', help='只体检 ComfyUI 是否在线，然后退出')
     ap.add_argument('--no-boot', action='store_true',
                     help='不自动启动 ComfyUI（默认没启动就拉一个后台实例）')
@@ -524,6 +595,19 @@ def main() -> int:
         print('    python stages/production/scripts/drama.py assets --engine local --submit')
         print('  建议先只出一张看风格：加 --only %s' % assets[0]['id'])
         return 0
+
+    # 单张重出：先留旧版的底。放在这里而不是 comfy_client 里，是因为它只该在
+    # 「用户主动要求重出这一张」时发生 —— 整批出图也备份会让资产目录体积翻倍。
+    if args.backup:
+        saved = _backup_existing(assets)
+        if saved:
+            print('[备份] %d 张旧图已存到 _bak/（重出更不满意时可按名字找回）：' % len(saved))
+            for x in saved[:6]:
+                print('        %s' % x)
+            if len(saved) > 6:
+                print('        … 另有 %d 张' % (len(saved) - 6))
+        else:
+            print('[备份] 这次没有会被覆盖的旧图（首次出图），无需备份。')
 
     cmd = [sys.executable, str(COMFY_PY), '--spec', str(MANIFEST), '--out', str(OUT_DIR)]
     if not args.force:

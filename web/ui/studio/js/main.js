@@ -6,51 +6,79 @@ import { api, clearCache } from './api.js';
 import { esc, icon, paintIcons, errorCard, openDrawer, closeDrawer, closeModal, skeleton, toast } from './ui.js';
 import { toggleAgent, agentOpen, restoreAgent, syncAgent, openAgent } from './agent-panel.js';
 import { initMonitor, openMonitor } from './monitor.js';
+import { initTheme, cycle, storedMode, LABEL as THEME_LABEL } from './theme.js';
 import {
   S, loadProjects, loadCaps, loadHealth, loadRunning, project as currentProject,
   setWs, initialWs, initialCollapsed, setCollapsed, loadProjects as reloadProjects
 } from './store.js';
 
-/* ---------- 侧栏 ----------
-   ★ 2026-11-04 重排（用户要求）：
-     · 工作台与项目管理合并成一个「工作台」——两者本来就是「本机有哪些剧」的两个视图，
-       分成两页只会让人在两页之间来回找同一个项目；
-     · AI 模型中心 / 连接中心 / 环境体检合并成「系统中心」——它们回答的都是
-       「这台机器现在能不能干活」，分成三页时，用户配完模型找不到体检；
-     · 时间中心从全局移进项目（它是项目属性），全局耗时放工作台首屏；
-     · 项目内的顺序改成真实创作顺序：项目详情 → 画布 → 创作 → 资产 → 分镜 → 视频 → 剪辑 → 发行。
-       画布排在前面，是因为「这一部现在长什么样」比「第几步」更常用。 */
-const NAV = [
+/* ---------- 侧栏：五个工作空间 ----------
+   ★ 2026-11-10（2.0 Phase 3）重排：15 项平铺 → 5 个工作空间 + 4 个全局入口。
+
+   为什么是「工作空间」而不是「更多分组」：
+   旧结构把 11 个项目内页面平铺在一级导航里（分镜 / 视频 / 剪辑 / 发行各占一位），
+   用户看到的是「功能清单」，不是「我现在在哪条产线上」。按影视制作的真实组织方式
+   收成五块：写（创意）→ 造（视觉资产）→ 拍（分镜与拍摄）→ 交（后期与发行）→ 管（制作控制）。
+
+   为什么不把 members 全部展开：
+   展开就等于又回到 15 项平铺。默认只显示工作空间名，**当前所在的这一块**才展开成员；
+   切换段落的主力入口是内容区顶部的页签条（renderWsbar），侧栏负责「我现在在哪个空间」。
+
+   'system' 故意留在全局：它管的是模型 / 通道 / 环境，属于「这台机器能不能干活」，
+   跟有没有打开项目无关。放进项目工作空间会在「还没选项目」时整块变灰，用户配不了模型。 */
+const WORKSPACES = [
   {
-    label: '全局', items: [
-      { key: 'workbench', label: '工作台', ico: 'workbench' },
-      { key: 'tasks', label: '任务中心', ico: 'list' },
-      { key: 'system', label: '系统中心', ico: 'cpu' },
-      { key: 'settings', label: '系统设置', ico: 'settings' }
+    key: 'create', label: '创意工作室', ico: 'spark', home: 'create',
+    members: [{ key: 'create', label: '创作' }, { key: 'skills', label: '题材模板' }]
+  },
+  {
+    key: 'assets', label: '视觉资产', ico: 'image', home: 'assets',
+    members: [{ key: 'assets', label: '资产库' }]
+  },
+  {
+    key: 'shots', label: '分镜与拍摄', ico: 'board', home: 'boards',
+    members: [
+      { key: 'boards', label: '分镜图' },
+      { key: 'storyboard', label: '出片' },
+      { key: 'canvas', label: '镜号画布' },
+      { key: 'graph', label: '关系图' }
     ]
   },
   {
-    label: '当前项目', project: true, items: [
-      // ★ 助手排第一：它是「不想一页页点」时的入口，藏到列表末尾就等于没有。
-      //   ★ 2026-11-04：它不是一页，是一个浮窗 —— 点它是就地开/关，
-      //     否则「打开助手」会把当前页面顶掉，正好毁了「同时看两个界面」这个诉求。
-      { key: 'agent', label: '助手', ico: 'spark', float: true },
-      { key: 'overview', label: '项目详情', ico: 'workbench' },
-      { key: 'graph', label: '画布', ico: 'canvas' },
-      { key: 'create', label: '创作', ico: 'spark' },
-      { key: 'skills', label: '创作模板', ico: 'layers' },
-      { key: 'assets', label: '资产', ico: 'image' },
-      { key: 'boards', label: '分镜', ico: 'board' },
-      { key: 'storyboard', label: '视频', ico: 'film' },
-      { key: 'post', label: '剪辑', ico: 'scissors' },
-      { key: 'release', label: '发行', ico: 'upload' },
-      { key: 'cost', label: '用时', ico: 'clock' }
+    key: 'deliver', label: '后期与发行', ico: 'scissors', home: 'post',
+    members: [{ key: 'post', label: '后期' }, { key: 'release', label: '发行' }]
+  },
+  {
+    key: 'control', label: '制作控制', ico: 'cpu', home: 'overview',
+    members: [
+      { key: 'overview', label: '项目驾驶舱' },
+      { key: 'pipeline', label: '流水线' },
+      { key: 'cost', label: '用时与成本' },
+      { key: 'generators', label: '生成器' }
     ]
   }
 ];
 
-const PROJECT_ROUTES = ['agent', 'overview', 'graph', 'create', 'skills', 'assets', 'boards',
-  'storyboard', 'post', 'release', 'cost', 'pipeline'];
+const GLOBAL_NAV = [
+  { key: 'workbench', label: '工作台', ico: 'workbench' },
+  { key: 'tasks', label: '任务中心', ico: 'list' },
+  { key: 'system', label: '系统中心', ico: 'cpu' },
+  { key: 'settings', label: '系统设置', ico: 'settings' },
+  /* 助手是浮窗，不是一页：点它在当前页就地开/关。放在全局组末尾 —
+     它服务于「哪一页都不想点」的场景，藏在项目里反而找不到。 */
+  { key: 'agent', label: '助手', ico: 'spark', float: true }
+];
+
+/* 路由 → 所属工作空间（用于侧栏高亮与页签条） */
+const ROUTE_WS = (() => {
+  const m = {};
+  WORKSPACES.forEach((w) => w.members.forEach((it) => { m[it.key] = w.key; }));
+  return m;
+})();
+
+/* 需要先选项目才可用的路由。模型/通道/环境不在此列：它们跟项目无关。 */
+const PROJECT_ROUTES = ['agent', 'overview', 'graph', 'canvas', 'create', 'skills', 'assets',
+  'boards', 'storyboard', 'post', 'release', 'cost', 'pipeline', 'generators'];
 
 const VIEWS = {
   workbench: () => import('./views/workbench.js'),
@@ -163,33 +191,81 @@ function ctx() {
 }
 
 /* ---------- 外壳渲染 ---------- */
+function navItem(it, route) {
+  /* 浮窗类入口（助手）的高亮看窗口开没开 —— 它可以在任何页面上开着。 */
+  const active = it.float ? (agentOpen() || it.key === route) : (it.key === route);
+  let badge = '';
+  if (it.key === 'tasks' && S.running > 0) badge = '<span class="nav-badge warn">' + S.running + '</span>';
+  return '<button class="nav-item' + (active ? ' active' : '') + '"'
+    + ' data-nav="' + it.key + '"' + (it.float ? ' data-float="1"' : '')
+    + (it.float ? ' title="打开/收起助手浮窗（不切页）"' : '') + '>'
+    + '<span class="nav-ico">' + icon(it.ico, 16) + '</span>'
+    + '<span class="nav-text">' + esc(it.label) + '</span>' + badge + '</button>';
+}
+
 function renderNav(route) {
   const box = document.getElementById('nav');
-  box.innerHTML = NAV.map((g) => {
-    const disabled = g.project && !S.ws;
-    const items = g.items.map((it) => {
-      /* 浮窗类入口（助手）的高亮看窗口开没开 —— 它可以在任何页面上开着。
-         但站在它的落地页（#/agent）时也要亮：那时「你就在这一块里」，
-         不亮会让人以为点错了。 */
-      const active = it.float ? (agentOpen() || it.key === route) : (it.key === route);
-      let badge = '';
-      if (it.key === 'tasks' && S.running > 0) badge = '<span class="nav-badge warn">' + S.running + '</span>';
-      return '<button class="nav-item' + (active ? ' active' : '') + (disabled ? ' disabled' : '') + '"'
-        + ' data-nav="' + it.key + '"' + (it.float ? ' data-float="1"' : '')
-        + (disabled ? ' disabled title="先打开一个项目"' : '')
-        + (it.float ? ' title="打开/收起助手浮窗（不切页）"' : '') + '>'
-        + '<span class="nav-ico">' + icon(it.ico, 16) + '</span>'
-        + '<span class="nav-text">' + esc(it.label) + '</span>' + badge + '</button>';
-    }).join('');
-    const hint = disabled ? '<div class="nav-label" style="letter-spacing:0;text-transform:none">先打开一个项目</div>' : '';
-    return '<div class="nav-group"><div class="nav-label">' + esc(g.label) + '</div>' + items + hint + '</div>';
+  const wsOf = ROUTE_WS[route] || '';
+
+  const globals = GLOBAL_NAV.map((it) => navItem(it, route)).join('');
+
+  /* 工作空间：当前所在的那一块才展开成员。
+     全部展开 = 又回到 15 项平铺；全不展开 = 用户只能靠页签条找路，
+     侧栏会退化成「五个不知道里面有什么的按钮」。 */
+  const workspaces = WORKSPACES.map((w) => {
+    const disabled = !S.ws;
+    const on = wsOf === w.key;
+    const head = '<button class="nav-item nav-ws' + (on ? ' active' : '') + (disabled ? ' disabled' : '') + '"'
+      + ' data-wsopen="' + w.key + '"' + (disabled ? ' disabled title="先打开一个项目"' : '')
+      + ' title="' + esc(w.label) + '">'
+      + '<span class="nav-ico">' + icon(w.ico, 16) + '</span>'
+      + '<span class="nav-text">' + esc(w.label) + '</span></button>';
+    const subs = on
+      ? '<div class="nav-sub">' + w.members.map((m) =>
+        '<button class="nav-subitem' + (m.key === route ? ' active' : '') + '" data-nav="' + m.key + '">'
+        + esc(m.label) + '</button>').join('') + '</div>'
+      : '';
+    return head + subs;
   }).join('');
+
+  const hint = S.ws ? '' : '<div class="nav-label" style="letter-spacing:0;text-transform:none">先打开一个项目</div>';
+  box.innerHTML = '<div class="nav-group"><div class="nav-label">全局</div>' + globals + '</div>'
+    + '<div class="nav-group"><div class="nav-label">项目 · 五个工作空间</div>' + workspaces + hint + '</div>';
+
   box.querySelectorAll('[data-nav]').forEach((b) => {
     b.onclick = () => {
       if (b.disabled) return;
       if (b.dataset.float) { toggleAgent(); return; }   /* 就地开/关，不 navigate */
       navigate(b.dataset.nav);
     };
+  });
+  box.querySelectorAll('[data-wsopen]').forEach((b) => {
+    b.onclick = () => {
+      if (b.disabled) return;
+      const w = WORKSPACES.find((x) => x.key === b.dataset.wsopen);
+      if (w) navigate(w.home);
+    };
+  });
+}
+
+/* 工作空间页签条：内容区顶部，回答「这一块里还有哪几步」。
+   侧栏负责「我属于哪个空间」，页签负责「在这个空间里横向移动」——
+   两件事分开，才能既不多一层导航，也不逼用户回侧栏找第二条。 */
+function renderWsbar(route) {
+  const bar = document.getElementById('wsbar');
+  if (!bar) return;
+  const w = WORKSPACES.find((x) => x.key === ROUTE_WS[route]);
+  if (!w || !S.ws) { bar.innerHTML = ''; bar.classList.add('hide'); return; }
+  bar.classList.remove('hide');
+  bar.innerHTML = '<div class="ws-name"><span class="nav-ico">' + icon(w.ico, 14) + '</span>'
+    + esc(w.label) + '</div>'
+    + '<div class="ws-tabs">' + w.members.map((m) =>
+      '<button class="ws-tab' + (m.key === route ? ' active' : '') + '" data-wsgo="' + m.key + '">'
+      + esc(m.label) + '</button>').join('') + '</div>'
+    + '<span class="spacer"></span>'
+    + '<button class="ws-link" data-wsgo="system" title="模型 / 通道 / 环境（机器级，与项目无关）">模型·通道·环境</button>';
+  bar.querySelectorAll('[data-wsgo]').forEach((b) => {
+    b.onclick = () => navigate(b.dataset.wsgo);
   });
 }
 
@@ -239,6 +315,7 @@ async function render(force) {
     view.innerHTML = noProject(route);
     bindNoProject(view);
     renderNav(route);
+    renderWsbar(route);
     renderTop();
     syncAgent();
     return;
@@ -246,6 +323,7 @@ async function render(force) {
 
   view.innerHTML = skeleton(3);
   renderNav(route);
+  renderWsbar(route);
   loadStart();
 
   let mod;
@@ -375,6 +453,20 @@ async function boot() {
     setCollapsed(!S.collapsed);
     document.getElementById('shell').classList.toggle('shell-collapsed', S.collapsed);
   };
+
+  /* 主题：首帧已由 <head> 内联脚本定下（防闪白），这里只接管三态循环与按钮文案。
+     三态而不是两态：不给「跟随系统」这一档，用系统主题的人每次开机都要手动点一次。 */
+  initTheme();
+  const themeBtn = document.getElementById('btnTheme');
+  if (themeBtn) {
+    const paintTheme = () => {
+      const m = storedMode();
+      themeBtn.textContent = THEME_LABEL[m] || '跟随系统';
+      themeBtn.title = '主题：跟随系统 → 深色 → 浅色（当前：' + themeBtn.textContent + '）';
+    };
+    paintTheme();
+    themeBtn.onclick = () => { cycle(); paintTheme(); };
+  }
   document.getElementById('projSwitch').onclick = () => openProjectPicker();
   document.getElementById('btnRefresh').onclick = async () => {
     const btn = document.getElementById('btnRefresh');

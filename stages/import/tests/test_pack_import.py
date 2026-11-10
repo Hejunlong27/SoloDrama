@@ -377,3 +377,42 @@ def test_tianchong_demo_pack():
     assert s1["board_prompt"].startswith("参考：STYLE01")
     # 台词只保留能定位到本镜 cast 的条目
     assert [d["text"] for d in s1["dialogue"]] == ["一年，互不干涉。", "三个月。"]
+
+
+# ---------------------------------------------------------------------------
+# 参考图挑选：文件名尾部带帧号（`_00`）时不能退化到「随便挑一张」
+# ---------------------------------------------------------------------------
+def test_pick_image_with_frame_suffix(tmp_path):
+    """`P01_Elena_VIEW_00.png` 这类带帧号的名字，必须按 code 精确命中。
+
+    曾经这里用 `rest.endswith("_" + code)` 匹配，帧号让条件恒假，
+    于是同一角色的 VIEW / EXP / LOOK-A/B/C 全部落到第一个文件上 ——
+    refs.json 里每个键都有值，出片却一直喂错参考图。
+    """
+    import pack_import as PI
+
+    d = tmp_path / "characters"
+    d.mkdir()
+    for name in ("P01_Elena_VIEW_00.png", "P01_Elena_EXP_00.png",
+                 "P01_Elena_LOOK-A_00.png", "P01_Elena_LOOK-B_00.png"):
+        (d / name).write_bytes(b"x")
+
+    scanned = PI._scan_asset_images(d)
+    assert PI._pick_image(scanned, "P01", "VIEW").name == "P01_Elena_VIEW_00.png"
+    assert PI._pick_image(scanned, "P01", "EXP").name == "P01_Elena_EXP_00.png"
+    assert PI._pick_image(scanned, "P01", "LOOK-A").name == "P01_Elena_LOOK-A_00.png"
+    assert PI._pick_image(scanned, "P01", "LOOK-B").name == "P01_Elena_LOOK-B_00.png"
+
+
+def test_pick_image_exact_match_wins_over_substring(tmp_path):
+    """`LOOK-A` 不能被 `LOOK-AB` 之类抢走（分段匹配而不是包含匹配）。"""
+    import pack_import as PI
+
+    d = tmp_path / "characters"
+    d.mkdir()
+    (d / "P02_Álvaro_LOOK-AB_00.png").write_bytes(b"x")
+    (d / "P02_Álvaro_LOOK-A_00.png").write_bytes(b"x")
+
+    scanned = PI._scan_asset_images(d)
+    assert PI._pick_image(scanned, "P02", "LOOK-A").name == "P02_Álvaro_LOOK-A_00.png"
+

@@ -1,0 +1,1222 @@
+/* ==========================================================================
+   components-2.css · SoloDrama 2.0 新增组件
+   --------------------------------------------------------------------------
+   为什么单独一个文件而不是改 app.css：
+   app.css 有 1255 行、22 个视图在用，边改边看会分不清"哪条样式属于谁坏的"。
+   新组件先独立成文件，只新增类名（.sd-* / .btn.danger），不动任何既有选择器，
+   等 Phase 2–4 各页面逐个接入、实拍确认后再谈是否合并。
+
+   只用 tokens.css 里的语义 Token（--sd-*）。不写字面色值。
+   ========================================================================== */
+
+/* ---- 焦点态：统一补齐（app.css 只有 3 处 :focus-visible，键盘用户会迷路） ---- */
+:is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--sd-accent);
+  outline-offset: 2px;
+  border-radius: var(--sd-radius-sm);
+}
+
+/* ---- 危险按钮：删除/覆盖/清空。刻意不用金色，避免与"花钱"语义混淆 ---- */
+.btn.danger {
+  --btn-bg: transparent;
+  --btn-fg: var(--sd-danger);
+  --btn-ring: 0 0 0 1px color-mix(in oklab, var(--sd-danger) 55%, transparent);
+  color: var(--sd-danger);
+  background: transparent;
+  box-shadow: var(--btn-ring);
+}
+.btn.danger:hover {
+  background: var(--sd-danger-tint);
+}
+.btn.danger[disabled] {
+  color: var(--sd-text-disabled);
+  box-shadow: 0 0 0 1px var(--sd-line);
+}
+
+/* ==========================================================================
+   项目海报卡（2:3）—— 首页与项目库用
+   ========================================================================== */
+.sd-poster {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: var(--sd-radius-lg);
+  border: 1px solid var(--sd-line);
+  background: var(--sd-surface-2);
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  transition: transform var(--sd-dur-fast) var(--sd-ease-standard),
+              border-color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.sd-poster:hover { transform: translateY(-2px); border-color: var(--sd-line-strong); }
+.sd-poster:active { transform: translateY(0) scale(.995); }
+
+.sd-poster-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 无图占位：不画灰方块，用场记板斜纹 + 首字（空状态也要有身份感） */
+.sd-poster-blank {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--sd-text-3);
+  font-family: var(--sd-font-display);
+  font-size: 40px;
+  background:
+    repeating-linear-gradient(-45deg,
+      transparent 0 10px,
+      color-mix(in oklab, var(--sd-text) 3%, transparent) 10px 20px),
+    var(--sd-surface-2);
+}
+.sd-poster-shade {
+  position: absolute;
+  inset: 0;
+  background: var(--sd-media-scrim);
+}
+.sd-poster-body {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: var(--sd-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sd-space-1);
+}
+.sd-poster-title {
+  font-family: var(--sd-font-display);
+  font-size: var(--sd-fs-h3);
+  line-height: var(--sd-lh-h3);
+  color: var(--sd-on-media);  /* 图片上的文字：不随主题变，见 tokens 的媒体浮层组 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sd-poster-meta {
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-caption);
+  color: color-mix(in oklab, var(--sd-on-media) 72%, transparent);
+}
+
+/* ==========================================================================
+   阶段条 —— 13 节点的可视化（不是进度条，是状态矩阵）
+   ========================================================================== */
+.sd-stages {
+  display: flex;
+  gap: var(--sd-space-1);
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+.sd-stage {
+  flex: 1 1 0;
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sd-space-2) var(--sd-space-3);
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--sd-dur-fast) var(--sd-ease-standard),
+              border-color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.sd-stage:hover { background: var(--sd-hover); border-color: var(--sd-line-strong); }
+.sd-stage-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sd-space-1);
+  font-size: var(--sd-fs-sm);
+  color: var(--sd-text);
+}
+.sd-stage-why {
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-3);
+  line-height: var(--sd-lh-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 六态：与 nodes.py 的 passed/failed/blocked/absent/skipped/stale 一一对应 */
+.sd-stage[data-state="passed"]  { border-color: color-mix(in oklab, var(--sd-ok) 42%, var(--sd-line)); }
+.sd-stage[data-state="doing"]   { border-color: color-mix(in oklab, var(--sd-teal) 48%, var(--sd-line)); }
+.sd-stage[data-state="blocked"] { border-color: color-mix(in oklab, var(--sd-warn) 48%, var(--sd-line)); }
+.sd-stage[data-state="failed"]  { border-color: color-mix(in oklab, var(--sd-danger) 52%, var(--sd-line)); }
+.sd-stage[data-state="absent"]  { border-style: dashed; }
+.sd-stage[data-state="skipped"] { opacity: .6; }
+
+.sd-stage[data-state="passed"]  .sd-stage-name::before { content: "●"; color: var(--sd-ok); }
+.sd-stage[data-state="doing"]   .sd-stage-name::before { content: "◐"; color: var(--sd-teal); }
+.sd-stage[data-state="blocked"] .sd-stage-name::before { content: "◑"; color: var(--sd-warn); }
+.sd-stage[data-state="failed"]  .sd-stage-name::before { content: "✕"; color: var(--sd-danger); }
+.sd-stage[data-state="absent"]  .sd-stage-name::before { content: "○"; color: var(--sd-text-3); }
+.sd-stage[data-state="skipped"] .sd-stage-name::before { content: "–"; color: var(--sd-text-3); }
+
+/* ==========================================================================
+   六段式提示词编辑器 —— 顺序即契约，不可拖拽排序
+   ========================================================================== */
+/* 六段式的「逐段」样式 —— ★ 产品页（storyboard）不再使用，见文件末尾的整段编辑区。
+   保留原因：design.html 的只读结构对照还用它；将来若要出「结构检查报告」也用得上。
+   别拿它去做编辑界面：拆开编辑会让「整段贴出去试」这个真实用法变难。 */
+.sd-prompt { display: flex; flex-direction: column; gap: var(--sd-space-2); }
+.sd-prompt-sec {
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface);
+  overflow: hidden;
+}
+.sd-prompt-sec[data-bad="1"] { border-color: color-mix(in oklab, var(--sd-danger) 55%, var(--sd-line)); }
+.sd-prompt-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sd-space-2);
+  padding: var(--sd-space-2) var(--sd-space-3);
+  background: var(--sd-surface-2);
+  cursor: pointer;
+  user-select: none;
+}
+.sd-prompt-key {
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-accent);
+  letter-spacing: .01em;
+}
+.sd-prompt-cn { font-size: var(--sd-fs-sm); color: var(--sd-text-2); }
+.sd-prompt-stat {
+  margin-left: auto;
+  display: flex;
+  gap: var(--sd-space-2);
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-3);
+}
+.sd-prompt-body {
+  padding: var(--sd-space-3);
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-mono);
+  line-height: 1.6;
+  color: var(--sd-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sd-prompt-sec[data-collapsed="1"] .sd-prompt-body { display: none; }
+.sd-prompt-sec[data-bad="1"] .sd-prompt-head::after {
+  content: "规则命中";
+  font-size: var(--sd-fs-label);
+  color: var(--sd-danger);
+  border: 1px solid color-mix(in oklab, var(--sd-danger) 45%, transparent);
+  border-radius: var(--sd-radius-pill);
+  padding: 0 6px;
+}
+
+/* ==========================================================================
+   成本行 —— 实付与估算永不合并
+   ========================================================================== */
+.sd-cost-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--sd-space-3);
+  align-items: baseline;
+  padding: var(--sd-space-2) 0;
+  border-bottom: 1px dashed var(--sd-line);
+  font-size: var(--sd-fs-sm);
+}
+.sd-cost-row:last-child { border-bottom: 0; }
+.sd-cost-what { color: var(--sd-text); }
+.sd-cost-what small { color: var(--sd-text-3); margin-left: var(--sd-space-2); }
+.sd-cost-num {
+  font-family: var(--sd-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--sd-text);
+}
+.sd-cost-src {
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-3);
+  min-width: 84px;
+  text-align: right;
+}
+.sd-cost-src[data-kind="real"] { color: var(--sd-ok); }
+.sd-cost-src[data-kind="est"]  { color: var(--sd-warn); }
+
+/* ==========================================================================
+   侧栏 · 工作空间（2.0 Phase 3）
+   --------------------------------------------------------------------------
+   一级只放五个工作空间 + 四个全局入口。当前所在的那一块才展开成员，
+   其余折叠 —— 全部展开等于又回到 15 项平铺。
+   ========================================================================== */
+.nav-ws { font-weight: 500; }
+/* 有成员展开时给父项一条向下的引线，视觉上「这块是开着的」 */
+.nav-sub {
+  position: relative;
+  padding: 2px 0 6px;
+}
+.nav-sub::before {
+  content: "";
+  position: absolute;
+  left: 26px; top: 0; bottom: 8px;
+  width: 1px;
+  background: var(--sd-line);
+}
+.nav-subitem {
+  display: flex; align-items: center;
+  width: 100%; height: 32px;
+  padding: 0 14px 0 40px;
+  border: 0; background: none; cursor: pointer;
+  color: var(--sd-text-2);
+  font-size: var(--sd-fs-sm);
+  text-align: left;
+  border-left: 3px solid transparent;
+  transition: background var(--sd-dur-fast) var(--sd-ease-standard),
+              color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.nav-subitem:hover { background: var(--sd-hover); color: var(--sd-text); }
+.nav-subitem.active {
+  color: var(--sd-text);
+  background: var(--sd-active);
+  border-left-color: var(--sd-accent);
+}
+.shell-collapsed .nav-sub { display: none; }
+
+/* ==========================================================================
+   工作空间页签条
+   --------------------------------------------------------------------------
+   侧栏回答「我在哪个空间」，这条回答「在这个空间里我现在站在哪一步」。
+   两者分开，才不会为了少点一次而把导航做成三层。
+   ========================================================================== */
+.wsbar {
+  flex: none;
+  display: flex; align-items: center; gap: var(--sd-space-4);
+  height: 44px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--sd-line);
+  background: var(--sd-surface);
+}
+.wsbar.hide { display: none; }
+.ws-name {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--sd-fs-sm);
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+.ws-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; }
+.ws-tab {
+  position: relative;
+  height: 44px; padding: 0 12px;
+  border: 0; background: none; cursor: pointer;
+  color: var(--sd-text-2);
+  font-size: var(--sd-fs-sm);
+  white-space: nowrap;
+  transition: color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.ws-tab:hover { color: var(--sd-text); }
+.ws-tab.active { color: var(--sd-text); font-weight: 500; }
+.ws-tab.active::after {
+  content: "";
+  position: absolute; left: 10px; right: 10px; bottom: -1px;
+  height: 2px; border-radius: 2px;
+  background: var(--sd-accent);
+}
+/* 机器级入口：模型 / 通道 / 环境不属于任何项目工作空间，单独挂在右侧 */
+.ws-link {
+  border: 1px solid var(--sd-line);
+  background: none; cursor: pointer;
+  color: var(--sd-text-3);
+  font-size: var(--sd-fs-caption);
+  height: 26px; padding: 0 10px;
+  border-radius: var(--sd-radius-sm);
+  white-space: nowrap;
+  transition: color var(--sd-dur-fast), border-color var(--sd-dur-fast);
+}
+.ws-link:hover { color: var(--sd-text); border-color: var(--sd-line-strong); }
+@media (max-width: 720px) { .wsbar { gap: var(--sd-space-2); padding: 0 12px; } .ws-name { display: none; } }
+
+/* ==========================================================================
+   首页 · 继续创作（海报墙）
+   ========================================================================== */
+.sd-poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: var(--sd-space-4);
+}
+.sd-poster-stage {
+  position: absolute;
+  top: var(--sd-space-2); left: var(--sd-space-2);
+  display: flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 8px;
+  border-radius: var(--sd-radius-pill);
+  background: var(--sd-media-veil);
+  color: var(--sd-on-media);
+  font-size: var(--sd-fs-label);
+  letter-spacing: .02em;
+  backdrop-filter: none;
+}
+.sd-poster-stage .dot { width: 5px; height: 5px; }
+
+/* ==========================================================================
+   项目驾驶舱 · 阶段矩阵（5 环节 × 13 节点）
+   --------------------------------------------------------------------------
+   环节名与 why 来自引擎（nodes.py 的 STAGES），节点只显示契约 id ——
+   前端不自己编一套中文节点名，否则引擎改 id 时 UI 会继续显示旧名字。
+   ========================================================================== */
+.sd-display {
+  font-family: var(--sd-font-display);
+  font-size: var(--sd-fs-display);
+  line-height: var(--sd-lh-display);
+  letter-spacing: .01em;
+}
+.sd-nodegrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sd-space-2);
+}
+@media (max-width: 1240px) { .sd-nodegrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 860px)  { .sd-nodegrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px)  { .sd-nodegrid { grid-template-columns: minmax(0, 1fr); } }
+
+.sd-nstage {
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface);
+  padding: var(--sd-space-2);
+  min-width: 0;
+}
+.sd-nstage-h {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; border: 0; background: none; cursor: pointer;
+  padding: 0 0 6px;
+  text-align: left;
+}
+.sd-nstage-name {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--sd-fs-sm);
+  color: var(--sd-text);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sd-nstage-n {
+  margin-left: auto;
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+.sd-nodes { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* 六态与 nodes.py 的 state 同名，不做二次命名 */
+.sd-node {
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-label);
+  line-height: 1.6;
+  padding: 0 5px;
+  border-radius: var(--sd-radius-xs);
+  border: 1px solid var(--sd-line);
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+.sd-node[data-state="passed"]  { color: var(--sd-ok-ink);     border-color: color-mix(in oklab, var(--sd-ok) 45%, transparent); }
+.sd-node[data-state="failed"]  { color: var(--sd-danger-ink); border-color: color-mix(in oklab, var(--sd-danger) 55%, transparent); }
+.sd-node[data-state="blocked"] { color: var(--sd-warn-ink);   border-color: color-mix(in oklab, var(--sd-warn) 55%, transparent); }
+.sd-node[data-state="stale"]   { color: var(--sd-warn-ink);   border-style: dashed; border-color: color-mix(in oklab, var(--sd-warn) 45%, transparent); }
+.sd-node[data-state="absent"]  { color: var(--sd-text-3);     border-style: dashed; }
+.sd-node[data-state="skipped"] { color: var(--sd-text-3);     opacity: .55; }
+
+/* 下一步：整页唯一的主张 —— 哪一步、为什么、点了会花什么 */
+.sd-next {
+  display: flex; align-items: center; gap: var(--sd-space-3);
+  flex-wrap: wrap;
+  margin-top: var(--sd-space-3);
+  padding: var(--sd-space-3);
+  border: 1px solid var(--sd-accent-line);
+  border-radius: var(--sd-radius-lg);
+  background: var(--sd-accent-tint);
+}
+.sd-next-k {
+  font-size: var(--sd-fs-label);
+  letter-spacing: .07em;
+  color: var(--sd-accent);
+  font-weight: 600;
+}
+.sd-next-main { font-size: var(--sd-fs-h3); color: var(--sd-text); }
+.sd-next-why { flex: 1 1 300px; font-size: var(--sd-fs-sm); color: var(--sd-text-2); }
+.sd-next .btn { flex: none; }
+
+/* 集选择器：坐在卡片头右侧。用原生 select —— 自造下拉的无障碍成本远高于这点观感收益 */
+.sd-epsel {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--sd-radius-sm);
+  border: 1px solid var(--sd-line);
+  background: var(--sd-inset);
+  color: var(--sd-text);
+  font-size: var(--sd-fs-sm);
+  font-family: var(--sd-font-ui);
+  max-width: 220px;
+}
+.sd-epsel:focus-visible { outline: 2px solid var(--sd-accent); outline-offset: 1px; }
+
+/* 六段式子域输入：等宽、可换行、随段折叠。高度自适应用 rows 控制，不做 auto-grow ——
+   auto-grow 会在长文本上引起滚动位置跳动，编辑时最烦的就是这个。 */
+.sd-prompt-edit {
+  display: block;
+  width: 100%;
+  padding: var(--sd-space-3);
+  border: 0;
+  background: var(--sd-inset);
+  color: var(--sd-text);
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-mono);
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 72px;
+}
+.sd-prompt-edit:focus-visible { outline: 2px solid var(--sd-accent); outline-offset: -2px; }
+.sd-prompt-sec[data-bad="1"] .sd-prompt-edit { background: color-mix(in oklab, var(--sd-danger) 6%, var(--sd-inset)); }
+
+/* ==========================================================================
+   分镜与拍摄 · 三栏工作台（2.0 Phase 3）
+   --------------------------------------------------------------------------
+   左 288 / 中 弹性 / 右 430。三栏各自滚动，互不影响。
+   高度用 vh 估算（顶栏 + 页签条 + 页头 + 统计条），min-height 兜底 ——
+   算多了只是底部多出一点空白，算少了外层 .content 会跟着滚，都不会破版。
+   ========================================================================== */
+.sd-shot3 {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr) 430px;
+  gap: var(--sd-space-3);
+  height: calc(100vh - 268px);
+  min-height: 460px;
+  align-items: stretch;
+}
+.sd-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sd-col .card-h { padding: 8px 12px; min-height: 42px; gap: var(--sd-space-2); }
+.sd-col .card-foot { padding: 7px 12px; }
+
+/* 窄栏里 select 不能撑满一行 */
+.sd-col .card-h .select { width: 96px; height: 28px; font-size: var(--sd-fs-caption); }
+
+/* ---- 左：镜头列表 ---- */
+.sd-list-tools {
+  flex: none;
+  display: flex; flex-direction: column; gap: var(--sd-space-2);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sd-line);
+}
+.sd-list-tools .search { width: 100%; }
+.sd-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.sd-filters .chip { height: 22px; font-size: var(--sd-fs-label); padding: 0 7px; }
+.sd-list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px; }
+
+.sd-row {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  width: 100%; height: 34px; padding: 0 8px;
+  border: 0; border-radius: var(--sd-radius-sm);
+  background: none; cursor: pointer; text-align: left;
+  color: var(--sd-text-2);
+  transition: background var(--sd-dur-fast) var(--sd-ease-standard),
+              color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.sd-row:hover { background: var(--sd-hover); color: var(--sd-text); }
+.sd-row.on {
+  background: var(--sd-active);
+  color: var(--sd-text);
+  box-shadow: inset 3px 0 0 var(--sd-accent);
+}
+.sd-row-id { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--sd-fs-caption); }
+.sd-row-mark { flex: none; display: flex; opacity: .65; }
+.sd-row-mark.bad { color: var(--sd-danger); opacity: 1; }
+
+/* ---- 中：画布 ---- */
+.sd-stage {
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--sd-inset);
+  overflow: hidden;
+}
+/* 视频 buffer 本身是黑的，和画布底几乎同色 —— 加一道极细边线，否则看不出画面到哪结束。
+   这不是装饰：竖屏 9:16 放在宽画布里会左右留空，没边界时会被误判成「视频没加载」。 */
+.sd-video { display: block; max-width: 100%; max-height: 100%; background: #000; box-shadow: 0 0 0 1px var(--sd-line-strong); }
+.sd-blank {
+  display: flex; flex-direction: column; align-items: center; gap: var(--sd-space-2);
+  padding: var(--sd-space-5); text-align: center;
+  color: var(--sd-text-3);
+}
+.sd-blank .mono { word-break: break-all; }
+
+.sd-stage-meta {
+  flex: none;
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px var(--sd-space-3);
+  padding: 10px 12px;
+  border-top: 1px solid var(--sd-line);
+  font-size: var(--sd-fs-caption);
+  max-height: 148px; overflow-y: auto;
+}
+.sd-kv-k { color: var(--sd-text-3); white-space: nowrap; }
+.sd-kv-v { color: var(--sd-text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sd-navbtn svg { transform: rotate(90deg); }
+.sd-navbtn.prev svg { transform: rotate(-90deg); }
+
+/* ---- 右：提示词（整段编辑） ---- */
+.sd-side-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--sd-space-2);
+  padding: 10px 12px 12px;
+}
+.sd-side-body > .sd-p-text { flex: 1; }
+.sd-p-meta { flex: none; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.sd-p-meta .badge { font-size: var(--sd-fs-label); }
+.sd-p-meta .mono { max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 结构概览：只读 chip。缺段的标红 —— 「拆开编辑」唯一真正有用的信息就是这一条 */
+.sd-p-secs { flex: none; display: flex; flex-wrap: wrap; gap: 3px; }
+.sd-pchip {
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-label);
+  line-height: 1.7;
+  padding: 0 5px;
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-xs);
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+.sd-pchip b { margin-left: 5px; font-weight: 400; color: var(--sd-text-2); }
+.sd-pchip.bad {
+  color: var(--sd-danger-ink);
+  border-color: color-mix(in oklab, var(--sd-danger) 50%, transparent);
+}
+
+.sd-p-text {
+  width: 100%;
+  min-height: 120px;
+  resize: none;
+  padding: 10px;
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-sm);
+  background: var(--sd-inset);
+  color: var(--sd-text);
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-mono);
+  line-height: 1.6;
+  tab-size: 2;
+}
+.sd-p-text:focus-visible { outline: 2px solid var(--sd-accent); outline-offset: -2px; }
+/* 校验清单：常驻一行摘要，正文默认收起。编辑区优先。 */
+.sd-p-lint { flex: none; display: flex; flex-direction: column; gap: var(--sd-space-1); }
+.sd-p-lint:empty { display: none; }
+.sd-lintbar {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 5px 8px;
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-sm);
+  background: var(--sd-inset);
+  cursor: pointer; text-align: left;
+  font-size: var(--sd-fs-label);
+  color: var(--sd-text-2);
+}
+.sd-lintbar.bad {
+  color: var(--sd-danger-ink);
+  background: color-mix(in oklab, var(--sd-danger) 9%, transparent);
+  border-color: color-mix(in oklab, var(--sd-danger) 34%, transparent);
+}
+.sd-lintbar.warn {
+  color: var(--sd-warn-ink);
+  background: color-mix(in oklab, var(--sd-warn) 10%, transparent);
+  border-color: color-mix(in oklab, var(--sd-warn) 34%, transparent);
+}
+.sd-lintbar svg { flex: none; }
+.sd-linttxt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-lintmore { flex: none; opacity: .8; text-decoration: underline; text-underline-offset: 2px; }
+.sd-lintbody { max-height: 30vh; overflow-y: auto; }
+.sd-p-foot { flex: none; display: flex; align-items: center; gap: var(--sd-space-2); padding-top: 2px; }
+
+/* ---- 响应式：先收窄，再单栏堆叠 ---- */
+@media (max-width: 1440px) { .sd-shot3 { grid-template-columns: 250px minmax(0, 1fr) 386px; } }
+@media (max-width: 1240px) { .sd-shot3 { grid-template-columns: 228px minmax(0, 1fr) 344px; } }
+@media (max-width: 1040px) {
+  .sd-shot3 { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+  .sd-col-list { max-height: 380px; }
+  .sd-col-stage { max-height: 560px; }
+  .sd-col-side { min-height: 420px; }
+  .sd-p-text { min-height: 200px; }
+}
+
+/* ==========================================================================
+   创意工作室 · 三栏创作工作台（2.0 Phase 3）
+   --------------------------------------------------------------------------
+   左 268（文档树）/ 中 弹性（Markdown 编辑或预览）/ 右 372（下一步·生成·制作包·上下文）。
+   中间是写作区，所以给它弹性宽度；右栏是「现在能做什么」，固定宽度便于扫读。
+   ========================================================================== */
+.sd-cw3 {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr) 372px;
+  gap: var(--sd-space-3);
+  height: calc(100vh - 268px);
+  min-height: 480px;
+  align-items: stretch;
+}
+.sd-cw3 .sd-col { min-width: 0; min-height: 0; }
+
+/* ---- 左：文档树 ---- */
+.sd-docscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.sd-docitem {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  width: 100%; height: 34px; padding: 0 8px;
+  border: 0; border-radius: var(--sd-radius-sm);
+  background: none; cursor: pointer; text-align: left;
+  color: var(--sd-text-2);
+  transition: background var(--sd-dur-fast) var(--sd-ease-standard),
+              color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.sd-docitem:hover { background: var(--sd-hover); color: var(--sd-text); }
+.sd-docitem.on {
+  background: var(--sd-active);
+  color: var(--sd-text);
+  box-shadow: inset 3px 0 0 var(--sd-accent);
+}
+.sd-docitem.child { height: 30px; padding-left: 22px; font-size: var(--sd-fs-caption); }
+/* 容器头（多文件产物，如导演手册）：只是分组标题，不可点 —— 它没有「一篇完整文档」可编辑 */
+.sd-docgroup-h {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  height: 30px; padding: 0 8px; margin-top: 6px;
+  color: var(--sd-text-3);
+  font-size: var(--sd-fs-caption);
+}
+/* 多文件产物的子项挂一条引线，否则 30 集看起来像四个并列文档 */
+.sd-docgroup { position: relative; margin: 2px 0 4px; }
+.sd-docgroup::before {
+  content: ""; position: absolute; left: 14px; top: 2px; bottom: 2px;
+  width: 1px; background: var(--sd-line);
+}
+.sd-docname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-docmeta { flex: none; font-size: var(--sd-fs-label); color: var(--sd-text-3); }
+
+/* ---- 中：编辑器 ---- */
+.sd-edhead { padding: 8px 12px; min-height: 44px; gap: var(--sd-space-2); }
+.sd-edbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sd-edtools {
+  flex: none; display: flex; align-items: center; gap: var(--sd-space-2);
+  flex-wrap: nowrap;                       /* 换行会让「保存」跑到第二行最左，看着像别的东西 */
+  padding: 5px 14px; border-bottom: 1px solid var(--sd-line);
+}
+.sd-edstat { flex: none; }
+.sd-edpath {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--sd-fs-label); color: var(--sd-text-3);
+}
+.sd-edempty {
+  flex: none; margin: 12px 14px 0; padding: 10px 12px;
+  border: 1px dashed var(--sd-line-strong); border-radius: var(--sd-radius-sm);
+}
+.sd-edtext {
+  flex: 1; min-height: 0; width: 100%;
+  padding: 14px 16px;
+  border: 0; background: transparent; color: var(--sd-text);
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-mono);
+  line-height: 1.8;
+  resize: none; tab-size: 2;
+}
+.sd-edtext:focus-visible { outline: none; }
+
+/* 编辑 / 预览 切换：两态分段控件，不做开关滑块（滑块在深浅主题下都要额外调） */
+.sd-seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--sd-line); border-radius: var(--sd-radius-sm);
+}
+.sd-segbtn {
+  border: 0; background: none; cursor: pointer;
+  padding: 3px 10px;
+  font-size: var(--sd-fs-label); color: var(--sd-text-2);
+}
+.sd-segbtn:hover { color: var(--sd-text); }
+.sd-segbtn.on { background: var(--sd-active); color: var(--sd-text); }
+
+/* ---- 预览（受限 Markdown 渲染） ---- */
+.sd-md {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 16px 22px 40px;
+  color: var(--sd-text);
+  font-size: var(--sd-fs-body);
+  line-height: 1.85;
+}
+.sd-md > :first-child { margin-top: 0; }
+.sd-md h1 { font-size: var(--sd-fs-h2); font-weight: 600; margin: 22px 0 10px; letter-spacing: -.01em; }
+.sd-md h2 {
+  font-size: var(--sd-fs-h3); font-weight: 600;
+  margin: 20px 0 8px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--sd-line);
+}
+.sd-md h3 { font-size: var(--sd-fs-body); font-weight: 600; margin: 16px 0 6px; }
+.sd-md h4 { font-size: var(--sd-fs-sm); font-weight: 600; margin: 14px 0 6px; color: var(--sd-text-2); }
+.sd-md p { margin: 8px 0; }
+.sd-md ul, .sd-md ol { margin: 8px 0 8px 20px; }
+.sd-md li { margin: 3px 0; }
+.sd-md blockquote {
+  margin: 10px 0; padding: 6px 12px;
+  border-left: 2px solid var(--sd-accent-line);
+  background: var(--sd-inset); color: var(--sd-text-2);
+}
+.sd-md hr { border: 0; border-top: 1px solid var(--sd-line); margin: 18px 0; }
+.sd-md code {
+  font-family: var(--sd-font-mono); font-size: var(--sd-fs-caption);
+  background: var(--sd-inset); padding: 1px 4px; border-radius: var(--sd-radius-xs);
+}
+.sd-md-code {
+  font-family: var(--sd-font-mono); font-size: var(--sd-fs-caption);
+  background: var(--sd-inset); border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-sm); padding: 10px 12px;
+  overflow-x: auto; margin: 10px 0;
+}
+/* 企划案的立项卡、导演手册的资产表都是表格，窄屏要能横滚而不是撑破卡片 */
+.sd-md-tw { overflow-x: auto; margin: 10px 0; }
+/* 窄栏里给表格 `width:100%` 会强行压缩列宽，「编号」这种两字表头会被挤成竖排。
+   改成「至少撑满、内容多则更宽」，配合外层的 overflow-x 横滚。 */
+.sd-md table { border-collapse: collapse; min-width: 100%; width: max-content; max-width: none; font-size: var(--sd-fs-caption); }
+.sd-md th { white-space: nowrap; }
+.sd-md th, .sd-md td {
+  border: 1px solid var(--sd-line);
+  padding: 5px 8px; text-align: left; vertical-align: top;
+}
+.sd-md th { background: var(--sd-inset); font-weight: 600; color: var(--sd-text); }
+
+/* ---- 右：上下文 ---- */
+.sd-col-ctx {
+  display: flex; flex-direction: column; gap: var(--sd-space-2);
+  overflow-y: auto; padding-right: 2px;
+}
+.sd-cwcard { flex: none; }
+.sd-cwcard .card-h { padding: 8px 12px; min-height: 40px; gap: var(--sd-space-2); }
+.sd-cwcard .card-b { padding: 10px 12px; }
+.sd-fld {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  margin-bottom: 8px;
+  font-size: var(--sd-fs-caption); color: var(--sd-text-3);
+}
+.sd-fld > span { flex: none; min-width: 62px; }
+.sd-fld .input { height: 28px; font-size: var(--sd-fs-caption); }
+.sd-note { font-size: var(--sd-fs-label); line-height: 1.7; color: var(--sd-text-3); margin-top: 6px; }
+.sd-bad { color: var(--sd-danger-ink); }
+.sd-kvlist { display: flex; flex-direction: column; gap: 6px; }
+.sd-kvrow { display: flex; align-items: baseline; gap: var(--sd-space-2); font-size: var(--sd-fs-caption); }
+.sd-kvrow .sd-kv-k { flex: none; min-width: 56px; }
+.sd-kvrow .sd-kv-v {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--sd-text-2);
+}
+
+@media (max-width: 1440px) { .sd-cw3 { grid-template-columns: 244px minmax(0, 1fr) 344px; } }
+@media (max-width: 1240px) {
+  .sd-cw3 { grid-template-columns: 220px minmax(0, 1fr) 310px; }
+  .sd-edstat { display: none; }
+}
+@media (max-width: 1040px) {
+  .sd-cw3 { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+  .sd-col-docs { max-height: 320px; }
+  .sd-col-ed { min-height: 520px; }
+  .sd-col-ctx { overflow: visible; }
+}
+
+/* 灵感文档的参数行（集数 / 单集秒数）：跟着正文一起提交，所以并进编辑器而不是右栏 */
+.sd-ideafields { gap: var(--sd-space-4); }
+.sd-ideafields .sd-fld { margin-bottom: 0; }
+.sd-ideafields .sd-fld .input { width: 66px; }
+
+/* ==========================================================================
+   版本对照（创作页 · 历史版本）
+   --------------------------------------------------------------------------
+   左右两列行级 diff。宽版弹窗通过 `.modal-wide` 临时放宽 ——
+   560px 塞两列每列不到 270px，长句会碎成一条一条，比不看还费劲。
+   ========================================================================== */
+.modal.modal-wide { width: 1080px; max-width: 96vw; }
+.modal-wide .modal-b { max-height: 66vh; }
+
+.sd-vd-bar {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  margin-bottom: var(--sd-space-2);
+  flex-wrap: wrap;
+}
+.sd-vd-stat { font-family: var(--sd-font-mono); font-size: var(--sd-fs-caption); }
+.sd-vd-stat .add { color: var(--sd-ok-ink); font-weight: 600; }
+.sd-vd-stat .del { color: var(--sd-danger-ink); font-weight: 600; }
+
+.sd-vd-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sd-space-2);
+}
+.sd-vd-col {
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-sm);
+  overflow: hidden;
+}
+.sd-vd-h {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sd-space-2);
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--sd-line);
+  background: var(--sd-inset);
+  font-size: var(--sd-fs-label);
+  color: var(--sd-text-3);
+}
+.sd-vd-body {
+  height: 44vh; overflow: auto;
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-caption);
+  line-height: 1.6;
+}
+.sd-vd-line { display: flex; align-items: flex-start; min-height: 19px; }
+.sd-vd-ln {
+  flex: none; width: 42px; padding-right: 8px;
+  text-align: right; color: var(--sd-text-3);
+  user-select: none;
+  border-right: 1px solid var(--sd-line);
+}
+.sd-vd-tx {
+  flex: 1; min-width: 0; padding: 0 8px;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* 删除＝当前多出来的；新增＝备份里多出来的（备份 → 当前 读作「加回这段」） */
+.sd-vd-line.del { background: color-mix(in oklab, var(--sd-danger) 12%, transparent); }
+.sd-vd-line.del .sd-vd-tx { color: var(--sd-danger-ink); }
+.sd-vd-line.add { background: color-mix(in oklab, var(--sd-ok) 12%, transparent); }
+.sd-vd-line.add .sd-vd-tx { color: var(--sd-ok-ink); }
+.sd-vd-line.gap { background: var(--sd-inset); }
+.sd-vd-line.gap .sd-vd-tx::after { content: ""; }
+
+@media (max-width: 760px) {
+  .sd-vd-cols { grid-template-columns: minmax(0, 1fr); }
+  .sd-vd-body { height: 30vh; }
+}
+
+/* ==========================================================================
+   版本对照（创作页 · 历史版本）
+   --------------------------------------------------------------------------
+   左右两列行级 diff。宽版弹窗通过 `.modal-wide` 临时放宽 ——
+   560px 塞两列每列不到 270px，长句会碎成一条一条，比不看还费劲。
+   ========================================================================== */
+.modal.modal-wide { width: 1080px; max-width: 96vw; }
+.modal-wide .modal-b { max-height: 66vh; }
+
+.sd-vd-bar {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  margin-bottom: var(--sd-space-2);
+  flex-wrap: wrap;
+}
+.sd-vd-stat { font-family: var(--sd-font-mono); font-size: var(--sd-fs-caption); }
+.sd-vd-stat .add { color: var(--sd-ok-ink); font-weight: 600; }
+.sd-vd-stat .del { color: var(--sd-danger-ink); font-weight: 600; }
+
+.sd-vd-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sd-space-2);
+}
+.sd-vd-col {
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-sm);
+  overflow: hidden;
+}
+.sd-vd-h {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sd-space-2);
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--sd-line);
+  background: var(--sd-inset);
+  font-size: var(--sd-fs-label);
+  color: var(--sd-text-3);
+}
+.sd-vd-body {
+  height: 44vh; overflow: auto;
+  font-family: var(--sd-font-mono);
+  font-size: var(--sd-fs-caption);
+  line-height: 1.6;
+}
+.sd-vd-line { display: flex; align-items: flex-start; min-height: 19px; }
+.sd-vd-ln {
+  flex: none; width: 42px; padding-right: 8px;
+  text-align: right; color: var(--sd-text-3);
+  user-select: none;
+  border-right: 1px solid var(--sd-line);
+}
+.sd-vd-tx {
+  flex: 1; min-width: 0; padding: 0 8px;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* 删除＝当前多出来的；新增＝备份里多出来的（备份 → 当前 读作「加回这段」） */
+.sd-vd-line.del { background: color-mix(in oklab, var(--sd-danger) 12%, transparent); }
+.sd-vd-line.del .sd-vd-tx { color: var(--sd-danger-ink); }
+.sd-vd-line.add { background: color-mix(in oklab, var(--sd-ok) 12%, transparent); }
+.sd-vd-line.add .sd-vd-tx { color: var(--sd-ok-ink); }
+.sd-vd-line.gap { background: var(--sd-inset); }
+.sd-vd-line.gap .sd-vd-tx::after { content: ""; }
+
+@media (max-width: 760px) {
+  .sd-vd-cols { grid-template-columns: minmax(0, 1fr); }
+  .sd-vd-body { height: 30vh; }
+}
+
+/* ==========================================================================
+   资产中心 · 角色档案（2.0 Phase 3）
+   --------------------------------------------------------------------------
+   一人一卡；卡内按层分组：三视图（身份基准）→ 造型（穿什么）→ 表情。
+   缩略图用 3:4 而不是 1:1 —— 立绘、三视图、四宫格都是"高一点"的画幅，
+   方框会把它们裁得看不出是谁。
+   ========================================================================== */
+.sd-roster { display: flex; flex-direction: column; gap: var(--sd-space-3); }
+
+.sd-char {
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface);
+  overflow: hidden;
+}
+.sd-char-h {
+  display: flex; align-items: center; gap: var(--sd-space-2);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--sd-line);
+  flex-wrap: wrap;
+}
+.sd-char-id {
+  font-size: var(--sd-fs-label);
+  color: var(--sd-accent);
+  border: 1px solid var(--sd-accent-line);
+  border-radius: var(--sd-radius-xs);
+  padding: 0 5px;
+  line-height: 1.7;
+}
+.sd-char-name { font-size: var(--sd-fs-h3); font-weight: 600; color: var(--sd-text); }
+.sd-char-role,
+.sd-char-anchor {
+  padding: 7px 12px;
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-2);
+  border-bottom: 1px solid var(--sd-line);
+  line-height: 1.7;
+}
+.sd-char-anchor { color: var(--sd-text-3); }
+.sd-char-anchor b { color: var(--sd-text-2); font-weight: 500; margin-right: 4px; }
+
+.sd-cv-group { padding: 10px 12px 4px; }
+.sd-cv-gh {
+  display: flex; align-items: baseline; gap: var(--sd-space-2);
+  margin-bottom: 6px;
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-2);
+}
+.sd-cv-gh > span:first-child { font-weight: 600; }
+.sd-cv-gn { font-family: var(--sd-font-mono); font-size: var(--sd-fs-label); color: var(--sd-text-3); }
+.sd-cv-hint {
+  flex: 1; min-width: 0;
+  font-size: var(--sd-fs-label); color: var(--sd-text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.sd-cv-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--sd-space-2);
+  padding-bottom: 8px;
+}
+.sd-cv {
+  display: flex; flex-direction: column;
+  padding: 0; border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-sm);
+  background: var(--sd-inset);
+  cursor: pointer; overflow: hidden;
+  text-align: left;
+  transition: border-color var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.sd-cv:hover { border-color: var(--sd-accent); }
+.sd-cv-img {
+  display: block; width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: var(--sd-surface-2);
+}
+.sd-cv-miss {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--sd-text-3);
+  font-size: var(--sd-fs-label);
+  border-bottom: 1px dashed var(--sd-line);
+}
+.sd-cv-cap {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 6px;
+  font-size: var(--sd-fs-label);
+  color: var(--sd-text-2);
+  background: var(--sd-surface);
+}
+.sd-cv-cap b { margin-left: auto; color: var(--sd-text-3); font-weight: 400; }
+
+/* ==========================================================================
+   资产中心 · 角色框（2.0 · 2026-11-10 用户定的形态）
+   --------------------------------------------------------------------------
+   一个角色一个框：上方大图（主形象 / 当前变体，框内可纵向滚动），
+   下方一排文字 tab 选变体。
+   尺寸刻意做大 —— 上一版 118px 小图铺一屏，看不清是谁也点不准。
+   ========================================================================== */
+.sd-roster { display: flex; flex-direction: column; gap: var(--sd-space-4); }
+
+.sd-ccard {
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-lg);
+  background: var(--sd-surface);
+  overflow: hidden;
+}
+.sd-ccard-h {
+  display: flex; align-items: center; gap: var(--sd-space-3);
+  padding: 14px 18px 10px;
+  flex-wrap: wrap;
+}
+.sd-ccard-id {
+  font-size: var(--sd-fs-caption);
+  font-weight: 600;
+  color: var(--sd-accent);
+  border: 1px solid var(--sd-accent-line);
+  border-radius: var(--sd-radius-xs);
+  padding: 1px 7px;
+}
+.sd-ccard-name {
+  font-size: var(--sd-fs-h2);
+  font-weight: 600;
+  color: var(--sd-text);
+  letter-spacing: -.01em;
+}
+.sd-ccard-stat {
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-3);
+  white-space: nowrap;
+}
+.sd-ccard-stat b { color: var(--sd-text); font-weight: 600; font-size: var(--sd-fs-sm); }
+.sd-ccard-sub {
+  display: flex; gap: var(--sd-space-4); flex-wrap: wrap;
+  padding: 0 18px 12px;
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-2);
+  line-height: 1.7;
+}
+.sd-ccard-anchor { color: var(--sd-text-3); }
+
+/* ---- 大图区：固定高度 + 纵向滚动；多张时横向排开各自滚动 ---- */
+.sd-cstage { padding: 0 18px; }
+.sd-cstage-bar {
+  display: flex; align-items: center; gap: var(--sd-space-3);
+  padding: 8px 0;
+  border-top: 1px solid var(--sd-line);
+  font-size: var(--sd-fs-caption);
+  color: var(--sd-text-2);
+}
+.sd-cstage-lb {
+  max-width: 46%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--sd-text-3);
+}
+/* 图区：图定高（≤480），横向由 flex 居中吃掉。
+   为什么**不**铺一层色块背景：竖图（存量 9:16 三视图）放在宽框里必然左右留白，
+   铺成深色块就成了两条"黑边"，看着像图没加载完。留白直接用卡片底色，观感干净。
+   为什么**不**让宽度主导：横竖混着（存量竖图 / 新规范横图），
+   `max-height + width:auto` 对两种比例都成立，按 code 猜一定会错。 */
+.sd-cstage-body {
+  max-height: 520px;
+  overflow: auto;                     /* 框内可滑动 */
+  display: flex; gap: var(--sd-space-3);
+  align-items: center; justify-content: center;
+  padding: var(--sd-space-2) 0 var(--sd-space-3);
+}
+.sd-cstage-body.multi { justify-content: flex-start; }
+.sd-cshot {
+  display: block; flex: none;
+  border-radius: var(--sd-radius-sm);
+  overflow: hidden;
+  background: var(--sd-surface-2);
+  box-shadow: 0 0 0 1px var(--sd-line-strong);
+}
+.sd-cshot img {
+  display: block;
+  max-height: 480px;
+  width: auto; max-width: 100%;
+  object-fit: contain;
+}
+
+/* ---- 变体文字 tab ---- */
+.sd-ctabs {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 12px 18px 16px;
+}
+.sd-ctab {
+  display: inline-flex; flex-direction: column; gap: 1px;
+  padding: 7px 13px;
+  border: 1px solid var(--sd-line);
+  border-radius: var(--sd-radius-md);
+  background: var(--sd-surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--sd-dur-fast) var(--sd-ease-standard),
+              background var(--sd-dur-fast) var(--sd-ease-standard);
+}
+.sd-ctab:hover { border-color: var(--sd-line-strong); background: var(--sd-hover); }
+.sd-ctab.on {
+  border-color: var(--sd-accent);
+  background: var(--sd-accent-tint);
+  box-shadow: inset 0 0 0 1px var(--sd-accent-line);
+}
+.sd-ctab-code {
+  font-size: var(--sd-fs-sm);
+  color: var(--sd-text);
+  font-weight: 600;
+}
+.sd-ctab-lb { font-size: var(--sd-fs-label); color: var(--sd-text-3); }
+.sd-ctab.on .sd-ctab-lb { color: var(--sd-text-2); }
+.sd-ctab.empty { opacity: .55; }
+.sd-ctab.master .sd-ctab-code { color: var(--sd-accent); }
+.sd-ctab-star {
+  font-style: normal;
+  font-size: var(--sd-fs-label);
+  color: var(--sd-accent);
+  line-height: 1;
+}
+
+/* 诊断页签：视觉上比主分类弱一档，暗示「这不是素材类别」 */
+.sd-tab-diag { color: var(--sd-text-3); font-size: var(--sd-fs-caption); }
+
+@media (max-width: 900px) {
+  .sd-cstage-body { height: 300px; }
+  .sd-ccard-name { font-size: var(--sd-fs-h3); }
+}
+
+/* ==========================================================================
+   资产页 · 操作区放大（2.0 · 2026-11-10）
+   --------------------------------------------------------------------------
+   用户反馈「各个块都太小、看着费力」。这里是**只放大、不改结构**：
+   页签、KPI、缺口芯片、页头按钮统一抬一档，密度换可读性。
+   资产页是「看图和选图」的地方，不是数据表 —— 挤是这里最不该犯的错。
+   ========================================================================== */
+.sd-roster-wrap .card-h { padding: 12px 18px; min-height: 54px; }
+.sd-roster-wrap .card-b.sd-roster { padding: 18px; }
+.sd-roster-wrap .card-foot { padding: 12px 18px; }
+
+/* 主分类页签：加大点击区与字号 */
+.sd-roster-wrap ~ .tabs .tab,
+.tabs .tab { padding: 9px 16px; font-size: var(--sd-fs-sm); }
+
+/* KPI：数字更大、留白更足 */
+.kpi { padding: 18px 20px; }
+.kpi-k { font-size: var(--sd-fs-caption); margin-bottom: 4px; }
+.kpi-v { font-size: 30px; line-height: 1.15; font-weight: 600; letter-spacing: -.02em; }
+.kpi-n { font-size: var(--sd-fs-caption); color: var(--sd-text-3); margin-top: 6px; line-height: 1.6; }
+
+/* 缺口芯片：从 11px 抬到 12px，行高放宽 */
+.card-b .chip { font-size: var(--sd-fs-caption); padding: 5px 11px; }
+
+/* 页头按钮：主次都抬一档，避免「一排小字按钮」 */
+.page-actions .btn { padding: 8px 15px; font-size: var(--sd-fs-sm); }

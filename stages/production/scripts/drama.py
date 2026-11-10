@@ -11,7 +11,7 @@ token 全花在重复探索上。这里把它们固化成**稳定命令**：
 
 命令一览（`python scripts/drama.py guide` 也会打印同样内容）
 -----------------------------------------------------------
-    next|do|nodes|graph|skip                ★七环节 23 节点调度（唯一编排）：看下一步 / 执行 / 全状态 /
+    next|do|nodes|graph|skip                ★五环节 13 节点调度（唯一编排）：看下一步 / 执行 / 全状态 /
                                           节点图 / 显式跳过（须给理由）
     init       --title ... --episodes N   ★建项目骨架（9 目录 + 6 模板，不写内容）
     style      list|status|set|reset|ask|require  ★画风库：形态 track × 视觉 look × 叙事 narrative
@@ -955,6 +955,9 @@ def cmd_assets_local(args) -> int:
         cmd += ['--only', args.only]
     if args.force:
         cmd += ['--force']
+    # 单张重出要能反悔：出图前把旧图存到 _bak/。整批出图不开（资产目录体积翻倍）。
+    if getattr(args, 'backup', False):
+        cmd += ['--backup']
     if args.submit:
         cmd += ['--submit']
     # ★ 2026-11-07：种子与负向词必须能从 drama.py 这一层传下去 ——

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <title>SoloDrama Studio</title>
@@ -18,8 +18,29 @@
      于是改完 css/js 刷新页面看到的还是旧文件 —— 表现是「改了没生效」。
      2026-11-04 踩过一次：画布样式写完了，页面上一个格子都没有。
      发布时把下面这个日期串改一次，强制所有客户端取新文件；开发期刷新即可（服务端已发 no-cache）。 -->
-<link rel="stylesheet" href="css/tokens.css?v=20261105a">
-<link rel="stylesheet" href="css/app.css?v=20261105a">
+<link rel="stylesheet" href="css/tokens.css?v=20261110g">
+<link rel="stylesheet" href="css/app.css?v=20261110g">
+<!-- 2.0 新组件：只新增类名（.sd-* / .btn.danger），不改既有选择器。
+     .btn.danger 的唯一来源在这里（app.css 只留注释指向本文件）。 -->
+<link rel="stylesheet" href="css/components-2.css?v=20261110g">
+<!-- 主题必须在 CSS 之前定下，否则深色用户会先看到一帧白底（闪白）。
+     这 6 行是 theme.js 的精简版：只做「读记忆 → 解析 auto → 写 data-theme」。
+     与 js/theme.js 的取值规则必须一致，改一处要改两处。 -->
+<script>
+(function () {
+  try {
+    var q = new URLSearchParams(location.search).get('theme');
+    var m = (q === 'dark' || q === 'light') ? q : (localStorage.getItem('sd-theme') || 'auto');
+    var t = (m === 'dark' || m === 'light') ? m
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    var d = document.documentElement;
+    d.setAttribute('data-theme', t);
+    d.setAttribute('data-theme-mode', m);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+</script>
 </head>
 <body>
 
@@ -32,7 +53,7 @@
       <div class="brand-mark"><img src="img/logo.svg" alt="" width="26" height="26"></div>
       <div>
         <div class="brand-name">SoloDrama</div>
-        <div class="brand-sub">STUDIO 0.2</div>
+        <div class="brand-sub">STUDIO 2.0</div>
       </div>
     </div>
     <div class="nav-scroll" id="nav" role="navigation" aria-label="主导航"></div>
@@ -62,10 +83,15 @@
       <div class="mon" id="monitor" role="group" aria-label="资源占用"></div>
       <span class="badge warn hide" id="roBadge" title="只读模式下所有写操作被拒绝">只读模式</span>
       <span class="badge outline" id="engineBadge" title="引擎解释器">引擎</span>
+      <!-- 主题：深色看片 / 浅色写稿。三态（跟随系统/深/浅），点击循环切换。 -->
+      <button class="btn ghost sm" id="btnTheme" title="主题：跟随系统 → 深色 → 浅色">跟随系统</button>
       <button class="btn ghost icon" id="btnRefresh" title="重新读取（清缓存）">
         <span data-ico="refresh"></span>
       </button>
     </header>
+
+    <!-- 工作空间页签条：由 main.js 按当前路由填充；全局页（工作台/任务/设置）时隐藏 -->
+    <div class="wsbar hide" id="wsbar"></div>
 
     <main class="content" id="view" tabindex="-1"></main>
   </div>

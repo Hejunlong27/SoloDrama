@@ -3,7 +3,7 @@
 # 说明：引擎侧 requirements.txt 一字不动（httpx / Pillow 已足够跑全部 stage 脚本）。
 #      作业库 / 审计 / 事件流用 Python 标准库 sqlite3，不引第三方数据库。
 
-fastapi==0.143.3
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 
 # ★ LLM 网关（web/core/llm/providers.py）需要 httpx：与引擎 requirements.txt **同一锁定版本**，

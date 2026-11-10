@@ -27,10 +27,10 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--r-sm); }
 
-* { scrollbar-width: thin; scrollbar-color: #3a424e transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--sd-line) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: #333a45; border-radius: 999px; border: 2px solid var(--bg-app); background-clip: content-box; }
-*::-webkit-scrollbar-thumb:hover { background: #48515f; background-clip: content-box; }
+*::-webkit-scrollbar-thumb { background: var(--sd-line-strong); border-radius: 999px; border: 2px solid var(--bg-app); background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--sd-text) 34%, transparent); background-clip: content-box; }
 
 /* ---------- 原子类 ---------- */
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -200,19 +200,22 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .kpi-n .warn { color: var(--accent); }
 
 /* ---------- 按钮 ----------
-   对齐 OpenDesign / claude（DESIGN.md §4 Buttons、§5 Border Radius Scale、
-   §6 Depth & Elevation、§3 Typography）。规范锁定的取值以组件局部变量承载，
-   不改 tokens.css —— 作用域只到 .btn，不牵动其他组件；日后并入全局令牌时
-   本块 --btn-* 直接折叠进 tokens.css。
-   变体映射：默认 → §4「Dark Charcoal」（#30302e + Ivory，规范里唯一的深底变体）
-             .primary → §4「Brand Terracotta」（#c96442 + Ivory，唯一的彩色 CTA） */
+   ★ 2026-11-10（2.0 Phase 1）：色值已并入设计 Token，本块不再写字面色值。
+     原先对齐的是一份外部规范（OpenDesign / DESIGN.md §4/§5/§6），
+     结果是同屏出现陶土 #c96442 + 琥珀 #e0a458 两套暖色，品牌识别被稀释。
+     现在映射关系：
+       默认     → --sd-surface-2 + --sd-text（深底变体在浅色主题自动变浅）
+       .primary → --sd-accent（香槟金 / 浅色褐金 #9B7145）+ --sd-on-accent
+                  深色下金底配深墨字 8.21:1；浅色下严格用规范值 #9B7145 配白字 4.34:1
+                  （已知不足 AA，品牌忠实优先；需要 AA 的文字级金色用 --sd-accent-strong）
+       描边     → --sd-line-strong（原「用阴影充当边框」的 ring 体系保留） */
 .btn {
-  --btn-r: 8px;                    /* §5 Comfortably rounded：标准按钮 */
-  --btn-fs: 16px;                  /* §3 Body Standard 16px，原文明列「button text」 */
-  --btn-bg: #30302e;               /* §2 Dark Surface */
-  --btn-bg-hover: #3d3d3a;         /* §2 Dark Warm（规范未定义 hover 面，取调色板内相邻值） */
-  --btn-fg: #faf9f5;               /* §2 Ivory */
-  --btn-ring: 0 0 0 1px #30302e;   /* §6 Level 2 Ring：用阴影充当边框 */
+  --btn-r: var(--sd-radius-md);    /* 8px：输入框同档 */
+  --btn-fs: 15px;                  /* 与 --sd-fs-body 对齐（原 16px 与正文不同档） */
+  --btn-bg: var(--sd-surface-2);
+  --btn-bg-hover: var(--sd-hover);
+  --btn-fg: var(--sd-text);
+  --btn-ring: 0 0 0 1px var(--sd-line-strong);
 
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   height: 36px; padding: 0 12px;
@@ -230,29 +233,27 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 /* §6 Level 4 Inset：按压态叠 1px 内描边 @15% */
 .btn:active {
   transform: translateY(1px) scale(.995);
-  box-shadow: var(--btn-ring), inset 0 0 0 1px rgba(0, 0, 0, .15);
+  box-shadow: var(--btn-ring), inset 0 0 0 1px color-mix(in oklab, var(--sd-text) 15%, transparent);
 }
 /* §4「Focus: ring with Focus Blue」；§2 声明它全系统唯一冷色，仅用于可访问性 */
 .btn:focus-visible {
   outline: none;
-  box-shadow: var(--btn-ring), 0 0 0 3px rgba(56, 152, 236, .3);
+  box-shadow: var(--btn-ring), 0 0 0 3px var(--sd-accent-line);
 }
 .btn.primary {
-  --btn-r: 12px;                    /* §4 8–12px；§5 主按钮取 Generously rounded 12px */
-  --btn-bg: #c96442;                /* §4 Brand Terracotta */
-  --btn-fg: #faf9f5;                /* §4 Text: Ivory */
-  --btn-ring: 0 0 0 1px #c96442;    /* §4 ring-based shadow */
+  --btn-r: var(--sd-radius-sm);     /* 6px：与 .btn.sm 同档，主按钮不再比次按钮更圆 */
+  --btn-bg: var(--sd-accent);
+  --btn-fg: var(--sd-on-accent);
+  --btn-ring: 0 0 0 1px var(--sd-accent);
 }
-/* 包内 tokens.css:45 的 accent-hover = accent 混黑 8%；双声明保底，
-   浏览器不支持 color-mix 时退回本色（不出现透明底） */
-.btn.primary:hover { background: #c96442; background: color-mix(in oklab, #c96442, black 8%); }
+/* 悬停加深 8%：双声明保底，浏览器不支持 color-mix 时退回本色（不出现透明底） */
+.btn.primary:hover { background: var(--sd-accent); background: color-mix(in oklab, var(--sd-accent), black 8%); }
 /* ghost / quiet / danger 是项目自有变体，规范无对应条款：结构保留，只接上 ring 体系 */
 .btn.ghost { --btn-bg: transparent; --btn-bg-hover: var(--bg-hover); --btn-ring: none; border-color: transparent; color: var(--txt-2); }
 .btn.ghost:hover { color: var(--txt); }
-.btn.quiet { --btn-bg: transparent; --btn-bg-hover: var(--bg-hover); --btn-ring: 0 0 0 1px #30302e; color: var(--txt-2); }
+.btn.quiet { --btn-bg: transparent; --btn-bg-hover: var(--bg-hover); --btn-ring: 0 0 0 1px var(--sd-line); color: var(--txt-2); }
 .btn.quiet:hover { color: var(--txt); }
-.btn.danger { --btn-bg: transparent; --btn-ring: none; border-color: rgba(217, 105, 94, .5); color: var(--danger); }
-.btn.danger:hover { background: var(--danger-tint); }
+/* .btn.danger 定义在 components-2.css（单一来源，避免两处定义互相覆盖） */
 .btn.sm { --btn-r: 6px; --btn-fs: 14px; height: 30px; padding: 0 11px; }   /* §5 Subtly rounded；§3 Caption 14px */
 .btn.xs { --btn-r: 6px; --btn-fs: 12px; letter-spacing: .12px; height: 26px; padding: 0 9px; }  /* §5；§3 Label 12px + 0.12px 字距 */
 .btn.lg { --btn-r: 12px; height: 44px; padding: 0 22px; gap: 9px; }
@@ -262,7 +263,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .btn.stage { --btn-fs: 14px; height: 34px; min-width: 84px; padding: 0 14px; }
 .btn[disabled] { opacity: .42; cursor: not-allowed; pointer-events: none; }
 .cost-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
-.btn.primary .cost-dot { background: #faf9f5; }
+.btn.primary .cost-dot { background: var(--sd-on-accent); }
 .spinner {
   width: 12px; height: 12px; flex: none;
   border: 1.5px solid currentColor; border-right-color: transparent;
@@ -280,10 +281,10 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.badge.ok { background: var(--ok-tint); color: var(--ok); border-color: rgba(86, 181, 127, .3); }
-.badge.warn { background: var(--accent-tint); color: var(--accent); border-color: var(--accent-line); }
-.badge.bad { background: var(--danger-tint); color: var(--danger); border-color: rgba(217, 105, 94, .3); }
-.badge.live { background: var(--live-tint); color: var(--live); border-color: rgba(79, 179, 199, .3); }
+.badge.ok { background: var(--ok-tint); color: var(--sd-ok-ink); border-color: color-mix(in oklab, var(--sd-ok) 30%, transparent); }
+.badge.warn { background: var(--accent-tint); color: var(--sd-warn-ink); border-color: var(--accent-line); }
+.badge.bad { background: var(--danger-tint); color: var(--sd-danger-ink); border-color: color-mix(in oklab, var(--sd-danger) 30%, transparent); }
+.badge.live { background: var(--live-tint); color: var(--sd-teal-ink); border-color: color-mix(in oklab, var(--sd-teal) 30%, transparent); }
 .badge.muted { background: var(--bg-active); color: var(--txt-2); border-color: var(--line); }
 .badge.outline { background: transparent; color: var(--txt-3); border-color: var(--line-strong); }
 
@@ -294,8 +295,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .dot.fail { background: var(--danger); }
 .dot.confirm { background: var(--accent); }
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(79, 179, 199, .10); }
-  50% { box-shadow: 0 0 0 5px rgba(79, 179, 199, .02); }
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--sd-teal) 10%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--sd-teal) 2%, transparent); }
 }
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12); white-space: nowrap; color: var(--txt-2); }
 .state.done { color: var(--ok); }
@@ -442,13 +443,13 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 /* ---------- 提示条 ---------- */
 .alert { display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--bg-inset); font-size: var(--fs-12); }
 .alert .nav-ico { flex: none; margin-top: 1px; }
-.alert.warn { border-color: var(--accent-line); background: var(--accent-tint); color: #f0d3a9; }
+.alert.warn { border-color: var(--accent-line); background: var(--accent-tint); color: var(--sd-text); }
 .alert.warn .nav-ico { color: var(--accent); }
-.alert.bad { border-color: rgba(217, 105, 94, .35); background: var(--danger-tint); color: #f0b6b0; }
+.alert.bad { border-color: color-mix(in oklab, var(--sd-danger) 35%, transparent); background: var(--danger-tint); color: var(--sd-text); }
 .alert.bad .nav-ico { color: var(--danger); }
-.alert.info { border-color: rgba(130, 150, 180, .28); background: var(--info-tint); color: #c6d2e4; }
+.alert.info { border-color: color-mix(in oklab, var(--sd-info) 28%, transparent); background: var(--info-tint); color: var(--sd-text); }
 .alert.info .nav-ico { color: var(--info); }
-.alert.ok { border-color: rgba(86, 181, 127, .3); background: var(--ok-tint); color: #bfe3ce; }
+.alert.ok { border-color: color-mix(in oklab, var(--sd-ok) 30%, transparent); background: var(--ok-tint); color: var(--sd-text); }
 .alert.ok .nav-ico { color: var(--ok); }
 
 /* ---------- 空态 / 骨架 ---------- */
@@ -456,7 +457,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .empty-t { color: var(--txt-2); font-size: var(--fs-14); margin-bottom: 6px; }
 .empty-h { font-size: var(--fs-12); max-width: 460px; margin: 0 auto 14px; line-height: 1.7; }
 .skeleton {
-  background: linear-gradient(90deg, #1d222a 25%, #242a33 37%, #1d222a 63%);
+  background: linear-gradient(90deg, var(--sd-surface-2) 25%, color-mix(in oklab, var(--sd-text) 8%, transparent) 37%, var(--sd-surface-2) 63%);
   background-size: 400% 100%;
   animation: shimmer 1.4s ease infinite;
   border-radius: var(--r-sm);
@@ -475,8 +476,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .mtile-ph {
   aspect-ratio: 16 / 9;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-  color: var(--txt-disabled); font-size: var(--fs-11);
-  background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(255, 255, 255, .014) 8px 16px);
+  color: var(--sd-text-3-strong); font-size: var(--fs-11);
+  background: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in oklab, var(--sd-text) 2%, transparent) 8px 16px);
 }
 .mtile-ph.tall { aspect-ratio: 9 / 16; max-height: 260px; }
 .mtile-cap { padding: 6px 8px; border-top: 1px solid var(--line); font-size: var(--fs-11); color: var(--txt-2); display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -495,7 +496,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   font-family: var(--font-mono); font-size: var(--fs-12); line-height: 1.75;
   background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--r-sm);
   padding: 10px 12px; overflow: auto; max-height: 320px;
-  white-space: pre-wrap; word-break: break-all; color: #c2cbd8; margin: 0;
+  white-space: pre-wrap; word-break: break-all; color: var(--sd-text-2); margin: 0;
 }
 .log .ln { display: flex; gap: 10px; }
 .log .ln > .no { color: var(--txt-disabled); flex: none; user-select: none; width: 28px; text-align: right; }
@@ -566,11 +567,11 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   animation: toast-in var(--dur-2) var(--ease);
 }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.toast.ok { border-color: rgba(86, 181, 127, .4); }
+.toast.ok { border-color: color-mix(in oklab, var(--sd-ok) 40%, transparent); }
 .toast.ok .nav-ico { color: var(--ok); }
 .toast.warn { border-color: var(--accent-line); }
 .toast.warn .nav-ico { color: var(--accent); }
-.toast.bad { border-color: rgba(217, 105, 94, .4); }
+.toast.bad { border-color: color-mix(in oklab, var(--sd-danger) 40%, transparent); }
 .toast.bad .nav-ico { color: var(--danger); }
 
 /* ---------- 占位（未接入）---------- */
@@ -699,8 +700,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .cv-stats .chip { height: 26px; }
 .cv-legend { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-11); color: var(--txt-3); flex-wrap: wrap; }
 .cv-key { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-left: 10px; }
-.cv-key.done { background: rgba(86, 181, 127, .55); border: 1px solid rgba(86, 181, 127, .8); }
-.cv-key.board { background: radial-gradient(circle, rgba(79, 179, 199, .95) 2px, rgba(79, 179, 199, .16) 2.5px); border: 1px solid rgba(79, 179, 199, .55); }
+.cv-key.done { background: color-mix(in oklab, var(--sd-ok) 55%, transparent); border: 1px solid color-mix(in oklab, var(--sd-ok) 80%, transparent); }
+.cv-key.board { background: radial-gradient(circle, color-mix(in oklab, var(--sd-teal) 95%, transparent) 2px, color-mix(in oklab, var(--sd-teal) 16%, transparent) 2.5px); border: 1px solid color-mix(in oklab, var(--sd-teal) 55%, transparent); }
 .cv-key.todo { background: transparent; border: 1px dashed var(--line-strong); }
 .cv-key.na { background: transparent; border: 1px solid var(--line); opacity: .4; }
 
@@ -710,7 +711,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--bg-inset);
-  background-image: radial-gradient(circle, rgba(255, 255, 255, .045) 1px, transparent 1px);
+  background-image: radial-gradient(circle, color-mix(in oklab, var(--sd-text) 4.5%, transparent) 1px, transparent 1px);
   background-size: 24px 24px;
   background-position: 0 0;
   border-top: 1px solid var(--line);
@@ -764,18 +765,18 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease),
               background var(--dur-fast) var(--ease);
 }
-.cv-cell.done { background: rgba(86, 181, 127, .55); border-color: rgba(86, 181, 127, .8); }
-.cv-cell.done:hover { background: rgba(86, 181, 127, .75); }
+.cv-cell.done { background: color-mix(in oklab, var(--sd-ok) 55%, transparent); border-color: color-mix(in oklab, var(--sd-ok) 80%, transparent); }
+.cv-cell.done:hover { background: color-mix(in oklab, var(--sd-ok) 75%, transparent); }
 /* 有分镜图 = 有「底子」但没有成品：淡青底 + 中心一个小方块。
    为什么不用「左半边填满」的 ◐：一屏 8 列 × 30 行时，半格和相邻的虚线格会拼成条纹，
    整片看着像条形码而不是状态。小方块在缩略密度下仍然分得清，且不制造纹理。 */
-.cv-cell.board { position: relative; overflow: hidden; background: rgba(79, 179, 199, .14); border-color: rgba(79, 179, 199, .5); }
+.cv-cell.board { position: relative; overflow: hidden; background: color-mix(in oklab, var(--sd-teal) 14%, transparent); border-color: color-mix(in oklab, var(--sd-teal) 50%, transparent); }
 .cv-cell.board::after {
   content: ""; position: absolute; left: 50%; top: 50%;
   width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
-  border-radius: 1px; background: rgba(79, 179, 199, .9);
+  border-radius: 1px; background: color-mix(in oklab, var(--sd-teal) 90%, transparent);
 }
-.cv-cell.board:hover { border-color: var(--live); background: rgba(79, 179, 199, .22); }
+.cv-cell.board:hover { border-color: var(--live); background: color-mix(in oklab, var(--sd-teal) 22%, transparent); }
 .cv-cell.todo { border-style: dashed; }
 .cv-cell.todo:hover { border-color: var(--accent); border-style: solid; }
 .cv-cell:hover { transform: scale(1.14); position: relative; z-index: 1; }
@@ -856,7 +857,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .gn-host {
   position: absolute; inset: 0; overflow: hidden;
   background-color: var(--bg-inset);
-  background-image: radial-gradient(circle, rgba(255, 255, 255, .05) 1px, transparent 1px);
+  background-image: radial-gradient(circle, color-mix(in oklab, var(--sd-text) 5%, transparent) 1px, transparent 1px);
   background-size: 24px 24px;
   cursor: grab;
   touch-action: none;
@@ -865,8 +866,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .gn-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 
 .gn-edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
-.gn-e { fill: none; stroke: rgba(130, 150, 180, .45); stroke-width: 1.2; pointer-events: none; }
-.gn-e.user { stroke: rgba(139, 127, 245, .65); stroke-dasharray: 5 4; pointer-events: stroke; cursor: pointer; }
+.gn-e { fill: none; stroke: color-mix(in oklab, var(--sd-info) 45%, transparent); stroke-width: 1.2; pointer-events: none; }
+.gn-e.user { stroke: color-mix(in oklab, var(--sd-teal) 65%, transparent); stroke-dasharray: 5 4; pointer-events: stroke; cursor: pointer; }
 .gn-e.user:hover { stroke: var(--create-strong); stroke-width: 1.8; }
 .gn-e.temp { stroke: var(--accent); stroke-dasharray: 4 4; pointer-events: none; }
 
@@ -883,8 +884,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .gn.done { border-left: 2px solid var(--ok); }
 .gn.todo { border-left: 2px solid var(--line-strong); }
 .gn.doing { border-left: 2px solid var(--live); }
-.gn.k-skill, .gn.k-idea, .gn.k-plan, .gn.k-design, .gn.k-script, .gn.k-storyboard { background: #1a1a26; }
-.gn.k-board { background: #16202a; border-color: rgba(79, 179, 199, .35); }
+.gn.k-skill, .gn.k-idea, .gn.k-plan, .gn.k-design, .gn.k-script, .gn.k-storyboard { background: var(--sd-surface-2); }
+.gn.k-board { background: color-mix(in oklab, var(--sd-teal) 10%, var(--sd-surface)); border-color: color-mix(in oklab, var(--sd-teal) 35%, transparent); }
 
 .gn-h { display: flex; align-items: center; gap: 6px; }
 .gn-t { font-size: var(--fs-12); font-weight: 500; color: var(--txt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -925,15 +926,15 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .gn-zoom #gnZoom { min-width: 36px; text-align: center; color: var(--txt-3); }
 .gn-hint {
   position: absolute; left: 12px; bottom: 12px;
-  font-size: var(--fs-11); color: var(--txt-3);
+  font-size: var(--fs-11); color: var(--sd-text-2);
   padding: 3px 8px; border-radius: var(--r-sm);
-  background: rgba(13, 15, 18, .72); border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--sd-elevated) 92%, transparent); border: 1px solid var(--line);
   pointer-events: none;
 }
 .gn-stats { flex-wrap: wrap; margin-bottom: var(--sp-5); row-gap: var(--sp-3); }
 .gn-lg { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-11); color: var(--txt-3); margin-left: 12px; }
-.gn-line { width: 18px; height: 0; border-top: 1.5px solid rgba(130, 150, 180, .6); }
-.gn-line.user { border-top-style: dashed; border-top-color: rgba(139, 127, 245, .7); }
+.gn-line { width: 18px; height: 0; border-top: 1.5px solid color-mix(in oklab, var(--sd-info) 60%, transparent); }
+.gn-line.user { border-top-style: dashed; border-top-color: color-mix(in oklab, var(--sd-teal) 70%, transparent); }
 .gn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .gn-dot.todo { background: var(--line-strong); }
 
@@ -987,7 +988,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .ag-b.me { background: var(--accent-tint); border-color: var(--accent-line); }
 .ag-trace {
   margin: 2px 0 6px 2px; padding: 8px 10px;
-  border-left: 2px solid var(--create-line); background: rgba(139, 127, 245, .05);
+  border-left: 2px solid var(--create-line); background: color-mix(in oklab, var(--sd-teal) 5%, transparent);
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
   display: flex; flex-direction: column; gap: 8px;
 }
@@ -1026,13 +1027,13 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   background: var(--bg-panel);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, .46), 0 0 0 1px rgba(255, 255, 255, .03) inset;
+  box-shadow: var(--sd-shadow-3), var(--sd-inset-line);
   overflow: hidden;
   animation: fwIn 180ms var(--ease-out);
 }
 .fw.hide { display: none; }
 .fw.max { border-radius: 0; }
-.fw.drag { box-shadow: 0 22px 56px rgba(0, 0, 0, .58); transition: none; }
+.fw.drag { box-shadow: var(--sd-shadow-3); transition: none; }
 .fw.hot { border-color: var(--accent-line); }
 @keyframes fwIn {
   from { opacity: 0; transform: translateY(6px) scale(.995); }
@@ -1061,7 +1062,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast);
 }
 .fw-b:hover { color: var(--txt); background: var(--bg-hover); border-color: var(--line); }
-.fw-b[data-fw-close]:hover { color: #fff; background: rgba(214, 92, 92, .82); border-color: transparent; }
+.fw-b[data-fw-close]:hover { color: var(--sd-on-danger); background: color-mix(in oklab, var(--sd-danger) 82%, transparent); border-color: transparent; }
 
 .fw-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -1126,7 +1127,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .mon-l { font-size: 10.5px; color: var(--txt-2); white-space: nowrap; }
 .mon-bar {
   width: 44px; height: 5px; border-radius: 3px; flex: none;
-  background: rgba(255, 255, 255, .10); overflow: hidden;
+  background: color-mix(in oklab, var(--sd-text) 10%, transparent); overflow: hidden;
 }
 .mon-bar > i {
   display: block; height: 100%; width: 0; border-radius: 2px;
@@ -1138,8 +1139,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   min-width: 28px; text-align: right; font-variant-numeric: tabular-nums;
 }
 .mon-i.warn .mon-bar > i { background: var(--accent); }
-.mon-i.bad .mon-bar > i { background: #d65c5c; }
-.mon-i.bad .mon-v { color: #e28787; }
+.mon-i.bad .mon-bar > i { background: var(--sd-danger); }
+.mon-i.bad .mon-v { color: var(--sd-danger); }
 .mon-i.na { opacity: .45; }
 .mon-i.na .mon-bar { display: none; }
 
@@ -1190,7 +1191,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
 .mn-line { transition: stroke .3s var(--ease); }
 .mn-line.ok { stroke: var(--ok); }
 .mn-line.warn { stroke: var(--accent); }
-.mn-line.bad { stroke: #d65c5c; }
+.mn-line.bad { stroke: var(--sd-danger); }
 
 /* ==========================================================================
    剧集画布 P3：单镜编辑（2026-11-04）
@@ -1249,7 +1250,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: inher
   display: flex; align-items: center; gap: 10px;
   padding: 9px 16px; border-radius: 999px;
   background: var(--bg-card); border: 1px solid var(--line-strong);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .5);
+  box-shadow: var(--sd-shadow-2);
 }
 .cv-selbar b { font-family: var(--font-mono); font-size: 15px; color: var(--accent); }
 .cv-selbar .warn { color: var(--accent); }

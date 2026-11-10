@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head><meta charset="utf-8"><title>SoloDrama · 对比度探针（设计 QA）</title>
+<link rel="stylesheet" href="css/tokens.css?v=20261110c">
+<link rel="stylesheet" href="css/app.css?v=20261110c">
+<link rel="stylesheet" href="css/components-2.css?v=20261110c">
+<style>
+/* 测量专用：过渡与动画必须停掉，否则在主题切换瞬间读到的是插值中间态 */
+*{transition:none!important;animation:none!important}
+body{margin:0;padding:12px;background:var(--sd-bg);font-family:system-ui}
+</style>
+</head>
+<body>
+<div id="stage">
+  <span class="badge ok" id="c1">通过</span>
+  <span class="badge bad" id="c2">失败</span>
+  <span class="badge live" id="c3">实时</span>
+  <div class="alert warn" id="c4"><span class="nav-ico">▲</span><div>上游未通过：video.resolve</div></div>
+  <div class="alert bad" id="c5"><span class="nav-ico">✕</span><div>退出码 3：批次缺口 2 镜</div></div>
+  <div class="alert info" id="c6"><span class="nav-ico">ⓘ</span><div>只读模式：写操作被拒绝</div></div>
+  <div class="alert ok" id="c7"><span class="nav-ico">●</span><div>13 项检查全部正常</div></div>
+  <pre class="log" id="c8">[12:04:11] video.batch shot_007 ok</pre>
+  <i class="dot doing" id="c10"></i>
+  <span class="cv-key done" id="c11"></span>
+  <div class="mon-bar" id="c13"><i style="width:60%"></i></div>
+  <div class="gn k-board" id="c14">分镜图</div>
+  <div class="gn-hint" id="c15">拖拽连线</div>
+  <div class="mtile-ph" id="c16">无预览</div>
+  <div class="fw" id="c17" style="position:static">浮窗</div>
+  <div class="toast ok" id="c18">已保存</div>
+  <button class="btn primary" id="c19">生成 12 镜 · 约 ¥2.40</button>
+  <button class="btn" id="c20">重新预检</button>
+  <div class="card" id="c21"><div class="card-b">面板卡内容</div></div>
+  <div class="sd-cost-row" id="c22"><div class="sd-cost-what">云端出片</div><div class="sd-cost-num">¥2.40</div><div class="sd-cost-src" data-kind="real">实付</div></div>
+  <div class="sd-stage" id="c23" data-state="blocked"><span class="sd-stage-name">剪辑</span><span class="sd-stage-why">上游未通过：出片</span></div>
+  <span class="badge warn" id="c24">被拦</span>
+</div>
+<!--
+  用途：把「主题里每个组件的真实计算色 + 对比度」打出来，防止改 Token 时凭感觉判断。
+  跑法：起服务后打开 /studio/design-probe.html，看页面底部的 LOW(<4.5) 一行。
+  约定：LOW 里只允许出现「已知取舍」的条目（当前仅有浅色主按钮 4.34，用户拍板品牌忠实优先）。
+  为什么禁用 transition：切主题瞬间读到的是插值中间态，会把 4.34 误读成 8.21。
+-->
+<pre id="out"></pre>
+<script>
+const cv = document.createElement('canvas'); cv.width = cv.height = 1;
+const cx = cv.getContext('2d', { willReadFrequently: true });
+/* 任何 CSS 颜色（含 oklab / color-mix 结果）都让浏览器自己转成 sRGB 像素 */
+function toRGBA(str) {
+  cx.clearRect(0, 0, 1, 1);
+  cx.fillStyle = '#000';
+  cx.fillStyle = str;                       // 非法值会保持上一次的 #000
+  cx.fillRect(0, 0, 1, 1);
+  const d = cx.getImageData(0, 0, 1, 1).data;
+  return [d[0], d[1], d[2], d[3] / 255];
+}
+function over(fg, bg) {                     // fg 叠在 bg 上
+  const a = fg[3];
+  return [Math.round(fg[0]*a + bg[0]*(1-a)),
+          Math.round(fg[1]*a + bg[1]*(1-a)),
+          Math.round(fg[2]*a + bg[2]*(1-a)), 1];
+}
+function lum(c) {
+  const m = c.slice(0,3).map(v => v/255)
+    .map(v => v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4));
+  return 0.2126*m[0] + 0.7152*m[1] + 0.0722*m[2];
+}
+function ratio(a, b) {
+  const l1 = lum(a), l2 = lum(b);
+  return (Math.max(l1,l2) + 0.05) / (Math.min(l1,l2) + 0.05);
+}
+function effectiveBg(el) {
+  const chain = [];
+  let n = el;
+  while (n && n.nodeType === 1) { chain.push(n); n = n.parentElement; }
+  let base = [255,255,255,1];
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const c = toRGBA(getComputedStyle(chain[i]).backgroundColor);
+    if (c[3] > 0) base = over(c, base);
+  }
+  return base;
+}
+const TEXT = ['c1','c2','c3','c4','c5','c6','c7','c8','c14','c15','c16','c17','c18','c19','c20','c21','c22','c23','c24'];
+const IDS = TEXT.concat(['c10','c11','c13']);
+const rows = [];
+function run(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  for (const id of IDS) {
+    const el = document.getElementById(id);
+    const bg = effectiveBg(el);
+    const fg = toRGBA(getComputedStyle(el).color);
+    const solid = over(fg, bg);
+    const r = TEXT.indexOf(id) >= 0 ? ratio(solid, bg).toFixed(2) : '';
+    rows.push([theme, id, '"' + el.className + '"',
+      'rgb(' + bg.slice(0,3).join(',') + ')',
+      'rgb(' + solid.slice(0,3).join(',') + ')', r]);
+  }
+}
+run('dark');
+run('light');
+document.getElementById('out').textContent =
+  'theme\tid\tclass\tbg\tfg(合成)\tratio\n' +
+  rows.map(r => r.join('\t')).join('\n') +
+  '\n\nLOW(<4.5)=' + rows.filter(r => r[5] && parseFloat(r[5]) < 4.5).map(r => r[0]+':'+r[1]+'='+r[5]).join(' ');
+</script>
+</body></html>

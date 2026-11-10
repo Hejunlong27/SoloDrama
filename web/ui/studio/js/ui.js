@@ -177,6 +177,9 @@ export function openDrawer(opts) {
 export function closeModal() {
   const m = document.getElementById('modal');
   m.classList.remove('on');
+  /* 宽版是「这一次弹窗」的临时形态，关掉就要摘干净：
+     否则下一个普通确认框会莫名变成全宽。 */
+  m.classList.remove('modal-wide');
   m.setAttribute('aria-hidden', 'true');
   if (!document.getElementById('drawer').classList.contains('on')) scrim().classList.remove('on');
 }

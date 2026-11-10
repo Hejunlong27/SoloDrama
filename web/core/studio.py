@@ -99,6 +99,74 @@ def assets_dir(ws) -> Path:
     return Path(ws) / "04-资产"
 
 
+_IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+
+
+def cover(ws) -> dict:
+    """给首页海报挑一张代表性图（只读，不落盘、不移动任何文件）。
+
+    为什么要后端挑：资产目录 / 分镜目录的名字都来自 `layout.json`，用户可能改名。
+    前端硬编 `04-资产` 会在自定义布局的项目上直接取不到图；而扫全工作区又太贵
+    （一个项目几百张图加视频）。所以在这里按「已知阶段目录」定向扫，路径只从
+    `_layout.stage_dir()` 来。
+
+    优先级：资产图 → 分镜图 → 剧目录根层散图。
+    取 mtime 最新的一张：刚出的图最像「这部戏现在的样子」；按文件名取会永远停在最早的角色设定图。
+
+    扫描有上限（`_COVER_MAX`），避免在超大项目上把首屏拖慢。
+    """
+    _COVER_MAX = 4000
+
+    def go():
+        L = _layout()
+        deep, flat = [], [Path(ws)]
+        if L is not None:
+            for key in ("assets", "storyboard"):
+                try:
+                    deep.append(Path(L.stage_dir(str(ws), key)))
+                except Exception:                       # noqa: BLE001
+                    continue
+        best = (0.0, "")
+        seen = 0
+        for d in deep:
+            if not d.is_dir():
+                continue
+            try:
+                for f in d.rglob("*"):
+                    seen += 1
+                    if seen > _COVER_MAX:
+                        break
+                    if f.suffix.lower() not in _IMG_EXT or not f.is_file():
+                        continue
+                    try:
+                        m = f.stat().st_mtime
+                    except OSError:
+                        continue
+                    if m > best[0]:
+                        best = (m, _rel(ws, f))
+            except OSError:
+                continue
+        if not best[1]:
+            for d in flat:
+                if not d.is_dir():
+                    continue
+                try:
+                    for f in d.iterdir():
+                        if f.suffix.lower() not in _IMG_EXT or not f.is_file():
+                            continue
+                        try:
+                            m = f.stat().st_mtime
+                        except OSError:
+                            continue
+                        if m > best[0]:
+                            best = (m, _rel(ws, f))
+                except OSError:
+                    continue
+        return {"ok": bool(best[1]), "rel": best[1], "mtime": best[0]}
+
+    return _cached(("cover", str(ws)), 60, go)
+
+
 def asset_mds(ws) -> dict:
     """找候选「资产提示词 md」——引擎据此生成资产清单（环境变量 SOLODRAMA_ASSET_MD）。
 
@@ -736,22 +804,33 @@ def overview(ws) -> dict:
     return _cached("overview:%s" % ws, _TTL, go)
 
 
-def prompt_of(ws, shot: str) -> dict:
-    """单镜提示词（读 06-提示词/h3_prompts.json，只取这一条）。
+def prompt_of(ws, shot: str, ep: str = "") -> dict:
+    """单镜提示词 + 六段解析 + 规则校验（只取这一条，不下发整个文件）。
 
-    不把整个文件下发给浏览器：240 镜的提示词有几百 KB，且没必要暴露全部。
+    ★ 2026-11-10 修的一个长期静默 bug
+      原实现读 `data_dir(ws)/h3_prompts.json`，**少拼了 `<ep>` 这一层**。
+      真实布局是 `data_dir(ws)/<ep>/h3_prompts.json`（`layout.json` 的 `data_rel`
+      通常指向 `06-提示词`），于是 `prompt_of` 永远返回 `no_prompts` ——
+      提示词面板一直是空的，但页面上没有任何报错。
+
+    为什么改成调引擎脚本而不是在这里解析
+      `split_sections` / `lint` 的规则就是 H3 的契约（`h3_prompt.SECTIONS` 顺序即契约）。
+      Web 层再写一份正则，引擎改契约后 UI 会用旧规则做「假检查」。
+      所以解析与校验都走 `stages/import/prompt_edit.py`（子进程，Web 不 import 引擎）。
+
+    `shot_001` 每集都有：不给 ep 时返回 `ambiguous` + 候选集号，不猜第一份。
     """
     if not shot or "/" in shot or "\\" in shot or ".." in shot:
         return {"ok": False, "reason": "bad_shot", "shot": shot}
-    d = _read_json(data_dir(ws) / "h3_prompts.json")
-    if not isinstance(d, dict):
-        return {"ok": False, "reason": "no_prompts", "shot": shot}
-    v = d.get(shot)
-    if not isinstance(v, dict):
-        return {"ok": False, "reason": "not_found", "shot": shot}
-    return {"ok": True, "shot": shot, "duration": v.get("duration"),
-            "ratio": v.get("ratio"), "voice": v.get("voice"),
-            "prompt": v.get("prompt") or ""}
+    args = ["read", "--workspace", str(ws), "--shot", shot, "--json"]
+    if ep:
+        args += ["--ep", str(ep)]
+    res = adapters.run_json("prompt_edit", args, ws, timeout=40, ttl=0)
+    data = res.get("data")
+    if isinstance(data, dict):
+        return data
+    return {"ok": False, "reason": res.get("reason") or "no_json", "shot": shot,
+            "text_tail": res.get("text_tail", "")}
 
 
 def media_info(ws, rel: str) -> dict:

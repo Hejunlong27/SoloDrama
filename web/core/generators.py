@@ -177,6 +177,72 @@ def _local_wf_state(path: Path, info: dict) -> dict:
             "detail": "%d 节点 / 模型齐全" % len(wf)}
 
 
+def image_channel(ws) -> dict:
+    """资产出图**这一次会走哪条通道** —— 唯一依据是项目自己的 `model-plan.json`。
+
+    为什么不让 UI 自己选「本地/云端」：`drama.py` 的 `_model_gate()` 会拿
+    `engine_arg` 与确认单比对，选错就退出码 4（「确认了云端却用 local」）。
+    界面若自己给一个默认值，用户点下去只会看到「按钮没反应」——
+    `graph._cmd_for()` 已经踩过这个坑，这里沿用同一条口径。
+
+    返回的 `spec` 就是该跑的 web 命令 id；`paid` 直接取命令元数据的 billing，
+    不在 UI 里另判一次「这个要不要钱」。
+    """
+    from . import commands as CMDS            # 局部导入：避免模块级循环依赖
+
+    choice = plan_choice(ws, "image")
+    det = _plan_detail(ws, "image")
+    url = str(det.get("comfy_url") or "")
+    wf = str(det.get("comfy_workflow") or "")
+
+    # model-plan 里的 label / cost 是「模型确认单」写入的原文，直接用它，
+    # 不在 UI 里另编一套文案 —— 否则确认单说「计费」而按钮说「免费」。
+    label, cost_text = "", ""
+    try:
+        d = json.loads((Path(str(ws)) / "model-plan.json").read_text(encoding="utf-8-sig"))
+        node = (((d.get("models") or {}).get("image")) or {})
+        label = str(node.get("label") or "")
+        cost_text = str(node.get("cost") or "")
+        confirmed = bool(node.get("confirmed"))
+    except (OSError, ValueError):
+        confirmed = False
+
+    if choice == "cloud_comfyui":
+        spec = "assets.cloud"
+    elif choice in ("runninghub", "rh"):
+        spec = "assets.rh_wf"
+    else:
+        spec = "assets.local"
+
+    cmd = CMDS.get(spec)
+    paid = bool(cmd and getattr(cmd, "billing", "") == "paid")
+
+    # 「本机地址 + 选云端」= 假云端，引擎会直接拦。提前说出来，别等点了才报错。
+    fake_cloud = bool(choice == "cloud_comfyui" and url and _is_loopback(url))
+    return {
+        "ok": True,
+        "choice": choice or "",
+        "label": label or (getattr(cmd, "title", "") if cmd else ""),
+        "cost": cost_text,
+        "spec": spec,
+        "paid": paid,
+        "url": url,
+        "workflow": wf,
+        "confirmed": confirmed,
+        "fake_cloud": fake_cloud,
+        "backup": spec != "assets.rh_wf",   # RH 工作流通道不经过本地落盘，无法备份旧图
+    }
+
+
+def _is_loopback(url: str) -> bool:
+    """地址是否指回本机。与 `drama._is_loopback_url` 同一条判据（含 0.0.0.0 / 内网段）。"""
+    u = str(url or "").lower()
+    for host in ("127.0.0.1", "localhost", "0.0.0.0", "::1", "[::1]", "192.168.", "10.", "172.16."):
+        if host in u:
+            return True
+    return False
+
+
 def _plan_detail(ws, kind: str) -> dict:
     """项目模型确认单里这一类的 detail（读不到就空 dict）。
 

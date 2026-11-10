@@ -2,7 +2,7 @@
 # 运行环境：Windows + Python 3.10+（实测 3.13）
 # 安装：pip install -r requirements.txt
 httpx==0.28.1
-Pillow==12.2.0
+Pillow==13.0.0
 
 # 说明：
 # - 剪辑工程（剪映草稿）的依赖单独放在 requirements-edit.txt：

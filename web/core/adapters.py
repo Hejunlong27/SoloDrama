@@ -30,6 +30,8 @@ SCRIPTS = {
     "cost_ledger": paths.PROD_SCRIPTS / "cost_ledger.py",
     "release_check": paths.PROD_SCRIPTS / "release_check.py",
     "release_export": paths.PROD_SCRIPTS / "release_export.py",
+    "prompt_edit": paths.IMPORT_SCRIPTS / "prompt_edit.py",
+    "view_sheet": paths.IMPORT_SCRIPTS / "view_sheet.py",
 }
 
 _CACHE: dict = {}
@@ -82,14 +84,20 @@ def run_json(script_key: str, args: list, ws, *, timeout: int = 90, ttl: int = 0
 # ---------------------------------------------------------------------------
 # 具体适配器（每个都对应一个真实存在的子命令）
 # ---------------------------------------------------------------------------
-def workflow_status(ws) -> dict:
-    """七环节 23 节点状态（唯一真源：`drama nodes --json` → `nodes.py::evaluate`）。
+def workflow_status(ws, ep: str = "") -> dict:
+    """五环节 13 节点状态（唯一真源：`drama nodes --json` → `nodes.py::evaluate`）。
+
+    `ep` 为空时**由引擎自己回落 ep01**（nodes.py 的口径），这里不改它的行为：
+    把「不指定集」和「指定 ep01」当成同一件事，会掩盖「这个项目到底有没有第 N 集」。
 
     ★ 2026-11-01：原实现调 `workflow.py status`（S1–S11），而那脚本已在 V0.7.42 删除 ——
       本函数于是长期返回 `script_missing`，连带「流程总览 / 助手上下文 / 流水线推进」
       三块一起静默失效（UI 只显示「未接入」，不报错）。现在接回节点真源。
     """
-    return run_json("drama", ["nodes", "--json"], ws, ttl=8)
+    args = ["nodes", "--json"]
+    if ep:
+        args += ["--ep", str(ep)]
+    return run_json("drama", args, ws, ttl=8)
 
 
 SETUP_LABELS = (
@@ -205,7 +213,7 @@ def release_export_preview(ws) -> dict:
 
 
 def norm_workflow(res: dict) -> dict:
-    """23 节点 → 7 环节视图：`{ok, current, complete, stages[], nodes[]}`。
+    """13 节点 → 5 环节视图：`{ok, current, complete, stages[], nodes[]}`。
 
     每个环节的 state 由**该环节下所有节点**决定：
       · done    —— 全部 passed/skipped
@@ -214,7 +222,7 @@ def norm_workflow(res: dict) -> dict:
     `probes` 放节点明细，前端据此显示「这个环节还差哪几个节点」，而不是一句笼统的「未完成」。
 
     ★ 2026-11-01：上一版读的是 `workflow.py` 的 S1–S11（脚本已删），且与 `nodes.py` 的
-      23 节点是两套模型 —— 同一个「下一步该做什么」在 CLI 与 UI 上给两个答案。现在只有一个。
+      13 节点是两套模型 —— 同一个「下一步该做什么」在 CLI 与 UI 上给两个答案。现在只有一个。
     """
     if not res.get("ok") or not isinstance(res.get("data"), dict):
         return {"ok": False, "reason": res.get("reason") or "no_json", "stages": [],

@@ -92,8 +92,13 @@ def _scan_asset_images(assets_dir: pathlib.Path) -> dict:
 def _pick_image(by_id: dict, aid: str, code: str) -> pathlib.Path | None:
     """在一个资产的多张产物里挑出 code 对应的那张。
 
-    匹配顺序：完整 rest 等于 `<name>_<code>` → rest 以 `_<code>` 结尾 → 该 ID 唯一一张图。
-    前两条优先，是因为不同资产的 name 可能带下划线；最后一条兜底单变体情况。
+    匹配顺序：`<name>_<code>` 或 `<name>_<code>_<序号>` → 该 ID 唯一一张图。
+
+    ★ 2026-11-10 修：原来第二条写的是 `rest.endswith("_" + code)`，而真实产物名是
+      `P01_Elena_VIEW_00.png`（尾部还有帧号 `_00`），于是**永远匹配不上**，
+      一路掉到「该 ID 唯一一张图」那个兜底 —— 把 P01 的 VIEW / EXP / LOOK-A/B/C
+      全指到了同一个文件（实测五个键都指向 `P01_Elena_EXP_00.png`）。
+      症状极隐蔽：refs.json 看着人人有图，出片却拿表情图当造型参考。
     """
     group = by_id.get(aid) or {}
     if not group:
@@ -103,9 +108,14 @@ def _pick_image(by_id: dict, aid: str, code: str) -> pathlib.Path | None:
     c = str(code or "").strip()
     if not c:
         return next(iter(group.values()))
-    cands = [v for rest, v in group.items() if rest.endswith("_" + c) or rest == c]
-    if cands:
-        return sorted(cands)[0]
+    # `<name>_<code>` 之后可能还有 `_<帧号>`；用分段匹配而不是 endswith
+    exact = [v for rest, v in group.items() if rest == c or rest.endswith("_" + c)]
+    if exact:
+        return sorted(exact)[0]
+    loose = [v for rest, v in group.items()
+             if ("_" + c + "_") in ("_" + rest + "_")]
+    if loose:
+        return sorted(loose)[0]
     return next(iter(group.values()))
 
 

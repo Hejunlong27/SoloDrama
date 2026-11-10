@@ -77,6 +77,50 @@ export async function render(ctx) {
     problems.push({ tone: 'ok', title: '没有需要你处理的事', detail: '所有任务都已结束；下一步在项目详情里看阶段。', route: 'projects' });
   }
 
+  /* ---------- 继续创作：海报墙 ----------
+     只取最近更新的 6 部，当前打开的那部排第一并标「当前」。
+     封面由后端挑（/api/studio/cover）：资产图 → 分镜图 → 根层散图，取 mtime 最新的一张。
+     为什么不在前端挑：资产/分镜目录名来自 layout.json，用户可改名，前端硬编就取不到；
+     为什么不扫全工作区：一个项目几百张图加视频，首屏扛不住。 */
+  const byRecent = projects.slice().sort((a, b) => (Number(b.updated_at) || 0) - (Number(a.updated_at) || 0));
+  const curProj = projects.find((p) => p.path === ctx.ws) || null;
+  const ordered = curProj ? [curProj].concat(byRecent.filter((p) => p.path !== curProj.path)) : byRecent;
+  const top = ordered.slice(0, 6);
+  const covers = await Promise.all(top.map((p) => api.cover(p.path).catch(() => null)));
+  const coverAt = (i) => (((covers[i] || {}).url) || '');
+
+  /* 阶段角标只给「当前项目」：它的 workflow 已经取到了。
+     为了给每个项目都算阶段去起 6 次子进程，是拿首屏速度换一个漂亮的角标，不值。 */
+  const stageBadge = () => {
+    if (!wf || !wf.ok || !wf.current) return '';
+    const list = wf.stages || [];
+    const idx = list.findIndex((x) => x.id === wf.current);
+    if (idx < 0) return '';
+    return '<span class="sd-poster-stage">' + dot('doing')
+      + esc('第 ' + (idx + 1) + '/' + list.length + ' 步 · ' + (list[idx].name || wf.current)) + '</span>';
+  };
+
+  const posterHtml = top.map((p, i) => {
+    const img = coverAt(i);
+    const isCur = !!curProj && p.path === curProj.path;
+    const meta = [
+      isCur ? '当前' : '',
+      ((Number(p.images) || 0) + (Number(p.loose) || 0)) + ' 张图',
+      p.updated_text ? '更新 ' + p.updated_text : ''
+    ].filter(Boolean).join(' · ');
+    const ch = String(p.title || p.path).replace(/[《》\s]/g, '')[0] || '剧';
+    return '<button class="sd-poster" data-open="' + esc(p.path) + '" title="' + esc(p.path) + '">'
+      + (img
+        ? '<img class="sd-poster-img" src="' + esc(img) + '" alt="" loading="lazy">'
+        : '<div class="sd-poster-blank">' + esc(ch) + '</div>')
+      + (isCur ? stageBadge() : '')
+      + '<div class="sd-poster-shade"></div>'
+      + '<div class="sd-poster-body">'
+      + '<div class="sd-poster-title">' + esc(p.title || p.path) + '</div>'
+      + '<div class="sd-poster-meta">' + esc(meta) + '</div>'
+      + '</div></button>';
+  }).join('');
+
   const rows = projects.map((p) => (
     '<tr class="clickable" data-open="' + esc(p.path) + '">'
     + '<td><div class="row gap8">' + dot(p.has_output ? 'done' : 'todo')
@@ -98,25 +142,25 @@ export async function render(ctx) {
     + '<button class="btn primary" data-go="projects">' + icon('plus', 14) + ' 登记 / 新建</button>'
     + '</div></div>'
 
-    + '<div class="grid g4" style="margin-bottom:16px">'
+    /* 首屏第一屏必须回答「现在继续哪一部」，所以海报排在最前，KPI 退到它下面 */
+    + '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>继续创作</h3>'
+    + '<span class="card-sub">最近更新的 ' + top.length + ' 部 · 点封面进入</span>'
+    + '<span class="spacer"></span><button class="btn ghost sm" data-go="projects">全部项目</button></div>'
+    + '<div class="card-b">'
+    + (top.length
+      ? '<div class="sd-poster-grid">' + posterHtml + '</div>'
+      : emptyBox('还没有项目', '扫描本机目录，或登记一个已有的剧项目目录。'))
+    + '</div></section>'
+
+    + '<div class="grid g3" style="margin-bottom:16px">'
     + kpi('已登记项目', String(projects.length), withOutput.length + ' 部有产出')
     + kpi('运行中任务', String(running.length), running.length ? '可在任务中心查看日志' : '当前没有排队任务')
     + kpi('累计花费', totalYuan ? money(totalYuan) : '—',
       totalYuan ? '<span class="mono">按注入台账汇总</span>'
         : '<span class="mono">台账无可读记录（不是 0 花费）</span>')
-    + kpi('环境', S.health ? '在线' : '未知', S.health ? '引擎 ' + esc(String(S.health.python || '').split(/[\\/]/).pop()) : '未取到 /api/health')
     + '</div>'
 
     + '<div class="grid g21" style="margin-bottom:16px">'
-    + '<section class="card"><div class="card-h"><h3>项目</h3><span class="card-sub">按产出与最近活动排序</span>'
-    + '<span class="spacer"></span><button class="btn ghost sm" data-go="projects">全部</button></div>'
-    + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
-    + '<th style="width:44%">剧名 / 路径</th><th class="num" style="width:88px">图片</th>'
-    + '<th class="num" style="width:100px">花费</th><th style="width:110px">更新</th><th></th>'
-    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="5">' + emptyBox('还没有项目', '扫描本机目录或登记一个已有的剧项目目录。') + '</td></tr>')
-    + '</tbody></table></div></div>'
-    + '<div class="card-foot">' + stamp('本地项目注册表 · 扫描结果缓存 90 秒') + '</div></section>'
-
     + '<section class="card"><div class="card-h"><h3>待处理</h3><span class="badge ' + (problems[0].tone === 'ok' ? 'ok' : 'warn') + '">'
     + problems.length + '</span></div><div class="card-b">'
     + problems.map((p) => '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'
@@ -128,7 +172,7 @@ export async function render(ctx) {
       + '<div class="tiny dim">' + esc(p.detail) + '</div></div>'
       + '<button class="btn quiet sm" data-go="' + esc(p.route) + '">查看</button>'
       + '</div></div>').join('')
-    + '</div></section></div>'
+    + '</div></section>'
 
     + '<section class="card"><div class="card-h"><h3>正在运行</h3>'
     + '<span class="card-sub">作业在服务端执行，刷新浏览器不受影响</span>'
@@ -144,10 +188,18 @@ export async function render(ctx) {
       : '<div class="empty"><div class="empty-t">当前没有运行中的任务</div>'
       + '<div class="empty-h">出片、放大、字幕这类长任务会出现在这里。</div>'
       + '<button class="btn quiet" data-go="tasks">打开任务中心</button></div>')
-    + '</div></section>'
+    + '</div></section></div>'
 
     + channelCard(ctx, setup, providers, purposes, conn)
-    + (overRefs.length ? '' : '');
+
+    + '<section class="card"><div class="card-h"><h3>全部项目</h3>'
+    + '<span class="card-sub">表格视图：图片数 / 花费 / 最近更新</span></div>'
+    + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
+    + '<th style="width:44%">剧名 / 路径</th><th class="num" style="width:88px">图片</th>'
+    + '<th class="num" style="width:100px">花费</th><th style="width:110px">更新</th><th></th>'
+    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="5">' + emptyBox('还没有项目', '扫描本机目录或登记一个已有的剧项目目录。') + '</td></tr>')
+    + '</tbody></table></div></div>'
+    + '<div class="card-foot">' + stamp('本地项目注册表 · 扫描结果缓存 90 秒') + '</div></section>';
 
   return {
     html,

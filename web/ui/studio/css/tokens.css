@@ -1,71 +1,256 @@
 /* ==========================================================================
    SoloDrama Studio · 设计 Token（唯一来源）
-   深色工作台：冷中性灰 + 单一提醒色（琥珀）。
-   改颜色只改这里；组件样式见 app.css。
+   --------------------------------------------------------------------------
+   三层结构，改之前先读 docs/design/design-tokens.md：
+
+     第 1 层  基色板      --sd-ink-* / --sd-paper-*   只在这里写具体色值
+     第 2 层  语义 Token   --sd-bg / --sd-text-2 …     组件只准用这一层
+     第 3 层  旧变量别名   --bg-app / --txt-2 / --fs-13 … 指向第 2 层
+
+   为什么要有第 3 层：app.css 有 1255 行、22 个视图都在用旧变量名。
+   直接改名会让全站同时失效，而旧名的"数字"并不等于像素值（--fs-13 实为 15px）。
+   所以旧名一个都不删，只做指向；新代码不再写旧名。
+
+   双主题只覆盖第 2 层：基色板是颜料，语义层是"这次用哪支颜料"。
    ========================================================================== */
+
 :root {
-  /* ---- 底色层次：页面 → 面板 → 卡片 → 悬浮 → 激活 → 内凹 ---- */
-  --bg-app: #0d0f12;
-  --bg-panel: #14171c;
-  --bg-card: #191d23;
-  --bg-hover: #1f242b;
-  --bg-active: #252b34;
-  --bg-inset: #0a0c0f;
-  --bg-overlay: rgba(8, 10, 13, .72);
+  color-scheme: dark;
 
-  /* ---- 描边 ---- */
-  --line: #232830;
-  --line-strong: #333a45;
-  --line-focus: var(--accent);
+  /* ======================================================================
+     第 1 层 · 基色板（Midnight Studio）
+     这些值不在组件里直接用。改品牌色从这里改，语义层会自动跟随。
+     ====================================================================== */
+  --sd-ink-950: #0B0D10;
+  --sd-ink-900: #101216;   /* Midnight Ink  页面底 */
+  --sd-ink-850: #171B22;   /* Deep Graphite 面板 */
+  --sd-ink-800: #202630;   /* Studio Surface 卡片 */
+  --sd-ink-750: #282F3A;   /* Elevated      浮层 */
+  --sd-ink-700: #1F242B;   /* Hover */
+  --sd-ink-650: #252B34;   /* Active */
+  --sd-line-600: #303844;  /* Subtle Border */
+  --sd-line-500: #3D4754;
 
-  /* ---- 文字（对 --bg-card 的对比度）---- */
-  --txt: #e8ebf0;        /* 14.2:1 正文 */
-  --txt-2: #a2abb8;      /* 7.1:1  次要 */
-  --txt-3: #6d7684;      /* 3.9:1  仅元信息 */
-  --txt-disabled: #4a515c;
+  --sd-ivory: #F2F0EA;     /* Soft Ivory   正文（不用纯白） */
+  --sd-silver: #A1A8B2;    /* Muted Silver 次要 */
+  --sd-slate: #737D89;     /* Slate Gray 辅助文字，3.64:1 —— 只放非必读元信息 */
+  --sd-slate-hi: #8B949E;  /* 必读元信息用这一档（4.94:1，达 AA） */
+  --sd-slate-dim: #5B6470; /* 禁用 */
 
-  /* ---- 语义色：琥珀兼任「品牌 + 要注意/要花钱」 ---- */
-  --accent: #e0a458;
-  --accent-strong: #f2b96d;
-  --accent-tint: rgba(224, 164, 88, .14);
-  --accent-line: rgba(224, 164, 88, .38);
-  --live: #4fb3c7;
-  --live-tint: rgba(79, 179, 199, .14);
-  --ok: #56b57f;
-  --ok-tint: rgba(86, 181, 127, .14);
-  --danger: #d9695e;
-  --danger-tint: rgba(217, 105, 94, .14);
-  --info: #8296b4;
-  --info-tint: rgba(130, 150, 180, .14);
+  --sd-amber: #D6A76C;     /* Cinematic Amber 品牌 / 主操作 / 代价 */
+  --sd-amber-hi: #E8BE85;
+  --sd-teal: #78A9A4;      /* Muted Teal 数据 / 实时 */
+  --sd-ok-c: #72B89A;      /* Success Green（指令指定值） */
+  --sd-warn-c: #E0A45D;    /* Warm Orange */
+  --sd-danger-c: #D87979;  /* Soft Red */
+  --sd-info-c: #8FA3BF;
 
-  /* ---- 创作链专用强调色（2026-11-04）----
-     为什么不直接改 --accent：琥珀在本项目里已经承担了「品牌 + 要花钱/要注意」两个语义，
-     换掉它会让所有存量页面失去「花钱 = 琥珀」这条约定。
-     创作链（灵感 → 企划 → 资产 → 剧本 → 手册）是另一条流水线，给它一个独立身份：
-     蓝紫 = 人+模型的创作，琥珀 = 机器执行与代价。两者在同屏出现时不会互相混淆。 */
-  --create: #8b7ff5;
-  --create-strong: #a79dff;
-  --create-tint: rgba(139, 127, 245, .14);
-  --create-line: rgba(139, 127, 245, .36);
+  /* ======================================================================
+     第 2 层 · 语义 Token（深色 = 默认）
+     对比度实测值见 docs/design/color-system.md；改色后必须重算。
+     ====================================================================== */
+
+  /* 底：页面 → 面板 → 卡片 → 浮层 → 内凹 */
+  --sd-bg: var(--sd-ink-900);
+  --sd-surface: var(--sd-ink-850);
+  --sd-surface-2: var(--sd-ink-800);
+  --sd-elevated: var(--sd-ink-750);
+  --sd-inset: var(--sd-ink-950);
+  --sd-hover: var(--sd-ink-700);
+  --sd-active: var(--sd-ink-650);
+  --sd-overlay: rgba(8, 10, 13, .72);
+
+  /* 描边 */
+  --sd-line: var(--sd-line-600);
+  --sd-line-strong: var(--sd-line-500);
+  --sd-line-focus: var(--sd-accent);
+
+  /* 文字：正文 13.34:1 / 次要 6.34:1 / 辅助 3.64:1 / 必读元信息 4.94:1（对 --sd-surface-2） */
+  --sd-text: var(--sd-ivory);
+  --sd-text-2: var(--sd-silver);
+  --sd-text-3: var(--sd-slate);        /* 非必读：时间戳、计数、装饰性说明 */
+  --sd-text-3-strong: var(--sd-slate-hi);  /* 必读元信息：缺项清单、退出码、文件名 */
+  --sd-text-disabled: var(--sd-slate-dim);
+
+  /* 强调：香槟金。变体后缀固定四个：-strong / -tint / -line / -fill */
+  --sd-accent: var(--sd-amber);
+  --sd-accent-strong: var(--sd-amber-hi);
+  --sd-accent-fill: var(--sd-amber);
+  --sd-accent-tint: color-mix(in oklab, var(--sd-accent) 14%, transparent);
+  --sd-accent-line: color-mix(in oklab, var(--sd-accent) 38%, transparent);
+  --sd-on-accent: #14171C;   /* 金底用深墨字，8.21:1；不要用白 */
+
+  /* 辅助色 */
+  --sd-teal: #78A9A4;
+  --sd-teal-tint: color-mix(in oklab, var(--sd-teal) 14%, transparent);
+  --sd-teal-line: color-mix(in oklab, var(--sd-teal) 38%, transparent);
+
+  /* 状态色（六态与 nodes.py 一一对应，UI 不得另立状态名） */
+  --sd-ok: var(--sd-ok-c);
+  --sd-ok-tint: color-mix(in oklab, var(--sd-ok) 14%, transparent);
+  --sd-warn: var(--sd-warn-c);
+  --sd-warn-tint: color-mix(in oklab, var(--sd-warn) 14%, transparent);
+  --sd-danger: var(--sd-danger-c);
+  --sd-danger-tint: color-mix(in oklab, var(--sd-danger) 14%, transparent);
+  --sd-on-danger: #FFFFFF;   /* 危险实底上的字（深红/浅红两种底都够对比） */
+
+  /* 状态色的「文字档」：同一语义有两种用法，不能共用一个值。
+     - --sd-ok / --sd-teal … 用于图形、描边、实心块（对比要求 3:1）
+     - --sd-ok-ink …         用于**淡色底上的文字**（对比要求 4.5:1）
+     深色主题里两者相同；浅色主题里淡底会把颜色「抬亮」，文字档必须压深，否则实测不达 AA。 */
+  --sd-ok-ink: var(--sd-ok);
+  --sd-teal-ink: var(--sd-teal);
+  --sd-warn-ink: var(--sd-warn);
+  --sd-danger-ink: var(--sd-danger);
+  --sd-info-ink: var(--sd-info);
+  --sd-info: var(--sd-info-c);
+  --sd-info-tint: color-mix(in oklab, var(--sd-info) 14%, transparent);
 
   /* ---- 字体 ----
-     2026-10-29 整体上调一档（用户反馈「字小、看着累」）。
-     不是所有尺寸统一 ×1.15 —— 那样「都变大了」但主次反而更糊：
-       元信息 11→12（只加 1）
-       正文   13→15（+2，视线主体）
-       标题   20→24 / 数字 26→32（拉开层级）
-     行高统一走 body 的 1.55，表格行高由 --row-h 单独控制。 */
-  --font-ui: "PingFang SC", "Microsoft YaHei", -apple-system, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", Consolas, "SF Mono", ui-monospace, monospace;
-  --fs-11: 12px;   /* 元信息 / 表头 / 表格副行 */
-  --fs-12: 13px;   /* 次要说明 */
-  --fs-13: 15px;   /* 正文基准 */
-  --fs-14: 16px;   /* 小标题 / 强调 */
-  --fs-16: 18px;   /* 卡片内大标题 */
-  --fs-20: 24px;   /* 页面标题 */
-  --fs-26: 32px;   /* KPI 数字 */
+     本地优先：不引任何 CDN 字体（断网必须能用）。装了就自动用，没装回退系统黑体。
+     展示标题用衬线（片名感），全站只有剧名与页头主标题用它。 */
+  --sd-font-ui:
+    "Inter", "Manrope", "Geist Sans",
+    "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", "Source Han Sans SC",
+    "Microsoft YaHei", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --sd-font-display:
+    "Playfair Display", "Noto Serif SC", "Source Han Serif SC", "Songti SC",
+    "SimSun", Georgia, "Times New Roman", serif;
+  --sd-font-mono:
+    "JetBrains Mono", "Cascadia Mono", "SF Mono", "Consolas", "Menlo",
+    ui-monospace, monospace;
 
-  /* ---- 间距 ---- */
+  /* 字阶（正文 15px 是用户实测定下的，别再降回 14） */
+  --sd-fs-display: 34px;
+  --sd-fs-h1: 24px;
+  --sd-fs-h2: 19px;
+  --sd-fs-h3: 16px;
+  --sd-fs-body: 15px;
+  --sd-fs-sm: 13px;
+  --sd-fs-caption: 12px;
+  --sd-fs-label: 11px;
+  --sd-fs-mono: 13px;
+
+  --sd-lh-display: 1.2;
+  --sd-lh-h1: 1.3;
+  --sd-lh-h2: 1.35;
+  --sd-lh-h3: 1.4;
+  --sd-lh-body: 1.55;
+  --sd-lh-sm: 1.5;
+  --sd-lh-caption: 1.45;
+  --sd-lh-label: 1.4;
+
+  /* ---- 间距：4px 基数（阶梯按 2.0 指令：4/8/12/16/24/32/48，8–10 供大版面用） ---- */
+  --sd-space-1: 4px;
+  --sd-space-2: 8px;
+  --sd-space-3: 12px;
+  --sd-space-4: 16px;
+  --sd-space-5: 24px;
+  --sd-space-6: 32px;
+  --sd-space-7: 48px;
+  --sd-space-8: 64px;
+  --sd-space-9: 80px;
+  --sd-space-10: 96px;
+
+  /* ---- 圆角（指令阶梯：小按钮 6 / 输入 8 / 容器 10 / 浮层 12 / 大工作区 14） ---- */
+  --sd-radius-xs: 3px;      /* 徽标、状态点 */
+  --sd-radius-sm: 6px;      /* 小按钮 */
+  --sd-radius-md: 8px;      /* 输入框 */
+  --sd-radius-lg: 10px;     /* 普通容器、卡片 */
+  --sd-radius-overlay: 12px;/* 浮层：抽屉、模态、下拉 */
+  --sd-radius-xl: 14px;     /* 大型工作区面板 */
+  --sd-radius-pill: 999px;
+
+  /* ---- 阴影：只给浮层，卡片靠描边分层 ---- */
+  --sd-shadow-1: 0 2px 8px rgba(0, 0, 0, .28);
+  --sd-shadow-2: 0 6px 20px rgba(0, 0, 0, .38);
+  --sd-shadow-3: 0 18px 48px rgba(0, 0, 0, .55);
+  --sd-ring-focus: 0 0 0 2px var(--sd-accent-line);
+  --sd-inset-line: inset 0 1px 0 rgba(255, 255, 255, .03);
+
+  /* ---- 媒体浮层（图片 / 视频上）----
+     这组**不随主题变**：压在照片上的字必须始终是暗底浅字，
+     浅色主题下也绝不能变成深字，否则在深色剧照上直接消失。 */
+  --sd-on-media: #F2F0EA;
+  --sd-media-veil: rgba(8, 10, 13, .62);
+  --sd-media-scrim: linear-gradient(to top,
+    rgba(8, 10, 13, .88) 0%,
+    rgba(8, 10, 13, .55) 26%,
+    rgba(8, 10, 13, 0) 58%);
+
+  /* ---- 动效：只驱动 transform / opacity ---- */
+  --sd-dur-instant: 60ms;
+  --sd-dur-fast: 120ms;
+  --sd-dur-base: 180ms;
+  --sd-dur-slow: 260ms;
+  --sd-dur-hold: 420ms;
+  --sd-ease-standard: cubic-bezier(.2, .8, .2, 1);
+  --sd-ease-out: cubic-bezier(.16, 1, .3, 1);
+  --sd-ease-in: cubic-bezier(.4, 0, 1, 1);
+  --sd-ease-emphasis: cubic-bezier(.34, 1.56, .64, 1);
+
+  /* ---- 布局 ---- */
+  --sd-nav-w: 252px;
+  --sd-nav-w-collapsed: 64px;
+  --sd-top-h: 60px;
+  --sd-row-h: 44px;
+  --sd-content-max: 1440px;
+
+  /* ======================================================================
+     第 3 层 · 旧变量别名（只减不增；新代码不要再写这些名字）
+     app.css 1255 行 + 22 个视图都依赖它们，删任何一个都会当场白屏。
+     ====================================================================== */
+  --bg-app: var(--sd-bg);
+  --bg-panel: var(--sd-surface);
+  --bg-card: var(--sd-surface-2);
+  --bg-hover: var(--sd-hover);
+  --bg-active: var(--sd-active);
+  --bg-inset: var(--sd-inset);
+  --bg-overlay: var(--sd-overlay);
+
+  --line: var(--sd-line);
+  --line-strong: var(--sd-line-strong);
+  --line-focus: var(--sd-line-focus);
+
+  --txt: var(--sd-text);
+  --txt-2: var(--sd-text-2);
+  --txt-3: var(--sd-text-3);
+  --txt-disabled: var(--sd-text-disabled);
+
+  --accent: var(--sd-accent);
+  --accent-strong: var(--sd-accent-strong);
+  --accent-tint: var(--sd-accent-tint);
+  --accent-line: var(--sd-accent-line);
+
+  --live: var(--sd-teal);
+  --live-tint: var(--sd-teal-tint);
+  --ok: var(--sd-ok);
+  --ok-tint: var(--sd-ok-tint);
+  --danger: var(--sd-danger);
+  --danger-tint: var(--sd-danger-tint);
+  --info: var(--sd-info);
+  --info-tint: var(--sd-info-tint);
+
+  /* 创作链蓝紫已废弃（同屏三色稀释品牌）：指向蓝绿，语义改为"数据/进度"。
+     若将来仍需区分创作链，用版式区分（衬线标题、编辑式排版），不要再加一个颜色。 */
+  --create: var(--sd-teal);
+  --create-strong: var(--sd-teal);
+  --create-tint: var(--sd-teal-tint);
+  --create-line: var(--sd-teal-line);
+
+  --font-ui: var(--sd-font-ui);
+  --font-mono: var(--sd-font-mono);
+
+  /* 旧字号名里的数字 ≠ 像素值（历史遗留），映射按 design-tokens.md §4.2 */
+  --fs-11: var(--sd-fs-caption);   /* 12px */
+  --fs-12: var(--sd-fs-sm);        /* 13px */
+  --fs-13: var(--sd-fs-body);      /* 15px */
+  --fs-14: var(--sd-fs-h3);        /* 16px */
+  --fs-16: var(--sd-fs-h2);        /* 19px */
+  --fs-20: var(--sd-fs-h1);        /* 24px */
+  --fs-26: var(--sd-fs-display);   /* 34px */
+
+  /* 旧间距保留原值：它们不是 4 的倍数，改值会让现有版面整体错位 */
   --sp-1: 2px;
   --sp-2: 4px;
   --sp-3: 6px;
@@ -77,32 +262,88 @@
   --sp-9: 32px;
   --sp-10: 40px;
 
-  /* ---- 圆角（最大 10px：不用大圆角卡片）---- */
-  --r-xs: 3px;
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 8px;
-  --r-xl: 10px;
+  --r-xs: var(--sd-radius-xs);
+  --r-sm: var(--sd-radius-sm);
+  --r-md: var(--sd-radius-md);
+  --r-lg: var(--sd-radius-lg);
+  --r-xl: var(--sd-radius-xl);
 
-  /* ---- 阴影（只给浮层）---- */
-  --sh-inset: inset 0 1px 0 rgba(255, 255, 255, .03);
-  --sh-2: 0 6px 20px rgba(0, 0, 0, .38);
-  --sh-3: 0 18px 48px rgba(0, 0, 0, .55);
+  --sh-inset: var(--sd-inset-line);
+  --sh-2: var(--sd-shadow-2);
+  --sh-3: var(--sd-shadow-3);
 
-  /* ---- 动效 ----
-     只驱动 transform / opacity（不触发布局与重绘）。
-     入场用 --ease-out（快进慢出），退场用 --ease-in；高频交互（悬停）压到 90ms 以内。 */
-  --dur-fast: 90ms;
-  --dur-1: 120ms;
-  --dur-2: 180ms;
-  --dur-3: 260ms;
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  --ease-out: cubic-bezier(.16, 1, .3, 1);
-  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --dur-fast: var(--sd-dur-fast);
+  --dur-1: var(--sd-dur-fast);
+  --dur-2: var(--sd-dur-base);
+  --dur-3: var(--sd-dur-slow);
+  --ease: var(--sd-ease-standard);
+  --ease-out: var(--sd-ease-out);
+  --ease-in: var(--sd-ease-in);
 
-  /* ---- 布局 ---- */
-  --nav-w: 252px;
-  --nav-w-collapsed: 64px;
-  --top-h: 60px;
-  --row-h: 44px;
+  --nav-w: var(--sd-nav-w);
+  --nav-w-collapsed: var(--sd-nav-w-collapsed);
+  --top-h: var(--sd-top-h);
+  --row-h: var(--sd-row-h);
+}
+
+/* ==========================================================================
+   浅色主题 · Warm Paper
+   --------------------------------------------------------------------------
+   只覆盖第 2 层。第 1 层与第 3 层不动 —— 别名会自动跟着语义层变。
+   两处偏差必须知道：
+     1. 强调色 #9B7145 在白底只有 4.34:1（不足 AA），承载文字/图标时降到 #8A6439；
+        原值保留为 --sd-accent-fill，仅用于不承载文字的装饰填充。
+     2. 阴影改浅、变柔：浅色下重投影会显得脏。
+   ========================================================================== */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --sd-bg: #F4F2ED;
+  --sd-surface: #FFFFFF;
+  --sd-surface-2: #EFECE5;
+  --sd-elevated: #FFFFFF;
+  --sd-inset: #F7F5F0;
+  --sd-hover: #F0EDE6;
+  --sd-active: #E6E2D9;
+  --sd-overlay: rgba(32, 36, 43, .38);
+
+  --sd-line: #E2DED5;
+  --sd-line-strong: #CFC9BD;
+
+  --sd-text: #20242B;
+  --sd-text-2: #5A6169;
+  --sd-text-3: #6B727A;
+  --sd-text-3-strong: #5F666E;
+  --sd-text-disabled: #A5AAB1;
+
+  /* 强调色：严格采用规范给定值 #9B7145（品牌忠实优先）。
+     代价已知并接受：该值在白底 4.34:1、#EFECE5 底 3.51:1，**不达 AA 正文标准**。
+     因此把更深一档留给「必须达 AA」的场合（正文级金色文字、小字号链接）：
+     --sd-accent-strong = #8A6439（白底 5.30:1）。按钮/图标/边框/大色块用 --sd-accent。 */
+  --sd-accent: #9B7145;
+  --sd-accent-strong: #8A6439;
+  --sd-accent-fill: #9B7145;
+  --sd-accent-tint: color-mix(in oklab, var(--sd-accent) 10%, transparent);
+  --sd-accent-line: color-mix(in oklab, var(--sd-accent) 32%, transparent);
+  --sd-on-accent: #FFFFFF;
+
+  --sd-teal: #3F7F79;
+  --sd-teal-tint: color-mix(in oklab, var(--sd-teal) 12%, transparent);
+  --sd-teal-line: color-mix(in oklab, var(--sd-teal) 34%, transparent);
+
+  --sd-ok: #2F7A50;
+  --sd-warn: #8A6320;
+  --sd-danger: #A63D33;
+  --sd-info: #4A5C77;
+  /* 淡色底上的文字档（对 14% 淡底实测：4.97 / 4.86 / 5.34 / 5.81 / 6.61） */
+  --sd-ok-ink: #22693F;
+  --sd-teal-ink: #2A6A64;
+  --sd-warn-ink: #7A5518;
+  --sd-danger-ink: #8E322A;
+  --sd-info-ink: #3A4A61;
+
+  --sd-shadow-1: 0 1px 3px rgba(20, 24, 32, .08);
+  --sd-shadow-2: 0 4px 16px rgba(20, 24, 32, .10);
+  --sd-shadow-3: 0 12px 40px rgba(20, 24, 32, .14);
+  --sd-inset-line: inset 0 1px 2px rgba(20, 24, 32, .06);
 }

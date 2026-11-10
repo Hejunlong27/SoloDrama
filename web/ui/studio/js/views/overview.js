@@ -1,23 +1,63 @@
-/* 项目详情：7 环节 / 23 节点（引擎判据）+ G-0/G-1/G0/G2 + 集列表 + 产物目录 */
+/* 项目驾驶舱：5 环节 / 13 节点（引擎判据）+ 下一步 + 门禁 + 集列表 + 产物目录 */
 import { api } from '../api.js';
 import { S } from '../store.js';
 import {
   esc, icon, badge, dot, stateEl, money, coins, dt, ago, stamp, kv, openDrawer, toast, paintIcons
 } from '../ui.js';
 
+/* 集号放在 URL 上（`?ep=ep03`），不塞模块变量：
+   刷新、分享链接、后退都要能回到「我看的是第 3 集」。
+   空值 = 不指定，交给引擎按 ep01 评估（它自己的口径，这里不替它改）。 */
+function epParam() {
+  try { return (new URLSearchParams(location.search).get('ep') || '').trim(); } catch (e) { return ''; }
+}
+
 export async function render(ctx) {
   const ov = await api.overview(ctx.ws);
-  const wf = ov.workflow || { ok: false, stages: [], reason: 'no_data' };
+  const epSel = epParam();
+  /* 指定了集才多起一次子进程：`/api/studio/overview` 已经跑过一次 workflow（按默认集），
+     只在用户真的切换集时才值得再跑一次。 */
+  const wf = epSel
+    ? (await api.workflow(ctx.ws, epSel))
+    : (ov.workflow || { ok: false, stages: [], reason: 'no_data' });
   const setup = ov.setup || { items: [], ready: false };
   const counts = ov.counts || {};
   const spend = ov.spend || {};
 
-  const rail = (wf.stages || []).map((s) => {
-    const cls = s.state === 'done' ? ' done' : s.state === 'current' ? ' current' : '';
-    const title = s.id + ' ' + s.name + (s.optional ? '（可选）' : '')
-      + '\n' + (s.probes || []).map((p) => (p.ok ? '✓ ' : '✗ ') + p.label + ' ' + p.found + '/' + p.need).join('\n');
-    return '<div class="rail-step' + cls + '" title="' + esc(title) + '">'
-      + '<span class="rail-n">' + esc(s.id) + '</span><span class="rail-t">' + esc(s.name) + '</span></div>';
+  /* ---------- 阶段矩阵：5 环节 × 13 节点 ----------
+     数据来自 `drama nodes --json`：nodes[] 每条带 id / stage / state / detail，
+     stages[] 带 id / name / why。两处都是引擎真值，前端不另写一套阶段模型。
+
+     为什么不给节点编中文名：引擎里节点只有 id（`video.batch` 这种），中文名只存在于
+     「环节」一级。前端自造一份映射，引擎改 id 时 UI 会继续显示旧名字 —— 那是最难查的一类漂移。
+     节点 id 本身就是 CLI 里能看到的名字，专业用户读得懂。 */
+  const nodes = wf.nodes || [];
+  const stageDefs = wf.stages || [];
+  const STAGE_ROUTE = { import: 'boards', asset: 'assets', board: 'boards', video: 'storyboard', edit: 'post' };
+  const NODE_BAD = ['failed', 'blocked', 'stale'];
+  const byStage = {};
+  nodes.forEach((n) => { (byStage[n.stage || '?'] = byStage[n.stage || '?'] || []).push(n); });
+  const stageDone = (list) => list.filter((n) => n.state === 'passed' || n.state === 'skipped').length;
+  const firstBad = nodes.find((n) => NODE_BAD.indexOf(n.state) >= 0) || null;
+  const nextNode = nodes.find((n) => n.state !== 'passed' && n.state !== 'skipped') || null;
+
+  const nodeGrid = stageDefs.map((sd) => {
+    const list = byStage[sd.id] || [];
+    const dn = stageDone(list);
+    const tone = !list.length ? 'absent'
+      : dn === list.length ? 'passed'
+        : (list.some((n) => NODE_BAD.indexOf(n.state) >= 0) ? (list.some((n) => n.state === 'failed') ? 'failed' : 'blocked') : 'doing');
+    return '<div class="sd-nstage">'
+      + '<button class="sd-nstage-h" data-go="' + esc(STAGE_ROUTE[sd.id] || 'overview') + '" title="'
+      + esc(sd.name + (sd.why ? ' —— ' + sd.why : '')) + '">'
+      + '<span class="sd-nstage-name"><i class="dot ' + (tone === 'passed' ? 'done' : tone === 'doing' ? 'doing' : tone === 'failed' ? 'fail' : 'todo') + '"></i>'
+      + esc(sd.name) + '</span>'
+      + '<span class="sd-nstage-n mono">' + dn + '/' + list.length + '</span></button>'
+      + '<div class="sd-nodes">'
+      + (list.length ? list.map((n) => '<span class="sd-node" data-state="' + esc(n.state) + '" title="'
+        + esc(n.id + ' · ' + (n.detail || n.state)) + '">' + esc(n.id) + '</span>').join('')
+        : '<span class="sd-node" data-state="absent">无节点</span>')
+      + '</div></div>';
   }).join('');
 
   const gateRows = [];
@@ -47,6 +87,13 @@ export async function render(ctx) {
   )).join('');
 
   const eps = ov.episodes || [];
+  /* 下拉里只放「真实存在的集」（来自集列表）+ 一个「不指定」。
+     不按计划集数生成空集：点进去会看到一个凭空造出来的 ep09，比没有更糟。 */
+  const epOptions = ['<option value="">默认（引擎按 ep01 评估）</option>']
+    .concat(eps.map((e) => '<option value="' + esc(e.ep) + '"'
+      + (epSel && epSel.toLowerCase() === String(e.ep).toLowerCase() ? ' selected' : '') + '>'
+      + esc(e.ep) + (e.total ? '（' + e.total + ' 镜）' : '') + '</option>'))
+    .join('');
   const epRows = eps.map((e) => (
     '<tr><td class="mono">' + esc(e.ep) + '</td>'
     + '<td class="num">' + e.total + '</td>'
@@ -69,6 +116,13 @@ export async function render(ctx) {
   const epCount = meta.total || eps.length || '—';
   const epSec = meta.seconds || '—';
 
+  /* 判据 vs 产物：只报「有成片但下一个节点是 absent」这一种，别的组合不猜。 */
+  const conflict = (nextNode && nextNode.state === 'absent'
+    && eps.some((e) => e.master || e.release))
+    ? { node: nextNode.id, detail: nextNode.detail || '产物不存在',
+        eps: eps.filter((e) => e.master || e.release).length }
+    : null;
+
   const adapterWarn = [];
   if (!wf.ok) {
     adapterWarn.push('流程状态未取到（reason=' + esc(wf.reason || '?') + '）：可能工作区缺少 layout.json 或引擎解释器不可用。');
@@ -78,8 +132,8 @@ export async function render(ctx) {
   const html = ''
     + '<div class="page-head"><div>'
     + '<div class="crumb"><b>项目管理</b><span class="sep">/</span><b>' + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</b></div>'
-    + '<h1 class="page-title">项目详情</h1>'
-    + '<div class="page-sub">' + esc(ctx.ws) + '</div></div>'
+    + '<h1 class="page-title sd-display">' + esc(ctx.project ? (ctx.project.title || ctx.project.path) : ctx.ws) + '</h1>'
+    + '<div class="page-sub">项目驾驶舱 · ' + esc(ctx.ws) + '</div></div>'
     + '<div class="page-actions">'
     + '<button class="btn quiet" data-go="storyboard">' + icon('film', 14) + ' 分镜与视频</button>'
     + '<button class="btn quiet" id="btnRefreshOv">' + icon('refresh', 14) + ' 重新读取</button>'
@@ -89,14 +143,47 @@ export async function render(ctx) {
       + icon('alert', 14) + '</span><div>' + adapterWarn.map(esc).join('<br>') + '</div></div>' : '')
 
     + '<section class="card" style="margin-bottom:16px">'
-    + '<div class="card-h"><h3>生产阶段</h3><span class="card-sub">7 环节 23 节点，顺序不可跳（G10）</span>'
+    + '<div class="card-h"><h3>生产阶段</h3>'
+    + '<span class="card-sub">' + stageDefs.length + ' 环节 · ' + nodes.length + ' 节点 · '
+    + (epSel ? '按 ' + esc(epSel) + ' 评估' : '未指定单集，按 ep01 评估') + '</span>'
     + '<span class="spacer"></span>'
-    + (wf.current ? badge('live', '当前 ' + wf.current) : badge('ok', '全部完成'))
+    + '<select class="sd-epsel" id="epSel" title="切换按哪一集评估节点状态">' + epOptions + '</select>'
+    + (firstBad ? badge('bad', '有阻塞') : wf.current ? badge('live', '当前 ' + wf.current) : badge('ok', '全部完成'))
     + '</div><div class="card-b">'
-    + (rail || '<div class="dim small">无阶段数据</div>')
+    + (nodes.length ? '<div class="sd-nodegrid">' + nodeGrid + '</div>' : '<div class="dim small">无阶段数据</div>')
+
+    /* 「下一步」是这一页唯一的主张：说清是哪一步、为什么卡住、点了会花什么。 */
+    + (nextNode
+      ? '<div class="sd-next">'
+        + '<div class="sd-next-k">下一步</div>'
+        + '<div class="sd-next-main"><span class="mono">' + esc(nextNode.id) + '</span>'
+        + (nextNode.state === 'blocked' || nextNode.state === 'failed' || nextNode.state === 'stale'
+          ? ' <span class="badge bad">' + esc(nextNode.state) + '</span>' : '')
+        + ((nextNode.id || '').indexOf('video.') === 0 ? ' <span class="badge warn">计费节点</span>' : '')
+        + '</div>'
+        + '<div class="sd-next-why">' + esc(nextNode.detail || '产物不存在，需要执行该节点。') + '</div>'
+        + '<button class="btn primary" data-go="' + esc(STAGE_ROUTE[nextNode.stage] || 'overview') + '">去处理</button>'
+        + '</div>'
+      : '<div class="sd-next"><div class="sd-next-k">下一步</div>'
+        + '<div class="sd-next-main">全部节点已通过</div>'
+        + '<div class="sd-next-why">可以进入发行导出：发布版唯一出口是 <span class="mono">release_export.py --all --apply</span>。</div>'
+        + '<button class="btn primary" data-go="release">去发行</button></div>')
+
+    /* 判据与产物打架：引擎按「产物文件」判，集列表按「成片目录」读。
+       两者不一致时最容易被误读成「系统坏了」，所以原文摆出来 —— 也说明引擎的行为是「不跳过」。 */
+    + (conflict
+      ? '<div class="alert warn" style="margin-top:12px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
+        + '<div><b>判据与产物不一致</b>：<span class="mono">07-成片</span> 里已有 ' + conflict.eps
+        + ' 集的母版，但节点 <span class="mono">' + esc(conflict.node) + '</span> 的产物文件缺失（'
+        + esc(conflict.detail) + '）。<br>引擎以判据文件为准，<b>不会</b>因为成片存在而跳过该节点 —— '
+        + '要让它过，需要补齐这个产物文件或按引擎口径重跑该节点。</div></div>'
+      : '')
+
     + '<div class="alert info" style="margin-top:12px"><span class="nav-ico">' + icon('alert', 14) + '</span>'
-    + '<div>阶段完成度来自引擎的产物判据（<span class="mono">drama nodes --json</span> 的节点状态），'
-    + '不靠手动勾选。下一环节只在上游全过时才可推进（未过 = 退出码 3，需人工确认 = 4）。</div></div>'
+    + '<div>节点状态来自引擎的产物判据（<span class="mono">drama nodes --json</span>），不靠手动勾选。'
+    + '被上游挡住时会写明「上游未通过：X」—— 那句话原文展示，不改写成「前置条件未满足」。'
+    + '<br>判据读的是契约层（<span class="mono">data/&lt;ep&gt;/</span>），<b>不是</b>成片目录；'
+    + '如果切换集后状态完全一样，先看这个项目的契约层建了没有。</div></div>'
     + '</div></section>'
 
     + '<div class="grid g12" style="margin-bottom:16px">'
@@ -144,6 +231,13 @@ export async function render(ctx) {
       root.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => ctx.navigate(b.dataset.go); });
       const rf = root.querySelector('#btnRefreshOv');
       if (rf) rf.onclick = () => ctx.refresh();
+      const sel = root.querySelector('#epSel');
+      if (sel) sel.onchange = () => {
+        const u = new URL(location.href);
+        if (sel.value) u.searchParams.set('ep', sel.value); else u.searchParams.delete('ep');
+        history.replaceState(null, '', u.toString());
+        ctx.refresh();
+      };
       root.querySelectorAll('[data-ep]').forEach((b) => {
         b.onclick = () => {
           const e = eps.find((x) => x.ep === b.dataset.ep);

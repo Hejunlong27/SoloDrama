@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>SoloDrama · 设计样板 2.0</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101216">
+<link rel="icon" href="img/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/tokens.css?v=20261110g">
+<link rel="stylesheet" href="css/app.css?v=20261110g">
+<link rel="stylesheet" href="css/components-2.css?v=20261110g">
+<script>
+/* 与 index.html 同一段：首帧前定主题，防闪白 */
+(function () {
+  try {
+    var q = new URLSearchParams(location.search).get('theme');
+    var m = (q === 'dark' || q === 'light') ? q : (localStorage.getItem('sd-theme') || 'auto');
+    var t = (m === 'dark' || m === 'light') ? m
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    var d = document.documentElement;
+    d.setAttribute('data-theme', t);
+    d.setAttribute('data-theme-mode', m);
+  } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+})();
+</script>
+<style>
+/* 只属于样板页的排版，不进入产品样式 */
+.sg-wrap { max-width: 1120px; margin: 0 auto; padding: 28px 24px 80px; }
+.sg-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; margin-bottom: 8px; background: var(--sd-bg);
+  border-bottom: 1px solid var(--sd-line); }
+.sg-sec { margin: 34px 0 0; }
+.sg-h { font-family: var(--sd-font-display); font-size: var(--sd-fs-h1); color: var(--sd-text);
+  margin: 0 0 4px; letter-spacing: .01em; }
+.sg-sub { font-size: var(--sd-fs-sm); color: var(--sd-text-3); margin: 0 0 16px; }
+.sg-grid { display: grid; gap: 12px; }
+.sg-g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sg-g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sg-g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 900px) { .sg-g2, .sg-g3, .sg-g4 { grid-template-columns: minmax(0, 1fr); } }
+.sw { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+.sw-chip { height: 56px; }
+.sw-meta { padding: 8px 10px; background: var(--bg-card); }
+.sw-name { font-size: var(--fs-11); color: var(--txt); }
+.sw-hex { font-family: var(--font-mono); font-size: var(--fs-11); color: var(--txt-3); }
+.demo { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px; background: var(--bg-panel); }
+.lbl { font-size: var(--sd-fs-label); letter-spacing: .06em; color: var(--txt-3);
+  text-transform: uppercase; margin: 0 0 8px; font-weight: 600; }
+table.sg-t { width: 100%; border-collapse: collapse; font-size: var(--fs-12); }
+table.sg-t th { text-align: left; font-weight: 500; color: var(--txt-3); font-size: var(--fs-11);
+  padding: 8px 10px; border-bottom: 1px solid var(--line-strong); }
+table.sg-t td { padding: 9px 10px; border-bottom: 1px solid var(--line); color: var(--txt); }
+table.sg-t td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+</style>
+</head>
+<body>
+<div class="sg-wrap">
+
+  <div class="sg-bar">
+    <img src="img/logo.svg" alt="" width="26" height="26">
+    <div>
+      <div style="font-family:var(--sd-font-display);font-size:16px;color:var(--txt)">SoloDrama · 设计样板</div>
+      <div class="tiny dim mono">Studio 2.0 / Phase 1 · 真实组件，非图片</div>
+    </div>
+    <span class="spacer"></span>
+    <span class="badge outline" id="sgMode">跟随系统</span>
+    <button class="btn" id="sgTheme">切换主题</button>
+  </div>
+
+  <!-- ============================================================ 色彩 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">色彩</h2>
+    <p class="sg-sub">第 2 层语义 Token。对比度为脚本实测值（对 --sd-surface-2）。改色必须重算。</p>
+
+    <p class="lbl">表面层次</p>
+    <div class="sg-grid sg-g4" id="sgSurfaces"></div>
+
+    <p class="lbl" style="margin-top:20px">文字</p>
+    <div class="sg-grid sg-g4" id="sgTexts"></div>
+
+    <p class="lbl" style="margin-top:20px">强调与状态</p>
+    <div class="sg-grid sg-g4" id="sgAccents"></div>
+  </section>
+
+  <!-- ============================================================ 排版 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">排版</h2>
+    <p class="sg-sub">展示标题用衬线（片名感），正文黑体，镜号与金额等宽。本地字体优先，不引 CDN。</p>
+    <div class="demo">
+      <div style="font-family:var(--sd-font-display);font-size:34px;line-height:1.2;color:var(--txt)">
+        禁欲大佬的恋爱脑甜心
+      </div>
+      <div class="tiny dim mono" style="margin:6px 0 18px">--sd-fs-display 34px · 衬线 · 剧名专用</div>
+
+      <div style="font-size:24px;font-weight:600;line-height:1.3;color:var(--txt)">分镜与拍摄</div>
+      <div class="tiny dim mono" style="margin:4px 0 14px">--sd-fs-h1 24px / 600</div>
+
+      <div style="font-size:19px;font-weight:600;line-height:1.35;color:var(--txt)">第 03 集 · 18 镜</div>
+      <div class="tiny dim mono" style="margin:4px 0 14px">--sd-fs-h2 19px / 600</div>
+
+      <div style="font-size:15px;line-height:1.55;color:var(--txt);max-width:62ch">
+        她把剧本摔在桌上，说这句话的时候，镜头应当停在她攥紧的指节上——
+        不是脸。观众要先看见「用力」，再看见「她」。
+      </div>
+      <div class="tiny dim mono" style="margin:4px 0 14px">--sd-fs-body 15px / 1.55 · 中文行高要比西文大</div>
+
+      <div style="font-size:13px;color:var(--txt-2)">次要说明：本集参考图已对齐，出片前无需再改。</div>
+      <div class="tiny dim mono" style="margin:4px 0 14px">--sd-fs-sm 13px</div>
+
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--txt)">
+        shot_007 · 00:12.480 · 4.0s · 9:16
+      </div>
+      <div class="tiny dim mono" style="margin:4px 0 0">--sd-fs-mono 13px · 等宽（镜号 / 时间码 / 金额）</div>
+
+      <p class="lbl" style="margin-top:22px">数字对齐（不等宽就会逐行跳）</p>
+      <table class="sg-t">
+        <thead><tr><th>项目</th><th style="text-align:right">金额</th><th style="text-align:right">占比</th></tr></thead>
+        <tbody>
+          <tr><td>本地出图</td><td class="num">¥0.00</td><td class="num">0.0%</td></tr>
+          <tr><td>云端出片</td><td class="num">¥12.40</td><td class="num">86.7%</td></tr>
+          <tr><td>高清放大</td><td class="num">¥1.90</td><td class="num">13.3%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ 间距圆角 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">间距与圆角</h2>
+    <p class="sg-sub">4px 基数。圆角 6/8/10/12/14 五档 —— 14 只给大型工作区面板，卡片一律 10。</p>
+    <div class="sg-grid sg-g2">
+      <div class="demo"><p class="lbl">--sd-space-*</p><div id="sgSpace"></div></div>
+      <div class="demo"><p class="lbl">--sd-radius-*</p><div class="row" id="sgRadius"></div></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 按钮 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">按钮</h2>
+    <p class="sg-sub">一屏只有一个主按钮。计费动作的主按钮必须带价格。</p>
+    <div class="demo">
+      <div class="row">
+        <button class="btn primary">生成 12 镜 · 约 ¥2.40</button>
+        <button class="btn">重新预检</button>
+        <button class="btn quiet">取消</button>
+        <button class="btn ghost icon" title="刷新"></button>
+        <button class="btn danger">删除本集产物</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" disabled>禁用</button>
+        <button class="btn primary" disabled>禁用主操作</button>
+        <button class="btn"><span class="spinner"></span>执行中</button>
+      </div>
+      <div class="alert info" style="margin-top:14px">
+        <div>危险按钮刻意不用金色：金色在本产品里表示「品牌 / 主操作 / 代价」，删除不是代价，是风险。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 表单 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">表单</h2>
+    <p class="sg-sub">错误文案在字段下方，不弹 toast —— toast 会消失，字段旁的错误不会。</p>
+    <div class="demo">
+      <div class="sg-grid sg-g2">
+        <div>
+          <p class="lbl">项目名</p>
+          <input class="input" value="禁欲大佬的恋爱脑甜心">
+        </div>
+        <div>
+          <p class="lbl">搜索</p>
+          <div class="search"><span class="nav-ico">⌕</span><input class="input" placeholder="搜镜号 / 角色 / 文件名"></div>
+        </div>
+        <div>
+          <p class="lbl">画风（不可事后更换）</p>
+          <select class="input" disabled><option>电影感写实（已锁定）</option></select>
+          <div class="tiny" style="color:var(--sd-text-3);margin-top:6px">画风选定后不可更换，因此显示为禁用而非下拉。</div>
+        </div>
+        <div>
+          <p class="lbl">必填校验</p>
+          <input class="input" value="shot_00" style="border-color:var(--sd-danger)">
+          <div class="tiny" style="color:var(--sd-danger);margin-top:6px">镜号需形如 shot_001（三位数字）</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 状态 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">状态标记</h2>
+    <p class="sg-sub">颜色永远不是唯一信号：圆点旁边必须有文字，色盲用户可读。</p>
+    <div class="demo">
+      <div class="row" style="gap:18px;flex-wrap:wrap">
+        <span class="health-item" style="display:inline-flex;align-items:center;gap:6px"><i class="dot done"></i>通过</span>
+        <span class="health-item" style="display:inline-flex;align-items:center;gap:6px"><i class="dot doing"></i>正在执行</span>
+        <span class="health-item" style="display:inline-flex;align-items:center;gap:6px"><i class="dot todo"></i>未开始</span>
+        <span class="badge warn">区块被拦</span>
+        <span class="badge outline">只读模式</span>
+      </div>
+      <div class="alert info" style="margin-top:14px;display:flex;gap:10px">
+        <span>ⓘ</span><div>预检通过：13 项检查中 13 项正常。可以生成。</div>
+      </div>
+      <div class="alert warn" style="margin-top:10px;display:flex;gap:10px">
+        <span>▲</span><div>有 3 镜缺少分镜图：shot_007 / shot_012 / shot_018。<b>先跑「分镜图」节点，再出片。</b></div>
+      </div>
+      <div class="alert bad" style="margin-top:10px;display:flex;gap:10px">
+        <span>✕</span><div>出片失败，退出码 3：批次缺口 2 镜。用 <span class="mono">--resume</span> 续跑，不要重写提示词。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 阶段条 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">阶段条（2.0 新）</h2>
+    <p class="sg-sub">13 节点的可视化。不是进度条，是状态矩阵；每个节点都要能说出「为什么」。点击进产物页，不在原地执行（防误点计费）。</p>
+    <div class="demo">
+      <div class="sd-stages">
+        <button class="sd-stage" data-state="passed"><span class="sd-stage-name">导入</span><span class="sd-stage-why">制作包已翻译</span></button>
+        <button class="sd-stage" data-state="passed"><span class="sd-stage-name">资产</span><span class="sd-stage-why">42 张，无缺口</span></button>
+        <button class="sd-stage" data-state="passed"><span class="sd-stage-name">分镜图</span><span class="sd-stage-why">18/18</span></button>
+        <button class="sd-stage" data-state="doing"><span class="sd-stage-name">出片</span><span class="sd-stage-why">7/18 · 进行中</span></button>
+        <button class="sd-stage" data-state="blocked"><span class="sd-stage-name">剪辑</span><span class="sd-stage-why">上游未通过：出片</span></button>
+        <button class="sd-stage" data-state="absent"><span class="sd-stage-name">发行</span><span class="sd-stage-why">产物不存在</span></button>
+      </div>
+      <div class="tiny" style="color:var(--txt-3);margin-top:12px">
+        样式：<span class="mono">.sd-stage[data-state]</span> —— 六态与 nodes.py 的 passed/doing/blocked/failed/absent/skipped 对应。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 六段式 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">六段式提示词 · 结构只读概览</h2>
+    <p class="sg-sub">顺序即契约，不可拖拽。段头右侧是规则命中，不是装饰。</p>
+    <div class="alert info" style="margin-bottom:12px">
+      <div class="tiny">下面是<b>结构可视化</b>的样式储备（供只在需要时陈列结构）。
+        产品页（分镜与拍摄）里的提示词是<b>一整段可编辑文本 + 一行结构 chip 概览</b> ——
+        因为真实用法是把整段贴出去试，拆成六个输入框每次都要自己拼回去。
+        这套分段样式仍保留给「结构对照」类只读场景。</div></div>
+    <div class="demo">
+      <div class="sd-prompt">
+        <div class="sd-prompt-sec">
+          <div class="sd-prompt-head"><span class="sd-prompt-key">subject_definitions</span>
+            <span class="sd-prompt-cn">主体定义</span>
+            <span class="sd-prompt-stat"><span>128 字符</span><span>CJK 34</span></span></div>
+          <div class="sd-prompt-body">&lt;Subject 1&gt; 女主，26 岁，米色针织衫，低马尾，右手腕有旧疤痕
+&lt;Picture 1&gt; 分镜首帧，中景，办公室窗边</div>
+        </div>
+        <div class="sd-prompt-sec">
+          <div class="sd-prompt-head"><span class="sd-prompt-key">summary</span>
+            <span class="sd-prompt-cn">任务类型</span>
+            <span class="sd-prompt-stat"><span>24 字符</span></span></div>
+          <div class="sd-prompt-body">[reference generation] [fully_preserved]</div>
+        </div>
+        <div class="sd-prompt-sec">
+          <div class="sd-prompt-head"><span class="sd-prompt-key">retention_analysis</span>
+            <span class="sd-prompt-cn">保留与迁移</span>
+            <span class="sd-prompt-stat"><span>96 字符</span></span></div>
+          <div class="sd-prompt-body">&lt;Subject 1&gt; fully_preserved — 脸型、发型、服装颜色保持一致</div>
+        </div>
+        <div class="sd-prompt-sec" data-bad="1">
+          <div class="sd-prompt-head"><span class="sd-prompt-key">detailed_description</span>
+            <span class="sd-prompt-cn">动作与镜头</span>
+            <span class="sd-prompt-stat"><span>312 字符</span><span>CJK 88</span></span></div>
+          <div class="sd-prompt-body">她把手里的文件摔在桌上，纸页散开。镜头停在她攥紧的指节上，缓慢下压。
+<d>[Chinese] 你到底想怎么样。</d></div>
+        </div>
+        <div class="sd-prompt-sec" data-collapsed="1">
+          <div class="sd-prompt-head"><span class="sd-prompt-key">overall_soundscape</span>
+            <span class="sd-prompt-cn">环境声</span>
+            <span class="sd-prompt-stat"><span>48 字符</span></span></div>
+          <div class="sd-prompt-body">纸张摩擦声，远处打印机低频嗡鸣。</div>
+        </div>
+        <div class="sd-prompt-sec">
+          <div class="sd-prompt-head"><span class="sd-prompt-key">non_diegetic_music</span>
+            <span class="sd-prompt-cn">非画内音乐</span>
+            <span class="sd-prompt-stat"><span>36 字符</span></span></div>
+          <div class="sd-prompt-body">无。本镜只留环境声。</div>
+        </div>
+      </div>
+      <div class="tiny" style="color:var(--txt-3);margin-top:12px">
+        红框段示例：台词未按 <span class="mono">&lt;d&gt;[Chinese] 原句。&lt;/d&gt;</span> 书写，会被模型当「画面中应出现的文字」烧成字幕。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 卡片 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">卡片</h2>
+    <p class="sg-sub">卡片不加投影：深色下投影等于脏，浅色下靠描边分层。最多两层。</p>
+    <div class="sg-grid sg-g4">
+      <div>
+        <div class="sd-poster">
+          <div class="sd-poster-blank">禁</div>
+          <div class="sd-poster-shade"></div>
+          <div class="sd-poster-body">
+            <div class="sd-poster-title">禁欲大佬的恋爱脑甜心</div>
+            <div class="sd-poster-meta">18 集 · 出片中 7/18</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="sd-poster">
+          <div class="sd-poster-blank">暴</div>
+          <div class="sd-poster-shade"></div>
+          <div class="sd-poster-body">
+            <div class="sd-poster-title">暴力水晶鞋：全城通缉大力女刺客</div>
+            <div class="sd-poster-meta">12 集 · 已发行</div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="grid-column:span 2">
+        <div class="card-b">
+          <p class="lbl">本集成本（实付与估算分列，永不合并）</p>
+          <div class="sd-cost-row">
+            <div class="sd-cost-what">云端出片 <small>12 镜 × ¥0.20</small></div>
+            <div class="sd-cost-num">¥2.40</div>
+            <div class="sd-cost-src" data-kind="real">实付 · 11-10 14:22</div>
+          </div>
+          <div class="sd-cost-row">
+            <div class="sd-cost-what">高清放大 <small>本地 GPU 3 次</small></div>
+            <div class="sd-cost-num">¥0.00</div>
+            <div class="sd-cost-src" data-kind="real">实付 · 本地</div>
+          </div>
+          <div class="sd-cost-row">
+            <div class="sd-cost-what">字幕重跑 <small>尚未执行</small></div>
+            <div class="sd-cost-num">—</div>
+            <div class="sd-cost-src" data-kind="est">未产生计费</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 三态 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">空 / 错 / 载</h2>
+    <p class="sg-sub">空状态必须回答三件事：为什么空、下一步做什么、去哪做。</p>
+    <div class="sg-grid sg-g3">
+      <div class="demo">
+        <div class="empty">
+          <div class="empty-t">还没有分镜图</div>
+          <div class="empty-h">先导入制作包，再跑「分镜图」节点。</div>
+          <button class="btn" style="margin-top:10px">去导入</button>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="empty">
+          <div class="empty-t">发行检查未通过</div>
+          <div class="empty-h">缺 3 项：封面、发布文案、版权资料 draft-03。</div>
+          <button class="btn" style="margin-top:10px">查看缺失清单</button>
+        </div>
+      </div>
+      <div class="demo"><div id="sgSkeleton"></div></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 动效 -->
+  <section class="sg-sec">
+    <h2 class="sg-h">动效</h2>
+    <p class="sg-sub">只驱动 transform 与 opacity。悬停 120ms，浮层 180ms，页面入场 260ms。系统「减少动效」开启后全部停用但功能完整。</p>
+    <div class="demo">
+      <div class="row">
+        <button class="btn" id="sgDemoMotion">播放一次入场</button>
+        <span class="tiny dim">260ms · cubic-bezier(.16,1,.3,1)</span>
+      </div>
+      <div id="sgMotionBox" class="card" style="margin-top:12px;padding:16px;color:var(--txt-2);font-size:var(--fs-12)">
+        这是被动画的元素。它只会上下 6px + 淡入，不做位移夸张的花活。
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script type="module">
+import { initTheme, cycle, storedMode, LABEL, currentTheme } from './js/theme.js';
+
+initTheme();
+
+const btn = document.getElementById('sgTheme');
+const modeEl = document.getElementById('sgMode');
+const paint = () => {
+  modeEl.textContent = LABEL[storedMode()] + ' · ' + currentTheme();
+  btn.title = '跟随系统 → 深色 → 浅色';
+};
+paint();
+btn.onclick = () => { cycle(); paint(); repaint(); };
+
+/* ---- 色板：直接从 computedStyle 读真实值，避免文档与代码不一致 ---- */
+const cs = () => getComputedStyle(document.documentElement);
+function swTile(name, label, ratio) {
+  const v = cs().getPropertyValue(name).trim();
+  return '<div class="sw"><div class="sw-chip" style="background:' + v + '"></div>'
+    + '<div class="sw-meta"><div class="sw-name">' + label + '</div>'
+    + '<div class="sw-hex">' + name + (ratio ? ' · ' + ratio : '') + '</div></div></div>';
+}
+function repaint() {
+  document.getElementById('sgSurfaces').innerHTML =
+    swTile('--sd-bg', '页面底') + swTile('--sd-surface', '面板') +
+    swTile('--sd-surface-2', '卡片') + swTile('--sd-elevated', '浮层');
+  document.getElementById('sgTexts').innerHTML =
+    swTile('--sd-text', '正文', '13.34:1') + swTile('--sd-text-2', '次要', '6.34:1') +
+    swTile('--sd-text-3', '元信息', '4.94:1') + swTile('--sd-text-disabled', '禁用');
+  document.getElementById('sgAccents').innerHTML =
+    swTile('--sd-accent', '香槟金 / 主操作') + swTile('--sd-teal', '蓝绿 / 数据') +
+    swTile('--sd-ok', '通过') + swTile('--sd-danger', '失败');
+  paint();
+}
+repaint();
+
+/* ---- 间距与圆角 ---- */
+const SPACES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+document.getElementById('sgSpace').innerHTML = SPACES.map((n) => {
+  const v = cs().getPropertyValue('--sd-space-' + n).trim();
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:5px">'
+    + '<span class="mono tiny dim" style="width:74px">space-' + n + '</span>'
+    + '<span style="display:inline-block;height:12px;width:' + v + ';background:var(--sd-accent-tint);border-left:2px solid var(--sd-accent)"></span>'
+    + '<span class="mono tiny dim">' + v + '</span></div>';
+}).join('');
+
+const RADII = ['xs', 'sm', 'md', 'lg', 'xl', 'pill'];
+document.getElementById('sgRadius').innerHTML = RADII.map((k) =>
+  '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">'
+  + '<div style="width:56px;height:40px;background:var(--bg-card);border:1px solid var(--line-strong);border-radius:var(--sd-radius-' + k + ')"></div>'
+  + '<span class="mono tiny dim">' + k + '</span></div>').join('');
+
+/* ---- 骨架屏（复用产品的呼吸样式） ---- */
+document.getElementById('sgSkeleton').innerHTML =
+  '<p class="lbl">加载中</p>'
+  + '<div style="display:flex;flex-direction:column;gap:8px">'
+  + [92, 76, 84].map((w) => '<div style="height:12px;width:' + w + '%;border-radius:6px;background:var(--bg-hover);animation:sd-breathe 1.4s ease-in-out infinite"></div>').join('')
+  + '</div>';
+
+const style = document.createElement('style');
+style.textContent = '@keyframes sd-breathe{0%,100%{opacity:.45}50%{opacity:.8}}';
+document.head.appendChild(style);
+
+/* ---- 动画演示 ---- */
+document.getElementById('sgDemoMotion').onclick = () => {
+  const b = document.getElementById('sgMotionBox');
+  b.style.animation = 'none';
+  void b.offsetWidth;
+  b.style.animation = 'sd-in 260ms cubic-bezier(.16,1,.3,1) both';
+};
+const st2 = document.createElement('style');
+st2.textContent = '@keyframes sd-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}';
+document.head.appendChild(st2);
+</script>
+</body>
+</html>

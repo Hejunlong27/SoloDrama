@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>SoloDrama 2.0 · 验收看板（2026-11-10）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 直接用产品自己的 Token 与组件样式：这页不是另画一套，它本身就是对设计系统的验收 -->
+<link rel="stylesheet" href="../../web/ui/studio/css/tokens.css">
+<link rel="stylesheet" href="../../web/ui/studio/css/components-2.css">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 80px;
+    background: var(--sd-bg); color: var(--sd-text);
+    font-family: var(--sd-font-ui); font-size: var(--sd-fs-body); line-height: var(--sd-lh-body);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .bar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 14px;
+    height: 60px; padding: 0 24px;
+    background: color-mix(in oklab, var(--sd-bg) 92%, transparent);
+    border-bottom: 1px solid var(--sd-line);
+    backdrop-filter: none;
+  }
+  .bar h1 { font-family: var(--sd-font-display); font-size: 18px; margin: 0; font-weight: 600; }
+  .bar .meta { font-family: var(--sd-font-mono); font-size: var(--sd-fs-caption); color: var(--sd-text-3); }
+  .spacer { flex: 1; }
+  h2 {
+    font-family: var(--sd-font-display); font-size: var(--sd-fs-h1);
+    margin: 44px 0 4px; letter-spacing: .01em;
+  }
+  .sub { color: var(--sd-text-3); font-size: var(--sd-fs-sm); margin: 0 0 16px; }
+  .card {
+    border: 1px solid var(--sd-line); border-radius: var(--sd-radius-lg);
+    background: var(--sd-surface); padding: 16px;
+  }
+  .grid { display: grid; gap: 12px; }
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 900px) { .g2, .g3, .g4 { grid-template-columns: minmax(0, 1fr); } }
+
+  table { width: 100%; border-collapse: collapse; font-size: var(--sd-fs-sm); }
+  th {
+    text-align: left; font-weight: 500; color: var(--sd-text-3);
+    font-size: var(--sd-fs-caption); padding: 8px 10px;
+    border-bottom: 1px solid var(--sd-line-strong);
+  }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--sd-line); vertical-align: top; }
+  td.num, th.num { text-align: right; font-family: var(--sd-font-mono); font-variant-numeric: tabular-nums; }
+  .k { font-family: var(--sd-font-mono); font-size: var(--sd-fs-caption); color: var(--sd-text-3); }
+
+  .kpi { font-family: var(--sd-font-mono); font-size: 30px; color: var(--sd-text); font-variant-numeric: tabular-nums; }
+  .kpi-u { font-size: var(--sd-fs-caption); color: var(--sd-text-3); margin-left: 4px; }
+
+  .stages { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 0; }
+  .st {
+    flex: 1 1 0; min-width: 132px; padding: 8px 10px;
+    border: 1px solid var(--sd-line); border-radius: var(--sd-radius-md);
+    background: var(--sd-surface);
+  }
+  .st[data-s="done"] { border-color: color-mix(in oklab, var(--sd-ok) 45%, var(--sd-line)); }
+  .st[data-s="doing"] { border-color: color-mix(in oklab, var(--sd-teal) 50%, var(--sd-line)); }
+  .st[data-s="todo"] { border-style: dashed; }
+  .st b { font-size: var(--sd-fs-sm); font-weight: 500; }
+  .st i { display: block; font-style: normal; font-size: var(--sd-fs-caption); color: var(--sd-text-3); }
+
+  .shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 900px) { .shots { grid-template-columns: minmax(0, 1fr); } }
+  .shot { border: 1px solid var(--sd-line); border-radius: var(--sd-radius-lg); overflow: hidden; background: var(--sd-surface); }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shot .cap {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 8px 12px; font-size: var(--sd-fs-caption); color: var(--sd-text-2);
+    border-top: 1px solid var(--sd-line);
+  }
+  .shot .cap span:last-child { color: var(--sd-text-3); font-family: var(--sd-font-mono); }
+
+  .sw { border: 1px solid var(--sd-line); border-radius: var(--sd-radius-md); overflow: hidden; }
+  .sw i { display: block; height: 44px; }
+  .sw div { padding: 6px 8px; background: var(--sd-surface); }
+  .sw b { display: block; font-size: var(--sd-fs-caption); font-weight: 500; }
+  .sw span { font-family: var(--sd-font-mono); font-size: var(--sd-fs-label); color: var(--sd-text-3); }
+
+  a.btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 14px; text-decoration: none;
+    border-radius: var(--sd-radius-sm); border: 1px solid var(--sd-line-strong);
+    color: var(--sd-text); background: var(--sd-surface-2); font-size: var(--sd-fs-sm);
+  }
+  a.btn:hover { background: var(--sd-hover); }
+  a.btn.primary { background: var(--sd-accent); color: var(--sd-on-accent); border-color: var(--sd-accent); }
+  code { font-family: var(--sd-font-mono); font-size: .92em; background: var(--sd-inset); padding: 1px 5px; border-radius: 3px; }
+  .note { font-size: var(--sd-fs-sm); color: var(--sd-text-2); }
+  .warnbox { border: 1px solid var(--sd-accent-line); background: var(--sd-accent-tint); border-radius: var(--sd-radius-md); padding: 12px 14px; font-size: var(--sd-fs-sm); }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>SoloDrama 2.0 · 验收看板</h1>
+  <span class="meta">2026-11-10 · main @ 2347df2 · 63 项改动未提交（均未 commit / 未 push）</span>
+  <span class="spacer"></span>
+  <button class="btn ghost sm" id="themeBtn" style="border:1px solid var(--sd-line);background:none;color:var(--sd-text-2);height:28px;padding:0 10px;border-radius:6px;cursor:pointer">切换主题</button>
+</div>
+
+<div class="wrap">
+
+  <h2>一、阶段进度</h2>
+  <p class="sub">Phase 0 审计 → Phase 2 设计系统 → Phase 3 信息架构 / 首页 / 驾驶舱 / 分镜三栏。Phase 4 的提示词读写已完成，其余未开始。</p>
+  <div class="stages">
+    <div class="st" data-s="done"><b>0 · 审计</b><i>21 份文档</i></div>
+    <div class="st" data-s="done"><b>1 · 工程整理</b><i>清单已出（未执行删除）</i></div>
+    <div class="st" data-s="done"><b>2 · 设计系统</b><i>双主题 + Token 三层</i></div>
+    <div class="st" data-s="doing"><b>3 · 核心 UI</b><i>导航 / 首页 / 驾驶舱 / 分镜 / 创作 ✓</i></div>
+    <div class="st" data-s="doing"><b>4 · 提示词读写</b><i>读写+校验 ✓ / 生产功能未做</i></div>
+    <div class="st" data-s="todo"><b>5 · 测试优化</b><i>移动端未重测</i></div>
+  </div>
+
+  <h2>二、数字台账</h2>
+  <p class="sub">下面每个数字都能追到命令输出或文件，没有估算值。</p>
+  <div class="grid g4">
+    <div class="card"><div class="k">改动文件</div><div class="kpi">63<span class="kpi-u">个</span></div><div class="k">+7529 / −638 行</div></div>
+    <div class="card"><div class="k">回归测试</div><div class="kpi">261<span class="kpi-u">passed</span></div><div class="k">0 failed（web+tools+import）</div></div>
+    <div class="card"><div class="k">硬编码色值</div><div class="kpi">72 → 1</div><div class="k">唯一保留：视频黑边</div></div>
+    <div class="card"><div class="k">完整性清单</div><div class="kpi">547<span class="kpi-u">条</span></div><div class="k">未登记/哈希/行尾 全 0</div></div>
+  </div>
+
+  <h2>三、实拍截图</h2>
+  <p class="sub">本机 Chrome headless 实拍，不是设计稿。点开可看原图。</p>
+  <div class="grid g2">
+    <a class="shot" href="shots/create-dark.png" target="_blank" rel="noopener">
+      <img src="shots/create-dark.png" alt="创意工作室三栏">
+      <div class="cap"><span>创意工作室 · 深色（本轮）</span><span>30 集文档树 / Markdown 预览</span></div>
+    </a>
+    <a class="shot" href="shots/create-light.png" target="_blank" rel="noopener">
+      <img src="shots/create-light.png" alt="创意工作室浅色">
+      <div class="cap"><span>创意工作室 · 浅色（本轮）</span><span>表格在预览里正常排版</span></div>
+    </a>
+  </div>
+  <div class="grid g2" style="margin-top:12px">
+    <a class="shot" href="shots/storyboard-3col-dark.png" target="_blank" rel="noopener">
+      <img src="shots/storyboard-3col-dark.png" alt="分镜三栏深色">
+      <div class="cap"><span>分镜三栏 · 深色（本轮）</span><span>183 镜 / 3 条 H3 阻断</span></div>
+    </a>
+    <a class="shot" href="shots/storyboard-3col-light.png" target="_blank" rel="noopener">
+      <img src="shots/storyboard-3col-light.png" alt="分镜三栏浅色">
+      <div class="cap"><span>分镜三栏 · 浅色（本轮）</span><span>提示词整段可复制</span></div>
+    </a>
+  </div>
+  <div class="shots">
+    <a class="shot" href="shots/studio-home-dark.png" target="_blank" rel="noopener">
+      <img src="shots/studio-home-dark.png" alt="首页深色">
+      <div class="cap"><span>首页 · 深色</span><span>studio-home-dark.png</span></div>
+    </a>
+    <a class="shot" href="shots/studio-home-light.png" target="_blank" rel="noopener">
+      <img src="shots/studio-home-light.png" alt="首页浅色">
+      <div class="cap"><span>首页 · 浅色</span><span>studio-home-light.png</span></div>
+    </a>
+    <a class="shot" href="shots/cockpit-dark.png" target="_blank" rel="noopener">
+      <img src="shots/cockpit-dark.png" alt="驾驶舱深色">
+      <div class="cap"><span>项目驾驶舱 · 深色</span><span>cockpit-dark.png</span></div>
+    </a>
+    <a class="shot" href="shots/cockpit-light.png" target="_blank" rel="noopener">
+      <img src="shots/cockpit-light.png" alt="驾驶舱浅色">
+      <div class="cap"><span>项目驾驶舱 · 浅色</span><span>cockpit-light.png</span></div>
+    </a>
+    <a class="shot" href="shots/workspace-assets-dark.png" target="_blank" rel="noopener">
+      <img src="shots/workspace-assets-dark.png" alt="工作空间页签">
+      <div class="cap"><span>工作空间页签 + 侧栏二级</span><span>workspace-assets-dark.png</span></div>
+    </a>
+    <a class="shot" href="shots/design-sample-light.png" target="_blank" rel="noopener">
+      <img src="shots/design-sample-light.png" alt="设计样板浅色">
+      <div class="cap"><span>设计样板 · 浅色</span><span>design-sample-light.png</span></div>
+    </a>
+  </div>
+
+  <h2>四、设计系统（真值，非示意）</h2>
+  <p class="sub">色块读的是 <code>tokens.css</code> 的实时计算值 —— 本页直接引用了产品样式表。</p>
+  <div class="grid g4" id="swatches"></div>
+
+  <h2>五、可以直接点开的页面</h2>
+  <div class="grid g2">
+    <div class="card">
+      <div class="k">真实应用</div>
+      <p class="note" style="margin:8px 0 14px">需本机服务在跑（<code>start.cmd</code> 或 <code>uvicorn app:app --port 8788</code>）。</p>
+      <a class="btn primary" href="http://127.0.0.1:8788/studio/" target="_blank" rel="noopener">打开 Studio</a>
+      <a class="btn" href="http://127.0.0.1:8788/studio/design.html?theme=light" target="_blank" rel="noopener" style="margin-left:8px">设计样板</a>
+      <a class="btn" href="http://127.0.0.1:8788/studio/design-probe.html" target="_blank" rel="noopener" style="margin-left:8px">对比度探针</a>
+    </div>
+    <div class="card">
+      <div class="k">文档</div>
+      <p class="note" style="margin:8px 0 0">
+        审计：<code>docs/architecture/</code>（4 份）+ <code>docs/upgrade/01–07</code><br>
+        设计：<code>docs/design/</code>（8 份）<br>
+        交付报告：<code>docs/upgrade/phase-report-20261110.md</code>（含 §13 §14）
+      </p>
+    </div>
+  </div>
+
+  <h2>六、现在的问题与待决</h2>
+  <div class="warnbox">
+    <b>只有一条可访问性已知取舍</b>：浅色主按钮 <code>#9B7145</code> 白底 4.34:1，低于 AA。你拍板「品牌忠实优先」，
+    探针里永久只剩这一条 <code>LOW</code>。
+  </div>
+  <table style="margin-top:14px">
+    <thead><tr><th style="width:38%">问题</th><th>影响</th><th style="width:90px">归属</th></tr></thead>
+    <tbody>
+      <tr><td><b>旧格式提示词保存必被拦</b>：30 集提示词都不是六段式，改一个字也会被判「缺 6 段」</td><td>要走「仍然保存」两步；这是门禁本意（H3 六段是契约），不是 bug</td><td>引擎口径</td></tr>
+      <tr><td>六段式分支无真实数据验证</td><td>本机 0 个项目是六段式，结构 chip 只有代码路径跑过</td><td>待真实样本</td></tr>
+      <tr><td>本机 0 个项目有 <code>data/&lt;ep&gt;/</code> 契约层</td><td>驾驶舱切集看不出差异，判据读的是契约文件不是成片目录</td><td>数据现状</td></tr>
+      <tr><td><b>创作版本对比无入口</b>：备份 <code>.bak_&lt;时间戳&gt;.md</code> 在磁盘上，界面看不到</td><td>「改坏了能回滚」实际上只能去文件夹翻</td><td>T20</td></tr>
+      <tr><td>生成无草稿区：模型写歪就直接覆盖正文（有备份）</td><td>要先进草稿确认再落盘，属引擎侧改动</td><td>T21</td></tr>
+      <tr><td>资产工作室页面仍是旧的</td><td>视觉与新框架不匹配</td><td>Phase 3</td></tr>
+      <tr><td>移动端断点未重测</td><td>窄屏可能错位</td><td>Phase 5</td></tr>
+    </tbody>
+  </table>
+
+  <h2>七、三条可选下一步</h2>
+  <table>
+    <thead><tr><th style="width:130px">选项</th><th>内容</th><th style="width:210px">说明</th></tr></thead>
+    <tbody>
+      <tr><td><b>H · 视觉资产工作室</b></td><td>角色档案 / 场景设定集的视觉化，图片优先</td><td>资产是核心卖点</td></tr>
+      <tr><td><b>I · 生产控制</b></td><td>通道 / 预检 / 作业 / 成本台账按现有业务逻辑接成工作台</td><td>能力已有，缺界面</td></tr>
+      <tr><td><b>J · 版本对比</b></td><td>只读列出 <code>.bak_</code> + 左右对照</td><td>补掉 T20，创作页才闭环</td></tr>
+    </tbody>
+  </table>
+
+</div>
+
+<script>
+const MODES = ['dark', 'light'];
+let i = 0;
+document.getElementById('themeBtn').onclick = () => {
+  i = (i + 1) % MODES.length;
+  document.documentElement.setAttribute('data-theme', MODES[i]);
+  paint();
+};
+
+const SW = [
+  ['--sd-bg', '页面底'], ['--sd-surface', '面板'], ['--sd-surface-2', '卡片'], ['--sd-elevated', '浮层'],
+  ['--sd-text', '正文'], ['--sd-text-2', '次要'], ['--sd-text-3', '辅助'], ['--sd-line', '描边'],
+  ['--sd-accent', '香槟金'], ['--sd-teal', '蓝绿'], ['--sd-ok', '通过'], ['--sd-danger', '失败']
+];
+function paint() {
+  const cs = getComputedStyle(document.documentElement);
+  document.getElementById('swatches').innerHTML = SW.map(([k, label]) => {
+    const v = cs.getPropertyValue(k).trim();
+    return '<div class="sw"><i style="background:' + v + '"></i>'
+      + '<div><b>' + label + '</b><span>' + k + '</span></div></div>';
+  }).join('');
+}
+paint();
+</script>
+</body>
+</html>

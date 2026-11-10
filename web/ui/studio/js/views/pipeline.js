@@ -9,7 +9,7 @@ const ACT_TEXT = { auto: '可自动', ask: '需确认', blocked: '被前置挡�
 const ST_TEXT = { done: '已完成', current: '进行中', todo: '未开始' };
 
 /* 环节 → 该去哪一页（后端只给「需人工」的环节带 page，其余给兜底）
-   ★ 2026-11-01：键改成 `nodes.STAGES` 的 7 环节 id。原来写的是已废弃的 S1–S11，
+   ★ 2026-11-01：键改成 `nodes.STAGES` 的环节 id（现为 5 个）。原来写的是已废弃的 S1–S11，
      于是「打开」按钮对 7 个环节全都 miss，一律跳到「项目详情」。 */
 const PAGE_OF = {
   research: 'creation', script: 'creation', asset: 'assets', board: 'storyboard',

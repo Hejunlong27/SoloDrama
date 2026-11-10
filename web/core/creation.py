@@ -246,6 +246,105 @@ def write(ws, stage: str, text: str, *, name: str = "", backup: bool = True,
                          "；旧版备份为 %s" % Path(bak).name if bak else "")}
 
 
+# ---------------------------------------------------------------------------
+# 版本：磁盘上已有的 `.bak_<unixts>.md` 就是版本，不另建版本库
+# ---------------------------------------------------------------------------
+# `write()` 的备份名是 `<stem>.bak_<unix秒>.md`（见上面 write 的实现）。
+# 只认这个形状：既排除用户手工建的 `xxx-副本.md`，也避免把别的文件的备份算进来。
+_BAK_RE = re.compile(r"^(?P<stem>.+)\.bak_(?P<ts>\d{9,})\.md$")
+
+
+def _target(ws, stage: str, name: str = "") -> tuple:
+    """→ (stage_def, 当前文件, 这份产物的 stem)。
+
+    `stem` 用来判断一个备份到底属于谁：多文件阶段（导演手册）同一目录下
+    有 30 份产物的备份，`第01集.bak_x.md` 不能出现在第 02 集的版本列表里。
+    """
+    s = _STAGE_BY_ID.get(stage)
+    if not s:
+        raise KeyError(stage)
+    d = cdir(ws)
+    if s.get("multi"):
+        fn = Path(name or "第01集.md").name          # 只取文件名，防目录穿越
+        if not fn.endswith(".md"):
+            fn += ".md"
+        return s, d / s["file"] / fn, Path(fn).stem
+    p = d / s["file"]
+    return s, p, p.stem
+
+
+def versions(ws, stage: str, name: str = "") -> dict:
+    """某个创作产物的版本清单：当前文件 + 它的全部备份。纯只读。
+
+    为什么不建版本库：`write()` 每次覆盖前已经把旧内容落成 `.bak_<时间戳>.md`，
+    那本身就是版本。再建一套索引只会出现「索引说有三个版本、磁盘上有五个」的分叉。
+    """
+    ws = Path(str(ws))
+    _s, cur, stem = _target(ws, stage, name)
+    d = cur.parent
+    items = []
+    if d.is_dir():
+        for f in d.iterdir():
+            if not f.is_file() or not f.name.endswith(".md"):
+                continue
+            m = _BAK_RE.match(f.name)
+            if m:
+                if m.group("stem") != stem:
+                    continue                          # 同目录下别的产物的备份
+                ts = int(m.group("ts"))
+            elif f.name == cur.name:
+                ts = 0                                # 0 = 当前版本
+            else:
+                continue
+            try:
+                st = f.stat()
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            items.append({
+                "file": f.name,
+                "rel": _rel(ws, f),
+                "ts": ts,
+                "when": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "",
+                "chars": len(text),
+                "mtime": st.st_mtime,
+                "current": ts == 0,
+            })
+    # 当前版本排最前，备份按时间倒序（最近的改动最常被比较）
+    items.sort(key=lambda x: (not x["current"], -x["ts"]))
+    return {"ok": True, "stage": stage, "name": cur.name,
+            "rel": _rel(ws, cur), "exists": cur.is_file(), "items": items}
+
+
+def read_version(ws, stage: str, name: str = "", file: str = "") -> dict:
+    """读某一个版本的正文（`file` 为空 = 当前文件）。只读。
+
+    三条拒绝规则，都是为了不让「看第 2 集的备份」变成「读到别的东西」：
+    路径分隔符、非 `.md`、备份的 stem 与目标文件不一致。
+    """
+    ws = Path(str(ws))
+    _s, cur, stem = _target(ws, stage, name)
+    fn = Path(str(file or cur.name)).name              # 取 basename，吃掉任何 ../ 前缀
+    if not fn.endswith(".md"):
+        raise ValueError("只能读 .md 版本文件：%s" % fn)
+    m = _BAK_RE.match(fn)
+    if m:
+        if m.group("stem") != stem:
+            raise ValueError("这个备份不属于当前文件：%s" % fn)
+        ts = int(m.group("ts"))
+    elif fn == cur.name:
+        ts = 0
+    else:
+        raise ValueError("不是该产物的版本文件：%s" % fn)
+    p = cur.parent / fn
+    if not p.is_file():
+        raise ValueError("版本不存在：%s" % fn)
+    text = p.read_text(encoding="utf-8", errors="replace")
+    return {"ok": True, "stage": stage, "name": cur.name, "file": fn, "ts": ts,
+            "when": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "",
+            "chars": len(text), "text": text, "rel": _rel(ws, p)}
+
+
 def save_idea(ws, payload: dict) -> dict:
     """写灵感（brief.json）。这是整条链的起点，也是唯一需要人「说一句话」的地方。"""
     ws = Path(str(ws))
