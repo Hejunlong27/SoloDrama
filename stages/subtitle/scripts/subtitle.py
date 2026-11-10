@@ -871,7 +871,10 @@ def stage_align(ws, ep, cfg, segs, lines, subs_dir, force=False, asr_fill=True, 
             wal = align_by_words(txts, words, langcfg, allow_partial=True)
             if wal:
                 _lost = wal[0].pop("_unmatched", None) or []
-                # 词级边界贴到真实有声区间（只动边界，不动文本/顺序）
+                # ★ 顺序：先按静音**拆**（一句跨两段人声 → 两条字幕），
+                #   再贴边（每条贴到它自己那个语音块）。反了就会先粘成一整块再拆不开。
+                #   两条都只在 trim 开启时做（--no-trim 表示用户要原始时间，别动）。
+                _split = split_cues_on_gaps(wal, full, langcfg) if trim else 0
                 _snap = snap_to_voiced(wal, full, langcfg) if trim else 0
                 gaps4 = coverage_gaps(cfg, seg["file"],
                                       [(r["start"], r["end"]) for r in wal],
@@ -1401,71 +1404,227 @@ def align_by_words(txts, words, lc, allow_partial=False):
     return out
 
 
-def snap_to_voiced(recs, wav, lc, head_keep=0.04, tail_keep=0.08):
-    """把每条字幕的首尾**贴到真实有声区间**上；返回调整条数。
+def snap_to_voiced(recs, wav, lc, head_keep=0.04, tail_keep=0.08, max_gap=0.25):
+    """把每条字幕贴到**单一**真实有声区间上；返回调整条数。
 
-    ★ 2026-11-10（第三次修）：词级 whisper 的边界在「人声分段 + 长静音」的素材上仍会偏。
-      实测 海外剧/28 ep01：
-        · shot_003 第二句词级给 4.58–6.53，而该镜人声实际在 6.50–7.40（偏 2 秒）；
-        · shot_005「Es la diseñadora del año.」词级把 `diseñadora` 拉成 0.6–2.70，
-          真人是 0.10–0.70 一句、2.70–3.90 一句，中间两秒空。
-      为什么会这样：whisper 的时间是按 token 均摊回声学段的，遇到长静音会把某个 token
-      拉长去盖住静音。文本对不对是一回事，边界对不对是另一回事。
+    ★ 2026-11-10 第三次重写。前两版都是错的，用户实测指出来了：
 
-      修法（只动边界，不动文本、不动顺序、不做等分）：
-        ① 取该段的声学有声区间（`loud_intervals`，同一套阈值）；
-        ② 与该字幕区间**有交叠**的区间 → 首尾取这些区间的并集端点；
-        ③ 一条都不交叠 → 找第一个起点落在 [start-0.3, end+2.0] 的区间接上去；
-        ④ 仍找不到 → 原样保留（宁可不动，也不要凭空挪）。
-      ②的作用是把「跨过静音的两段人声」正确地一起罩住；③的作用是把整句挪到
-      真正有声音的位置。前后各留 40/80ms 让字幕不要卡着声波起止闪。
+    错法一（跨静音连成一条）：旧实现取「与字幕区间有交叠的**所有**语音块」的并集端点。
+      实测 shot_001 第二句被贴成 6.66–9.82，而真实人声是
+      **6.70–7.24 / 8.20–8.76 / 9.06–9.74 三段，中间各有近 1 秒静音**。
+      字幕全程亮着跨过两段静音 —— 用户看到的就是「0 秒处和 7 秒处的音频中间有空隙，
+      但字幕连起来了」。一条字幕跨过一个 >`max_gap` 的空洞就是错的：
+      观众看到的是字在静止画面上挂着，声音早没了。
 
-    护栏：调整后若短于 `min_duration_s` 或短于「念得完」所需，就**放弃调整** ——
-    与 `tighten_to_audio` 同一原则：宁可多停留，不产出念不完的字幕。
+    错法二（整条放弃）：为防重叠，旧实现把上一条尾巴砍到**下一条的原起点**上。
+      而 `scene` 里两条字幕本来就共用人声块时（shot_004：「¿Nos conocemos?」与「No.」
+      都在 3.62–5.04 这一块），砍完只剩 0.42s < 最短 0.5s ⇒ 整条 `continue`
+      ⇒ 字幕退回原处 2.28（整集 32.66），**而人声在 33.98**。
+      用户看到的就是「35 秒处的音频，但字幕提前到了 33 秒处」。
+
+    现在的做法（只动边界，不动文本、不动顺序、不做等分）：
+      ① 取该段声学有声区间（`loud_intervals`，与覆盖检查/幻觉拦截同一套阈值）；
+      ② 找与字幕区间**交叠最多**的那一个语音块（不是并集！），首尾就取它的端点；
+      ③ 一块都不交叠 → 取第一个起点在 [a-0.3, b+2.0] 的块，整条挪过去；
+      ④ 都没有 → 原样保留（宁可不动，也不要凭空挪）。
+      ⑤ 顺序清理：上一条尾巴不许越过下一条起点；若因此短于最小时长，
+        **优先砍上一条**（它本来就在人声块里，砍完仍在人声块内），
+        而不是把上一条整条放弃退回静音。
+
+    护栏：调整后若短于 `min_duration_s` 或短于「念得完」所需，放弃这一条的调整，
+    但仍保留原始时间 —— 与 `tighten_to_audio` 同一原则。
     """
     loud = loud_intervals(wav)
     if not loud:
         return 0
     changed = 0
     safe_cps = max(8.0, float((lc or {}).get("cps_hard_max", 12.0)) * 0.85)
-    prev_end = 0.0
-    for i, r in enumerate(recs):
+    min_dur = float((lc or {}).get("min_duration_s", 0.5))
+
+    def pick(a, b, used):
+        """该字幕应归属的语音块：优先「交叠最多且尚未被占用」，其次「最近的未占用块」。
+
+        ★ 2026-11-10（第二次踩）：只按「交叠最多」选会撞车。
+          shot_004 有两句台词、三个语音块：(3.62–5.04) / (5.90–6.10) / (6.48–7.32)。
+          第一句占 3.62–5.04 之后，第二句「No.」因为原区间 5.12–5.32 与已占块
+          「交叠最多」又被判回同一块，贴成 5.12–5.32（0.2 秒压在静音上），
+          而它真正的人在 5.90–6.10。
+          ⇒ 已占用的块必须从候选中剔除；剔除后按「起点离字幕起点最近」取，
+            这才是「一句话配一段人声」的自然顺序映射。
+        """
+        free = [iv for iv in loud if iv not in used]
+        if not free:
+            return None
+        best, best_ov = None, 0.0
+        for (x, y) in free:
+            ov = min(b, y) - max(a, x)
+            if ov > best_ov:
+                best, best_ov = (x, y), ov
+        if best is not None:
+            return best
+        near = sorted(free, key=lambda iv: (abs(iv[0] - a), iv[0]))
+        return near[0]
+
+    plan = []
+    used = []
+    for r in recs:
         a, b = float(r["start"]), float(r["end"])
-        hit = [(x, y) for (x, y) in loud if y > a + 0.02 and x < b - 0.02]
-        if hit:
-            na = min(x for x, _ in hit)
-            nb = max(y for _, y in hit)
-        else:
-            nxt = [iv for iv in loud if a - 0.3 <= iv[0] <= b + 2.0]
-            if not nxt:
-                prev_end = max(prev_end, b)
-                continue
-            na, nb = nxt[0][0], nxt[0][1]
-        na = max(0.0, na - head_keep)
-        nb = nb + tail_keep
-        # 不许回退越过上一条（顺序约束）——动边界不能把顺序搞乱
-        na = max(na, prev_end)
-        # ★ 也不许盖住**下一条**已经校验过的起点：shot_004 现场，
-        #   第一句贴到 3.58–5.12，而第二句「No.」贴着 4.0–4.6（人声确实在 4.0），
-        #   不管顺序就会重叠，剪映里两条字幕同一时刻抢同一行，看起来像花屏。
-        #   这里把上一条的尾巴收到下一条起点，收完不足最小时长就整条放弃调整。
-        nxt_floor = None
-        if i + 1 < len(recs):
-            nxt_floor = float(recs[i + 1]["start"])
-        if nxt_floor is not None and nb > nxt_floor:
-            nb = max(na, nxt_floor)
-        if nb - na < float((lc or {}).get("min_duration_s", 0.5)):
-            prev_end = max(prev_end, b)
+        blk = pick(a, b, used)
+        if blk is None:
+            plan.append((r, a, b, False))
             continue
-        if nb - na < spoken_len(r.get("text") or "") / safe_cps:
-            prev_end = max(prev_end, b)
+        used.append(blk)
+        na = max(0.0, blk[0] - head_keep)
+        nb = blk[1] + tail_keep
+        # 语音块短于「理想停留时长」⇒ 向静音里延一点，让观众读得完，但不越过下一块。
+        #   ★ 2026-11-10 第三次踩：这里原来用 `min_duration_s`（0.8s）当**硬门槛**，
+        #   而 shot_004 的「No.」真实人声只有 0.20s（5.90–6.10）。延到 6.46 也只有 0.60s，
+        #   不够 0.8 ⇒ 整条放弃贴边、退回错误的 5.12（压在静音上）。
+        #   `min_duration_s` 是「节奏目标」，不是「这段语音够不够长」的判据；
+        #   真正的下限只有两条：能显示出来（0.35s）+ 念得完（字数/可接受语速）。
+        nxt_block = min([x for (x, _y) in loud if x > blk[1]] or [na + min_dur + 1.0])
+        # ★ 2026-11-10（第四次踩）：这里的「补足停留时长」曾经可以越过 `max_gap` 的静音。
+        #   实测 shot_004「No.」人声 5.90–6.10（0.20s），补足到 0.80s 就把尾巴拖进
+        #   (6.10, 6.48) 这 0.38s 静音里 ⇒ 字幕横跨两个语音块，用户看到的又是「连起来了」。
+        #   ⇒ 补时长可以，但**不许补进 >max_gap 的空洞**：最多补到下一块起点前 0.02。
+        fill_limit = nxt_block - 0.02
+        if nxt_block - blk[1] > max_gap:
+            fill_limit = blk[1] + max_gap
+        nb = min(max(nb, na + min_dur), max(fill_limit, na + 0.35))
+        hard_floor = max(0.35, spoken_len(r.get("text") or "") / safe_cps)
+        if nb - na < hard_floor:
+            plan.append((r, a, b, False))
             continue
-        if abs(na - a) > 0.03 or abs(nb - b) > 0.03:
+        # 记下「这条最多能延到哪」：build_cues 后面还会为了 min_duration_s 补时长，
+        # 不告诉它上界，它就会把尾巴拖进静音（2026-11-10 实测「No.」又被拉长跨块）。
+        r["_max_end"] = round(max(fill_limit, nb), 3)
+        plan.append((r, na, nb, True))
+
+    # 顺序清理：正序压起点、逆序压终点。方向不同，效果是「谁被挤谁让步」而不是「整条放弃」。
+    for k in range(1, len(plan)):
+        r, a, b, ok = plan[k]
+        _rp, _ap, pb, _pok = plan[k - 1]
+        if a < pb:
+            plan[k] = (r, pb, max(b, pb + 0.2), ok)
+    for k in range(len(plan) - 2, -1, -1):
+        r, a, b, ok = plan[k]
+        _rn, an, _bn, _okn = plan[k + 1]
+        if b > an:
+            nb = max(a + 0.2, an)
+            if nb - a < max(0.35, spoken_len(r.get("text") or "") / safe_cps):
+                # 让不出空间 ⇒ 上一条保持原时间（而不是贴到一个念不完的窗口）
+                plan[k] = (r, float(r["start"]), float(r["end"]), False)
+            else:
+                plan[k] = (r, a, nb, ok)
+
+    for (r, na, nb, ok) in plan:
+        if not ok:
+            continue
+        if abs(na - float(r["start"])) > 0.03 or abs(nb - float(r["end"])) > 0.03:
             r["start"], r["end"] = round(na, 3), round(nb, 3)
             r["snapped"] = True
             changed += 1
-        prev_end = float(r["end"])
     return changed
+
+
+def _split_text_at(text, frac):
+    """在文本的 `frac` 位置附近找最合适的切点（标点 > 空格），返回 (head, tail)。
+
+    为什么需要它：一条字幕如果跨过一段 >0.25s 的静音（上一句说完、下一句才开口），
+    正确做法是**拆成两条**字幕，而不是让它整段亮着。拆的时候必须尽量在词/句边界，
+    不能把单词切开 —— 西语「diseñadora」被切成「diseñ / adora」比时间错更难接受。
+    """
+    t = str(text or "").strip()
+    if len(t) < 6:
+        return None
+    cut = int(round(len(t) * frac))
+    cut = max(3, min(len(t) - 3, cut))
+    win = 6
+    best = None
+    for d in range(0, win + 1):
+        for idx in (cut - d, cut + d):
+            if 3 <= idx <= len(t) - 3:
+                ch = t[idx - 1]
+                pri = 0 if ch in "，。！？；,.!?;" else (1 if ch.isspace() else None)
+                if pri is not None and (best is None or (pri, abs(idx - cut)) < best[0]):
+                    best = ((pri, abs(idx - cut)), idx)
+    if best is None:
+        return None
+    idx = best[1]
+    head, tail = t[:idx].strip(), t[idx:].strip()
+    if len(head) < 2 or len(tail) < 2:
+        return None
+    return head, tail
+
+
+def split_cues_on_gaps(recs, wav, lc, max_gap=0.25):
+    """把「跨过明显静音」的字幕拆成多条；返回拆分次数。
+
+    ★ 2026-11-10（用户实测指出）：「0 秒处和 7 秒处的音频中间有空隙，但字幕连起来了」。
+      根因是 `align_by_words` 取的是「首词起点 → 末词终点」，中间有几秒静音它并不知道
+      （whisper 的词级时间在长静音处会把某个词拉长去覆盖，或干脆跳过一个词）。
+      实测 shot_001 第二句 6.66–9.82，真实人声是 6.70–7.24 / 8.20–8.76 / 9.06–9.74。
+
+    做法：
+      ① 取该字幕覆盖范围内的有声区间；
+      ② 相邻区间之间的空隙 > `max_gap` ⇒ 这是一句话之间的停顿，应当断开；
+      ③ 按空隙数把文本均分（在标点/空格处切），每段配一个语音块的时间；
+      ④ 文本切不动（太短/没边界）⇒ **整条不拆，保持原样**并留 `gaps_in_subtitle`
+         —— 宁可让它连着，也不要把一个词切两半。这条会进体检报告，人能看见。
+
+    拆出来的新条目 `source` 保留原值并加 `_split` 序号，`text`/`lines` 重新断行。
+    """
+    loud = loud_intervals(wav)
+    if not loud:
+        return 0
+    out, n_split = [], 0
+    for r in recs:
+        a, b = float(r["start"]), float(r["end"])
+        blks = [(x, y) for (x, y) in loud if y > a + 0.05 and x < b - 0.05]
+        if len(blks) < 2:
+            out.append(r)
+            continue
+        gaps = [(blks[i][1], blks[i + 1][0]) for i in range(len(blks) - 1)]
+        if not any(g1 - g0 > max_gap for g0, g1 in gaps):
+            out.append(r)
+            continue
+        text = str(r.get("text") or "")
+        parts, pieces = [text], []
+        ok = True
+        for _ in range(len(blks) - 1):
+            # 每次按当前段数均分，找最靠中间的可切点
+            parts_new = []
+            for seg in parts:
+                if len(parts_new) < len(blks) - 1:
+                    cut = _split_text_at(seg, 0.5)
+                else:
+                    cut = None
+                if cut:
+                    parts_new += [cut[0], cut[1]]
+                else:
+                    parts_new.append(seg)
+                if len(parts_new) >= len(blks):
+                    break
+            if len(parts_new) < len(parts) + 1:
+                ok = False
+                break
+            parts = parts_new
+        if not ok or len(parts) != len(blks):
+            r["gaps_in_subtitle"] = round(sum(max(0.0, g1 - g0) for g0, g1 in gaps
+                                              if g1 - g0 > max_gap), 2)
+            out.append(r)
+            continue
+        for k, (seg_txt, (x, y)) in enumerate(zip(parts, blks)):
+            nr = dict(r)
+            nr["text"] = seg_txt
+            nr["lines"] = split_two_lines(seg_txt, lc)
+            nr["start"] = round(x, 3)
+            nr["end"] = round(y, 3)
+            nr["_split"] = k + 1
+            out.append(nr)
+        n_split += len(blks) - 1
+    recs[:] = out
+    return n_split
 
 
 def asr_entries(cfg, path, asr_dir=None, tag=None):
@@ -1932,6 +2091,51 @@ def split_long_cue(text, cfg):
     return chunks
 
 
+def find_srt_dirs():
+    """找 SRT 时搜这些目录（按优先级）。剪映「导出字幕」默认落在用户下载目录。"""
+    home = os.path.expanduser("~")
+    dirs = [os.path.join(home, "Downloads"), os.path.join(home, "Desktop"),
+            os.path.join(home, "Documents")]
+    lad = os.environ.get("LOCALAPPDATA")
+    if lad:
+        # 剪映自己的草稿根目录（导出时也可能存这里）
+        dirs.append(os.path.join(lad, "JianyingPro"))
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+def find_recent_srt(ep=None, within_days=7):
+    """在下载/桌面/文档里找**最近修改**的 .srt；找不到返回 None。
+
+    为什么不要求文件名匹配集号：剪映导出时用的是**草稿名**（`<ep>_剪映工程.srt`、
+    `SOLODRAMA_28_ep01.srt`……），命名不可靠。改成「取最近改动的那个」更实用 ——
+    人刚在剪映里导完就来跑命令，那个文件必然是最新的。
+
+    只在 7 天内改动的文件里挑，避免误抓几周前的旧字幕。
+    """
+    best, best_mt = None, 0.0
+    cutoff = time.time() - within_days * 86400
+    for d in find_srt_dirs():
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            if not n.lower().endswith(".srt"):
+                continue
+            full = os.path.join(d, n)
+            try:
+                mt = os.path.getmtime(full)
+            except OSError:
+                continue
+            if mt < cutoff or os.path.getsize(full) < 16:
+                continue
+            if ep and str(ep).lower() in n.lower():
+                mt += 1e9            # 文件名带集号的一律优先
+            if mt > best_mt:
+                best, best_mt = full, mt
+    return best
+
+
 def load_cues_from_srt(path, cfg, segs, offset_s=0.0):
     """把外部 SRT 读成 cues（整集绝对时间，**镜头轴**）。
 
@@ -2120,14 +2324,19 @@ def build_cues(ws, ep, cfg, segs, lines, subs_dir):
                 pst, pen = cur, min(cur + span, en)
                 if pen - pst < lc["min_duration_s"]:
                     pen = min(pst + lc["min_duration_s"], en)
-                cues.append({
+                _cue = {
                     "shot_id": sid,
                     "start": round(seg_start + pst, 3),
                     "end": round(seg_start + pen, 3),
                     "text": p,
                     "lines": split_two_lines(p, lc),
                     "source": it.get("source", "ctc-sequential")
-                })
+                }
+                # 把「这条最多能延到哪」一起带到 cue 上（段内轴 → 整集轴）。
+                #   少了这一行，后面「补足 min_duration_s」会无视语音块边界把尾巴拖进静音。
+                if it.get("_max_end") is not None:
+                    _cue["_max_end"] = round(seg_start + float(it["_max_end"]), 3)
+                cues.append(_cue)
                 cur = pen
     # 排序 → 延长过短条目 → 去重叠（后一条不得早于前一条结束）
     #   注意：延长必须受【下一条起点】约束，否则会把两条字幕叠在一起
@@ -2138,7 +2347,15 @@ def build_cues(ws, ep, cfg, segs, lines, subs_dir):
         if c["end"] <= c["start"]:
             c["end"] = c["start"] + lc["min_duration_s"]
         if c["end"] - c["start"] < lc["min_duration_s"]:
-            c["end"] = min(c["start"] + lc["min_duration_s"], nxt)
+            # ★ 2026-11-10：补时长不许越过 `_max_end`（= 该条所在语音块 + 允许的静音余量）。
+            #   否则「No.」这种 0.2 秒的短应答会被补到 0.8 秒，尾巴横穿下一条静音，
+            #   用户看到的就是「字幕连起来了而音频断开」。
+            _cap = c.pop("_max_end", None)
+            _lim = min(c["start"] + lc["min_duration_s"], nxt)
+            if _cap:
+                _lim = min(_lim, float(_cap))
+            if _lim > c["end"]:
+                c["end"] = round(_lim, 3)
         if c["end"] > nxt:
             c["end"] = nxt
         if c["end"] - c["start"] < lc["min_duration_s"] - 1e-6:
@@ -3056,14 +3273,27 @@ def main():
                     help="母版不加首帧封面（默认用 09-发行/封面/cover_9x16*.png 做 0.8s 片头）")
     ap.add_argument("--from-srt", dest="from_srt", default=None, metavar="PATH",
                     help="用外部 SRT 作为字幕时间源（例如剪映「识别字幕」后导出的字幕文件）；"
-                         "给了它就不跑 whisper/CTC 对齐 —— 外部 ASR 已经定过时间，别再覆盖")
+                         "给了它就不跑 whisper/CTC 对齐 —— 外部 ASR 已经定过时间，别再覆盖。"
+                         "写 `auto` 则自动在下载目录 / 草稿目录里找最近修改的 .srt")
     ap.add_argument("--srt-axis", dest="srt_axis", default="master",
                     choices=["master", "shots"],
                     help="外部 SRT 的时间轴：master=工程/成片轴（含封面片头，默认，会自动减回）；"
                          "shots=镜头轴（第一段画面=0，不减）")
 
     args = ap.parse_args()
-    args.ep = canon_ep(args.ep)          # 26 / EP26 / ep026 → ep26（否则路径对不上）
+    args.ep = canon_ep(args.ep)
+    if args.from_srt and str(args.from_srt).strip().lower() == "auto":
+        # ★ 剪映导出的字幕会落到「下载」目录（默认是浏览器下载位置），文件名是草稿名。
+        #   让人手抄一个长路径是没必要的摩擦：`--from-srt auto` 直接找最近的那个。
+        _hit = find_recent_srt(args.ep)
+        if not _hit:
+            raise SystemExit(
+                "没找到可用的 SRT。剪映里请走：文本 → 智能字幕 → 识别字幕 → 识别完成后"
+                "右上「导出」→ 只勾「字幕」→ 导出到默认下载目录；然后再跑本命令。\n"
+                "  已搜：%s" % "；".join(find_srt_dirs()))
+        args.from_srt = _hit
+        print("②.0 自动选中 SRT：%s（%.0f 分钟前修改）"
+              % (_hit, (time.time() - os.path.getmtime(_hit)) / 60))          # 26 / EP26 / ep026 → ep26（否则路径对不上）
 
     if not args.workspace:
         raise SystemExit(

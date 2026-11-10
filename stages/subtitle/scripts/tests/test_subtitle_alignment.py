@@ -23,6 +23,7 @@ import re
 import struct
 import sys
 import tempfile
+import time
 import unittest
 import wave
 
@@ -394,6 +395,131 @@ class TestCueOrderCursor(unittest.TestCase):
             # 第二段起点应是 2.0s（第一段占满），而不是 0.2s
             self.assertGreaterEqual(cues[0]["start"], 1.9,
                                     "无台词镜头的时长必须计入时间轴，否则字幕整体提前")
+
+
+class TestSplitOnGaps(unittest.TestCase):
+    """一条字幕跨过 >0.25s 静音 ⇒ 必须拆成两条（用户实测指出）。"""
+
+    LC = {"wrap": "word", "max_cue_chars": 48, "max_line_chars": 26,
+          "max_duration_s": 6.0, "min_duration_s": 0.5, "cps_hard_max": 12.0}
+
+    def test_splits_three_blocks_into_three_cues(self):
+        """shot_001 现场：词级给 6.66–9.82，真实人声 6.70–7.24 / 8.20–8.76 / 9.06–9.74。"""
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [
+                (0.0, 0.5, 0), (0.70, 1.24, 8000), (1.24, 2.20, 0),
+                (2.20, 2.76, 8000), (2.76, 3.06, 0), (3.06, 3.74, 8000),
+                (3.74, 4.0, 0)])
+            recs = [{"start": 0.66, "end": 3.82, "text": "Firmaste. Quien firma, no tiene derecho.",
+                     "source": "whisper-word"}]
+            n = S.split_cues_on_gaps(recs, str(wav), self.LC)
+            self.assertEqual(n, 2, "两处静音 => 拆两刀")
+            self.assertEqual(len(recs), 3)
+            for r in recs:
+                self.assertLess(r["end"] - r["start"], 1.5, "每条只能罩一个语音块")
+
+    def test_no_split_when_gap_is_short(self):
+        """相邻块间隙 0.1s（< 0.25）是同一个人换气，不该拆。"""
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [
+                (0.0, 0.5, 0), (0.70, 1.24, 8000), (1.24, 1.34, 0), (1.34, 2.0, 8000)])
+            recs = [{"start": 0.66, "end": 2.05, "text": "Hola que tal amigo", "source": "x"}]
+            self.assertEqual(S.split_cues_on_gaps(recs, str(wav), self.LC), 0)
+            self.assertEqual(len(recs), 1)
+
+    def test_text_too_short_keeps_cue_and_flags_gap(self):
+        """文本切不动（单字）⇒ 不拆，但留下 gaps_in_subtitle 让人看见。"""
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [
+                (0.0, 0.5, 0), (0.70, 1.24, 8000), (1.24, 2.20, 0), (2.20, 2.76, 8000)])
+            recs = [{"start": 0.66, "end": 2.82, "text": "No", "source": "x"}]
+            self.assertEqual(S.split_cues_on_gaps(recs, str(wav), self.LC), 0)
+            self.assertEqual(len(recs), 1)
+            self.assertIn("gaps_in_subtitle", recs[0])
+
+
+class TestSnapToSingleBlock(unittest.TestCase):
+    """贴边只能贴到**一个**语音块；两条字幕不许抢同一块。"""
+
+    LC = {"min_duration_s": 0.8, "cps_hard_max": 12.0}
+
+    def test_does_not_merge_multiple_blocks(self):
+        """用户实测：'0 秒和 7 秒的音频中间有空隙，字幕却连起来了'。
+
+        旧实现取「所有交叠块」的并集端点 => 6.66–9.82 跨两段静音。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [
+                (0.0, 0.5, 0), (0.70, 1.24, 8000), (1.24, 2.20, 0),
+                (2.20, 2.76, 8000)])
+            recs = [{"start": 0.66, "end": 2.82, "text": "Firmaste. Quien firma", "source": "x"}]
+            S.snap_to_voiced(recs, str(wav), self.LC)
+            # 只罩 0.70–1.24 那一块（0.62s）念不完整句 ⇒ 保持原样（不动），
+            # 关键是不能把 end **拉长**到覆盖第二块 2.20–2.78 —— 那才是「跨静音」。
+            self.assertLessEqual(recs[0]["end"], 2.82 + 1e-6,
+                                 "贴边只许收紧或平移，绝不许把尾巴拉长去盖住下一块")
+
+    def test_short_reply_grabs_its_own_block(self):
+        """用户实测：'35 秒的音频，字幕提前到 33 秒'。
+
+        shot_004 两句共处一个人声块时，第二句曾被判回已占块 → 贴成 0.2s 静音，
+        或整条放弃退回错误位置。正确行为：第二句拿**下一个**未占用块。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [
+                (0.0, 3.00, 0), (3.62, 5.04, 8000), (5.04, 5.90, 0),
+                (5.90, 6.10, 8000), (6.10, 6.48, 0), (6.48, 7.32, 8000)])
+            recs = [{"start": 3.58, "end": 5.12, "text": "¿Nos conocemos?", "source": "x"},
+                    {"start": 5.12, "end": 5.32, "text": "No.", "source": "x"}]
+            S.snap_to_voiced(recs, str(wav), self.LC)
+            self.assertAlmostEqual(recs[0]["start"], 3.58, places=1)
+            # 「No.」必须落到 5.90–6.10 那块，而不是 5.12（静音）也不是 6.48
+            self.assertGreaterEqual(recs[1]["start"], 5.80)
+            self.assertLessEqual(recs[1]["start"], 6.00)
+
+    def test_pad_does_not_cross_silence(self):
+        """补足停留时长不许补进 >max_gap 的空洞（否则又变成'跨静音'）。"""
+        with tempfile.TemporaryDirectory() as td:
+            wav = _tone_wav(pathlib.Path(td) / "a.wav", [
+                (0.0, 5.00, 0), (5.90, 6.10, 8000), (6.10, 6.48, 0), (6.48, 7.32, 8000)])
+            recs = [{"start": 5.84, "end": 6.12, "text": "No.", "source": "x"}]
+            S.snap_to_voiced(recs, str(wav), self.LC)
+            self.assertLess(recs[0]["end"], 6.40, "尾巴不许拖进 6.10–6.48 的静音")
+
+
+class TestFindRecentSrt(unittest.TestCase):
+    """`--from-srt auto`：剪映导出的 SRT 落在下载目录，按修改时间取最新。"""
+
+    def test_picks_newest_and_prefers_ep_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = pathlib.Path(td)
+            old = d / "old.srt"
+            old.write_text("1\n00:00:00,000 --> 00:00:01,000\nA\n", encoding="utf-8")
+            import os as _os
+            _os.utime(old, (time.time() - 3 * 86400,) * 2)
+            new = d / "ep01_剪映工程.srt"
+            new.write_text("1\n00:00:00,000 --> 00:00:01,000\nB\n", encoding="utf-8")
+            orig = S.find_srt_dirs
+            S.find_srt_dirs = lambda: [str(d)]
+            try:
+                got = S.find_recent_srt("ep01")
+            finally:
+                S.find_srt_dirs = orig
+            self.assertEqual(pathlib.Path(got).name, "ep01_剪映工程.srt")
+
+    def test_ignores_stale_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = pathlib.Path(td)
+            p = d / "ancient.srt"
+            p.write_text("1\n00:00:00,000 --> 00:00:01,000\nA\n", encoding="utf-8")
+            import os as _os
+            _os.utime(p, (time.time() - 30 * 86400,) * 2)
+            orig = S.find_srt_dirs
+            S.find_srt_dirs = lambda: [str(d)]
+            try:
+                self.assertIsNone(S.find_recent_srt("ep01"))
+            finally:
+                S.find_srt_dirs = orig
 
 
 class TestSrtImport(unittest.TestCase):

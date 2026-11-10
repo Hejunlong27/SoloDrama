@@ -344,7 +344,7 @@ def build_timeline(data: dict, edit_cfg: dict, with_subtitle: bool = True) -> di
                                   % data["cover_s"]) if cover_us else "无封面片头，字幕不偏移"}
 
 
-def sync_check(data: dict, min_voiced_s: float = 0.25) -> dict:
+def sync_check(data: dict, min_voiced_s: float = 0.12) -> dict:
     """量化「字幕有没有压到静音上」：每条字幕窗口里**最长连续有声区间**的时长。
 
     为什么要有这一步：对齐错了不会报错，只会「看起来怪」。实测 海外剧/28 ep01
@@ -360,6 +360,11 @@ def sync_check(data: dict, min_voiced_s: float = 0.25) -> dict:
         · 首尾是对的、中间空洞是词级时间戳的固有抖动，不是错位。
       字幕的职责是「有人说话时它在场」，不是「在场时一直有人说话」；
       用占比判会把正确的全判成错的，人就再也不看这个告警了。
+
+    ★ 门限 0.12s 的理由：「No.」「¿Eh?」这种应答的真实人声就是 0.2 秒级
+      （实测 shot_004「No.」人声 5.90–6.10 = 0.20s）。门限设太高会把**正确的短句**
+      报成错位，人就再也不看这个告警了。真正要抓的是「整条都压在静音上」，
+      那类错的连续人声是 0.00s。
     """
     sub = _sub()
     starts, t = {}, 0.0
@@ -944,7 +949,7 @@ def main(argv=None) -> int:
     #   对齐错位是「沉默的错」—— 不断言、不报错，只在画面里静静错着。
     #   所以每次出工程都算一遍，把「哪条压静音」写进 manifest，让审核能追。
     sync = (sync_check(data) if tl["text"]
-            else {"checked": 0, "skipped": 0, "suspects": [], "min_voiced_s": 0.25})
+            else {"checked": 0, "skipped": 0, "suspects": [], "min_voiced_s": 0.12})
 
     manifest = build_manifest(data, tl, draft, verdict)
     manifest["sync"] = sync
