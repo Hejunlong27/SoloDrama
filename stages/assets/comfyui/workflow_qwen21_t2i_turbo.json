@@ -1,0 +1,202 @@
+{
+  "13": {
+    "inputs": {
+      "aspect_ratio": "3:4 (Portrait Standard)",
+      "megapixels": 2,
+      "multiple": 8
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "分辨率选择器"
+    }
+  },
+  "470": {
+    "inputs": {
+      "unet_name": "qwen_image_2.1_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "471": {
+    "inputs": {
+      "prompt": [
+        "488",
+        0
+      ],
+      "negative_prompt": "",
+      "resolution": 1024,
+      "clip": [
+        "472",
+        0
+      ],
+      "vae": [
+        "473",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImage21",
+    "_meta": {
+      "title": "Text Encode Qwen Image 2.1"
+    }
+  },
+  "472": {
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "473": {
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "474": {
+    "inputs": {
+      "width": [
+        "13",
+        0
+      ],
+      "height": [
+        "13",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "475": {
+    "inputs": {
+      "samples": [
+        "497",
+        0
+      ],
+      "vae": [
+        "473",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "487": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "475",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  },
+  "488": {
+    "inputs": {
+      "value": "竖版3:4短剧商业封面，都市家庭情感题材，电影感影视海报。画面中必须恰好出现五个人物：一名成年女性与四名成年男性兄弟，共五人，不要多也不要少。女主位于画面前景中央，约30岁左右，面部清晰突出，五官自然真实，发型整洁，穿着简洁优雅的米白色针织上衣与深色外套，气质克制、坚定，眼神略带疲惫但不哭泣，呈现离婚后重新被家人接住时的复杂情绪。四名成年男性兄弟站在女主两侧与后方，形成保护性半包围构图：左右各一名，后方两名，人物之间有前后层次，不并排机械站立；他们穿着不同款式的深色都市秋冬外套，表情关切、克制、可靠，不使用统一微笑或僵硬摆拍。最近的一位兄弟可自然做出轻扶门框或递外套的动作，手部结构自然，不遮挡女主面部。\n\n背景为现代城市住宅入口或门廊，门外是冷蓝灰色都市夜景，门内透出温暖的金色家庭灯光，形成“门外冷、门内暖”的空间对比，象征回归与守护。女主面部使用柔和主光，四名兄弟使用轮廓光与较暗的环境光，背景适度虚化，人物与背景清晰分离。整体色彩为冷蓝灰与暖金对比，画面干净、有层次，具有真实摄影质感和电影海报质感，皮肤自然、服装材质清晰，避免过度磨皮和塑料感。\n\n标题必须准确、完整地生成西班牙语原文，不得改写、漏字或增加文字：Divorciada: mis cuatro hermanos me llevan a casa。标题放置在画面底部安全区，居中排版，分三行：第一行“Divorciada:”，第二行“mis cuatro hermanos”，第三行“me llevan a casa”。第一行字号最大，使用现代电影感粗体无衬线字体，白色字配深灰描边和轻微阴影；第二、三行字号稍小但清晰可读，暖白色，保持统一字体气质。标题不得遮挡女主面部，不得添加宣传语、集数、平台Logo、水印或无关文字。女主面部位于画面上方三分之一中央，标题位于底部约五分之一区域，确保缩略图裁切时人物和标题均安全可见。整体要求高点击商业短剧封面、专业影视宣传物料、清晰视觉层级、自然光影、真实人物比例和高级构图。"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "字符串（多行）"
+    }
+  },
+  "492": {
+    "inputs": {
+      "switch": [
+        "494",
+        0
+      ],
+      "on_false": [
+        "471",
+        2
+      ],
+      "on_true": [
+        "474",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "切换"
+    }
+  },
+  "494": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "自定义比例"
+    }
+  },
+  "495": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "496": {
+    "inputs": {
+      "sigmas": "1.0,0.978453,0.95418,0.926626,0.89508,0.845148,0.704534,0.414568,0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "自定义Sigmas"
+    }
+  },
+  "497": {
+    "inputs": {
+      "add_noise": true,
+      "noise_seed": 1001791701491090,
+      "cfg": 1,
+      "model": [
+        "470",
+        0
+      ],
+      "positive": [
+        "471",
+        0
+      ],
+      "negative": [
+        "471",
+        1
+      ],
+      "sampler": [
+        "495",
+        0
+      ],
+      "sigmas": [
+        "496",
+        0
+      ],
+      "latent_image": [
+        "492",
+        0
+      ]
+    },
+    "class_type": "SamplerCustom",
+    "_meta": {
+      "title": "自定义采样器"
+    }
+  }
+}

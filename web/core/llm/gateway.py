@@ -187,10 +187,10 @@ class Gateway:
     # ------------------------------------------------------------------
     # 主入口
     # ------------------------------------------------------------------
-    def complete(self, purpose, variables=None, *, provider_id=None, model=None,
-                 timeout_s=None, job_id=None, cancel=None, temperature=None,
-                 max_tokens=None, template_id=None, validate_schema=True,
-                 project=None) -> dict:
+    def _complete_one(self, purpose, variables=None, *, provider_id=None, model=None,
+                      timeout_s=None, job_id=None, cancel=None, temperature=None,
+                      max_tokens=None, template_id=None, validate_schema=True,
+                      project=None, route_id="") -> dict:
         """生成一次。**不抛业务错误**：返回 `{ok: bool, ...}`，保证前端拿到分类信息。
 
         失败也写用量；`error` 里只有分类与人话。
@@ -209,6 +209,8 @@ class Gateway:
         base = {
             "request_id": rid, "purpose": purpose, "template_id": tid,
             "template_sha": templates.body_sha(tid), "job_id": job_id or "",
+            "kind": "completion", "project": str(project or ""),
+            "route_id": str(route_id or ""),
             "provider": "", "provider_name": "", "model": "",
         }
 
@@ -378,17 +380,248 @@ class Gateway:
             **base, "ok": True, "at": time.time(), "elapsed_ms": elapsed_ms,
             "simulated": simulated,
             "attempts": attempt + 1, "usage": out["usage"], "cost": cost,
+            "actual_model": out.get("model") or base["model"],
+            "finish_reason": out.get("finish_reason") or "",
             "output_sha": _sha(res.text), "output_chars": len(res.text or ""),
             "error_kind": "", "error": "",
         })
-        _ = project  # 预留：按项目分别统计用量
         return out
+
+    # ------------------------------------------------------------------
+    # 原生对话（制片助手等多轮用途）
+    # ------------------------------------------------------------------
+    def _chat_one(self, messages, *, purpose="agent.chat", route_purpose="create.plan",
+                  provider_id=None, model=None, project=None, job_id=None,
+                  timeout_s=None, temperature=0.3, max_tokens=2400, cancel=None,
+                  route_id="") -> dict:
+        """多轮模型调用，统一复用 Gateway 的鉴权、重试与用量记账。
+
+        为什么需要单独入口：制片助手每次返回的是工具调用 JSON，不是模板渲染结果，
+        不能走 `complete()` 的模板/Schema 链路；但也不能像旧实现那样直接构建
+        provider，否则这次调用不会进入 usage.jsonl，成本与效果都无法追踪。
+        """
+        rid = uuid.uuid4().hex[:12]
+        t0 = time.time()
+        routed = {}
+        base = {
+            "request_id": rid, "purpose": str(purpose or "agent.chat"),
+            "route_purpose": str(route_purpose or ""), "template_id": "",
+            "template_sha": "", "job_id": job_id or "", "kind": "chat",
+            "project": str(project or ""), "route_id": str(route_id or ""),
+            "provider": "", "provider_name": "",
+            "model": str(model or ""), "simulated": False,
+        }
+
+        def fail(exc: LLMError, extra=None):
+            rec = {**base, "ok": False, "at": time.time(),
+                   "elapsed_ms": int((time.time() - t0) * 1000),
+                   "error_kind": exc.kind, "error": safety.scrub(exc.text)[:300],
+                   "usage": {}, "cost": {"usd": None, "source": "unknown"},
+                   "prompt_sha": "", "output_sha": "", **(extra or {})}
+            store.append_usage(rec)
+            return {
+                "ok": False, "request_id": rid, "purpose": base["purpose"],
+                "provider": base.get("provider") or "", "model": base.get("model") or "",
+                "elapsed_ms": rec["elapsed_ms"],
+                "error": {"kind": exc.kind, "message": safety.scrub(exc.text),
+                          "retryable": exc.retryable, "status": exc.status},
+            }
+
+        if not isinstance(messages, list) or not messages:
+            return fail(LLMError("config", "对话消息不能为空"))
+
+        try:
+            if provider_id:
+                prov = store.get_provider(str(provider_id), with_key=True)
+            else:
+                routed = store.get_purpose(route_purpose)
+                pid = routed.get("provider_id") or ""
+                if not pid:
+                    picked = store.auto_provider(route_purpose)
+                    pid = picked.get("id") or ""
+                if not pid:
+                    raise LLMError("config", "用途「%s」没有可用提供商，请先到 AI 模型中心配置"
+                                   % route_purpose)
+                prov = store.get_provider(pid, with_key=True)
+        except LLMError as exc:
+            return fail(exc)
+
+        base["provider"] = prov.get("id") or ""
+        base["provider_name"] = prov.get("name") or ""
+        base["model"] = str(model or routed.get("model") or prov.get("default_model") or "")
+        simulated = prov.get("kind") == "mock"
+        base["simulated"] = simulated
+
+        if not prov.get("enabled"):
+            return fail(LLMError("config", "提供商「%s」已停用" % (prov.get("name") or prov.get("id"))))
+        if not simulated:
+            try:
+                safety.check_base_url(prov.get("base_url"), allow_local=bool(prov.get("local")))
+            except LLMError as exc:
+                return fail(exc)
+
+        need = ["text"]
+        have = list(prov.get("capabilities") or [])
+        lack = [c for c in need if c not in have]
+        if lack:
+            return fail(LLMError("unsupported", "提供商「%s」未声明能力 %s"
+                                 % (prov.get("name") or prov.get("id"), "、".join(lack))))
+
+        key = prov.get("_key") or ""
+        if not key and not prov.get("local") and not simulated:
+            return fail(LLMError("config", "提供商「%s」缺少 API Key（环境变量 %s 未设置）"
+                                 % (prov.get("name") or prov.get("id"),
+                                    prov.get("env_var") or "未指定")))
+        try:
+            client = self._factory(prov, key)
+        except LLMError as exc:
+            return fail(exc)
+
+        prompt_sha = _sha(json.dumps(messages, ensure_ascii=False, sort_keys=True))
+        retries = int(prov.get("max_retries") or 0)
+        attempt = 0
+        res = None
+        while attempt <= retries:
+            if cancel is not None and getattr(cancel, "is_set", None) and cancel.is_set():
+                return fail(LLMError("canceled", "已取消"), {"attempts": attempt, "prompt_sha": prompt_sha})
+            try:
+                res = client.chat(messages, model=base["model"] or None,
+                                  temperature=temperature, max_tokens=max_tokens,
+                                  json_mode=False, timeout_s=timeout_s, cancel=cancel)
+                break
+            except LLMError as exc:
+                attempt += 1
+                if not exc.retryable or attempt > retries:
+                    return fail(exc, {"attempts": attempt, "prompt_sha": prompt_sha,
+                                      "elapsed_ms": int((time.time() - t0) * 1000)})
+                time.sleep(_BACKOFF[min(attempt, len(_BACKOFF) - 1)])
+            except Exception as exc:  # noqa: BLE001 - 适配器未包住的意外
+                return fail(LLMError("network", safety.scrub(str(exc))[:200]),
+                            {"attempts": attempt + 1, "prompt_sha": prompt_sha})
+
+        elapsed_ms = int((time.time() - t0) * 1000)
+        usage = res.usage or {}
+        cost = _cost_of(usage)
+        actual_model = res.model or base["model"]
+        finish_reason = str((res.extra or {}).get("finish_reason") or "")
+        out = {
+            "ok": True, "request_id": rid, "purpose": base["purpose"],
+            "provider": base["provider"], "provider_name": base["provider_name"],
+            "model": actual_model, "text": res.text or "", "elapsed_ms": elapsed_ms,
+            "attempts": attempt + 1, "usage": usage, "cost": cost,
+            "simulated": simulated, "finish_reason": finish_reason,
+        }
+        store.append_usage({
+            **base, "ok": True, "at": time.time(), "elapsed_ms": elapsed_ms,
+            "attempts": attempt + 1, "usage": usage, "cost": cost,
+            "actual_model": actual_model, "finish_reason": finish_reason,
+            "prompt_sha": prompt_sha, "output_sha": _sha(res.text),
+            "output_chars": len(res.text or ""), "error_kind": "", "error": "",
+        })
+        return out
+
+    # ------------------------------------------------------------------
+    # 路由与安全切换
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _can_fallback(result: dict) -> bool:
+        """只对未产生内容的预执行错误切下一家。
+
+        timeout / server / protocol 可能已经受理并计费，不能静默重提到另一个模型；
+        这类错误保留下来交给人工或后续显式恢复。
+        """
+        kind = str(((result or {}).get("error") or {}).get("kind") or "")
+        return kind in {"config", "auth", "quota", "model_not_found", "rate_limit"}
+
+    def _route_chain(self, purpose, provider_id=None, model=None) -> list:
+        if provider_id:
+            return [{"id": "explicit", "provider_id": str(provider_id),
+                     "model": str(model or "")}]
+        try:
+            routes = store.get_route_chain(purpose)
+        except LLMError:
+            routes = []
+        if routes:
+            if model:
+                routes = [dict(r, model=model) for r in routes]
+            # 冷却中的路由先跳过；若整条链都在冷却，仍保留全部，避免把系统直接锁死。
+            usable = []
+            for route in routes:
+                health = store.provider_health(route.get("provider_id") or "")
+                if not health.get("cooling"):
+                    usable.append(route)
+            return usable or routes
+        return [{"id": "unresolved", "provider_id": "", "model": str(model or "")}]
+
+    def complete(self, purpose, variables=None, *, provider_id=None, model=None,
+                 timeout_s=None, job_id=None, cancel=None, temperature=None,
+                 max_tokens=None, template_id=None, validate_schema=True,
+                 project=None) -> dict:
+        """按用途主路由执行；安全错误才切换备用路由。每次尝试独立写 usage。"""
+        routes = self._route_chain(purpose, provider_id=provider_id, model=model)
+        attempts = []
+        last = None
+        for route in routes:
+            res = self._complete_one(
+                purpose, variables, provider_id=route.get("provider_id") or None,
+                model=route.get("model") or model, route_id=route.get("id") or "",
+                timeout_s=timeout_s, job_id=job_id, cancel=cancel,
+                temperature=temperature, max_tokens=max_tokens,
+                template_id=template_id, validate_schema=validate_schema,
+                project=project,
+            )
+            err = res.get("error") or {}
+            attempts.append({"route_id": route.get("id") or "",
+                             "provider_id": route.get("provider_id") or "",
+                             "model": route.get("model") or "",
+                             "ok": bool(res.get("ok")),
+                             "error_kind": err.get("kind") or ""})
+            last = res
+            if res.get("ok") or not self._can_fallback(res):
+                break
+        if last is None:
+            last = {"ok": False, "purpose": purpose,
+                    "error": {"kind": "config", "message": "没有可用路由",
+                              "retryable": False, "status": None}}
+        last["route_attempts"] = attempts
+        return last
+
+    def chat(self, messages, *, purpose="agent.chat", route_purpose="create.plan",
+             provider_id=None, model=None, project=None, job_id=None,
+             timeout_s=None, temperature=0.3, max_tokens=2400, cancel=None) -> dict:
+        """多轮对话版的主备切换；规则与 complete() 相同。"""
+        routes = self._route_chain(route_purpose, provider_id=provider_id, model=model)
+        attempts = []
+        last = None
+        for route in routes:
+            res = self._chat_one(
+                messages, purpose=purpose, route_purpose=route_purpose,
+                provider_id=route.get("provider_id") or None,
+                model=route.get("model") or model, route_id=route.get("id") or "",
+                project=project, job_id=job_id, timeout_s=timeout_s,
+                temperature=temperature, max_tokens=max_tokens, cancel=cancel,
+            )
+            err = res.get("error") or {}
+            attempts.append({"route_id": route.get("id") or "",
+                             "provider_id": route.get("provider_id") or "",
+                             "model": route.get("model") or "",
+                             "ok": bool(res.get("ok")),
+                             "error_kind": err.get("kind") or ""})
+            last = res
+            if res.get("ok") or not self._can_fallback(res):
+                break
+        if last is None:
+            last = {"ok": False, "purpose": purpose,
+                    "error": {"kind": "config", "message": "没有可用路由",
+                              "retryable": False, "status": None}}
+        last["route_attempts"] = attempts
+        return last
 
     # ------------------------------------------------------------------
     # 用量汇总
     # ------------------------------------------------------------------
-    def usage(self, limit=200, purpose=None, provider=None) -> dict:
-        return store.usage(limit=limit, purpose=purpose, provider=provider)
+    def usage(self, limit=200, purpose=None, provider=None, project=None) -> dict:
+        return store.usage(limit=limit, purpose=purpose, provider=provider, project=project)
 
 
 def _host_of(url: str) -> str:

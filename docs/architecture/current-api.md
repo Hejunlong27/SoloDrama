@@ -1,6 +1,6 @@
-# 当前 API（111 端点，按域归档）
+# 当前 API（122 端点，按域归档）
 
-> 来源：`grep -cE '@app\.(get|post|put|delete|websocket)' web/app.py` → **118**（2.0 Phase 3 新增 `/api/studio/cover`；Phase 4 新增 `POST /api/studio/prompt`）。
+> 来源：`grep -cE '@app\.(get|post|put|delete|websocket)' web/app.py` → **122**（新增模型参数校验与媒体任务状态接口）。
 > 只列真实端点；标 † 的为危险写操作（受 `CMD.danger > CMD.READ` + 只读闸约束）。
 
 ## 1. 健康与运行时
@@ -37,7 +37,7 @@
 | GET | `/api/studio/episodes` | 逐集：`total/ok/fail/pending/state/master/upscaled/mix/subbed/ass/draft/release` |
 | GET | `/api/studio/prompt?shot=&ep=` | 单镜提示词 + 六段解析 + lint。`ep` 不给且该镜跨集存在时返回 `ambiguous` + 候选 |
 | POST | `/api/studio/prompt` | 写回单镜提示词（引擎侧备份 + 原子替换 + 复检；`blocked_by_lint` 时 rc=3 不落盘） |
-| GET | `/api/studio/cost` | 时间与钱两个口径 |
+| GET | `/api/studio/cost` | 项目耗时与平台花费；LLM 用量另由 `/api/llm/usage` 汇入成本页展示 |
 | GET | `/api/studio/cover?ws=` | 首页海报用的一张代表性图（只读，60s 缓存；取不到返回 `ok=false`） |
 | GET | `/api/studio/image-channel?ws=` | 资产出图的通道判定（只读）：`spec`/`paid`/`url`/`fake_cloud`/`backup`，真源 `model-plan.json` |
 | GET | `/api/studio/release` | 发行资料齐全度 `verdict ∈ ok/ready_for_export/blocked` |
@@ -73,9 +73,15 @@
 | POST | `/api/comfy/workflows/{id}/validate` | 校验（只读） |
 | GET | `/api/comfy/workflows/{id}/backups` | 备份列表 |
 | POST† | `/api/generators/rh` | 设 RunningHub 工作流 |
-| GET | `/api/generators` | 生成器清单 |
-| GET | `/api/pipeline/plan` | 计划（含预算闸门） |
-| POST† | `/api/pipeline/run` | 执行计划 |
+| GET | `/api/generators` | 生成通道状态 + `model_catalog` + `board_channel`（本地/云端/ZZAI/RunningHub 分镜图下游） |
+| POST | `/api/generators/model-params` | 只读校验模型参数并返回平台请求映射；不提交任务、不产生费用 |
+| GET | `/api/media/tasks?ws=` | 媒体任务列表；支持 `kind/status/limit`，记录远端 task ID、报价与实际金额 |
+| GET | `/api/media/tasks/{id}?ws=` | 单条媒体任务详情 |
+| GET | `/api/media/tasks/{id}/resume?ws=` | 断点恢复信息：是否需轮询、是否允许重新提交 |
+| GET | `/api/scheduler/status?ws=&ep=&limit=` | 13 节点只读状态、下一步、journal、工作区锁 |
+| POST† | `/api/scheduler/run` | 入队受控 Runner；默认干跑，`apply` 真跑需确认，`yes` 另需 GPU/计费确认 |
+| GET | `/api/pipeline/plan` | 旧版环节计划（兼容保留；Studio 调度页已改用 `/api/scheduler/status`） |
+| POST† | `/api/pipeline/run` | 旧版环节执行（兼容保留） |
 
 ## 6. 创作与 LLM
 
@@ -85,8 +91,9 @@
 | POST† | `/api/create/{idea,write,generate}` | 生成灵感/写文件/生成正文 |
 | GET | `/api/skills` `/installed` `/prompt` `/presets` `/api/skills/{sid}` | 题材模板 |
 | POST† | `/api/skills/{upload,install,uninstall}` | 装/卸模板 |
-| GET | `/api/llm/meta` `/providers` `/purposes` `/templates` `/usage` | 网关元信息 |
-| POST† | `/api/llm/providers` `/purposes/{pid}` | 供应商与用途路由 |
+| GET | `/api/llm/meta` `/providers` `/purposes` `/templates` `/usage` | 网关元信息；`providers` 返回 provider health，`purposes` 返回 `routes/fallback_count`，`usage` 支持 `purpose/provider/project` 过滤并区分已知/未知金额 |
+| POST† | `/api/llm/purposes/{pid}` | 绑定主路由或 `routes[]` 主备链；保存前校验 provider/model 与能力 |
+| POST† | `/api/llm/providers` | 供应商配置 |
 | POST | `/api/llm/{preview,complete}` `/{pid}/test` | 预览/补全/测试 |
 
 ## 7. 图解与画布
@@ -109,7 +116,7 @@
 | GET | `/api/styles` | 画风库 |
 | GET | `/api/time/global` | 全局耗时 |
 | GET | `/api/glossary` `/api/home` `/api/episodes` `/api/overview` `/api/pipeline` `/api/gates` | 旧控制台数据 |
-| POST | `/api/help` `/api/agent/chat` | 助手 |
+| POST | `/api/help` `/api/agent/chat` | 助手；`/api/agent/chat` 必须带 `confirm=true`，一次请求最多执行 12 步模型调用 |
 | GET | `/api/system/status`、POST† `/api/system/{download,update}` | 系统维护 |
 | GET | `/` | 跳 `/studio/` |
 

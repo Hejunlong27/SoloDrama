@@ -112,6 +112,14 @@ WORKFLOW_PRESETS = {
         "mode_when_refs": True,
         "save": "",
     },
+    "edit4": {
+        "prompt": "488", "prefix": "487", "seed": "497",
+        "aspect": "13", "latent": "474",
+        "load": "489,490,499,500",
+        "mode": "494",
+        "mode_when_refs": True,
+        "save": "",
+    },
 }
 
 # 全局节点映射（由 apply_preset 填；build() 在调用时读这几个全局）
@@ -125,6 +133,8 @@ ACTIVE_PRESET = ""
 def preset_key_for(path: str) -> str:
     """按文件名认工作流类型。认不出就按 t2i（纯文生图，无图输入）。"""
     name = os.path.basename(str(path or "")).lower()
+    if "4图" in name or "4ref" in name or "i2i" in name:
+        return "edit4"
     return "edit" if "edit" in name else "t2i"
 
 

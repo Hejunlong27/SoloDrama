@@ -160,6 +160,12 @@ IMAGE_MACHINE_OPTIONS = [
     {"value": "closed_source", "title": "外部模型（站外付费）",
      "desc": "自己在可灵 / 即梦等平台生成好，再把图放进这部剧的文件夹", "paid": True},
 ]
+BOARD_MACHINE_OPTIONS = [
+    {"value": "local_comfyui", "title": "这台电脑（免费）",
+     "desc": "本机 ComfyUI 逐镜生成分镜图，不花钱", "recommend": True},
+    {"value": "closed_source", "title": "外部模型（站外）",
+     "desc": "在外部平台生成分镜图后放回项目目录", "paid": True},
+]
 VIDEO_MACHINE_OPTIONS = [
     {"value": "local_comfyui", "title": "这台电脑（免费）",
      "desc": "不花钱，用本机显卡逐段生成；慢一些，期间电脑会很忙", "recommend": True},
@@ -177,6 +183,7 @@ TASKS = [
                      "点「把问题交给 AI 助手」，它会帮你把地址和工作流配好。"
                      "带「要花钱」标记的选项不会替你预先勾选 —— 花钱的事必须你自己点。",
              "groups": [{"label": "画角色和场景的形象", "key": "image", "options": IMAGE_MACHINE_OPTIONS},
+                        {"label": "生成每镜分镜图", "key": "board", "options": BOARD_MACHINE_OPTIONS},
                         {"label": "把镜头做成画面", "key": "video", "options": VIDEO_MACHINE_OPTIONS}]}),
     Task("import_pack", "把制作包交给引擎",
          "选题、剧本、资产设计、导演、分镜、提示词都在创作 Skill 里完成；引擎只负责把它们做出来",
@@ -539,6 +546,7 @@ def home(ws) -> dict:
 
 def _machine_text(models: dict) -> str:
     im = (models.get("image") or {})
+    bo = (models.get("board") or {})
     vi = (models.get("video") or {})
     # ★ 键必须覆盖 `model_gate.MODEL_OPTIONS` 的全部 id（2026-11-06）：
     #   少一个键就会把 `runninghub_workflow` 这种内部 id 直接甩给用户看。
@@ -547,10 +555,13 @@ def _machine_text(models: dict) -> str:
              "runninghub": "RunningHub（按用量）",
              "runninghub_workflow": "RunningHub（按用量）",
              "runninghub_ai_app": "RunningHub 应用（按用量）",
+             "zzai_image_api": "ZZAI 图片 API（按用量）",
              "closed_source": "外部模型"}
     parts = []
     if im.get("choice"):
         parts.append("画形象：" + label.get(im["choice"], "已选"))
+    if bo.get("choice"):
+        parts.append("画分镜：" + label.get(bo["choice"], "已选"))
     if vi.get("choice"):
         parts.append("做画面：" + label.get(vi["choice"], "已选"))
     return " · ".join(parts) or "还没选择"

@@ -19,7 +19,10 @@ function dur(sec) {
 }
 
 export async function render(ctx) {
-  const d = await api.cost(ctx.ws);
+  const [d, llmData] = await Promise.all([
+    api.cost(ctx.ws),
+    api.llmUsage(100).catch((e) => ({ error: e, items: [], summary: {} }))
+  ]);
   const ledger = d.ledger || { sec: 0, attempts: 0, success: 0, failed: 0 };
   const rows = d.rows || [];
   const byStage = d.by_stage || [];
@@ -27,6 +30,11 @@ export async function render(ctx) {
   const est = d.estimate || {};
   const sum = est.summary || {};
   const avg = d.avg_shot || { sec: 0, human: '—', sample: 0 };
+  const llm = llmData || {};
+  const llmSummary = llm.summary || {};
+  const llmItems = llm.items || [];
+  const llmKnown = Number(llmSummary.cost_records || 0);
+  const llmUnknown = Number(llmSummary.cost_unknown_records || 0);
 
   const maxStage = Math.max.apply(null, byStage.map((s) => s.sec).concat([1]));
   const srcTone = d.source === 'ledger' ? 'ok' : d.source === 'none' ? 'outline' : 'warn';
@@ -55,6 +63,36 @@ export async function render(ctx) {
       + '<td class="num">' + (ok ? esc(dur(r.sec)) : '<span class="dim">未产出</span>') + '</td>'
       + '<td class="mono small dim">' + esc(String(r.task_id || '').slice(0, 12)) + '</td></tr>';
   }).join('') || '<tr><td colspan="7">' + emptyBox('台账为空', '出片或出图之后，这里会逐条列出每次实际占用。') + '</td></tr>';
+
+  const llmRows = llmItems.map((r) => {
+    const u = r.usage || {};
+    const cost = r.cost || {};
+    const known = typeof cost.usd === 'number';
+    const bill = known
+      ? badge('ok', '已知') + ' <span class="mono small">$' + esc(cost.usd) + '</span>'
+      : badge('outline', '未知') + ' <span class="tiny dim">按量计费</span>';
+    return '<tr><td class="mono tiny dim">' + esc(dt(r.at)) + '</td>'
+      + '<td class="mono tiny">' + esc((r.project || '未归属').split(/[\\/]/).pop()) + '</td>'
+      + '<td class="small">' + esc(r.purpose || '—') + '</td>'
+      + '<td class="small muted">' + esc(r.provider_name || r.provider || '—')
+      + '<div class="tiny dim mono">' + esc(r.actual_model || r.model || '') + '</div></td>'
+      + '<td class="num tiny">' + esc(u.input_tokens == null ? '—' : u.input_tokens) + '</td>'
+      + '<td class="num tiny">' + esc(u.output_tokens == null ? '—' : u.output_tokens) + '</td>'
+      + '<td>' + bill + '</td></tr>';
+  }).join('') || '<tr><td colspan="7">' + emptyBox('还没有 LLM 调用',
+    '创作中心或制片助手调用模型后，这里会显示 token 与供应商账单状态。') + '</td></tr>';
+
+  const llmError = llm.error
+    ? '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14) + '</span><div>读取 LLM 用量失败：'
+      + esc(llm.error.detail || llm.error.message) + '</div></div>'
+    : '';
+  const llmCostText = llmSummary.cost_usd_known == null
+    ? '未知（供应商未返回金额）'
+    : ('$' + esc(llmSummary.cost_usd_known) + '（' + esc(llmKnown) + ' 条已知）');
+  const llmStatus = llmSummary.cost_status === 'known' ? badge('ok', '全部已知')
+    : llmSummary.cost_status === 'mixed' ? badge('warn', '部分已知')
+      : llmSummary.cost_status === 'none' ? badge('outline', '暂无记录')
+        : badge('outline', '按量计费');
 
   /* 置信度必须显眼：经验系数和实测值长得一样，但可信度差一个数量级 */
   const confTone = est.confidence === 'measured' ? 'ok' : 'warn';
@@ -100,6 +138,27 @@ export async function render(ctx) {
         + '<div class="card-foot">要省钱：把通道切回本机（出图出片的默认就是它），'
         + '或只对跑糊的那一镜单独重跑。</div></section>'
       : '')
+
+    + '<section class="card" style="margin-bottom:16px">'
+    + '<div class="card-h"><h3>LLM 调用</h3>'
+    + '<span class="card-sub">全机器用量；历史记录可能尚未关联项目</span>'
+    + '<span class="spacer"></span>' + llmStatus + '</div>'
+    + '<div class="card-b">' + llmError
+    + '<div class="row gap12" style="flex-wrap:wrap;margin-bottom:10px">'
+    + '<span class="chip">' + esc(llmSummary.calls || 0) + ' 次调用</span>'
+    + '<span class="chip">输入 ' + esc(llmSummary.input_tokens || 0) + ' tokens</span>'
+    + '<span class="chip">输出 ' + esc(llmSummary.output_tokens || 0) + ' tokens</span>'
+    + '<span class="chip">金额：' + llmCostText + '</span>'
+    + '<span class="chip">未知 ' + esc(llmUnknown) + ' 条</span></div>'
+    + '<div class="alert info" style="margin-bottom:10px"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
+    + esc(llmSummary.cost_note || '金额只认供应商返回的 usage；未知不会显示成 ¥0，也不按 token 猜价。')
+    + ' LLM 花费请以供应商后台账单为准。</div></div>'
+    + '<div class="table-wrap"><table class="tb"><thead><tr>'
+    + '<th style="width:96px">时间</th><th style="width:100px">项目</th><th>用途</th>'
+    + '<th>提供商 / 模型</th><th class="num" style="width:64px">入</th>'
+    + '<th class="num" style="width:64px">出</th><th style="width:130px">计费</th>'
+    + '</tr></thead><tbody>' + llmRows + '</tbody></table></div></div>'
+    + '<div class="card-foot">' + stamp('web/var/llm/usage.jsonl · 最近 100 条 · 已知/未知不合并') + '</div></section>'
 
     + '<div class="grid g21" style="margin-bottom:16px">'
     + '<section class="card"><div class="card-h"><h3>时间花在哪一步</h3>'

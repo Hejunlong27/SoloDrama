@@ -107,6 +107,34 @@ def main() -> int:
             check("%s 每项都有 requires 字段" % kind,
                   all("requires" in o for o in mg.MODEL_OPTIONS[kind]))
 
+        # 8a. board 是独立分类：本地 / 云端 / ZZAI / 人工
+        board_ids = [o["id"] for o in mg.MODEL_OPTIONS["board"]]
+        check("board 选项齐备",
+              board_ids == ["local_comfyui", "cloud_comfyui", "zzai_image_api",
+                            "runninghub_workflow", "closed_source"],
+              str(board_ids))
+        zzai = [o for o in mg.MODEL_OPTIONS["board"] if o["id"] == "zzai_image_api"][0]
+        check("board/zzai 有执行器且 engine_arg=zzai",
+              zzai.get("engine_arg") == "zzai" and "gen_boards.py" in str(zzai.get("executor")),
+              str(zzai))
+        rc_board = mg.cmd_set(_ns(workspace=str(ws), pairs=["board=zzai_image_api"], detail=None,
+                                  comfy_url=None, comfy_workflow=None, app_url=None,
+                                  app_id=None, workflow_id=None))
+        ok_board, msg_board = mg.require(ws, "board", expected_engine="zzai")
+        check("board=zzai 可确认且门禁放行", rc_board == 0 and ok_board, msg_board)
+        ok_board_wrong, _ = mg.require(ws, "board", expected_engine="local")
+        check("board=zzai 却用 local 被拦", ok_board_wrong is False)
+        rc_rh = mg.cmd_set(_ns(workspace=str(ws), pairs=["board=runninghub_workflow"],
+                               detail=None, comfy_url=None, comfy_workflow=None,
+                               comfy_workflow_t2i=None, comfy_workflow_i2i=None,
+                               app_url=None, app_id=None, workflow_id=None,
+                               workflow_id_t2i="t2i-id", workflow_id_i2i="i2i-id"))
+        ok_rh, msg_rh = mg.require(ws, "board", expected_engine="rh")
+        check("board=RH 工作流配置 i2i 后可放行", rc_rh == 0 and ok_rh, msg_rh)
+        menu_board = mg.render_menu("board")
+        check("board 菜单含全部标签",
+              all(o["label"] in menu_board for o in mg.MODEL_OPTIONS["board"]))
+
         # 8b. ★ 执行依据门禁：Cloud ComfyUI 缺 URL / 缺工作流文件 → 必须拦下
         # ★ 2026-11-05（云端接入）：出片侧的执行器已补齐，工作流随仓库交付，
         #   所以 video 的云端只强制 **地址**；image 仍要求工作流文件（出图工作流由用户选）。

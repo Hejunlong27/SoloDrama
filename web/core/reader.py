@@ -130,7 +130,7 @@ def norm_style(ws) -> dict:
 
 
 def norm_models(ws) -> dict:
-    """规整 `models status --json`：image / video 两类通道 + 执行依据齐备性。"""
+    """规整 `models status --json`：image / board / video 三类通道。"""
     raw = model_gate(ws).get("data") or {}
     plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else raw
     models = (plan or {}).get("models") or {}
@@ -142,8 +142,10 @@ def norm_models(ws) -> dict:
                 "evidence_ok": d.get("evidence_ok"), "missing_evidence": d.get("missing_evidence") or [],
                 "detail": d.get("detail") or {}}
 
-    im, vi = one("image"), one("video")
-    return {"image": im, "video": vi, "confirmed": bool(im["confirmed"] and vi["confirmed"]), "raw": raw}
+    im, bo, vi = one("image"), one("board"), one("video")
+    return {"image": im, "board": bo, "video": vi,
+            # board 未确认时生成器会安全回落本地；主门禁仍由 image/video 决定。
+            "confirmed": bool(im["confirmed"] and vi["confirmed"]), "raw": raw}
 
 
 # ---------------------------------------------------------------------------

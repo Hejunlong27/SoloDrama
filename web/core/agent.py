@@ -15,8 +15,9 @@
   回填，再让它决定下一步。比「一次吐一大段计划」可靠：错了能立刻停。
 * **写盘只到创作层**：`write_doc` 走 `creation.write`（有备份、有阶段白名单）；
   引擎输入契约 `06-提示词/` **模型碰不到** —— 出片稳定性不交给模型的自觉。
-* **GPU 要人点头**：`run()` 遇到计费/占 GPU 的命令，除非调用方明确 `allow_gpu=True`，
-  否则只返回「需要确认」，不提交。这是本项目唯一会造成真实损失的操作。
+* **GPU 与云端模型要人点头**：`run()` 遇到计费/占 GPU 的命令，除非调用方明确
+  `allow_gpu=True`，否则只返回「需要确认」；API 入口还要求 `confirm=true`，避免助手
+  在用户不知情时连续调用云端模型。
 
 模型契约（每次回复必须是这个 JSON）
 ----------------------------------
@@ -31,7 +32,7 @@ import json
 import re
 import time
 from . import canvas, commands as CMD, creation, jobs, runner, skills
-from .llm import providers, store
+from .llm import gateway as gw
 from .llm.errors import LLMError
 
 MAX_STEPS = 12
@@ -92,33 +93,21 @@ _DENY_SPECS = {"project.scaffold", "graph.reset", "skills.upload"}
 # ---------------------------------------------------------------------------
 # 模型通道
 # ---------------------------------------------------------------------------
-def _resolve_provider(prefer: str = "create.plan") -> tuple:
-    """→ (provider_cfg, model)。优先用途绑定，再退到第一个启用的文本提供商。"""
-    try:
-        p = store.get_purpose(prefer)
-        pid = p.get("provider_id") or p.get("auto_provider_id")
-        model = p.get("model") or None
-        if pid:
-            return store.get_provider(pid, with_key=True), model
-    except Exception:                                          # noqa: BLE001
-        pass
-    for it in store.list_providers():
-        if it.get("enabled") is False:
-            continue
-        try:
-            prov = store.get_provider(it["id"], with_key=True)
-        except LLMError:
-            continue
-        if prov.get("_key") or prov.get("local"):
-            return prov, None
-    raise LLMError("config", "没有可用的大模型：到「系统中心 → AI 模型」配一个带 Key 的提供商")
+def _chat(ws, model, messages, *, max_tokens=MAX_TOKENS) -> dict:
+    """所有助手模型调用必须经过 Gateway。
 
-
-def _chat(prov, model, messages, *, max_tokens=MAX_TOKENS) -> dict:
-    cli = providers.build(prov, prov.get("_key") or "")
-    r = cli.chat(messages, model=model, max_tokens=max_tokens, temperature=0.3)
-    return {"text": r.text or "", "usage": r.usage or {},
-            "model": getattr(r, "model", "") or model or ""}
+    旧实现直接 `providers.build()`，调用不会进入 usage.jsonl，因而无法按项目
+    统计成本、无法做模型对比，也无法统一重试/熔断。这里保留一个薄函数，
+    只是把 Agent 的多轮 messages 转交给 Gateway。
+    """
+    res = gw.get_gateway().chat(
+        messages, purpose="agent.chat", route_purpose="create.plan",
+        model=model, project=ws, max_tokens=max_tokens, temperature=0.3,
+    )
+    if not res.get("ok"):
+        err = res.get("error") or {}
+        raise LLMError(err.get("kind") or "network", err.get("message") or "模型调用失败")
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +219,9 @@ def _do_run(ws, spec_id: str, params: dict, *, allow_gpu: bool) -> dict:
         return {"ok": False, "detail": "没有这条命令：%s（可用 state 里的节点 id 或让我列命令）" % spec_id}
     if cmd.billing in (CMD.PAID, CMD.EXTERNAL):
         return {"ok": False, "detail": "这条命令会产生站外费用，助手不会替你花钱：%s" % spec_id}
+    if spec_id == "scheduler.run" and (params or {}).get("apply"):
+        return {"ok": False, "need_confirm": True,
+                "detail": "调度器真实执行必须由用户在 Studio 的调度页确认；助手只能先干跑"}
     if cmd.billing == CMD.GPU and not allow_gpu:
         return {"ok": False, "need_confirm": True,
                 "detail": "这条会占本机 GPU（可能几十分钟）。先跟用户确认，"
@@ -378,8 +370,6 @@ def _parse(text: str) -> dict:
 def run(ws, messages, *, auto: bool = False, allow_gpu: bool = False,
         model: str | None = None, max_steps: int = MAX_STEPS) -> dict:
     ws = str(ws)
-    prov, pmodel = _resolve_provider()
-    model = model or pmodel
     hist = [{"role": "system", "content": SYSTEM}]
     for m in messages or []:
         if m.get("role") in ("user", "assistant") and m.get("content"):
@@ -391,7 +381,7 @@ def run(ws, messages, *, auto: bool = False, allow_gpu: bool = False,
 
     for i in range(max_steps):
         try:
-            out = _chat(prov, model, hist)
+            out = _chat(ws, model, hist)
         except LLMError as exc:
             err = "%s: %s" % (exc.kind, exc.text)
             break
@@ -439,7 +429,7 @@ def run(ws, messages, *, auto: bool = False, allow_gpu: bool = False,
         "steps": steps,
         "usage": usage_sum,
         "model": out.get("model") if steps or reply else (model or ""),
-        "provider": prov.get("id"),
+        "provider": out.get("provider") or "",
         "elapsed": round(time.time() - t_all, 1),
     }
 

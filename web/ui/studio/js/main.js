@@ -52,7 +52,7 @@ const WORKSPACES = [
     key: 'control', label: '制作控制', ico: 'cpu', home: 'overview',
     members: [
       { key: 'overview', label: '项目驾驶舱' },
-      { key: 'pipeline', label: '流水线' },
+      { key: 'pipeline', label: '调度' },
       { key: 'cost', label: '用时与成本' },
       { key: 'generators', label: '生成器' }
     ]

@@ -28,6 +28,7 @@ _RUNNING_JOBS: dict = {}     # job_id -> runner 进程句柄（用于取消）
 RH_SLOTS = 5                 # RunningHub 单账号并发硬限（平台硬限，不可调优）
 GPU_SLOTS = 1                # 本机 GPU 独占
 CPU_MEDIA_SLOTS = 1
+SCHEDULER_SLOTS = 1          # 13 节点 Runner 单写者
 
 RESOURCE_TOKENS = []
 for _i in range(GPU_SLOTS):
@@ -36,6 +37,8 @@ for _i in range(RH_SLOTS):
     RESOURCE_TOKENS.append("RH-%d" % (_i + 1))
 for _i in range(CPU_MEDIA_SLOTS):
     RESOURCE_TOKENS.append("MEDIA-1")
+for _i in range(SCHEDULER_SLOTS):
+    RESOURCE_TOKENS.append("SCHEDULER-%d" % (_i + 1))
 
 
 def _q(a) -> str:
@@ -134,6 +137,7 @@ def lock_status() -> dict:
         "summary": {
             "gpu": "%d/%d" % (sum(1 for t in RESOURCE_TOKENS if t.startswith("GPU-") and t in used), GPU_SLOTS),
             "rh": "%d/%d" % (sum(1 for t in RESOURCE_TOKENS if t.startswith("RH-") and t in used), RH_SLOTS),
+            "scheduler": "%d/%d" % (sum(1 for t in RESOURCE_TOKENS if t.startswith("SCHEDULER-") and t in used), SCHEDULER_SLOTS),
         },
     }
 

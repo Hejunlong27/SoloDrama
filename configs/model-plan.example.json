@@ -19,6 +19,16 @@
       "confirmed_by": null,
       "detail": {}
     },
+    "board": {
+      "choice": "local_comfyui",
+      "label": "本地 ComfyUI（￥0）",
+      "cost": "￥0（占本机 GPU/电费）",
+      "engine_arg": "local",
+      "confirmed": false,
+      "confirmed_at": null,
+      "confirmed_by": null,
+      "detail": {}
+    },
     "video": {
       "choice": "local_comfyui",
       "label": "本地 ComfyUI（￥0）",
@@ -43,9 +53,21 @@
       "runninghub",
       "runninghub_ai_app",
       "closed_source"
+    ],
+    "board": [
+      "local_comfyui",
+      "cloud_comfyui",
+      "zzai_image_api",
+      "runninghub_workflow",
+      "closed_source"
     ]
   },
   "_闭源模型说明": "可灵/即梦/Midjourney/Nano Banana(Gemini)/Veo/Sora/Runway 等；本仓库不直连，由人工在各平台出图/出片后落盘到工作区，引擎按本地文件接管。",
   "history": [],
-  "_花费口径": "不写单价。面向用户只报「按平台实际用量结算」，具体数字跑完按台账实测报（`cost_model.observed()`）。内置单价会低报约 4 倍，已从展示层移除。"
+  "_花费口径": "不写单价。面向用户只报「按平台实际用量结算」，具体数字跑完按台账实测报（`cost_model.observed()`）。内置单价会低报约 4 倍，已从展示层移除。",
+  "_工作流预设说明": {
+    "ComfyUI": "detail.comfy_workflow_t2i / detail.comfy_workflow_i2i 分别保存文生图、图生图工作流 JSON；分镜图固定使用 i2i。",
+    "RunningHub": "detail.workflow_id_t2i / detail.workflow_id_i2i 分别保存两套 workflowId；分镜图固定使用 i2i，并配置 runninghub_nodes_i2i 的 prompt/image(s)/aspect 节点映射。",
+    "ZZAI": "分镜图先上传角色/场景参考图，再用 zhenzhen-image-g-v2.6-lowprice 的 images[] 做图生图。"
+  }
 }

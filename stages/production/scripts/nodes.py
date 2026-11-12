@@ -137,7 +137,7 @@ NODES: list = [
      "trigger": "drama do board.frame --ep ep01",
      "reads": ["import.bind"], "output": "04-资产/boards/<ep>/",
      "check": "boards", "next": "import.gate", "reflow": ["import.bind"],
-     "run": "python stages/production/scripts/gen_boards.py --apply"},
+     "run": "python stages/production/scripts/gen_boards.py --engine auto --apply"},
 
     {"id": "import.gate", "stage": "import", "ep": True,
      "trigger": "drama do import.gate --ep ep01",
@@ -961,9 +961,10 @@ def run_node(ctx: Ctx, node_id: str, dry_run: bool = False, yes: bool = False) -
     if args[0] in ("python", "python3"):
         args[0] = sys.executable
 
-    if node_id == "video.batch":
+    if node_id in ("video.batch", "board.frame") and not dry_run:
         if not yes:
-            print("[HUMAN] 出片计费，必须显式 --yes")
+            print("[HUMAN] %s 可能占用 GPU 或产生平台费用，必须显式 --yes"
+                  % node_id)
             return EXIT_HUMAN
         args += ["--yes"]
 

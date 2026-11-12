@@ -28,8 +28,8 @@ from fastapi.staticfiles import StaticFiles
 from core import (adapters, agent, artifacts, canvas, characters, comfy_launcher, comfy_probe, comfy_store,
                   creation, graph, monitor, timing, updater,
                   skills as SKILLS, commands as CMD,
-                    connections, generators,
-                    health as health_mod, inventory, jobs, paths, pipeline, reader, runner,
+                    connections, generation_models, generators,
+                    health as health_mod, inventory, jobs, media_tasks, paths, pipeline, reader, runner,
                     studio, styles, ux)
 from core.llm import gateway as llm_gateway, store as llm_store
 from core.llm import templates as llm_templates
@@ -614,11 +614,88 @@ def _guard(cmd, values, payload) -> None:
             })
 
 
+# 调度器的“真实执行”是复合动作：即使命令本身不计费，也必须先确认写盘范围；
+# 允许 board.frame / video.batch 时再单独确认 GPU / 平台费用风险。
+def _guard_scheduler_apply(cmd, values, payload) -> None:
+    if cmd.id != "scheduler.run" or not values.get("apply"):
+        return
+    conf = payload.get("confirm") or {}
+    if not conf.get("ack"):
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "调度器真实执行会写盘；遇到 board.frame / video.batch 还可能占用 GPU 或产生平台费用，必须二次确认",
+            "cmd": cmd.id, "title": cmd.title,
+            "argv_preview": " ".join(cmd.build_argv(values)[1:]),
+        })
+    if values.get("yes") and not conf.get("gpu"):
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "已经选择允许分镜图/出片真实生成；请再次确认 GPU 与平台计费风险",
+            "need_gpu_yes": True,
+        })
+
+# ---------------------------------------------------------------------------
+# 13 节点调度：读取与入队
+# ---------------------------------------------------------------------------
+def _runner_json(lines):
+    """从 Runner stdout 取 JSON；保留其余文本用于故障定位。"""
+    text = "\n".join(lines).strip().lstrip("\ufeff")
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            return json.loads(text[start:end + 1])
+        except (TypeError, ValueError):
+            return None
+
+
+@app.get("/api/scheduler/status")
+def scheduler_status(ws: str = Query(...), ep: str = Query(default=""),
+                     limit: int = Query(default=50)):
+    """只读：由引擎子进程计算 13 节点状态，不在 Web 进程里 import 引擎。"""
+    w = str(_require_ws(ws))
+    cmd = CMD.get("scheduler.status")
+    v = cmd.validate({"ep": ep, "limit": limit})
+    if not v["ok"]:
+        raise HTTPException(status_code=422, detail={"errors": v["errors"]})
+    argv = cmd.build_argv(v["values"], w)
+    res = runner.run_stream(argv, ws=w, timeout=60)
+    out = _runner_json(res.get("lines") or [])
+    if out is None:
+        raise HTTPException(status_code=502, detail={
+            "reason": "调度器没有返回可解析 JSON",
+            "rc": res.get("rc"),
+            "stdout": "\n".join((res.get("lines") or [])[-40:]),
+        })
+    out["elapsed"] = res.get("elapsed")
+    return out
+
+
+@app.post("/api/scheduler/run")
+def scheduler_enqueue(payload: dict = Body(...)):
+    """把一次 13 节点推进入作业队列；默认干跑，真实执行需二次确认。"""
+    cmd, values, argv, w = _prepare(
+        "scheduler.run", payload.get("params") or {}, payload.get("ws"))
+    _guard(cmd, values, payload)
+    _guard_scheduler_apply(cmd, values, payload)
+    job = jobs.create_job(
+        w, cmd, argv, values,
+        estimate="按节点（默认干跑）",
+        note=payload.get("note") or "scheduler",
+    )
+    return JSONResponse({"mode": "job", "job": job}, status_code=202)
+
 @app.post("/api/run")
 def run_sync(payload: dict = Body(...)):
     spec_id = payload.get("spec_id") or ""
     cmd, values, argv, w = _prepare(spec_id, payload.get("params") or {}, payload.get("ws"))
     _guard(cmd, values, payload)
+    _guard_scheduler_apply(cmd, values, payload)
 
     if cmd.mode == "job":
         job = jobs.create_job(w, cmd, argv, values, estimate=payload.get("estimate") or "",
@@ -1090,6 +1167,13 @@ def agent_tools():
 @app.post("/api/agent/chat")
 def agent_chat(payload: dict = Body(...)):
     _write_guard()
+    if not payload.get("confirm"):
+        raise HTTPException(status_code=428, detail={
+            "need_confirm": True,
+            "reason": "制片助手会调用所绑定的大模型；若走云端通道会产生真实费用",
+            "cmd": "agent.chat",
+            "args": {"max_steps": agent.MAX_STEPS},
+        })
     ws = str(_require_ws(str(payload.get("ws") or "")))
     msgs = payload.get("messages")
     if not isinstance(msgs, list) or not msgs:
@@ -1687,6 +1771,44 @@ def api_generators(ws: str = Query(default="")):
     return generators.channels(str(ws or "").strip() or None)
 
 
+@app.post("/api/generators/model-params")
+def api_generator_model_params(payload: dict = Body(...)):
+    """校验模型级生成参数并返回平台请求字段；不提交任务、不产生费用。"""
+    try:
+        return generation_models.normalize_params(
+            str(payload.get("model") or ""), payload.get("params") or {},
+            has_references=bool(payload.get("has_references")),
+        )
+    except generation_models.ModelProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/api/media/tasks")
+def api_media_tasks(ws: str = Query(...), limit: int = Query(default=100),
+                    kind: str = Query(default=None), status: str = Query(default=None)):
+    w = str(_require_ws(ws))
+    return {"items": media_tasks.list_tasks(w, limit=limit, kind=kind, status=status),
+            "root": str(media_tasks.root(w))}
+
+
+@app.get("/api/media/tasks/{local_id}")
+def api_media_task(local_id: str, ws: str = Query(...)):
+    w = str(_require_ws(ws))
+    try:
+        return media_tasks.get(w, local_id)
+    except media_tasks.MediaTaskError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@app.get("/api/media/tasks/{local_id}/resume")
+def api_media_task_resume(local_id: str, ws: str = Query(...)):
+    w = str(_require_ws(ws))
+    try:
+        return media_tasks.resume_info(w, local_id)
+    except media_tasks.MediaTaskError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
 @app.get("/api/artifacts/loose")
 def artifacts_loose(ws: str = Query(...)):
     """标准资产目录之外的图片（只读）。
@@ -1904,8 +2026,9 @@ def llm_complete(payload: dict = Body(...)):
 
 @app.get("/api/llm/usage")
 def llm_usage(limit: int = Query(default=100), purpose: str = Query(default=None),
-              provider: str = Query(default=None)):
-    return llm_gateway.get_gateway().usage(limit=limit, purpose=purpose, provider=provider)
+              provider: str = Query(default=None), project: str = Query(default=None)):
+    return llm_gateway.get_gateway().usage(limit=limit, purpose=purpose,
+                                           provider=provider, project=project)
 
 
 # ---------------------------------------------------------------------------

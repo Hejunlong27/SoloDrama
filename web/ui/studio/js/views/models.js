@@ -130,6 +130,12 @@ export async function render(ctx) {
       root.querySelectorAll('[data-psave]').forEach((b) => {
         b.onclick = () => savePurpose(ctx, root, b.dataset.psave);
       });
+      root.querySelectorAll('[data-proute]').forEach((b) => {
+        b.onclick = () => {
+          const purpose = plist.find((x) => x.id === b.dataset.proute);
+          if (purpose) openRouteEditor(ctx, purpose, providers);
+        };
+      });
       root.querySelectorAll('[data-pbest]').forEach((b) => {
         b.onclick = () => savePurpose(ctx, root, b.dataset.pbest, true);
       });
@@ -162,6 +168,16 @@ function providersTab(providers, meta) {
       + '</div></div>';
   }
   const cards = providers.map((p) => {
+    const h = p.health || {};
+    const ht = h.state === 'healthy' ? badge('ok', '健康')
+      : h.state === 'cooling' ? badge('warn', '冷却中')
+        : h.state === 'blocked' ? badge('bad', '需处理')
+          : h.state === 'degraded' ? badge('warn', '降级')
+            : badge('outline', '未测');
+    const healthLine = '<span class="tiny dim">' + ht
+      + (h.last_error_kind ? ' · 最近错误 ' + esc(h.last_error_kind) : '')
+      + (h.consecutive_failures ? ' · 连续失败 ' + esc(h.consecutive_failures) : '')
+      + (h.cooldown_until ? ' · 冷却至 ' + esc(dt(h.cooldown_until)) : '') + '</span>';
     const kt = p.key_source === 'env' ? badge('info', '环境变量 ' + (p.env_var || ''))
       : p.key_source === 'file' ? badge('ok', '本机已保存 ' + p.key_hint)
         : badge('muted', '无 Key' + (p.local ? '（本地服务）' : ''));
@@ -193,6 +209,7 @@ function providersTab(providers, meta) {
       ])
       + '<div class="row gap8" style="margin-top:10px;flex-wrap:wrap">' + kt + caps + '</div>'
       + '<div style="margin-top:8px">' + lt + '</div>'
+      + '<div style="margin-top:6px">' + healthLine + '</div>'
       + '</div></section>';
   }).join('');
 
@@ -407,7 +424,7 @@ function purposesTab(purposes, providers) {
     const models = (prov && (prov.models || []).length ? prov.models : [p.model]).filter(Boolean);
     const mopts = models.map((m) => '<option value="' + esc(m) + '"'
       + (m === p.model ? ' selected' : '') + '>' + esc(m) + '</option>').join('');
-    return '<tr data-row="' + esc(p.id) + '">'
+    return '<tr data-row="' + esc(p.id) + '" data-routes="' + esc(JSON.stringify(p.routes || [])) + '">'
       + '<td><div class="small">' + esc(p.label) + '</div>'
       + '<div class="tiny dim mono">' + esc(p.id) + '</div></td>'
       + '<td class="small muted">' + esc(p.hint || '') + '<div class="tiny dim">需要：'
@@ -419,8 +436,10 @@ function purposesTab(purposes, providers) {
         ? badge('ok', '自动：' + (p.auto_provider_name || '已选路'))
         : (p.ready ? badge('ok', '就绪')
           : (p.bound ? badge('warn', '提供商已停用') : badge('muted', '不可用'))))
+      + '<div class="tiny dim">' + (Number(p.fallback_count || 0) ? ('备用 ' + esc(p.fallback_count) + ' 条') : '单路由') + '</div>'
       + '</td>'
       + '<td><button class="btn quiet sm" data-psave="' + esc(p.id) + '">保存</button>'
+      + ' <button class="btn quiet sm" data-proute="' + esc(p.id) + '">路由链</button>'
       + (prov && prov.default_model && p.model !== prov.default_model
         ? ' <button class="btn quiet sm" data-pbest="' + esc(p.id) + '" title="改用默认模型">用默认</button>' : '')
       + '</td></tr>';
@@ -433,16 +452,133 @@ function purposesTab(purposes, providers) {
     + '<th style="width:170px">模型</th><th style="width:90px">状态</th><th style="width:120px"></th>'
     + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
     + '<div class="card-foot"><span class="tiny dim">不指定时按「有 Key 的云端 > 本地模型 > 离线演练」'
-    + '自动选路，状态列会标出实际用的是谁；显式绑定永远优先。一个能跑的服务都没有时，'
-    + '接口会明确报「没有可用提供商」，不会静默失败。</span></div></section>';
+    + '自动选路；显式绑定永远优先。支持主路由 + 备用路由，备用链路会在安全错误时自动切换。'
+    + '</span></div></section>';
+}
+
+function providerOptions(providers, selected) {
+  return '<option value="">（选择提供商）</option>' + providers.map((p) =>
+    '<option value="' + esc(p.id) + '"' + (p.id === selected ? ' selected' : '') + '>'
+    + esc(p.name) + (p.enabled ? '' : '（停用）') + '</option>').join('');
+}
+
+function modelOptions(providers, pid, selected) {
+  const p = providers.find((x) => x.id === pid);
+  const values = (p && p.models || []).slice();
+  if (selected && values.indexOf(selected) < 0) values.unshift(selected);
+  return '<option value="">（默认模型）</option>' + values.map((m) =>
+    '<option value="' + esc(m) + '"' + (m === selected ? ' selected' : '') + '>'
+    + esc(m) + '</option>').join('');
+}
+
+function openRouteEditor(ctx, purpose, providers) {
+  let routes = (purpose.routes || []).map((r) => Object.assign({}, r));
+  if (!routes.length && purpose.provider_id) {
+    routes = [{ id: 'primary', provider_id: purpose.provider_id, model: purpose.model || '' }];
+  }
+  if (!routes.length) routes = [{ id: 'primary', provider_id: '', model: '' }];
+
+  const rowsHtml = () => routes.map((r, i) =>
+    '<div class="card" data-route-row="' + i + '" style="margin-bottom:8px"><div class="card-b">'
+    + '<div class="row" style="gap:8px;align-items:center;margin-bottom:8px">'
+    + '<span class="mono small">' + (i === 0 ? '主路由' : '备用 ' + i) + '</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn quiet sm" data-route-up="' + i + '"' + (i === 0 ? ' disabled' : '') + '>上移</button>'
+    + '<button class="btn quiet sm" data-route-down="' + i + '"' + (i === routes.length - 1 ? ' disabled' : '') + '>下移</button>'
+    + '<button class="btn quiet sm" data-route-del="' + i + '"' + (routes.length === 1 ? ' disabled' : '') + '>删除</button>'
+    + '</div>'
+    + '<div class="field"><label>提供商</label><select class="select" data-route-provider="' + i + '">'
+    + providerOptions(providers, r.provider_id || '') + '</select></div>'
+    + '<div class="field"><label>模型</label><select class="select" data-route-model="' + i + '">'
+    + modelOptions(providers, r.provider_id, r.model || '') + '</select></div>'
+    + '</div></div>').join('');
+
+  openModal({
+    title: '用途路由链 · ' + purpose.label,
+    html: '<div class="small muted" style="margin-bottom:10px">按顺序尝试。仅在 config/auth/quota/model_not_found/rate_limit 错误时切换备用；超时或服务端错误不静默重提。</div>'
+      + '<div id="routeRows">' + rowsHtml() + '</div>'
+      + '<button class="btn quiet sm" id="routeAdd"' + (routes.length >= 5 ? ' disabled' : '') + '>+ 添加备用路由</button>',
+    foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+      + '<button class="btn primary" id="routeSave">保存路由链</button>',
+    mount: () => {
+      const box = document.getElementById('routeRows');
+      const bind = () => {
+        box.innerHTML = rowsHtml();
+        const add = document.getElementById('routeAdd');
+        if (add) add.disabled = routes.length >= 5;
+        box.querySelectorAll('[data-route-provider]').forEach((el) => {
+          el.onchange = () => {
+            const i = Number(el.dataset.routeProvider);
+            routes[i].provider_id = el.value;
+            routes[i].model = '';
+            bind();
+          };
+        });
+        box.querySelectorAll('[data-route-model]').forEach((el) => {
+          el.onchange = () => { routes[Number(el.dataset.routeModel)].model = el.value; };
+        });
+        box.querySelectorAll('[data-route-del]').forEach((el) => {
+          el.onclick = () => { routes.splice(Number(el.dataset.routeDel), 1); bind(); };
+        });
+        box.querySelectorAll('[data-route-up]').forEach((el) => {
+          el.onclick = () => {
+            const i = Number(el.dataset.routeUp);
+            [routes[i - 1], routes[i]] = [routes[i], routes[i - 1]];
+            bind();
+          };
+        });
+        box.querySelectorAll('[data-route-down]').forEach((el) => {
+          el.onclick = () => {
+            const i = Number(el.dataset.routeDown);
+            [routes[i + 1], routes[i]] = [routes[i], routes[i + 1]];
+            bind();
+          };
+        });
+      };
+      bind();
+      document.getElementById('routeAdd').onclick = () => {
+        if (routes.length >= 5) return;
+        routes.push({ id: 'fallback-' + routes.length, provider_id: '', model: '' });
+        bind();
+      };
+      document.getElementById('routeSave').onclick = async () => {
+        const clean = routes.filter((r) => r.provider_id).map((r, i) => ({
+          id: r.id || (i === 0 ? 'primary' : 'fallback-' + i),
+          provider_id: r.provider_id,
+          model: r.model || ''
+        }));
+        try {
+          await api.llmSavePurpose(purpose.id, clean.length ? { routes: clean } : { provider_id: '' });
+          closeModal();
+          toast('路由链已保存');
+          ctx.refresh();
+        } catch (e) {
+          toast('保存失败：' + (e.detail || e.message), 'bad');
+        }
+      };
+    }
+  });
 }
 
 async function savePurpose(ctx, root, pid, useDefault) {
   const provSel = root.querySelector('[data-pprov="' + pid + '"]');
   const modelSel = root.querySelector('[data-pmodel="' + pid + '"]');
-  const body = { provider_id: provSel ? provSel.value : '' };
-  if (!useDefault && modelSel && modelSel.value) body.model = modelSel.value;
-  if (useDefault) body.model = '';
+  const row = root.querySelector('[data-row="' + pid + '"]');
+  const providerId = provSel ? provSel.value : '';
+  let routes = [];
+  try { routes = JSON.parse((row && row.dataset.routes) || '[]'); } catch (e) { routes = []; }
+  let body;
+  if (!providerId) {
+    body = { provider_id: '' };
+  } else if (Array.isArray(routes) && routes.length > 1) {
+    const model = useDefault ? '' : ((modelSel && modelSel.value) || '');
+    routes[0] = Object.assign({}, routes[0], { provider_id: providerId, model });
+    body = { routes };
+  } else {
+    body = { provider_id: providerId };
+    if (!useDefault && modelSel && modelSel.value) body.model = modelSel.value;
+    if (useDefault) body.model = '';
+  }
   try {
     await api.llmSavePurpose(pid, body);
     toast('已保存路由');
@@ -503,10 +639,15 @@ async function loadUsage(root) {
   try {
     const d = await api.llmUsage(100);
     const s = d.summary || {};
+    const unknownCosts = Number(s.cost_unknown_records == null
+      ? Math.max(0, Number(s.calls || 0) - Number(s.cost_records || 0))
+      : s.cost_unknown_records);
     const rows = (d.items || []).map((r) => {
       const u = r.usage || {};
       const c = r.cost || {};
-      const money = (c.usd == null) ? '<span class="dim">未知</span>' : ('$' + c.usd);
+      const money = (c.usd == null)
+        ? badge('outline', '未知') + '<div class="tiny dim">按量计费</div>'
+        : badge('ok', '已知') + '<div class="mono small">$' + esc(c.usd) + '</div>';
       return '<tr>'
         + '<td class="mono tiny dim" style="width:120px">' + esc(dt(r.at)) + '</td>'
         + '<td class="mono small">' + esc(r.purpose || '—') + '</td>'
@@ -530,17 +671,18 @@ async function loadUsage(root) {
       + '<div class="row gap12" style="flex-wrap:wrap;margin-bottom:10px">'
       + '<span class="chip">输入 ' + esc(s.input_tokens || 0) + ' tokens</span>'
       + '<span class="chip">输出 ' + esc(s.output_tokens || 0) + ' tokens</span>'
-      + '<span class="chip">金额：' + (s.cost_usd_known == null ? '未知'
-        : ('$' + s.cost_usd_known + '（' + esc(s.cost_records) + ' 条有账单）')) + '</span>'
+      + '<span class="chip">金额：' + (s.cost_usd_known == null ? '未知（按量计费）'
+        : ('$' + esc(s.cost_usd_known) + '（' + esc(s.cost_records) + ' 条已知 / '
+          + esc(unknownCosts) + ' 条未知）')) + '</span>'
       + '</div>'
       + '<div class="alert info" style="margin-bottom:10px"><span class="nav-ico">' + icon('alert', 14)
       + '</span><div><!-- costNote -->'
-      + '金额只认供应商返回的 usage：<b>没返回就是「未知」，不按 token 单价估算</b>。'
+      + esc(s.cost_note || '金额只认供应商返回的 usage：没返回就是未知，不按 token 单价估算。')
       + '提示词与生成正文不落日志，只存指纹与长度。</div></div>'
       + '<div class="table-wrap"><table class="tb"><thead><tr>'
       + '<th>时间</th><th>用途</th><th>提供商 / 模型</th><th style="width:80px">结果</th>'
       + '<th class="num" style="width:70px">入</th><th class="num" style="width:70px">出</th>'
-      + '<th class="num" style="width:80px">金额</th><th class="num" style="width:80px">耗时</th>'
+      + '<th class="num" style="width:80px">计费</th><th class="num" style="width:80px">耗时</th>'
       + '<th style="width:180px">错误</th>'
       + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
       + '<div class="card-foot">' + stamp('web/var/llm/usage.jsonl · 最近 100 条') + '</div></section>';

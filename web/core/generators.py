@@ -23,7 +23,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from . import paths
+from . import generation_models, paths
 
 def _comfy_base() -> str:
     """ComfyUI 地址取连接中心，**不再硬编码 8188**。
@@ -231,6 +231,36 @@ def image_channel(ws) -> dict:
         "confirmed": confirmed,
         "fake_cloud": fake_cloud,
         "backup": spec != "assets.rh_wf",   # RH 工作流通道不经过本地落盘，无法备份旧图
+    }
+
+
+def board_channel(ws) -> dict:
+    """分镜图当前会走哪条下游生图通道。"""
+    choice = plan_choice(ws, "board")
+    det = _plan_detail(ws, "board")
+    label, cost_text, confirmed = "", "", False
+    try:
+        d = json.loads((Path(str(ws)) / "model-plan.json").read_text(encoding="utf-8-sig"))
+        node = (((d.get("models") or {}).get("board")) or {})
+        label = str(node.get("label") or "")
+        cost_text = str(node.get("cost") or "")
+        confirmed = bool(node.get("confirmed"))
+    except (OSError, ValueError):
+        pass
+    engine = {"local_comfyui": "local", "cloud_comfyui": "cloud",
+              "zzai_image_api": "zzai", "runninghub_workflow": "rh",
+              "closed_source": "manual"}.get(choice, "local")
+    return {
+        "ok": True,
+        "choice": choice or "",
+        "engine": engine,
+        "label": label or ("本地 ComfyUI（￥0）" if engine == "local" else choice),
+        "cost": cost_text,
+        "paid": engine in ("cloud", "zzai", "rh"),
+        "confirmed": confirmed,
+        "url": str(det.get("comfy_url") or ""),
+        "workflow": str(det.get("comfy_workflow") or ""),
+        "fallback_local": not confirmed,
     }
 
 
@@ -542,4 +572,6 @@ def channels(ws=None) -> dict:
         sub = [x for x in items if x["kind"] == k]
         counts[k] = {"total": len(sub), "ready": len([x for x in sub if x["status"] == "ready"])}
     return {"items": items, "counts": counts, "comfy": comfy,
+            "model_catalog": generation_models.list_profiles(),
+            "board_channel": board_channel(ws) if ws else {"choice": "", "engine": "local"},
             "ws": str(ws or ""), "config_path": cfg_path}

@@ -229,7 +229,13 @@ def public_provider(prov: dict) -> dict:
 
 def list_providers() -> list:
     cfg = load_config()
-    return [public_provider(p) for p in cfg.get("providers") or []]
+    rows = _read_usage_rows()
+    out = []
+    for p in cfg.get("providers") or []:
+        item = public_provider(p)
+        item["health"] = provider_health(p.get("id"), rows=rows, prov=p)
+        out.append(item)
+    return out
 
 
 def get_provider(pid: str, *, with_key=False) -> dict:
@@ -388,8 +394,12 @@ def get_purpose(pid: str) -> dict:
             out["provider_id"] = picked.get("id") or ""
             out["provider_name"] = picked.get("name") or ""
             out["auto"] = True
-    # ready 与 list_purposes 同口径：绑定 + 提供商启用
-    out["ready"] = bool(bound.get("provider_id") and prov.get("enabled"))
+    # ready 与 list_purposes 同口径：绑定 + 提供商启用；自动选路也可用。
+    out["ready"] = bool((bound.get("provider_id") and prov.get("enabled"))
+                        or (out.get("auto") and out.get("provider_id")))
+    routes = get_route_chain(pid, cfg)
+    out["routes"] = routes
+    out["fallback_count"] = max(0, len(routes) - 1)
     return out
 
 
@@ -432,6 +442,58 @@ def auto_provider(spec_id: str, cfg: dict | None = None) -> dict:
     return best or {}
 
 
+
+MAX_ROUTES = 5
+
+
+def _normal_route(route, provs, index):
+    """校验并归一一条用途路由。保留旧 provider_id/model 字段兼容。"""
+    if not isinstance(route, dict):
+        raise LLMError("config", "路由必须是对象")
+    pid = str(route.get("provider_id") or "").strip()
+    if not pid or pid not in provs:
+        raise LLMError("not_found", "找不到路由提供商：%s" % (pid or "（空）"))
+    prov = provs[pid]
+    model = str(route.get("model") or prov.get("default_model") or "").strip()
+    if model and model not in (prov.get("models") or []):
+        raise LLMError("config", "模型 %s 不在提供商 %s 的模型列表里" % (model, pid))
+    rid = str(route.get("id") or ("primary" if index == 0 else "fallback-%d" % index)).strip()
+    return {"id": rid[:40], "provider_id": pid, "model": model}
+
+
+def get_route_chain(pid: str, cfg: dict | None = None) -> list:
+    """返回用途的主路由 + 备用路由；旧配置自动视为单路由。"""
+    spec = templates.PURPOSE_MAP.get(pid)
+    if not spec:
+        return []
+    cfg = cfg if cfg is not None else load_config()
+    provs = {p.get("id"): p for p in (cfg.get("providers") or [])}
+    slot = (cfg.get("purposes") or {}).get(pid) or {}
+    raw = slot.get("routes")
+    routes = []
+    if isinstance(raw, list) and raw:
+        for i, route in enumerate(raw[:MAX_ROUTES]):
+            try:
+                routes.append(_normal_route(route, provs, i))
+            except LLMError:
+                continue
+    if not routes:
+        bound = str(slot.get("provider_id") or "").strip()
+        if bound and bound in provs:
+            routes = [_normal_route({"provider_id": bound, "model": slot.get("model")},
+                                    provs, 0)]
+        else:
+            picked = auto_provider(pid, cfg)
+            if picked:
+                routes = [_normal_route({"provider_id": picked.get("id"),
+                                         "model": picked.get("default_model")}, provs, 0)]
+    for route in routes:
+        prov = provs.get(route["provider_id"]) or {}
+        route["provider_name"] = prov.get("name") or ""
+        route["enabled"] = bool(prov.get("enabled", True))
+    return routes
+
+
 def list_purposes() -> list:
     cfg = load_config()
     provs = {p.get("id"): p for p in (cfg.get("providers") or [])}
@@ -454,6 +516,8 @@ def list_purposes() -> list:
             "auto_provider_name": picked.get("name") or "",
             "auto": bool(picked),
             "ready": bool(explicit or picked),
+            "routes": get_route_chain(spec["id"], cfg),
+            "fallback_count": max(0, len(get_route_chain(spec["id"], cfg)) - 1),
         })
     return out
 
@@ -465,7 +529,35 @@ def set_purpose(pid: str, patch: dict) -> dict:
     provs = {p.get("id"): p for p in (cfg.get("providers") or [])}
     slot = cfg.setdefault("purposes", {}).setdefault(pid, {})
 
+    if "routes" in patch:
+        raw = patch.get("routes") or []
+        if not isinstance(raw, list):
+            raise LLMError("config", "routes 必须是数组")
+        routes = [_normal_route(r, provs, i) for i, r in enumerate(raw[:MAX_ROUTES])]
+        # 去重（同 provider/model 只保留第一个）
+        seen = set()
+        uniq = []
+        for route in routes:
+            key = (route["provider_id"], route["model"])
+            if key not in seen:
+                seen.add(key)
+                uniq.append(route)
+        if uniq:
+            slot["routes"] = uniq
+            slot["provider_id"] = uniq[0]["provider_id"]
+            slot["model"] = uniq[0]["model"]
+        else:
+            slot.pop("routes", None)
+            slot.pop("provider_id", None)
+            slot.pop("model", None)
+            if not slot:
+                cfg.get("purposes", {}).pop(pid, None)
+        save_config(cfg)
+        return get_purpose(pid)
+
     if "provider_id" in patch:
+        # 旧的单路由写法：一旦显式绑定，就清掉历史 routes，避免两个真源并存。
+        slot.pop("routes", None)
         v = str(patch.get("provider_id") or "").strip()
         if v and v not in provs:
             raise LLMError("not_found", "找不到提供商：%s" % v)
@@ -519,8 +611,7 @@ def append_usage(rec: dict) -> None:
             fh.write(line)
 
 
-def usage(limit=200, purpose=None, provider=None) -> dict:
-    """读最近 N 条（倒序）。文件不存在返回空，不报错。"""
+def _read_usage_rows() -> list:
     rows = []
     try:
         with open(USAGE_FILE, "r", encoding="utf-8", errors="replace") as fh:
@@ -532,13 +623,24 @@ def usage(limit=200, purpose=None, provider=None) -> dict:
                     d = json.loads(ln)
                 except json.JSONDecodeError:
                     continue
-                if purpose and d.get("purpose") != purpose:
-                    continue
-                if provider and d.get("provider") != provider:
-                    continue
-                rows.append(d)
+                if isinstance(d, dict):
+                    rows.append(d)
     except OSError:
-        return {"items": [], "total": 0, "summary": _summary([])}
+        return []
+    return rows
+
+
+def usage(limit=200, purpose=None, provider=None, project=None) -> dict:
+    """读最近 N 条（倒序）。文件不存在返回空，不报错。"""
+    rows = []
+    for d in _read_usage_rows():
+        if purpose and d.get("purpose") != purpose:
+            continue
+        if provider and d.get("provider") != provider:
+            continue
+        if project and d.get("project") != project:
+            continue
+        rows.append(d)
     total = len(rows)
     rows = rows[-int(limit):][::-1]
     return {"items": rows, "total": total, "summary": _summary(rows)}
@@ -550,6 +652,19 @@ def _summary(rows) -> dict:
     tout = sum(int((r.get("usage") or {}).get("output_tokens") or 0) for r in rows)
     usd = [r.get("cost", {}).get("usd") for r in rows if isinstance(r.get("cost"), dict)]
     known = [x for x in usd if isinstance(x, (int, float))]
+    unknown_count = len(rows) - len(known)
+    if not rows:
+        status = "none"
+        note = "还没有 LLM 调用记录"
+    elif not known:
+        status = "unknown"
+        note = "供应商未返回金额，全部为未知；不按 token 单价估算"
+    elif not unknown_count:
+        status = "known"
+        note = "金额来自供应商返回的 usage"
+    else:
+        status = "mixed"
+        note = "金额来自供应商返回的 usage；%d 条未返回金额，保持未知，不做估算" % unknown_count
     return {
         "calls": len(rows),
         "ok": ok,
@@ -558,6 +673,66 @@ def _summary(rows) -> dict:
         "output_tokens": tout,
         "cost_usd_known": round(sum(known), 6) if known else None,
         "cost_records": len(known),
-        "cost_note": ("金额仅来自供应商返回的 usage；缺失即为未知，不做估算"
-                      if len(known) else "供应商未返回金额，全部为未知"),
+        "cost_unknown_records": unknown_count,
+        "cost_status": status,
+        "cost_note": note,
+    }
+
+
+_COOLDOWN_SECONDS = {"rate_limit": 120, "timeout": 60, "network": 60, "server": 60}
+_BLOCKED_KINDS = {"auth", "quota", "model_not_found", "config"}
+
+
+def provider_health(provider_id: str, *, rows=None, prov=None) -> dict:
+    """从 usage.jsonl 派生提供商健康状态，不另建数据库。
+
+    cooling 是有时效的退避；blocked 表示配置/鉴权/余额问题，通常需要人处理。
+    """
+    pid = str(provider_id or "")
+    all_rows = _read_usage_rows() if rows is None else rows
+    mine = [r for r in all_rows if str(r.get("provider") or "") == pid]
+    mine.sort(key=lambda r: float(r.get("at") or 0))
+    latest = mine[-1] if mine else {}
+    now = time.time()
+    state = "unknown"
+    cooldown_until = None
+    last_ok_at = None
+    last_error_at = None
+    last_error_kind = ""
+    consecutive = 0
+    if mine:
+        for rec in reversed(mine):
+            if rec.get("ok"):
+                if last_ok_at is None:
+                    last_ok_at = float(rec.get("at") or 0) or None
+                break
+            consecutive += 1
+        last_error = next((r for r in reversed(mine) if not r.get("ok")), {})
+        last_error_at = float(last_error.get("at") or 0) or None
+        last_error_kind = str(last_error.get("error_kind") or "")
+        if latest.get("ok"):
+            state = "healthy"
+        elif last_error_kind in _COOLDOWN_SECONDS:
+            until = (last_error_at or 0) + _COOLDOWN_SECONDS[last_error_kind]
+            cooldown_until = until
+            state = "cooling" if until > now else "degraded"
+        elif last_error_kind in _BLOCKED_KINDS:
+            state = "blocked"
+        else:
+            state = "degraded"
+    elif prov:
+        lt = prov.get("last_test") or {}
+        if lt.get("ok"):
+            state = "healthy"
+        elif lt:
+            state = "blocked" if str(lt.get("kind") or "") in _BLOCKED_KINDS else "degraded"
+    return {
+        "state": state,
+        "cooling": bool(cooldown_until and cooldown_until > now),
+        "cooldown_until": cooldown_until,
+        "last_ok_at": last_ok_at,
+        "last_error_at": last_error_at,
+        "last_error_kind": last_error_kind,
+        "consecutive_failures": consecutive,
+        "calls": len(mine),
     }

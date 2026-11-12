@@ -67,10 +67,14 @@ GATE_VERSION = 2
 # 只确认「用 RH AI 应用」而不给应用地址 = 不知道该提交到哪。这两类信息只能由用户提供。
 REQUIRES = {
     "comfy_workflow": {"label": "ComfyUI 工作流 API 文件（在 ComfyUI 里「导出（API）」得到的 json）", "kind": "file"},
+    "comfy_workflow_t2i": {"label": "ComfyUI 文生图工作流 API 文件", "kind": "file"},
+    "comfy_workflow_i2i": {"label": "ComfyUI 图生图工作流 API 文件", "kind": "file"},
     "comfy_url":      {"label": "ComfyUI 服务地址（如 http://127.0.0.1:8188 或云端 https://...）", "kind": "text"},
     "app_url":        {"label": "RunningHub AI 应用地址（应用页 URL，或 webappId）", "kind": "text"},
     "app_id":         {"label": "RunningHub AI 应用 ID（webappId）", "kind": "text"},
     "workflow_id":    {"label": "RunningHub 工作流 ID（workflowId）", "kind": "text"},
+    "workflow_id_t2i": {"label": "RunningHub 文生图工作流 ID", "kind": "text"},
+    "workflow_id_i2i": {"label": "RunningHub 图生图工作流 ID", "kind": "text"},
 }
 
 MODEL_OPTIONS = {
@@ -83,7 +87,7 @@ MODEL_OPTIONS = {
             "engine_arg": "local",
             "executor": "gen_assets_local.py",
             "requires": [],
-            "optional": ["comfy_workflow"],
+            "optional": ["comfy_workflow", "comfy_workflow_t2i", "comfy_workflow_i2i"],
         },
         {
             "id": "cloud_comfyui",
@@ -93,7 +97,7 @@ MODEL_OPTIONS = {
             "engine_arg": "cloud",
             "executor": "gen_assets_local.py（同一客户端，COMFYUI_URL 指向云端）",
             "requires": ["comfy_url", "comfy_workflow"],
-            "optional": [],
+            "optional": ["comfy_workflow_t2i", "comfy_workflow_i2i"],
         },
         {
             "id": "runninghub_workflow",
@@ -105,7 +109,7 @@ MODEL_OPTIONS = {
             "engine_arg": "rh",
             "executor": "gen_assets_rh_workflow.py",
             "requires": ["comfy_workflow"],
-            "optional": ["workflow_id"],
+            "optional": ["workflow_id", "comfy_workflow_t2i", "comfy_workflow_i2i"],
         },
         {
             "id": "closed_source",
@@ -113,6 +117,59 @@ MODEL_OPTIONS = {
             "cost": "按各家订阅/点数计费（站外）",
             "desc": "可灵/即梦/Midjourney/Nano Banana(Gemini) 等；本仓库不直连，"
                     "由人工在各平台出图后落盘到工作区，引擎按本地文件接管。",
+            "engine_arg": None,
+            "executor": None,
+            "manual": True,
+            "requires": [],
+            "optional": [],
+        },
+    ],
+    "board": [
+        {
+            "id": "local_comfyui",
+            "label": "本地 ComfyUI（￥0）",
+            "cost": "￥0（占本机 GPU/电费）",
+            "desc": "本机 ComfyUI 用图生图工作流生成每镜分镜图；角色/场景参考图必填。",
+            "engine_arg": "local",
+            "executor": "gen_boards.py",
+            "requires": [],
+            "optional": ["comfy_workflow", "comfy_workflow_t2i", "comfy_workflow_i2i", "comfy_url"],
+        },
+        {
+            "id": "cloud_comfyui",
+            "label": "云端 ComfyUI / 仙宫云镜像（★计费）",
+            "cost": "按云主机/平台计费",
+            "desc": "同一套 gen_boards.py + ComfyUI i2i 工作流，COMFYUI_URL 指向仙宫云等远端实例。",
+            "engine_arg": "cloud",
+            "executor": "gen_boards.py（同一客户端，COMFYUI_URL 指向远端）",
+            "requires": ["comfy_url"],
+            "optional": ["comfy_workflow", "comfy_workflow_t2i", "comfy_workflow_i2i"],
+        },
+        {
+            "id": "zzai_image_api",
+            "label": "ZZAI 图片 API（★计费）",
+            "cost": "按图片任务实际 usage 结算",
+            "desc": "上传角色/场景参考图后，用 zhenzhen-image-g-v2.6-lowprice 做图生图；先 estimate，真实提交前必须确认。",
+            "engine_arg": "zzai",
+            "executor": "gen_boards.py --engine zzai",
+            "requires": [],
+            "optional": [],
+        },
+        {
+            "id": "runninghub_workflow",
+            "label": "RunningHub 工作流（★计费）",
+            "cost": "按平台实际用量结算",
+            "desc": "RunningHub 图生图工作流生成分镜图；必须配置 i2i workflowId 与节点映射。",
+            "engine_arg": "rh",
+            "executor": "gen_boards.py --engine rh",
+            "requires": ["workflow_id_i2i"],
+            "optional": ["workflow_id_t2i"],
+        },
+        {
+            "id": "closed_source",
+            "label": "闭源模型（★人工）",
+            "cost": "按平台订阅/点数（站外）",
+            "desc": "人工生成分镜图后放回 04-资产/boards/<ep>/<shot_id>.png。",
             "engine_arg": None,
             "executor": None,
             "manual": True,
@@ -186,7 +243,7 @@ MODEL_OPTIONS = {
     ],
 }
 
-KINDS = {"image": "生图", "video": "视频"}
+KINDS = {"image": "生图", "board": "分镜图", "video": "视频"}
 PLAN_NAME = "model-plan.json"
 EXIT_WAIT_CONFIRM = 4   # 与 drama.py 退出码约定一致：4 = 等待用户确认（关卡停点）
 
@@ -287,6 +344,7 @@ def missing_evidence(kind: str, choice: str, detail: dict | None) -> list:
 # 而真相是「跑到了另一台机器上」。这里把它补齐。
 ENV_MAP = {
     "image": {"comfy_url": "COMFYUI_URL", "comfy_workflow": "COMFYUI_WORKFLOW"},
+    "board": {"comfy_url": "COMFYUI_URL", "comfy_workflow": "COMFYUI_WORKFLOW"},
     "video": {"comfy_url": "COMFYUI_URL", "comfy_workflow": "COMFYUI_VIDEO_WORKFLOW"},
 }
 
@@ -430,7 +488,7 @@ def render_confirm_request(kind: str, ws: pathlib.Path) -> str:
 # 命令实现
 # ---------------------------------------------------------------------------
 def cmd_list(a) -> int:
-    for kind in ("image", "video"):
+    for kind in KINDS:
         print("【%s模型】可选：" % KINDS[kind])
         print(render_menu(kind))
         print()
@@ -445,7 +503,7 @@ def cmd_status(a) -> int:
     print("=" * 74)
     print("工作区    : %s" % ws)
     print("确认单    : %s%s" % (plan_path(ws), "" if plan_path(ws).is_file() else "（尚未创建）"))
-    for kind in ("image", "video"):
+    for kind in KINDS:
         st = gate_state(ws, kind)
         m = (plan.get("models") or {}).get(kind) or {}
         if st["confirmed"]:
@@ -470,7 +528,7 @@ def cmd_status(a) -> int:
 def _do_set(ws: pathlib.Path, kind: str, choice: str, detail: dict | None,
             source: str = "cli") -> int:
     if kind not in KINDS:
-        print("[FAIL] 未知分类：%s（应为 image / video）" % kind)
+        print("[FAIL] 未知分类：%s（应为 image / board / video）" % kind)
         return 2
     opt = _find_option(kind, choice)
     if not opt:
@@ -489,13 +547,16 @@ def _do_set(ws: pathlib.Path, kind: str, choice: str, detail: dict | None,
     detail = dict(detail or {})
 
     # ★ 把 detail 里的相对路径按「工作区」解析，落盘时统一存绝对路径（避免换机器/换 cwd 漂移）
-    for k in ("comfy_workflow",):
+    for k in ("comfy_workflow", "comfy_workflow_t2i", "comfy_workflow_i2i"):
         v = str(detail.get(k) or "").strip()
         if v and not pathlib.Path(v).is_absolute():
             detail[k] = str((ws / v).resolve())
 
     plan = load_plan(ws)
     prev = (plan.get("models") or {}).get(kind)
+    # 切换通道时保留其他通道的预设，不在“本地 → RH”之间来回时丢工作流 ID/路径。
+    if prev and isinstance(prev.get("detail"), dict):
+        detail = {**(prev.get("detail") or {}), **detail}
     miss = missing_evidence(kind, choice, detail)
     plan.setdefault("models", {})[kind] = {
         "choice": choice,
@@ -555,8 +616,11 @@ def cmd_set(a) -> int:
                     detail[k.strip()] = v.strip()
     # ★ 执行依据（2026-10-16）：显式参数优先于 --detail
     for flag, key in (("comfy_url", "comfy_url"), ("comfy_workflow", "comfy_workflow"),
+                      ("comfy_workflow_t2i", "comfy_workflow_t2i"),
+                      ("comfy_workflow_i2i", "comfy_workflow_i2i"),
                       ("app_url", "app_url"), ("app_id", "app_id"),
-                      ("workflow_id", "workflow_id")):
+                      ("workflow_id", "workflow_id"), ("workflow_id_t2i", "workflow_id_t2i"),
+                      ("workflow_id_i2i", "workflow_id_i2i")):
         v = getattr(a, flag, None)
         if v:
             detail[key] = str(v).strip()
@@ -575,7 +639,7 @@ def cmd_reset(a) -> int:
     ws = _resolve_ws(getattr(a, "workspace", None))
     kind = a.kind
     if kind not in KINDS:
-        print("[FAIL] 未知分类：%s（应为 image / video）" % kind)
+        print("[FAIL] 未知分类：%s（应为 image / board / video）" % kind)
         return 2
     plan = load_plan(ws)
     prev = (plan.get("models") or {}).pop(kind, None)
@@ -664,25 +728,33 @@ def main() -> int:
                    help="ComfyUI 服务地址（本地/云端）")
     p.add_argument("--comfy-workflow", dest="comfy_workflow", default=None,
                    help="ComfyUI 工作流 API 文件路径（在 ComfyUI 里「导出（API）」得到的 json）")
+    p.add_argument("--comfy-workflow-t2i", dest="comfy_workflow_t2i", default=None,
+                   help="ComfyUI 文生图工作流 API 文件")
+    p.add_argument("--comfy-workflow-i2i", dest="comfy_workflow_i2i", default=None,
+                   help="ComfyUI 图生图工作流 API 文件")
     p.add_argument("--app-url", dest="app_url", default=None,
                    help="RunningHub AI 应用地址（应用页 URL）")
     p.add_argument("--app-id", dest="app_id", default=None,
                    help="RunningHub AI 应用 ID（webappId）")
     p.add_argument("--workflow-id", dest="workflow_id", default=None,
                    help="RunningHub 工作流 ID（workflowId）")
+    p.add_argument("--workflow-id-t2i", dest="workflow_id_t2i", default=None,
+                   help="RunningHub 文生图工作流 ID")
+    p.add_argument("--workflow-id-i2i", dest="workflow_id_i2i", default=None,
+                   help="RunningHub 图生图工作流 ID")
     p.set_defaults(fn=cmd_set)
 
     p = sub.add_parser("reset", help="清除某类确认（换模型前用）")
-    p.add_argument("kind", choices=("image", "video"))
+    p.add_argument("kind", choices=tuple(KINDS))
     p.set_defaults(fn=cmd_reset)
 
     p = sub.add_parser("ask", help="交互式引导确认（需 TTY）")
-    p.add_argument("kind", nargs="?", default="image", choices=("image", "video"))
+    p.add_argument("kind", nargs="?", default="image", choices=tuple(KINDS))
     p.set_defaults(fn=cmd_ask)
 
     p = sub.add_parser("require", help="门禁查询（未过则退出码 4；供 drama.py 调用）")
-    p.add_argument("kind", choices=("image", "video"))
-    p.add_argument("--engine", default=None, help="本次实际使用的通道（local/rh/workflow）")
+    p.add_argument("kind", choices=tuple(KINDS))
+    p.add_argument("--engine", default=None, help="本次实际使用的通道（local/cloud/rh/workflow/zzai）")
     p.set_defaults(fn=cmd_require)
 
     a = ap.parse_args()

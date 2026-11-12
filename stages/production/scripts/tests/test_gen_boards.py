@@ -24,8 +24,10 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -88,9 +90,10 @@ def _():
 @reg("A", "A02 只有场景没有角色 → no people in frame，不编人")
 def _():
     txt, n, codes = G.build_prompt("shot_001", spec(["scene_room"]), BIBLE, "plain look")
-    A_(n == 1, "没有 char_* 时按 1 人兜底计数（至少不是 0 张图）")
-    A_("no people in frame" in txt or "nobody else" in txt,
+    A_(n == 0, "纯场景镜人数应为 0，实际 %s" % n)
+    A_("no people in frame" in txt,
         "纯场景镜的措辞不明显：%s" % txt[:200])
+    A_("exactly one person" not in txt, "纯场景镜不能写成一人")
     A_(not codes, "不该编出角色代号：%s" % codes)
     return "场景镜不编人"
 
@@ -108,6 +111,8 @@ def _():
     for raw in ("char_ava", "AVA", "Character_Ava", "ch_ava"):
         _, _, codes = G.build_prompt("s", spec([raw]), BIBLE, "")
         A_(codes == ["AVA"], "%s 没归成 AVA：%s" % (raw, codes))
+    A_(G._codes(["P01@LOOK-A"], ["P01", "P02"]) == ["P01"],
+       "P01@LOOK-A 应归一为 P01")
     return "4 种写法归一"
 
 
@@ -260,11 +265,244 @@ def _():
     return "1–5 人全覆盖"
 
 
+# =========================================================================== E 通道选择
+def _write_board_plan(ws, choice=None, detail=None):
+    ws.mkdir(parents=True, exist_ok=True)
+    models = {}
+    if choice:
+        models["board"] = {"choice": choice, "confirmed": True,
+                           "detail": detail or {}}
+    (ws / "model-plan.json").write_text(
+        json.dumps({"gate_version": 2, "models": models}, ensure_ascii=False),
+        encoding="utf-8")
+
+
+@reg("E", "E01 无 board 确认时 auto 回落本地，不破坏老项目")
+def _():
+    ws = _TMP / "board_auto_empty"
+    ws.mkdir(exist_ok=True)
+    engine, note = G._resolve_engine(ws, "auto")
+    A_(engine == "local", "无确认应回 local，实际 %r" % engine)
+    A_("未确认" in note, "应说明回落原因：%s" % note)
+    return "auto → local"
+
+
+@reg("E", "E02 board=zzai_image_api 能解析到 ZZAI 执行器")
+def _():
+    ws = _TMP / "board_auto_zzai"
+    _write_board_plan(ws, "zzai_image_api")
+    engine, note = G._resolve_engine(ws, "auto")
+    A_(engine == "zzai", "应解析为 zzai，实际 %r" % engine)
+    A_("已确认" in note, "门禁应放行：%s" % note)
+    return "board → zzai"
+
+
+@reg("E", "E03 board=cloud_comfyui 缺地址时被门禁拦下")
+def _():
+    ws = _TMP / "board_auto_cloud_missing"
+    _write_board_plan(ws, "cloud_comfyui", {})
+    engine, note = G._resolve_engine(ws, "auto")
+    A_(engine == "", "缺地址不应解析出执行器")
+    A_("comfy_url" in note, "错误应点名 comfy_url：%s" % note)
+    return "缺 comfy_url → block"
+
+
+@reg("E", "E04 board=cloud_comfyui 有地址时解析到 cloud")
+def _():
+    ws = _TMP / "board_auto_cloud"
+    _write_board_plan(ws, "cloud_comfyui",
+                      {"comfy_url": "https://abc-8188.container.x-gpu.com"})
+    engine, _ = G._resolve_engine(ws, "auto")
+    A_(engine == "cloud", "应解析为 cloud，实际 %r" % engine)
+    return "board → cloud"
+
+
+@reg("E", "E05 未实现/人工通道不静默回落本地")
+def _():
+    ws = _TMP / "board_auto_manual"
+    _write_board_plan(ws, "closed_source")
+    engine, note = G._resolve_engine(ws, "auto")
+    A_(engine == "", "closed_source 不应回落到 local")
+    A_("没有内置执行器" in note, "应明确说明没有执行器：%s" % note)
+    return "manual → block"
+
+
+@reg("E", "E06 board=RunningHub 工作流时解析到 rh")
+def _():
+    ws = _TMP / "board_auto_rh"
+    _write_board_plan(ws, "runninghub_workflow",
+                      {"workflow_id_i2i": "rh-i2i-id", "workflow_id_t2i": "rh-t2i-id"})
+    engine, note = G._resolve_engine(ws, "auto")
+    A_(engine == "rh", "应解析为 rh，实际 %r" % engine)
+    A_("已确认" in note, "门禁应放行：%s" % note)
+    A_(G._rh_workflow_preset(ws, "i2i") == "rh-i2i-id", "i2i workflowId 读取错误")
+    return "board → RH i2i"
+
+
+@reg("E", "E07 ComfyUI 预设区分 t2i / i2i，board 读取 i2i")
+def _():
+    ws = _TMP / "board_comfy_presets"
+    _write_board_plan(ws, "local_comfyui", {
+        "comfy_workflow_t2i": "D:/wf/t2i.json",
+        "comfy_workflow_i2i": "D:/wf/i2i.json",
+    })
+    A_(G._workflow_preset(ws, "t2i") == "D:/wf/t2i.json", "t2i 预设读错")
+    A_(G._workflow_preset(ws, "i2i") == "D:/wf/i2i.json", "i2i 预设读错")
+    return "t2i / i2i 分离"
+
+
+@reg("E", "E08 RunningHub i2i 节点映射包含 prompt / image / aspect")
+def _():
+    detail = {"runninghub_nodes_i2i": {
+        "prompt": {"nodeId": "6", "fieldName": "text"},
+        "images": [{"nodeId": "12", "fieldName": "image"},
+                   {"nodeId": "13", "fieldName": "image"}],
+        "aspect": {"nodeId": "20", "fieldName": "aspect_ratio"},
+    }}
+    pairs, err = G._rh_pairs(detail, "board prompt", "9:16", ["a.png", "b.png"])
+    A_(not err, "节点映射不应报错：%s" % err)
+    A_(pairs[0] == ("6", "text", "board prompt"), "prompt 节点映射错误：%s" % (pairs,))
+    A_(("12", "image", "a.png") in pairs and ("13", "image", "b.png") in pairs,
+       "参考图节点映射错误：%s" % (pairs,))
+    A_(pairs[-1] == ("20", "aspect_ratio", "9:16"), "aspect 节点映射错误：%s" % (pairs,))
+    return "prompt + 2 refs + aspect"
+
+
+# =========================================================================== F ZZAI Mock
+@reg("F", "F01 ZZAI 分镜图 estimate → submit → poll → download 全链 Mock")
+def _():
+    import stages.media_api.zzai as Z
+
+    class FakeClient:
+        def upload(self, path):
+            A_(pathlib.Path(path).is_file(), "上传的参考图必须存在")
+            return "https://cdn.example/ref.png"
+
+        def estimate(self, kind, payload):
+            A_(kind == "image", "estimate kind 应为 image")
+            A_(payload["size"] == "9:16", "宽高比应映射为 size")
+            A_(payload.get("images") == ["https://cdn.example/ref.png"], "图生图参考图未透传")
+            return {"estimate_available": True, "amount": 0.05,
+                    "currency": "CNY", "confidence": "high"}
+
+        def submit(self, kind, payload, *, max_cost=None, authorized=False):
+            A_(authorized is True, "真实提交必须 authorized=True")
+            A_(max_cost == 0.1, "max_cost 未透传")
+            return {"task_id": "task_board_1", "status": "queued"}
+
+        def poll(self, kind, task_id):
+            return {"task_id": task_id, "status": "succeeded", "progress": "100%",
+                    "result_url": "https://cdn.example/board.png",
+                    "result_urls": ["https://cdn.example/board.png"],
+                    "usage": {"amount": 0.04, "currency": "CNY"}, "error": ""}
+
+        def download(self, url, dest, **_kw):
+            pathlib.Path(dest).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(dest).write_bytes(b"png")
+            return {"ok": True, "path": str(dest), "bytes": 3}
+
+    ws = _TMP / "board_zzai_mock"
+    out = ws / "04-资产" / "boards" / "ep01"
+    ws.mkdir(parents=True, exist_ok=True)
+    assets = G.L.assets_dir(ws)
+    ref = assets / "characters" / "P01.png"
+    ref.parent.mkdir(parents=True, exist_ok=True)
+    ref.write_bytes(b"png")
+    (assets / "refs.json").write_text(
+        json.dumps({"characters": {"P01": str(ref)}, "scenes": {}},
+                   ensure_ascii=False), encoding="utf-8")
+    args = argparse.Namespace(
+        with_refs=False, model="zhenzhen-image-g-v2.6-lowprice",
+        resolution="1k", quality="high", yes=True, max_cost=0.1,
+        force=False, poll_seconds=0.01, ep="ep01",
+    )
+    plan = [("shot_001", "A cinematic still frame", 1, ["P01"],
+             {"ratio": "9:16", "refs": ["P01"]})]
+    with mock.patch.object(Z, "ZZAIClient", FakeClient):
+        rc = G._run_zzai(ws, args, plan, out)
+    A_(rc == 0, "ZZAI Mock 全链应成功，实际 rc=%s" % rc)
+    A_((out / "shot_001.png").is_file(), "分镜图未落盘")
+    task_files = list((ws / ".drama" / "media").glob("mt_*.json"))
+    A_(len(task_files) == 1, "应写 1 条媒体任务，实际 %d" % len(task_files))
+    rec = json.loads(task_files[0].read_text(encoding="utf-8"))
+    A_(rec["status"] == "succeeded", "任务状态应 succeeded：%s" % rec["status"])
+    A_(rec["remote_task_id"] == "task_board_1", "远端 task ID 未保存")
+    A_(rec["actual_cost"]["amount"] == 0.04, "实际金额未保存：%s" % rec.get("actual_cost"))
+    return "ZZAI Mock 全链"
+
+
+@reg("F", "F02 没有参考图时拒绝生成，不退化成文生图")
+def _():
+    ws = _TMP / "board_zzai_no_refs"
+    ws.mkdir(parents=True, exist_ok=True)
+    args = argparse.Namespace(
+        with_refs=True, model="zhenzhen-image-g-v2.6-lowprice",
+        resolution="1k", quality="high", yes=True, max_cost=0.1,
+        force=False, poll_seconds=0.01, ep="ep01",
+    )
+    with mock.patch("stages.media_api.zzai.ZZAIClient") as cls:
+        rc = G._run_zzai(ws, args, [("shot_001", "x", 1, [], {"ratio": "9:16", "refs": []})],
+                         ws / "04-资产" / "boards" / "ep01")
+        A_(not cls.called, "无参考图时不应创建 API 客户端")
+    A_(rc == 2, "无参考图应返回配置错误 2，实际 %s" % rc)
+    return "no refs → block"
+
+
+# =========================================================================== G 本地/云端 i2i
+@reg("G", "G01 本地通道固定使用 edit 工作流并传参考图")
+def _():
+    ws = _TMP / "board_local_i2i"
+    shutil.copytree(FIXTURE, ws)
+    ref = ws / "characters" / "char_ava_00.png"
+    ref.parent.mkdir(parents=True, exist_ok=True)
+    ref.write_bytes(b"png")
+    scene_ref = ws / "scenes" / "scene_room_00.png"
+    scene_ref.parent.mkdir(parents=True, exist_ok=True)
+    scene_ref.write_bytes(b"png")
+    captured = []
+
+    def fake_run(cmd, **kwargs):
+        captured.append((cmd, kwargs))
+        tmp = pathlib.Path(cmd[cmd.index("--out") + 1])
+        tmp.mkdir(parents=True, exist_ok=True)
+        prefix = cmd[cmd.index("--prefix") + 1]
+        (tmp / ("%s_00.png" % prefix)).write_bytes(b"png")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    argv = ["gen_boards.py", "--workspace", str(ws), "--ep", "ep01",
+            "--engine", "local", "--apply", "--force", "--limit", "1"]
+    with mock.patch.object(sys, "argv", argv), mock.patch.object(subprocess, "run", fake_run):
+        rc = G.main()
+    A_(rc == 0, "本地 Mock 出图应成功，实际 %s" % rc)
+    A_(len(captured) == 1, "应只提交 1 次本地任务，实际 %d" % len(captured))
+    cmd, kwargs = captured[0]
+    A_("workflow_qwen21_edit.json" in " ".join(cmd), "本地分镜图必须走 edit 工作流")
+    A_("--image" in cmd, "本地图生图必须传参考图")
+    A_(kwargs.get("env", {}).get("COMFYUI_URL", "") in ("", os.environ.get("COMFYUI_URL", "")),
+       "本地通道不应被误写成远端地址")
+    return "local → edit + refs"
+
+
+@reg("G", "G02 4 图 i2i 工作流识别出 4 个 LoadImage 槽")
+def _():
+    import importlib.util
+    wf = G.ROOT / "stages" / "assets" / "comfyui" / "workflow_qwen21_i2i_turbo_4ref.json"
+    A_(wf.is_file(), "4 图工作流预置不存在：%s" % wf)
+    A_(G._load_image_slots(wf) == 4, "应识别出 4 个 LoadImage，实际 %d" % G._load_image_slots(wf))
+    spec = importlib.util.spec_from_file_location("comfy_client_test", G.COMFY_CLIENT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    A_(mod.preset_key_for(str(wf)) == "edit4", "4 图工作流应命中 edit4 预设")
+    mod.apply_preset(str(wf))
+    A_(len(mod.LOAD_NODES) == 4, "edit4 预设应配置 4 个 LoadImage 节点：%s" % mod.LOAD_NODES)
+    return "4 slots / edit4"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--group", default="")
     args = ap.parse_args()
-    groups = [args.group.upper()] if args.group else ["A", "B", "C", "D"]
+    groups = [args.group.upper()] if args.group else ["A", "B", "C", "D", "E", "F", "G"]
     passed = failed = 0
     try:
         for g in groups:

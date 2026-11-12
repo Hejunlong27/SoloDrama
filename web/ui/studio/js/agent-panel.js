@@ -16,10 +16,11 @@
    ----------------------------------
    1. 工具是白名单：没有 shell、没有任意路径写；06-提示词 契约它碰不到。
    2. 占 GPU 的命令要人点头（「允许占用 GPU」开关），**默认关，且不持久化**。
-   3. 每一步都摊开给人看，不藏黑箱 —— 出问题时要能指着某一步说「这里错了」。
+   3. 调用云端模型要人点头：每次发送先确认，并说明一次请求最多 12 步。
+   4. 每一步都摊开给人看，不藏黑箱 —— 出问题时要能指着某一步说「这里错了」。
    ============================================================ */
 import { api } from './api.js';
-import { esc, icon, badge, toast, paintIcons } from './ui.js';
+import { esc, icon, badge, confirmCost, toast, paintIcons } from './ui.js';
 import { createFloat, wasOpen } from './float.js';
 import { S, project as currentProject } from './store.js';
 
@@ -130,7 +131,7 @@ function headSub() {
 }
 
 /* ---------- 发送 ---------- */
-async function send(text) {
+async function send(text, confirmed) {
   const ctx = getCtxFn();
   const t = String(text || '').trim();
   if (!t || busy || !ui) return;
@@ -141,8 +142,23 @@ async function send(text) {
     wsKey = ctx.ws || '';
   }
   if (!ctx.ws) { toast('先打开一个项目，助手才有东西可读', 'warn'); return; }
+  if (!confirmed) {
+    confirmCost({
+      title: '确认调用制片助手模型',
+      lines: [
+        ['项目', ctx.ws],
+        ['自动继续', auto ? '开（最多 12 步）' : '关（遇确认点即停）'],
+        ['GPU 命令', allowGpu ? '已授权' : '未授权（会先询问）']
+      ],
+      total: '按供应商实际 usage 结算',
+      note: '助手一次请求最多调用模型 12 步。云端模型可能产生真实费用；供应商未返回金额时保持未知，不按 token 猜价。',
+      onOk: () => send(t, true)
+    });
+    return;
+  }
 
   busy = true;
+  ui.ta.value = '';
   MSG.push({ role: 'user', content: t });
   ui.log.innerHTML = chatHtml() + '<div class="ag-row ai"><div class="ag-b">'
     + '<span class="spinner"></span> 正在读状态并决定下一步…</div></div>';
@@ -156,7 +172,7 @@ async function send(text) {
       ws: ctx.ws,
       /* 只发 role/content：steps 是本地展示用的，回传给模型等于让它以为自己说过那些话 */
       messages: MSG.map((m) => ({ role: m.role, content: m.content })),
-      auto: auto, allow_gpu: allowGpu
+      auto: auto, allow_gpu: allowGpu, confirm: true
     });
     MSG.push({
       role: 'assistant',
@@ -217,7 +233,7 @@ function mount(body) {
     ui.meta.textContent = '';
   };
 
-  ui.btn.onclick = () => { const v = ui.ta.value; ui.ta.value = ''; send(v); };
+  ui.btn.onclick = () => send(ui.ta.value);
   ui.ta.onkeydown = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); ui.btn.click(); }
   };

@@ -47,6 +47,35 @@ def _content_of(message) -> str:
     return ""
 
 
+def _usage_of(raw) -> dict:
+    """把不同中转站的 usage 字段归一，同时保留原始对象。
+
+    为什么要保留 raw：部分中转站会在 usage/raw 里返回 cost、缓存 token、
+    推理 token 等计费证据。旧实现只挑 prompt/completion/total 三项，导致
+    后续 `_cost_of()` 根本看不到供应商已经返回的金额。
+    """
+    u = raw if isinstance(raw, dict) else {}
+
+    def pick(*keys):
+        for key in keys:
+            value = u.get(key)
+            if isinstance(value, (int, float)):
+                return value
+        return None
+
+    input_tokens = pick("prompt_tokens", "input_tokens")
+    output_tokens = pick("completion_tokens", "output_tokens")
+    total_tokens = pick("total_tokens")
+    if total_tokens is None and (input_tokens is not None or output_tokens is not None):
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "raw": dict(u) if u else None,
+    }
+
+
 def _http_error(exc: Exception) -> LLMError:
     if isinstance(exc, httpx.TimeoutException):
         return LLMError("timeout", "请求超时（可在提供商配置里调大超时秒数）")
@@ -154,12 +183,7 @@ class OpenAICompatible(BaseProvider):
         text = _content_of(msg)
         finish = str((choices[0] or {}).get("finish_reason") or "")
         u = data.get("usage") or {}
-        usage = {
-            "input_tokens": u.get("prompt_tokens"),
-            "output_tokens": u.get("completion_tokens"),
-            "total_tokens": u.get("total_tokens"),
-            "raw": {k: v for k, v in u.items() if k in ("prompt_tokens", "completion_tokens", "total_tokens")} or None,
-        }
+        usage = _usage_of(u)
         # ★ 空 content 必须给出可执行的下一步，不能落到「输出不是合法 JSON」。
         #   实测 DeepSeek 的 flash / v4-pro 都是推理模型：max_tokens=16 时思考就吃掉全部额度，
         #   HTTP 200、usage 有值、content 为 ""。这两种原因下一步完全不同：

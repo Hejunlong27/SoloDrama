@@ -117,6 +117,12 @@ export const api = {
   prune: () => post('/api/workspaces/prune', {}),
 
   generators: (ws) => get('/api/generators', { ws }),
+  generationParams: (body) => post('/api/generators/model-params', body),
+  mediaTasks: (ws, limit, kind, status) => get('/api/media/tasks', {
+    ws, limit: limit || 100, kind, status
+  }),
+  mediaTask: (ws, id) => get('/api/media/tasks/' + encodeURIComponent(id), { ws }),
+  mediaTaskResume: (ws, id) => get('/api/media/tasks/' + encodeURIComponent(id) + '/resume', { ws }),
   healthChecks: (ws) => get('/api/health/checks', { ws }),
   healthFix: (body) => post('/api/health/fix', body),
   healthFixes: (limit) => get('/api/health/fixes', { limit }),
@@ -163,6 +169,8 @@ export const api = {
 
   pipeline: (ws, budget) => get('/api/pipeline/plan', { ws, budget }),
   pipelineRun: (body) => post('/api/pipeline/run', body),
+  schedulerStatus: (ws, ep, limit) => get('/api/scheduler/status', { ws, ep: ep || '', limit: limit || 50 }),
+  schedulerRun: (body) => post('/api/scheduler/run', body),
   setRhWorkflow: (body) => post('/api/generators/rh', body),
 
   capabilities: () => get('/api/studio/capabilities'),
@@ -241,7 +249,9 @@ export const api = {
   llmTemplate: (tid) => get('/api/llm/templates/' + encodeURIComponent(tid)),
   llmPreview: (body) => post('/api/llm/preview', body),
   llmComplete: (body) => post('/api/llm/complete', body),
-  llmUsage: (limit, purpose) => get('/api/llm/usage', { limit: limit || 100, purpose }),
+  llmUsage: (limit, purpose, project) => get('/api/llm/usage', {
+    limit: limit || 100, purpose, project
+  }),
 
   /* ---- 创作闭环：剧本草稿 ---- */
 };

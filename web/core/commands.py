@@ -51,6 +51,7 @@ SCRIPTS = {
     # 平台通道（RunningHub）。默认不出网，显式选 video.rh.* / assets.rh_wf 才走这里。
     "rhdoctor": paths.PROD_SCRIPTS / "rh_doctor.py",
     "gen_rh_wf": paths.PROD_SCRIPTS / "gen_assets_rh_workflow.py",
+    "scheduler_runner": paths.REPO_ROOT / "stages" / "agent" / "runner_cli.py",
 }
 
 
@@ -260,6 +261,7 @@ WS_FLAG = {
     "halfcheck": ("--workspace", "suffix"),
     "compliance": ("--workspace", "suffix"),
     "prepare_refs": ("--workspace", "suffix"),
+    "scheduler_runner": ("--workspace", "suffix"),
     "release_export": ("--workspace", "suffix"),
     "subtitle": ("--workspace", "suffix"),
     "edit_draft": ("--workspace", "suffix"),
@@ -285,6 +287,30 @@ def _add(cmd: Command) -> None:
     COMMANDS.append(cmd)
 
 
+# ===== 0 调度：13 节点受控推进 ==============================================
+_add(_c("scheduler.status", "0 调度", "13 节点状态（只读）", "scheduler_runner",
+        argv=["status", "--json"], mode="sync", danger=READ,
+        flags={"--ep": "ep", "--limit": "limit"},
+        params=[Param("ep", "集号", "str", placeholder="ep01（留空看项目总状态）"),
+                Param("limit", "最近 journal 条数", "int", default=50)],
+        help="只读显示 13 个节点、下一步、磁盘判据与最近调度 journal；不在 Web 层重写判据。",
+        agent="按节点顺序报告已通过/失败/阻塞/未开始，重点说清楚下一步和不能继续的原因。"))
+_add(_c("scheduler.run", "0 调度", "受控推进 13 节点（默认干跑）", "scheduler_runner",
+        argv=["run", "--json"], danger=WRITE, resources=["SCHEDULER"],
+        flags={"--ep": "ep", "--max-steps": "max_steps", "--only": "only",
+               "--until": "until", "--run-id": "run_id"},
+        bools={"--apply": "apply", "--yes": "yes"},
+        params=[Param("ep", "集号", "str", placeholder="ep01"),
+                Param("max_steps", "本次最多推进几步", "int", default=6),
+                Param("only", "只推进指定节点", "str", placeholder="board.frame"),
+                Param("until", "推进到指定节点（含）后停止", "str", placeholder="import.gate"),
+                Param("run_id", "运行标识", "str", placeholder="留空自动生成"),
+                Param("apply", "真实执行（默认只干跑）", "bool", default=False),
+                Param("yes", "允许 board.frame / video.batch 的真实生成", "bool", default=False)],
+        help="调用引擎的 next_node/node_state/run_node 顺序推进；不改判据、不跳节点。"
+             "默认干跑；board.frame / video.batch 的真实执行还必须 --yes。",
+        agent="先干跑说明会执行哪个节点；真实执行前再次确认，尤其分镜图和出片节点。"
+              "退出码 2 是判据不过，必须停下说明缺什么，不得自动重试。"))
 # ===== 前置门禁 -1 画风 =====================================================
 # ===== 前置门禁 0 通道 =====================================================
 _add(_c("models.list", "0 通道", "通道清单（含执行依据要求）", "drama",
@@ -293,12 +319,16 @@ _add(_c("models.list", "0 通道", "通道清单（含执行依据要求）", "d
         agent="用表格列出各通道必须提供的「执行依据」，并说明哪些是★计费。"))
 _add(_c("models.status", "0 通道", "当前通道确认状态", "drama",
         argv=["models", "status", "--json"], mode="sync", danger=READ,
-        help="只读查看 image / video 通道与执行依据是否齐备。",
-        agent="告我 image / video 各自选了哪条通道、执行依据是否齐备；缺什么就明确列出。"))
+        help="只读查看 image / board / video 通道与执行依据是否齐备。",
+        agent="告我 image / board / video 各自选了哪条通道、执行依据是否齐备；缺什么就明确列出。"))
 _add(_c("models.set", "0 通道", "确认通道（G0）", "drama",
         argv=["models", "set", "{pairs}"], gate="G0", danger=WRITE,
         flags={"--comfy-url": "comfy_url", "--comfy-workflow": "comfy_workflow",
-               "--app-url": "app_url", "--app-id": "app_id", "--workflow-id": "workflow_id"},
+               "--comfy-workflow-t2i": "comfy_workflow_t2i",
+               "--comfy-workflow-i2i": "comfy_workflow_i2i",
+               "--app-url": "app_url", "--app-id": "app_id", "--workflow-id": "workflow_id",
+               "--workflow-id-t2i": "workflow_id_t2i",
+               "--workflow-id-i2i": "workflow_id_i2i"},
         params=[Param("pairs", "确认项", "str", required=True, placeholder="image=local_comfyui video=local_comfyui",
                       help="形如 image=<通道> video=<通道>"),
                 Param("comfy_url", "ComfyUI 地址", "str", placeholder="http://127.0.0.1:8188"),
@@ -480,14 +510,36 @@ _add(_c("assets.rh_wf", "2 资产", "云端工作流出图（★计费，非默�
         env={"RUNNINGHUB_API_KEY": "key"}))
 _add(_c("board.frame", "3 分镜图", "批量出分镜图（每镜一张 9:16 首帧）", "gen_boards",
         argv=["--apply"], billing=GPU, danger=WRITE,
-        flags={"--ep": "ep", "--only": "only"},
-        bools={"--force": "force"},
+        flags={"--ep": "ep", "--only": "only", "--engine": "engine",
+               "--comfy-url": "comfy_url", "--workflow": "workflow",
+               "--max-cost": "max_cost", "--model": "model",
+               "--resolution": "resolution", "--quality": "quality",
+               "--poll-seconds": "poll_seconds",
+               "--workflow-id-i2i": "workflow_id_i2i",
+               "--rh-timeout-min": "rh_timeout_min"},
+        bools={"--force": "force", "--yes": "yes"},
         params=[Param("ep", "集号", "str", required=True, placeholder="ep01"),
                 Param("only", "只做这些镜", "str", placeholder="shot_001,shot_003"),
+                Param("engine", "分镜图通道", "enum", default="auto",
+                      choices=["auto", "local", "cloud", "zzai", "rh"],
+                      help="auto 读 model-plan.json 的 board.choice；无确认时本地"),
+                Param("comfy_url", "ComfyUI 地址", "str",
+                      placeholder="cloud 通道必填，或写进模型确认单"),
+                Param("workflow", "覆盖工作流 JSON", "str"),
+                Param("model", "ZZAI 图片模型", "str", default="zhenzhen-image-g-v2.6-lowprice"),
+                Param("resolution", "ZZAI 分辨率", "enum", default="1k",
+                      choices=["1k", "2k", "4k"]),
+                Param("quality", "ZZAI 质量", "enum", default="high",
+                      choices=["auto", "low", "medium", "high", "xhigh", "max"]),
+                Param("max_cost", "ZZAI 单张金额上限", "float"),
+                Param("poll_seconds", "轮询间隔秒", "float", default=3.0),
+                Param("workflow_id_i2i", "RunningHub i2i workflowId", "str"),
+                Param("rh_timeout_min", "RunningHub 轮询超时（分钟）", "float", default=15.0),
+                Param("yes", "云端/ZZAI 真实提交确认", "bool", default=False),
                 Param("force", "已生成的也重跑", "bool", default=False)],
         resources=["GPU"],
-        help="读 data/<ep>/boards.json 的 prompt，每镜出一张与成片同构的首帧。"
-             "缺 board_prompt 的镜会跳过并列出来。",
+        help="读分镜 md 的 board 字段或 boards.json，每镜出一张首帧。"
+             "支持本地 ComfyUI / 云端 ComfyUI / ZZAI 图片 API；计费通道需 --yes。",
         agent="汇报出了几张、跳过哪几镜、为什么跳过。"))
 # ===== 环节 7 参考图 =======================================================
 _add(_c("refs.report", "2 资产", "参考图瘦身体检", "drama",

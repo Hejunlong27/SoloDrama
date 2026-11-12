@@ -1,6 +1,37 @@
 # VERSIONS.md —— 引擎收编清单与版本固化
 
 - 收编日期：2026-10-08
+- **2026-11-12 更新（LLM 记账框架 · T1 路线 2）**
+
+  | # | 变更 | 说明 |
+  |---|---|---|
+  | 1 | 统一模型调用入口 | 制片助手改走 `Gateway.chat()`，不再直接调用 provider；多轮对话也写入 `usage.jsonl` |
+  | 2 | 补齐用量证据 | OpenAI 兼容适配器保留完整 `usage.raw`，不再丢弃中转站返回的 cost、缓存/推理 token 等字段 |
+  | 3 | 项目归属 | 新 usage 记录写入 `project`；`/api/llm/usage` 支持 `project` 过滤，旧记录保持兼容 |
+  | 4 | 金额状态收口 | summary 新增 `cost_status` / `cost_unknown_records`，成本中心与模型中心明确显示已知/未知，未知不回退为 0 |
+  | 5 | 回归测试 | 新增 `web/tests/test_llm_framework.py`，覆盖 Gateway 记账、未知金额、混合金额和 Agent 不旁路 |
+  | 6 | 助手费用闸门 | `POST /api/agent/chat` 必须显式 `confirm=true`；前端每次发送先弹出「最多 12 步、按供应商 usage 结算」确认 |
+  | 7 | 生成模型能力目录 | 新增 `configs/generation-models.json`，按模型声明参数、默认值、范围和端点；首批登记 GPT Image 2.6 低价版与 Muse Video |
+  | 8 | 参数校验入口 | 新增 `web/core/generation_models.py`，把 UI 选择映射为平台请求字段；Muse 的时长 2–10 秒和 720p 是模型约束，不是全局视频限制 |
+  | 9 | 模型参数 UI | 生成通道页新增模型参数表单与只读校验按钮，展示最终平台请求字段，不提交任务 |
+  | 10 | 媒体任务状态层 | 新增 `web/core/media_tasks.py`：本地任务 ID、远端 task ID、报价/最大费用、状态归一、断点恢复与重复提交保护 |
+  | 11 | 媒体任务观测 | 新增 `/api/media/tasks*` 只读接口，并在生成通道页显示任务状态、远端 ID、预估价与实际金额 |
+  | 12 | ZZAI 媒体客户端 | 新增 `stages/media_api/zzai.py`：钱包、模型、公开价格、免费 estimate、授权提交、轮询、usage 提取与下载；提交默认拒绝 |
+  | 13 | ZZAI Mock 回归 | 新增 `stages/media_api/tests/test_zzai.py`，6 例覆盖成功/失败退款/下载/上限头/Key 脱敏；当前未调用真实接口 |
+  | 14 | ZZAI 只读 CLI | 新增 `python -m stages.media_api.cli`，仅提供 wallet/models/pricing/estimate，不提供 submit |
+  | 15 | 多中转站主备路由 | `purposes` 支持 `routes[]` 主路由 + 备用路由；旧 `provider_id/model` 配置保持兼容 |
+  | 16 | 安全故障切换 | Gateway 仅对 config/auth/quota/model_not_found/rate_limit 切换备用；timeout/server/schema 等不静默重提，避免重复计费或掩盖内容问题 |
+  | 17 | 路由审计 | 每次尝试独立写入 usage，并记录 `route_id/provider/model/error_kind`；用途页显示备用链路数量且保存主模型时不会清空备用路由 |
+  | 18 | 路由链编辑器 | 模型中心新增路由链弹窗：添加、删除、上下调整主备路由，复用 `POST /api/llm/purposes/{pid}` |
+  | 19 | 提供商健康状态 | `list_providers` 从 usage 派生 healthy/cooling/blocked/degraded/unknown；rate-limit/timeout/network/server 进入有时效冷却 |
+  | 20 | 冷却路由跳过 | 有健康备用路由时自动跳过冷却中的主路由；若所有路由都在冷却则保留原链，避免系统被直接锁死 |
+  | 21 | 分镜图独立门禁 | `model-plan.json` 新增独立 `board.choice`，不跟随 `image.choice`；老项目未确认时安全回落本地 |
+  | 22 | 分镜图多通道 | `gen_boards.py --engine auto/local/cloud/zzai`：本地 ComfyUI、仙宫云 ComfyUI、ZZAI 图片 API；人工通道不静默回落 |
+  | 23 | 分镜图 ZZAI 执行链 | 先用免费 estimate，再要求 `--yes` 与 `--max-cost`；submit/poll/download 后写 `.drama/media` 任务记录 |
+  | 24 | 分镜图固定图生图 | `board.frame` 禁止无参考图退化文生图；本地/仙宫云至少加载角色/场景参考图，ZZAI 先上传参考图并传 `images[]` |
+  | 25 | t2i/i2i 工作流预设 | model-plan 支持 `comfy_workflow_t2i` / `comfy_workflow_i2i` 与 `workflow_id_t2i` / `workflow_id_i2i`；分镜图固定读取 i2i |
+  | 26 | RunningHub 分镜图 | 新增 `runninghub_workflow` board 通道；上传参考图、按 prompt/image(s)/aspect 节点映射提交 i2i，任务 ID/usage 写媒体台账 |
+
 - **2026-11-10 更新（V0.7.76 · Studio 2.0 Phase 1：独立设计系统（深/浅双主题）+ 依赖版本对齐）**
 
   本版**不动引擎、不动文件契约、不动生产门禁**，只做控制台视觉层与依赖声明。

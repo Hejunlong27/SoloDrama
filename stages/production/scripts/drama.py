@@ -809,7 +809,9 @@ def cmd_models(args) -> int:
         if getattr(args, 'detail', None):
             cmd += ['--detail', args.detail]
         # ★ 执行依据（ComfyUI 工作流 API 文件 / 云端地址 / RH 应用地址）透传
-        for flag in ('comfy_url', 'comfy_workflow', 'app_url', 'app_id', 'workflow_id'):
+        for flag in ('comfy_url', 'comfy_workflow', 'comfy_workflow_t2i',
+                     'comfy_workflow_i2i', 'app_url', 'app_id', 'workflow_id',
+                     'workflow_id_t2i', 'workflow_id_i2i'):
             v = getattr(args, flag, None)
             if v:
                 cmd += ['--' + flag.replace('_', '-'), str(v)]
@@ -1907,7 +1909,7 @@ def main() -> int:
     p.set_defaults(fn=cmd_refs)
 
     # ★ 模型选择门禁（前置条件）：首次生图 / 首次出片前必须先确认「依托哪条通道」
-    p = sub.add_parser('models', help='首次生图/出片前确认通道：本地ComfyUI / 云端ComfyUI / RH AI应用 / 闭源模型')
+    p = sub.add_parser('models', help='确认 image / board / video 通道：本地ComfyUI / 云端ComfyUI / RH / ZZAI / 闭源模型')
     _add_ws_arg(p)
     ms = p.add_subparsers(dest='models_cmd')
     q = ms.add_parser('list', help='打印可选通道清单（含各自必需的执行依据）')
@@ -1924,17 +1926,25 @@ def main() -> int:
     q.add_argument('--comfy-url', dest='comfy_url', default=None, help='ComfyUI 服务地址（本地/云端）')
     q.add_argument('--comfy-workflow', dest='comfy_workflow', default=None,
                    help='ComfyUI 工作流 API 文件路径（「导出（API）」得到的 json）')
+    q.add_argument('--comfy-workflow-t2i', dest='comfy_workflow_t2i', default=None,
+                   help='ComfyUI 文生图工作流 API 文件')
+    q.add_argument('--comfy-workflow-i2i', dest='comfy_workflow_i2i', default=None,
+                   help='ComfyUI 图生图工作流 API 文件')
     q.add_argument('--app-url', dest='app_url', default=None, help='RunningHub AI 应用地址')
     q.add_argument('--app-id', dest='app_id', default=None, help='RunningHub AI 应用 ID（webappId）')
     q.add_argument('--workflow-id', dest='workflow_id', default=None, help='RunningHub 工作流 ID')
+    q.add_argument('--workflow-id-t2i', dest='workflow_id_t2i', default=None,
+                   help='RunningHub 文生图工作流 ID')
+    q.add_argument('--workflow-id-i2i', dest='workflow_id_i2i', default=None,
+                   help='RunningHub 图生图工作流 ID')
     q.set_defaults(fn=cmd_models)
     q = ms.add_parser('reset', help='清除某类确认（换通道前用）')
     _add_ws_arg(q)
-    q.add_argument('kind', choices=('image', 'video'))
+    q.add_argument('kind', choices=('image', 'board', 'video'))
     q.set_defaults(fn=cmd_models)
     q = ms.add_parser('ask', help='交互式引导确认（需 TTY）')
     _add_ws_arg(q)
-    q.add_argument('kind', nargs='?', default='image', choices=('image', 'video'))
+    q.add_argument('kind', nargs='?', default='image', choices=('image', 'board', 'video'))
     q.set_defaults(fn=cmd_models)
     p.set_defaults(fn=cmd_models, models_cmd=None)
 

@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "models": {
+    "zhenzhen-image-g-v2.6-lowprice": {
+      "id": "zhenzhen-image-g-v2.6-lowprice",
+      "label": "GPT Image 2.6 低价版",
+      "kind": "image",
+      "protocol": "zzai-image-async",
+      "submit_endpoint": "/v1/image/generations",
+      "poll_endpoint": "/v1/image/generations/{task_id}",
+      "estimate_endpoint": "/v1/image/generations/estimate",
+      "reference_images": {
+        "min": 0,
+        "max": 16
+      },
+      "fixed": {
+        "n": 1,
+        "model": "zhenzhen-image-g-v2.6-lowprice"
+      },
+      "parameters": {
+        "resolution": {
+          "label": "分辨率",
+          "type": "enum",
+          "values": [
+            "1k",
+            "2k",
+            "4k"
+          ],
+          "default": "1k"
+        },
+        "aspect_ratio": {
+          "label": "宽高比",
+          "type": "enum",
+          "values": [
+            "auto",
+            "1:1",
+            "3:2",
+            "2:3",
+            "4:3",
+            "3:4",
+            "5:4",
+            "4:5",
+            "16:9",
+            "9:16",
+            "2:1",
+            "1:2",
+            "21:9",
+            "9:21",
+            "3:1",
+            "1:3"
+          ],
+          "default": "auto"
+        },
+        "quality": {
+          "label": "质量",
+          "type": "enum",
+          "values": [
+            "auto",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "auto"
+        },
+        "output_format": {
+          "label": "输出格式",
+          "type": "enum",
+          "values": [
+            "png",
+            "jpeg",
+            "webp",
+            "svg"
+          ],
+          "default": "png"
+        },
+        "gif_mode": {
+          "label": "GIF 模式",
+          "type": "boolean",
+          "default": false,
+          "note": "GIF 仅支持文生图；开启后 size 固定为 auto，输出格式为 gif。"
+        }
+      },
+      "notes": [
+        "SVG 和 GIF 仅支持文生图，传入参考图时必须关闭。",
+        "1K 固定价；2K/4K 按实际用量结算，提交前应调用 estimate。"
+      ]
+    },
+    "zhenzhen-video-muse": {
+      "id": "zhenzhen-video-muse",
+      "label": "Muse Video",
+      "kind": "video",
+      "protocol": "zzai-video-async",
+      "submit_endpoint": "/v1/video/generations",
+      "poll_endpoint": "/v1/video/generations/{task_id}",
+      "estimate_endpoint": "/v1/video/generations/estimate",
+      "reference_images": {
+        "min": 0,
+        "max": 9
+      },
+      "fixed": {
+        "model": "zhenzhen-video-muse",
+        "audio": true
+      },
+      "parameters": {
+        "aspect_ratio": {
+          "label": "宽高比",
+          "type": "enum",
+          "values": [
+            "auto",
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3"
+          ],
+          "default": "auto"
+        },
+        "resolution": {
+          "label": "分辨率",
+          "type": "enum",
+          "values": [
+            "720p"
+          ],
+          "default": "720p",
+          "note": "该模型当前只开放 720p；框架仍保留分辨率参数。"
+        },
+        "duration": {
+          "label": "时长",
+          "type": "integer",
+          "min": 2,
+          "max": 10,
+          "default": 10,
+          "unit": "秒"
+        }
+      },
+      "notes": [
+        "参考图影响构图，不保证严格使用分镜图作为首帧。",
+        "不支持 seed、首尾帧、无声输出或自定义分辨率。",
+        "默认时长 10 秒；本次框架允许调整为 2–10 秒，后续模型可声明不同范围。"
+      ]
+    }
+  }
+}

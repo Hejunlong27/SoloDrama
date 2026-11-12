@@ -180,6 +180,8 @@ SoloDrama 把「一句话点子 → 可发布竖屏短剧」拆成**创作**与*
 | `connections.py` | 三类外部通道的配置、注入、探测（产品层唯一真源） |
 | `comfy_{launcher,ports,probe,store}.py` | 本地 ComfyUI 启停 / 端口 / 探活 / 工作流存取 |
 | `generators.py` | 图像/视频通道统一台账 |
+| `generation_models.py` | 模型级参数能力加载与请求映射（真源 `configs/generation-models.json`） |
+| `media_tasks.py` | 媒体任务状态、远端 task ID、报价/实际金额与断点恢复记录 |
 | `creation.py` / `skills.py` / `styles.py` | 创作产物 / 题材模板 / 画风目录 |
 | `health.py` / `monitor.py` / `timing.py` | 体检与修复 / 资源快照 / 全局时间账 |
 | `ux.py` | 用户语言层（把技术话翻成人话） |
@@ -323,7 +325,7 @@ python .../drama.py skip edit.draft --workspace "<ws>" --ep ep01 --reason "只�
 | 说法 | 出处 | 状态 |
 |---|---|---|
 | **5 环节 13 节点**（导入/资产/分镜图/出片/剪辑） | `nodes.py::STAGES/NODES` | ✅ **现行唯一真源** |
-| 11 环节（调研→剧本→…→定稿）、S1–S11 | `drama guide` 输出、`web/core/pipeline.py` 头部 docstring、`pipeline.js` | ❌ 旧编排，`workflow.py` 已删 |
+| 11 环节（调研→剧本→…→定稿）、S1–S11 | `drama guide` 输出、`web/core/pipeline.py` 头部 docstring、`pipeline.js` | ❌ 旧编排，`workflow.py` 已移除 |
 | 16 环节、七环节 23 节点、23 节点 | `docs/Agent项目技术文档.md`、`drama.py` 注释与 argparse help | ❌ 过期文案 |
 
 **Codex 注意**：不要按 `drama guide` 里的 `setup / workflow / pipeline` 敲命令——这三个子命令 2026-11-01 已删除，argparse 会直接报 `invalid choice`。现行只有 §1.5 列出的 19 个子命令。修文案属 P1 T14，**不要混进功能改动**。
@@ -482,7 +484,7 @@ aspect:{character,scene,prop,board,video}
 | 工作区与项目 | `/api/workspaces` `/api/projects/create` `/api/workspaces/current` |
 | Studio 聚合（页面主力） | `/api/studio/{overview,workflow,shots,episodes,prompt,cost,release,cover,image-channel}` |
 | 作业与事件 | `/api/jobs` `/api/jobs/{id}/stream` `/api/run` `/api/commands` `/api/audit` |
-| 生成通道 | `/api/connections` `/api/comfy/*` `/api/generators` `/api/pipeline/{plan,run}` |
+| 生成通道 | `/api/connections` `/api/comfy/*` `/api/generators` |
 | 创作与 LLM | `/api/create/*` `/api/skills/*` `/api/llm/*` |
 | 图解与画布 | `/api/canvas/*` `/api/graph` |
 | 文件与静态 | `/api/file` `/api/artifacts` `/media` `/api/styles` |
@@ -505,7 +507,7 @@ aspect:{character,scene,prop,board,video}
 | `assets` | 资产中心：缺口 + 预览 + 单张重出 | 只有角色/场景/道具三类 |
 | `boards` | 分镜图 | — |
 | `canvas` | 剧集画布（镜号×集号） | — |
-| `pipeline` | 流水线（按环节推进） | 文案仍写「11 环节」，见 §14 |
+| `pipeline` | 13 节点受控调度：状态/下一步/干跑/真实执行/journal | 数据走 `/api/scheduler/*`；旧 pipeline API 仅兼容保留 |
 | `post` | 后期：母版/放大/字幕 + 播放 + GPU 动作 | — |
 | `release` | 发行中心：发布版 + G9 资料齐全度 + 干跑预览 | — |
 | `cost` | 用时（原成本中心） | 金额显示见 P0 T1 |
@@ -517,12 +519,13 @@ aspect:{character,scene,prop,board,video}
 | `health` / `system` / `settings` | 体检 / 系统维护 / 设置 | — |
 | `agent` | 助手对话 | — |
 
-### 4.4 两条执行通道（分工不要混）
+### 4.4 三条执行通道（分工不要混）
 
 | 通道 | 语义 | 用途 |
 |---|---|---|
 | `POST /api/run` | 跑**一条**白名单命令 | 单步动作、按钮 |
-| `POST /api/pipeline/run` | 跑一个**计划**（可 `until` / `only`） | 流水线模式 |
+| `POST /api/scheduler/run` | 受控 Runner 顺序推进 13 节点（默认干跑，真实执行需确认） | 调度页、自动推进 |
+| `POST /api/pipeline/run` | 旧版环节计划（兼容保留） | 历史接口，不再作为 Studio 主调度 |
 
 `web/core/runner.py` 是唯一写通道，命令必须先在 `commands.py` 登记（`CMD.danger > CMD.READ` 才需确认）。
 
@@ -637,7 +640,8 @@ aspect:{character,scene,prop,board,video}
 ```bash
 python -m pytest tools/tests stages/import/tests -q            # 112 passed / ~15s
 python -m pytest stages/subtitle/scripts/tests -q               # 72 passed
-python -m pytest web/tests -q                                   # 175 passed / ~40s
+python -m pytest web/tests -q                                   # 200 passed / ~30s
+python -m pytest stages/media_api/tests -q                       # 6 passed / Mock，零外网
 
 # production：收集阶段就 import _ws，必须先给真实工作区
 python - <<'PY'
@@ -661,8 +665,10 @@ python stages/production/scripts/tests/test_release_export.py  # 14 例
 | `tools` + `import` | 112 passed |
 | `subtitle` | 72 passed |
 | `production` | 141 passed |
-| `web` | 175 passed |
+| `web` | 200 passed |
+| `media_api` | 6 passed（本地 Mock） |
 | 脚本型 nodes / edit / release_export | 22 / 59 / 14，全通过 |
+| 分镜图 / 模型门禁脚本 | gen_boards 29；model_gate 84，全通过 |
 
 未逐一复跑：`stages/video/comfyui/tests`、`stages/video/workflow/.../tests`、`cloud/tests`、`stages/assets/scripts/tests`（可能需要外部服务或工作区）。
 
@@ -713,8 +719,9 @@ python stages/production/scripts/tests/test_release_export.py  # 14 例
 
 | 编号 | 任务 | 约束 | 验收 |
 |---|---|---|---|
-| T1 | 成本中心 LLM 金额 | 二选一：① 价格表 `configs/llm-prices.json`（带版本与生效日期，改价不改历史账）；② 只显示 token，金额列改「按量计费」。**不许回退成 0** | 历史调用显示「已知/未知」两态；无价格表 `usd=None`；有表可复算 |
 | T2 | RunningHub `status` 字段收口 | `query_status_v1` 现为候选容错，注释明写「未实测」 | 跑一次 `rh.sample`（★计费）拿真实键，收紧候选表，1 次轮询判 SUCCESS |
+
+已完成：T1 成本中心 LLM 金额（路线 2：显示 token 与「已知/未知」，未知不回退为 0）。
 
 ### P1 · 技术债
 
@@ -733,7 +740,7 @@ python stages/production/scripts/tests/test_release_export.py  # 14 例
 
 ### P2 · 需用户决策，不要自主开工
 
-- **全自动出片 Agent**：`docs/AGENT-PLAN.md` 是规划稿，`journal.py` / `agent_runner.py` / `qa.py` / `triage.py` 均未创建。边界是「三类闸门停人」，不是无人决策。
+- **全自动出片 Agent**：`docs/AGENT-PLAN.md` 是已降级历史稿，`journal.py` / `agent_runner.py` / `qa.py` / `triage.py` 均未创建。边界是「三类闸门停人」，不是无人决策。
 - **UI 信息架构重写**：T13（产品文档写「12 视图」实际 23）、T14（品牌副标题 `STUDIO 0.2`）。
 
 ---

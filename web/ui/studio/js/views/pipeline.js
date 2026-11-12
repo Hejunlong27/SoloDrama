@@ -1,164 +1,164 @@
-/* 流水线：把 11 个环节串成一条线，按顺序推进。
-   两种模式：逐步确认（每步停下）/ 连跑（预算内自动放行，遇人工或超预算停）。
-   数据来自 /api/pipeline（只读计划），执行走 /api/pipeline/run。 */
+/* 调度：13 节点受控推进。
+   状态只来自引擎的产物判据，执行只走 Runner 子进程；本页不猜状态、不改判据。 */
 import { api } from '../api.js';
-import { esc, icon, badge, toast } from '../ui.js';
+import { esc, icon, badge, toast, openModal, closeModal } from '../ui.js';
 
-const ACT_TONE = { auto: 'ok', ask: 'warn', blocked: 'bad', manual: 'outline' };
-const ACT_TEXT = { auto: '可自动', ask: '需确认', blocked: '被前置挡住', manual: '需人工' };
-const ST_TEXT = { done: '已完成', current: '进行中', todo: '未开始' };
-
-/* 环节 → 该去哪一页（后端只给「需人工」的环节带 page，其余给兜底）
-   ★ 2026-11-01：键改成 `nodes.STAGES` 的环节 id（现为 5 个）。原来写的是已废弃的 S1–S11，
-     于是「打开」按钮对 7 个环节全都 miss，一律跳到「项目详情」。 */
-const PAGE_OF = {
-  research: 'creation', script: 'creation', asset: 'assets', board: 'storyboard',
-  prompt: 'storyboard', video: 'storyboard', edit: 'post'
+const STATE_TONE = {
+  passed: 'ok', skipped: 'outline', absent: 'warn', stale: 'warn',
+  failed: 'bad', blocked: 'bad'
+};
+const STATE_TEXT = {
+  passed: '已通过', skipped: '可选跳过', absent: '未开始', stale: '已过期',
+  failed: '判据不过', blocked: '上游阻塞'
+};
+const NODE_LABEL = {
+  'import.pack': '导入制作包', 'asset.render': '资产渲染', 'import.bind': '绑定导入',
+  'board.frame': '分镜图', 'import.gate': '入门口禁', 'video.resolve': '出片解析',
+  'video.batch': '批量出片', 'video.audit': '出片审计', 'edit.master': '母版拼接',
+  'edit.upscale': '高清放大', 'edit.subtitle': '字幕烧录', 'edit.draft': '剪映草稿',
+  'edit.release': '发布导出'
 };
 
-/* 每一行都给一个**能点的大按钮**：
-   可自动 → 「运行此步」（只跑这一条，不会把前面几步一起跑）；
-   需人工/被挡 → 「打开」直接跳到该干的页面。
-   之前这一列是纯文字，用户看完还得自己去找页面 —— 这就是「每步都要点一下」的由来。 */
-function actionCell(s) {
-  if (s.action === 'auto') {
-    return '<button class="btn primary stage" data-run="' + esc(s.id) + '">'
-      + icon('play', 13) + ' 运行此步</button>';
-  }
-  const page = s.page || PAGE_OF[s.id] || 'overview';
-  const manual = s.action === 'manual';
-  return '<button class="btn quiet stage" data-go="' + esc(page) + '">'
-    + icon(manual ? 'external' : 'alert', 13) + ' ' + (manual ? '打开页面' : '去补齐') + '</button>';
+function nextText(d) {
+  if (!d || !d.next) return '全部节点已通过';
+  return d.next.id + ' · ' + (NODE_LABEL[d.next.id] || d.next.state);
 }
 
-function stageRow(s) {
-  const tone = ACT_TONE[s.action] || 'outline';
-  const blk = (s.blocked || []).length
-    ? '<div class="tiny dim" style="margin-top:4px">缺：' + esc(s.blocked.slice(0, 3).join('、')) + '</div>' : '';
-  return '<tr data-stage="' + esc(s.id) + '">'
-    + '<td class="mono">' + esc(s.id) + '</td>'
-    + '<td><div class="row gap8"><span>' + esc(s.name) + '</span></div>'
-    + '<div class="row-sub">' + (ST_TEXT[s.state] || s.state) + '</div></td>'
-    + '<td>' + badge(tone, ACT_TEXT[s.action] || s.action)
-    + '<div class="tiny dim" style="margin-top:4px">' + esc(s.action_text || '') + '</div></td>'
-    + '<td class="small dim" style="max-width:460px">' + esc(s.detail || '') + blk
-    + (s.cmd ? '<div class="tiny dim mono" style="margin-top:3px;opacity:.7">' + esc(s.cmd) + '</div>' : '')
-    + '</td>'
-    + '<td class="right">' + actionCell(s) + '</td>'
+function nodeRow(n, next) {
+  const tone = STATE_TONE[n.state] || 'outline';
+  const isNext = next && next.id === n.id;
+  return '<tr' + (isNext ? ' data-next="1"' : '') + '>'
+    + '<td class="mono">' + esc(n.id) + '</td>'
+    + '<td>' + esc(NODE_LABEL[n.id] || n.id)
+    + '<div class="tiny dim">' + esc(n.stage || '') + '</div></td>'
+    + '<td>' + badge(tone, STATE_TEXT[n.state] || n.state) + '</td>'
+    + '<td class="small dim">' + esc(n.detail || '') + '</td>'
+    + '<td class="tiny dim mono">' + esc(n.output || '') + '</td>'
     + '</tr>';
 }
 
+function journalRows(items) {
+  return (items || []).slice().reverse().map((e) => {
+    const what = e.event === 'node_start' ? ('开始 ' + (e.node || ''))
+      : e.event === 'node_end' ? ((e.node || '') + ' · rc=' + (e.rc == null ? '—' : e.rc))
+      : e.event === 'run_start' ? ('开始运行' + (e.dry_run ? '（干跑）' : '（真实执行）'))
+      : e.event === 'run_end' ? ('结束 · ' + (e.stopped || '') + ' · rc=' + (e.rc == null ? '—' : e.rc))
+      : (e.event || '事件');
+    return '<div class="row gap8" style="padding:5px 0;border-bottom:1px solid var(--line)">'
+      + '<span class="mono tiny dim" style="width:150px">' + esc(e.run_id || '—') + '</span>'
+      + '<span class="small flex1">' + esc(what) + '</span>'
+      + '<span class="tiny dim">' + esc(e.dry_run ? '干跑' : '') + '</span>'
+      + '</div>';
+  }).join('');
+}
+
 export async function render(ctx) {
-  const state = { budget: 100, auto: true, until: '', last: null };
-  const d = await api.pipeline(ctx.ws, state.budget).catch((e) => ({ error: String(e && e.message || e) }));
-
-  const html = ''
-    + '<div class="page-head"><div><h1 class="page-title">流水线</h1>'
-    + '<div class="page-sub">按环节顺序推进：能自动的自动跑，需要人或超预算的停下来告诉你原因</div></div>'
-    + '<div class="page-actions"><button class="btn quiet" id="btnPlan">' + icon('refresh', 14) + ' 重新算计划</button>'
-    + '<button class="btn primary" id="btnRun">' + icon('play', 14) + ' 开始运行</button></div></div>'
-
-    + '<div class="card" style="margin-bottom:14px"><div class="card-b" style="padding:12px 16px">'
+  let status = null;
+  let episodes = [];
+  let error = '';
+  try {
+    const eps = await api.episodes(ctx.ws).catch(() => ({ items: [] }));
+    episodes = eps.items || [];
+    const selected = (episodes[0] && episodes[0].ep) || 'ep01';
+    status = await api.schedulerStatus(ctx.ws, selected, 50);
+  } catch (e) {
+    error = String((e && (e.detail || e.message)) || e);
+  }
+  const firstEp = (episodes[0] && episodes[0].ep) || 'ep01';
+  const next = status && status.next;
+  const counts = (status && status.counts) || {};
+  const html = '<div class="page-head"><div><h1 class="page-title">调度</h1>'
+    + '<div class="page-sub">13 节点按磁盘产物判据推进；能自动的自动跑，判据不过就停。</div></div>'
+    + '<div class="page-actions"><button class="btn quiet" id="sRefresh">' + icon('refresh', 14)
+    + ' 刷新状态</button></div></div>'
+    + (error ? '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14)
+      + '</span><div>' + esc(error) + '</div></div>' : '')
+    + '<section class="card" style="margin-bottom:14px"><div class="card-b">'
     + '<div class="row gap8" style="flex-wrap:wrap;align-items:center">'
-    + '<span class="small">模式</span>'
-    + '<label class="row gap8" style="cursor:pointer"><input type="radio" name="pmode" value="step"> 逐步确认</label>'
-    + '<label class="row gap8" style="cursor:pointer"><input type="radio" name="pmode" value="auto" checked> 连跑（流水线）</label>'
-    + '<span class="spacer"></span>'
-    + '<span class="small">预算上限（只对花钱环节生效）</span>'
-    + '<input class="input mono" id="pBudget" value="' + state.budget + '" style="width:110px">'
-    + '<span class="tiny dim">估不出金额的计费环节会停下来问你，不猜</span>'
-    + '</div></div></div>'
-
-    + (d.error
-      ? '<div class="alert bad"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-        + esc(d.error) + '</div></div>'
-      : '<div class="row gap8" style="margin-bottom:12px;flex-wrap:wrap">'
-        + badge('ok', '可自动 ' + ((d.counts || {}).auto || 0))
-        + badge('warn', '需确认 ' + ((d.counts || {}).ask || 0))
-        + badge('bad', '被挡 ' + ((d.counts || {}).blocked || 0))
-        + badge('outline', '需人工 ' + ((d.counts || {}).manual || 0))
-        + '<span class="spacer"></span><span class="tiny dim">预算闸门 ' + (d.est_total || 0) + ' / '
-        + (d.budget || 0) + ' 点（估算，只用来拦截，不作费用参考）</span></div>'
-        + '<section class="card"><div class="card-b tight"><div class="table-wrap">'
-        + '<table class="tb"><thead><tr><th style="width:7%">环节</th><th style="width:17%">名称</th>'
-        + '<th style="width:14%">状态</th><th>说明</th>'
-        + '<th class="right" style="width:132px">操作</th></tr></thead><tbody>'
-        + (d.stages || []).map(stageRow).join('')
-        + '</tbody></table></div></div></section>')
-
-    + '<div id="runOut" style="margin-top:16px"></div>'
-
-    + '<div class="alert info" style="margin-top:16px"><span class="nav-ico">' + icon('alert', 14) + '</span><div>'
-    + '「连跑」只推进 <b>可自动</b> 的环节：前置未齐（引擎 probes 未过）、需要人工判断、'
-    + '或计费金额估不出来的，都会停下来并写明原因。一次运行默认最多 6 步，防跑飞。'
-    + '</div></div>';
+    + '<span class="small">集号</span><input class="input mono" id="sEp" value="'
+    + esc(firstEp) + '" style="width:110px" list="sEpList">'
+    + '<datalist id="sEpList">' + episodes.map((e) => '<option value="' + esc(e.ep) + '"></option>').join('') + '</datalist>'
+    + '<span class="small">最多推进</span><input class="input mono" id="sMax" value="6" style="width:70px">'
+    + '<span class="small">步</span><span class="spacer"></span>'
+    + '<button class="btn ghost" id="sDry">' + icon('play', 14) + ' 干跑下一步</button>'
+    + '<button class="btn primary" id="sApply">' + icon('play', 14) + ' 真实执行</button>'
+    + '</div></div></section>'
+    + (status ? '<div class="row gap8" style="margin-bottom:12px;flex-wrap:wrap">'
+      + badge('ok', '已通过 ' + (counts.passed || 0))
+      + badge('warn', '缺失/过期 ' + ((counts.absent || 0) + (counts.stale || 0)))
+      + badge('bad', '阻塞/失败 ' + ((counts.blocked || 0) + (counts.failed || 0)))
+      + badge('outline', '可选跳过 ' + (counts.skipped || 0))
+      + '<span class="spacer"></span><span class="small">下一步：<b>' + esc(nextText(status)) + '</b></span>'
+      + '</div>'
+      + '<section class="card" style="margin-bottom:14px"><div class="card-h"><h3>13 节点</h3>'
+      + '<span class="card-sub">' + esc(status.workspace || ctx.ws) + ' · ' + esc(status.ep || '') + '</span></div>'
+      + '<div class="card-b tight"><div class="table-wrap"><table class="tb"><thead><tr>'
+      + '<th style="width:18%">节点 id</th><th style="width:16%">名称</th><th style="width:12%">状态</th>'
+      + '<th>判据说明</th><th style="width:22%">产物</th></tr></thead><tbody>'
+      + (status.nodes || []).map((n) => nodeRow(n, next)).join('')
+      + '</tbody></table></div></div></section>'
+      + '<div class="alert info" style="margin-bottom:14px"><span class="nav-ico">' + icon('alert', 14)
+      + '</span><div><b>下一步：</b>' + esc(nextText(status))
+      + (next ? '<br>' + esc(next.detail || '') : '')
+      + '<br>退出码 2 = 判据不过，是正常门禁结果，不是程序崩溃；调度器会停下，不会跳步。</div></div>'
+      : '<div class="alert warn"><span class="nav-ico">' + icon('alert', 14)
+        + '</span><div>暂时拿不到节点状态，请先看上方错误。</div></div>')
+    + '<section class="card"><div class="card-h"><h3>运行轨迹</h3>'
+    + '<span class="card-sub">只追加 journal；重启后从磁盘状态继续</span></div>'
+    + '<div class="card-b">' + (journalRows(status && status.journal) || '<div class="tiny dim">还没有调度记录</div>')
+    + '</div></section>'
+    + '<div class="alert info" style="margin-top:16px"><span class="nav-ico">' + icon('alert', 14)
+    + '</span><div>干跑只打印将执行的命令，不写产物。真实执行会写盘；推进到 <span class="mono">board.frame</span> 或 '
+    + '<span class="mono">video.batch</span> 时，Runner 还会要求单独确认 GPU / 平台计费风险。</div></div>';
 
   return {
     html,
     mount: (root) => {
-      const budgetEl = root.querySelector('#pBudget');
-      const out = root.querySelector('#runOut');
-      const paint = (r) => {
-        if (!r) return;
-        const rows = (r.ran || []).map((x) => '<div class="row gap8" style="padding:6px 0;border-bottom:1px solid var(--line)">'
-          + badge(x.rc === 0 || x.rc === null ? 'ok' : 'bad', x.id)
-          + '<span class="small flex1">' + esc(x.cmd) + (x.dry_run ? '（演练）' : '')
-          + (x.elapsed ? ' · ' + x.elapsed + 's' : '') + '</span>'
-          + '<span class="mono tiny dim">' + esc(x.argv || '') + '</span></div>').join('');
-        const skip = (r.skipped || []).map((x) => '<div class="tiny dim" style="padding:4px 0">'
-          + esc(x.id) + ' 跳过：' + esc(x.why) + '</div>').join('');
-        out.innerHTML = '<section class="card"><div class="card-h"><h3>本次运行</h3>'
-          + '<span class="card-sub">' + (r.dry_run ? '演练（未执行命令）' : '已执行') + '</span></div>'
-          + '<div class="card-b">' + (rows || '<div class="tiny dim">没有可自动执行的环节</div>')
-          + (skip ? '<div style="margin-top:10px">' + skip + '</div>' : '') + '</div></section>';
-      };
-      root.querySelectorAll('[data-run]').forEach((b) => {
-        b.onclick = async () => {
-          const sid = b.dataset.run;
-          b.disabled = true;
-          try {
-            const r = await api.pipelineRun({
-              ws: ctx.ws, budget: Number(budgetEl.value) || 0,
-              dry_run: false, only: sid, max_steps: 1
-            });
-            paint(r);
-            const row = root.querySelector('[data-stage="' + sid + '"]');
-            if (row) {
-              const old = row.querySelector('.badge');
-              if (old && r.ok) { old.className = 'badge ok'; old.textContent = '已完成'; }
-              const cell = row.querySelector('[data-run]');
-              if (cell && r.ok) { cell.textContent = '已跑完'; cell.disabled = true; }
-            }
-            toast(r.ok ? sid + ' 已执行' : sid + ' 中途停下，原因见下方', r.ok ? 'ok' : 'warn');
-          } catch (e) {
-            toast('运行失败：' + ((e && (e.detail || e.message)) || e), 'bad');
-            b.disabled = false;
-          }
-        };
-      });
-      root.querySelectorAll('[data-go]').forEach((b) => {
-        b.onclick = () => ctx.navigate(b.dataset.go);
-      });
-      root.querySelector('#btnPlan').onclick = async () => {
-        try { await ctx.refresh(); toast('已重新计算'); } catch (e) { /* ignore */ }
-      };
-      root.querySelector('#btnRun').onclick = async () => {
-        const auto = (root.querySelector('input[name="pmode"]:checked') || {}).value === 'auto';
-        const budget = Number(budgetEl.value) || 0;
-        const btn = root.querySelector('#btnRun');
-        btn.disabled = true;
+      const ep = () => String((root.querySelector('#sEp') || {}).value || 'ep01').trim();
+      const maxSteps = () => Math.max(1, Number((root.querySelector('#sMax') || {}).value) || 1);
+      const enqueue = async (apply, yes) => {
+        const confirm = apply ? { ack: true, gpu: !!yes } : {};
         try {
-          const r = await api.pipelineRun({
-            ws: ctx.ws, budget, dry_run: false,
-            max_steps: auto ? 6 : 1
+          const res = await api.schedulerRun({
+            ws: ctx.ws,
+            params: { ep: ep(), max_steps: maxSteps(), apply: !!apply, yes: !!yes },
+            confirm
           });
-          paint(r);
-          toast(r.ok ? (auto ? '连跑完成' : '已跑 1 步') : '中途停下，原因见下方', r.ok ? 'ok' : 'warn');
+          toast('已入队调度作业，去任务中心查看进度', 'ok');
+          if (res && res.job) ctx.navigate('tasks');
         } catch (e) {
-          toast('运行失败：' + (e && e.message ? e.message : e), 'bad');
-        } finally {
-          btn.disabled = false;
+          toast('入队失败：' + ((e && (e.detail || e.message)) || e), 'bad');
         }
+      };
+      const refresh = root.querySelector('#sRefresh');
+      if (refresh) refresh.onclick = () => ctx.refresh();
+      const dry = root.querySelector('#sDry');
+      if (dry) dry.onclick = () => enqueue(false, false);
+      const apply = root.querySelector('#sApply');
+      if (apply) apply.onclick = () => {
+        openModal({
+          title: '真实执行调度',
+          icon: 'alert',
+          tone: 'bad',
+          html: '<div class="small">将真实执行下一步（最多 ' + esc(String(maxSteps())) + ' 步），可能写盘并覆盖该节点产物。</div>'
+            + '<label class="chk" style="margin-top:14px"><input type="checkbox" id="sAck">'
+            + '<span>我确认已看过干跑结果，并允许调度器写盘。</span></label>'
+            + '<label class="chk" style="margin-top:10px"><input type="checkbox" id="sGpu">'
+            + '<span>如果推进到 board.frame / video.batch，允许真实生成（可能占 GPU 或产生平台费用）。</span></label>',
+          foot: '<span class="spacer"></span><button class="btn quiet" data-close="modal">取消</button>'
+            + '<button class="btn primary" id="sGo" disabled>确认执行</button>',
+          mount: () => {
+            const ack = root.ownerDocument.getElementById('sAck');
+            const gpu = root.ownerDocument.getElementById('sGpu');
+            const go = root.ownerDocument.getElementById('sGo');
+            const sync = () => { go.disabled = !ack.checked; };
+            ack.onchange = sync;
+            go.onclick = async () => {
+              closeModal();
+              await enqueue(true, !!gpu.checked);
+            };
+          }
+        });
       };
     }
   };
