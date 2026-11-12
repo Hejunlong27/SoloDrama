@@ -333,10 +333,19 @@ def _ep_segments(ctx: Ctx) -> tuple:
         shots = shots.get("shots") or []
     ids = [x.get("shot_id") for x in shots
            if isinstance(x, dict) and x.get("shot_id") and _belongs_to_ep(x.get("shot_id"), ctx.ep)]
+    roots = [ctx.out]
+    try:
+        engine_out = L.engine_root(ctx.ws) / "output"
+        if engine_out.resolve() != ctx.out.resolve():
+            roots.append(engine_out)
+    except (OSError, ValueError):
+        pass
     segs = []
     for sid in ids:
-        cands = list(ctx.out.glob("*/%s/final.mp4" % sid))
-        cands += list(ctx.out.glob("*/*/%s/final.mp4" % sid))
+        cands = []
+        for root in roots:
+            cands += list(root.glob("*/%s/final.mp4" % sid))
+            cands += list(root.glob("*/*/%s/final.mp4" % sid))
         cands = [c for c in cands if c.is_file() and c.stat().st_size > 2048]
         if cands:
             segs.append(max(cands, key=lambda q: q.stat().st_mtime))

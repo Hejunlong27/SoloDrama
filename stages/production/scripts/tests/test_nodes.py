@@ -437,6 +437,26 @@ def _():
     return "asset.render 只带 --workspace"
 
 
+@reg("C", "C06 出片段数识别引擎 output 落点（RunningHub 回归）")
+def _():
+    """RunningHub 实际把 final.mp4 落在 <engine_root>/output，而不是 07-成片。"""
+    ctx = fresh()
+    d = ctx.data / (ctx.ep or "ep01")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "shots.json").write_text(json.dumps(
+        [{"shot_id": "shot_001"}], ensure_ascii=False), encoding="utf-8")
+    p = N.L.engine_root(ctx.ws) / "output" / "batch_test" / "shot_001" / "final.mp4"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"x" * 4096)
+    segs, ids = N._ep_segments(ctx)
+    A_(ids == ["shot_001"], "镜头 id 解析失败：%s" % (ids,))
+    A_(len(segs) == 1 and segs[0] == p.resolve(),
+       "未识别引擎 output 产物：%s" % (segs,))
+    ok, detail = N.check_node(ctx, N.NODE_BY_ID["video.batch"])
+    A_(ok, "video.batch 判据仍不过：%s" % detail)
+    return "engine_root/output 产物已进入 segments 判据"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--group", default="")
