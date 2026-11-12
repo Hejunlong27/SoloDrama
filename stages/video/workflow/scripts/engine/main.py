@@ -770,6 +770,7 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
               "missing_state": 0, "success_without_artifact": 0}
     gaps: Dict[str, List[str]] = {"missing_state": [], "success_without_artifact": []}
     money = coins = 0.0
+    usage_missing = False
     shot_rows: List[Dict[str, Any]] = []
 
     for shot in inputs.shots:
@@ -797,11 +798,24 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
 
         for key in ("image_usage", "video_usage"):
             u = st.get(key) or {}
-            try:
-                money += float(u.get("consumeMoney") or 0)
-                coins += float(u.get("consumeCoins") or 0)
-            except (TypeError, ValueError):
-                pass
+            relevant = (
+                (key == "video_usage" and v in (ST_SUCCESS, ST_FAILED)) or
+                (key == "image_usage" and st.get("image_status") in (ST_SUCCESS, ST_FAILED))
+            )
+            # 平台成功/失败但 usage 缺字段时，金额是「未知」，不能用 0 冒充。
+            if relevant and (u.get("consumeMoney") is None or u.get("consumeCoins") is None):
+                usage_missing = True
+            for field, bucket in (("consumeMoney", "money"), ("consumeCoins", "coins")):
+                val = u.get(field)
+                if val is None:
+                    continue
+                try:
+                    if bucket == "money":
+                        money += float(val)
+                    else:
+                        coins += float(val)
+                except (TypeError, ValueError):
+                    usage_missing = True
 
         shot_rows.append({
             "shot_id": sid,
@@ -840,7 +854,13 @@ def _write_summary(batch_dir: Path, batch_id: str, state: StateStore, fuse: Fuse
         "totals": totals,
         "gaps": gaps,
         "fuse": fuse.status(),
-        "usage": {"consumeMoney": round(money, 4), "consumeCoins": round(coins, 2)},
+        "usage": (
+            {"consumeMoney": None, "consumeCoins": None, "known": False,
+             "known_consumeMoney": round(money, 4),
+             "known_consumeCoins": round(coins, 2)}
+            if usage_missing else
+            {"consumeMoney": round(money, 4), "consumeCoins": round(coins, 2), "known": True}
+        ),
         "shots": shot_rows,
     }
     (batch_dir / "summary.json").write_text(
