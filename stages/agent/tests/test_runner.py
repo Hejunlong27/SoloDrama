@@ -82,3 +82,11 @@ def test_dry_run_result_exposes_steps_and_summary(tmp_path):
     assert out["summary"]["next"]["id"] == "import.pack"
     assert out["steps"][0]["state_before"] == "absent"
     assert out["steps"][0]["state_after"] == "absent"
+def test_prescan_keeps_valid_env_when_argv_is_mojibaked(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    monkeypatch.setenv("SOLODRAMA_WORKSPACE", str(ws))
+    monkeypatch.setenv("DRAMA_WORKSPACE", str(ws))
+    bad = str(ws) + "\\\ufffd"
+    runner._prescan_workspace(["--workspace", bad])
+    assert os.environ["SOLODRAMA_WORKSPACE"] == str(ws)
+    assert os.environ["DRAMA_WORKSPACE"] == str(ws)

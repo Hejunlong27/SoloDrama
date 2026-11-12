@@ -23,16 +23,33 @@ from . import journal
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _set_workspace(value: str) -> None:
+    """设置工作区；只有路径真实存在时才覆盖已有值。
+
+    Windows 终端可能用错误代码页把中文路径送进 sys.argv。Web 作业层已经在
+    `base_env` 里注入了正确的 Unicode 路径，因此不能用损坏的 argv 反向覆盖它。
+    """
+    try:
+        if not Path(value).expanduser().is_dir():
+            current = os.environ.get("SOLODRAMA_WORKSPACE") or os.environ.get("DRAMA_WORKSPACE")
+            if current:
+                try:
+                    if Path(current).expanduser().is_dir():
+                        return
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    os.environ["SOLODRAMA_WORKSPACE"] = value
+    os.environ["DRAMA_WORKSPACE"] = value
+
+
 def _prescan_workspace(argv) -> None:
     for i, arg in enumerate(argv):
         if arg == "--workspace" and i + 1 < len(argv):
-            os.environ["SOLODRAMA_WORKSPACE"] = argv[i + 1]
-            os.environ["DRAMA_WORKSPACE"] = argv[i + 1]
+            _set_workspace(argv[i + 1])
         elif arg.startswith("--workspace="):
-            value = arg.split("=", 1)[1]
-            os.environ["SOLODRAMA_WORKSPACE"] = value
-            os.environ["DRAMA_WORKSPACE"] = value
-
+            _set_workspace(arg.split("=", 1)[1])
 
 def _load_nodes():
     scripts = ROOT / "stages" / "production" / "scripts"
