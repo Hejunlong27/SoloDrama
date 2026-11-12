@@ -90,3 +90,44 @@ def test_prescan_keeps_valid_env_when_argv_is_mojibaked(tmp_path, monkeypatch):
     runner._prescan_workspace(["--workspace", bad])
     assert os.environ["SOLODRAMA_WORKSPACE"] == str(ws)
     assert os.environ["DRAMA_WORKSPACE"] == str(ws)
+def test_only_success_returns_ok_instead_of_max_steps(tmp_path, monkeypatch):
+    ws = tmp_path / "fake_ws"
+    ws.mkdir()
+    state = {"state": "absent", "detail": "todo"}
+
+    class FakeCtx:
+        def __init__(self, path, ep):
+            self.ws = path
+            self.ep = ep
+
+    class FakeNodes:
+        NODE_BY_ID = {"only.node": {"id": "only.node"}}
+        Ctx = FakeCtx
+
+        @staticmethod
+        def evaluate(ctx):
+            return {"counts": {"absent": 1},
+                    "nodes": [{"id": "only.node", "state": state["state"],
+                               "detail": state["detail"]}]}
+
+        @staticmethod
+        def next_node(ctx):
+            return None if state["state"] == "passed" else {
+                "node": {"id": "only.node"}, "state": state["state"],
+                "detail": state["detail"]}
+
+        @staticmethod
+        def node_state(ctx, node):
+            return dict(state)
+
+        @staticmethod
+        def run_node(ctx, node_id, dry_run=False, yes=False):
+            state.update({"state": "passed", "detail": "ok"})
+            return 0
+
+    monkeypatch.setattr(runner, "_load_nodes", lambda: FakeNodes)
+    out = runner.run(str(ws), "ep01", apply=True, only="only.node", max_steps=1)
+    assert out["ok"] is True
+    assert out["rc"] == 0
+    assert out["stopped"] == "only"
+    assert runner.lock_status(str(ws))["busy"] is False

@@ -260,6 +260,9 @@ def run(ws, ep="", *, apply=False, yes=False, max_steps=6,
                 stopped = "criterion_not_passed"
                 rc = 2
                 break
+            if only:
+                stopped = "only"
+                break
             if until and nid == until:
                 stopped = "until"
                 break
