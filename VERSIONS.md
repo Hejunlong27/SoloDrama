@@ -86,6 +86,7 @@
   | 46 | 守卫测试 +2 | `test_asset_tabs_are_only_real_material_kinds`（分类只许三类）、`test_character_has_single_master`（主形象必须有唯一且优先级显式） |
   | 47 | **变体单张重出** | 角色框的变体图区加「重出这一张」：走引擎既有的 `--only P01@LOOK-B --force --submit`，只重跑这一张。通道**不由界面选**，读 `GET /api/studio/image-channel`（真源 `model-plan.json`）——界面自定默认值会与确认单不一致，被 `_model_gate` 拦成退出码 4，用户只看到「按钮没反应」 |
   | 48 | **修一个会永久丢原图的路径** | `comfy_client` 落盘是 `os.replace(tmp, final)`：**直接覆盖、不留旧版**。「重出更差」时原图已经没了。新增 `gen_assets_local.py --backup`：出图前把将被覆盖的图存到 `<目录>/_bak/`，文件名带 `.bak` 后缀 |
+  | 49 | **媒体任务成本双口径** | `provider usage` 不再自动当成 `actual_cost`：新增 `provider_usage_cost` / `settled_cost` / `cost_status`，后台账单用 `tools/media_cost.py settle` 回填；旧记录读取时自动降级为暂报，新增回归测试 |
   | 49 | 备份为何必须是 `.bak` | `_scan_outputs()` 用 `iterdir()+startswith(prefix+'_')` 判产物；`pack_import._scan_asset_images()` 是 **rglob** 会递归进 `_bak/`。备份若仍叫 `.png`，stem 会被解析成 `P01`+`LOOK-B`，**和真产物抢参考图**。`.bak` 两处天然跳过 |
   | 50 | **修一个会阻断全部资产出图的边界** | `assets_from_pack()` 原来对 `rep.ok` 全量判断。而 30 集旧格式提示词会让 `SHOT019/020` 全红 → **本机任何项目都出不了资产图**，尽管资产卡完全合规。改为：只阻断资产级错误（PACK/ASSET/STYLE），分镜级（SHOT0xx）降级为打印提示。资产卡天生早于分镜提示词定稿 |
   | 51 | 新增 `GET /api/studio/image-channel` | 只读：返回这次会走哪条通道（`assets.local`/`assets.cloud`/`assets.rh_wf`）、是否计费、地址、工作流、是否假云端、能否备份。**RH 通道不支持单张重出**（它的 `--only` 是老 md 口径 `char_01`），界面上直接说清而不是静默失败 |

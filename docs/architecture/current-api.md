@@ -75,9 +75,9 @@
 | POST† | `/api/generators/rh` | 设 RunningHub 工作流 |
 | GET | `/api/generators` | 生成通道状态 + `model_catalog` + `board_channel`（本地/云端/ZZAI/RunningHub 分镜图下游） |
 | POST | `/api/generators/model-params` | 只读校验模型参数并返回平台请求映射；不提交任务、不产生费用 |
-| GET | `/api/media/tasks?ws=` | 媒体任务列表；支持 `kind/status/limit`，记录远端 task ID、报价与实际金额 |
+| GET | `/api/media/tasks?ws=` | 媒体任务列表；支持 `kind/status/limit`，记录远端 task ID、报价、供应商暂报 `usage` 与后台最终 `settled_cost` |
 | GET | `/api/media/tasks/{id}?ws=` | 单条媒体任务详情 |
-| GET | `/api/media/tasks/{id}/resume?ws=` | 断点恢复信息：是否需轮询、是否允许重新提交 |
+| GET | `/api/media/tasks/{id}/resume?ws=` | 断点恢复信息：是否需轮询、是否允许重新提交、成本是否已结算 |
 | GET | `/api/scheduler/status?ws=&ep=&limit=` | 13 节点只读状态、下一步、journal、工作区锁 |
 | POST† | `/api/scheduler/run` | 入队受控 Runner；默认干跑，`apply` 真跑需确认，`yes` 另需 GPU/计费确认 |
 | GET | `/api/pipeline/plan` | 旧版环节计划（兼容保留；Studio 调度页已改用 `/api/scheduler/status`） |

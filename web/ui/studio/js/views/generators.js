@@ -108,15 +108,15 @@ function tasksCard(tasks, error) {
       + esc(t.kind || '') + '</div></td>'
       + '<td>' + badge(tone, t.status || 'unknown') + '</td>'
       + '<td class="mono tiny dim">' + esc(String(t.remote_task_id || '—').slice(0, 24)) + '</td>'
-      + '<td>' + money(t.estimate) + '</td><td>' + money(t.actual_cost) + '</td>'
+      + '<td>' + money(t.estimate) + '</td><td>' + money(t.provider_usage_cost) + '</td><td>' + money(t.settled_cost) + '</td>'
       + '<td class="tiny dim">' + esc(dt(t.updated_at)) + '</td></tr>';
-  }).join('') || '<tr><td colspan="7">' + emptyBox('还没有媒体任务',
+  }).join('') || '<tr><td colspan="9">' + emptyBox('还没有媒体任务',
     '报价、提交和轮询记录会落在 .drama/media/。') + '</td></tr>';
   return '<section class="card" style="margin-bottom:16px"><div class="card-h"><h3>媒体任务</h3>'
-    + '<span class="card-sub">本地任务记录与远端 task ID；已提交任务禁止重复提交</span></div>'
+    + '<span class="card-sub">本地任务记录与远端 task ID；供应商 usage 为暂报，后台实结需对账</span></div>'
     + '<div class="card-b">' + (error ? '<div class="alert bad">' + esc(error) + '</div>' : '')
     + '<div class="table-wrap"><table class="tb"><thead><tr><th>本地 ID</th><th>模型</th>'
-    + '<th>状态</th><th>远端 task ID</th><th>预估价</th><th>实际金额</th><th>更新时间</th>'
+    + '<th>状态</th><th>远端 task ID</th><th>预估价</th><th>供应商暂报</th><th>后台实结</th><th>更新时间</th>'
     + '</tr></thead><tbody>' + rows + '</tbody></table></div></div></section>';
 }
 

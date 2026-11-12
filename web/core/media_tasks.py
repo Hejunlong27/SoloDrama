@@ -7,7 +7,7 @@
 * 一个任务一个 JSON，落在 `<workspace>/.drama/media/`，文件系统仍是唯一数据源；
 * 远端 task ID 一旦落盘，后续只能 poll/resume，不能再次 submit；
 * 不持久化 API Key、Authorization 头或带签名的临时结果 URL；
-* 预估价、最高允许价、实际金额分开保存，未知不回退为 0。
+* 预估价、供应商暂报 usage、后台最终结算分开保存；usage 不得冒充 actual_cost，未知不回退为 0。
 """
 from __future__ import annotations
 
@@ -84,6 +84,40 @@ def _write(ws, rec: dict) -> dict:
     return rec
 
 
+def _normalize_record(rec: dict) -> dict:
+    """Separate provisional provider usage from final settlement."""
+    if not isinstance(rec, dict):
+        return rec
+    usage = rec.get("usage")
+    if rec.get("provider_usage") is None and isinstance(usage, dict):
+        rec["provider_usage"] = _clean(usage)
+    if rec.get("provider_usage_cost") is None and isinstance(usage, dict):
+        amount = usage.get("amount")
+        if isinstance(amount, (int, float)) and not isinstance(amount, bool):
+            rec["provider_usage_cost"] = {"amount": amount, "currency": str(usage.get("currency") or "")}
+    settled = rec.get("settled_cost")
+    if settled is None and rec.get("cost_source") in ("provider_backend", "manual_backend", "invoice"):
+        legacy = rec.get("actual_cost")
+        if isinstance(legacy, dict) and isinstance(legacy.get("amount"), (int, float)) and not isinstance(legacy.get("amount"), bool):
+            settled = {"amount": legacy["amount"], "currency": str(legacy.get("currency") or "")}
+            rec["settled_cost"] = settled
+    if isinstance(settled, dict) and isinstance(settled.get("amount"), (int, float)) and not isinstance(settled.get("amount"), bool):
+        rec["cost_status"] = "settled"
+        rec["actual_cost"] = settled
+    elif rec.get("cost_source") == "provider" and isinstance(rec.get("actual_cost"), dict):
+        legacy = rec["actual_cost"]
+        if isinstance(legacy.get("amount"), (int, float)) and not isinstance(legacy.get("amount"), bool):
+            rec["provider_usage_cost"] = {"amount": legacy["amount"], "currency": str(legacy.get("currency") or "")}
+        rec["actual_cost"] = None
+        rec["cost_source"] = "unknown"
+        rec["cost_status"] = "provisional"
+    elif rec.get("provider_usage_cost") is not None:
+        rec["cost_status"] = "provisional"
+    else:
+        rec["cost_status"] = rec.get("cost_status") or "unknown"
+    return rec
+
+
 def _read(ws, local_id: str) -> dict:
     target = _path(ws, local_id)
     try:
@@ -94,7 +128,7 @@ def _read(ws, local_id: str) -> dict:
         raise MediaTaskError("媒体任务记录损坏：%s（%s）" % (local_id, exc)) from exc
     if not isinstance(data, dict) or data.get("schema_version") != _SCHEMA_VERSION:
         raise MediaTaskError("媒体任务版本不支持：%s" % local_id)
-    return data
+    return _normalize_record(data)
 
 
 def _history(rec, status, note=""):
@@ -141,6 +175,12 @@ def create(ws, *, kind: str, model: str, provider_id: str = "", request=None,
         "actual_cost": None,
         "cost_source": "unknown",
         "usage": None,
+        "provider_usage": None,
+        "provider_usage_cost": None,
+        "settled_cost": None,
+        "cost_status": "unknown",
+        "settled_at": None,
+        "settlement_note": "",
         "progress": None,
         "artifacts": [],
         "error": "",
@@ -172,6 +212,7 @@ def list_tasks(ws, *, limit=100, kind=None, status=None) -> list:
             continue
         if not isinstance(rec, dict) or rec.get("schema_version") != _SCHEMA_VERSION:
             continue
+        rec = _normalize_record(rec)
         if kind and rec.get("kind") != str(kind):
             continue
         if status and rec.get("status") != str(status):
@@ -231,15 +272,20 @@ def update_remote(ws, local_id: str, *, raw_status: str, progress=None,
         if progress is not None:
             rec["progress"] = _clean(progress)
         if usage is not None:
-            rec["usage"] = _clean(usage)
+            clean_usage = _clean(usage)
+            rec["usage"] = clean_usage
+            rec["provider_usage"] = clean_usage
             amount = usage.get("amount") if isinstance(usage, dict) else None
             currency = usage.get("currency") if isinstance(usage, dict) else None
             if isinstance(amount, (int, float)) and not isinstance(amount, bool):
-                rec["actual_cost"] = {"amount": amount, "currency": str(currency or "")}
-                rec["cost_source"] = "provider"
+                rec["provider_usage_cost"] = {"amount": amount, "currency": str(currency or "")}
+                rec["cost_status"] = "provisional"
             elif normalized in _TERMINAL:
-                rec["actual_cost"] = None
-                rec["cost_source"] = "unknown"
+                rec["provider_usage_cost"] = None
+                rec["cost_status"] = "unknown"
+        if rec.get("cost_status") != "settled":
+            rec["actual_cost"] = None
+            rec["cost_source"] = "unknown"
         if artifacts is not None:
             # 只收本地相对路径；远端签名 URL 会过期，不能当持久产物。
             rec["artifacts"] = [str(x)[:500] for x in list(artifacts)[:50]]
@@ -248,6 +294,32 @@ def update_remote(ws, local_id: str, *, raw_status: str, progress=None,
             _history(rec, normalized, "poll update")
         return _write(ws, rec)
 
+
+def record_settlement(ws, local_id: str, amount, currency: str = "", *, source: str = "provider_backend", note: str = "") -> dict:
+    """Record the final provider-backend invoice without replacing raw usage."""
+    try:
+        value = float(amount)
+    except (TypeError, ValueError):
+        raise MediaTaskError("结算金额无效：%r" % (amount,)) from None
+    if value < 0 or value != value or value in (float("inf"), float("-inf")):
+        raise MediaTaskError("结算金额必须是非负有限数字：%r" % (amount,))
+    cur = str(currency or "").strip()
+    if not cur:
+        raise MediaTaskError("结算金额缺少币种")
+    src = str(source or "provider_backend").strip()
+    if not src:
+        raise MediaTaskError("结算来源不能为空")
+    with _LOCK:
+        rec = _read(ws, local_id)
+        settled = {"amount": value, "currency": cur}
+        rec["settled_cost"] = settled
+        rec["actual_cost"] = settled
+        rec["cost_source"] = src
+        rec["cost_status"] = "settled"
+        rec["settled_at"] = time.time()
+        rec["settlement_note"] = str(note or "")[:300]
+        _history(rec, "cost_settled", note or "backend invoice reconciled")
+        return _write(ws, rec)
 
 def resume_info(ws, local_id: str) -> dict:
     rec = _read(ws, local_id)
@@ -263,6 +335,10 @@ def resume_info(ws, local_id: str) -> dict:
         "request_sha": rec.get("request_sha") or "",
         "estimate": rec.get("estimate"),
         "max_cost": rec.get("max_cost"),
+        "provider_usage": rec.get("provider_usage"),
+        "provider_usage_cost": rec.get("provider_usage_cost"),
+        "settled_cost": rec.get("settled_cost"),
         "actual_cost": rec.get("actual_cost"),
         "cost_source": rec.get("cost_source") or "unknown",
+        "cost_status": rec.get("cost_status") or "unknown",
     }

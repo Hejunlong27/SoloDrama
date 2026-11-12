@@ -181,7 +181,7 @@ SoloDrama 把「一句话点子 → 可发布竖屏短剧」拆成**创作**与*
 | `comfy_{launcher,ports,probe,store}.py` | 本地 ComfyUI 启停 / 端口 / 探活 / 工作流存取 |
 | `generators.py` | 图像/视频通道统一台账 |
 | `generation_models.py` | 模型级参数能力加载与请求映射（真源 `configs/generation-models.json`） |
-| `media_tasks.py` | 媒体任务状态、远端 task ID、报价/实际金额与断点恢复记录 |
+| `media_tasks.py` | 媒体任务状态、远端 task ID、报价、供应商暂报 `usage`、后台最终 `settled_cost` 与断点恢复记录 |
 | `creation.py` / `skills.py` / `styles.py` | 创作产物 / 题材模板 / 画风目录 |
 | `health.py` / `monitor.py` / `timing.py` | 体检与修复 / 资源快照 / 全局时间账 |
 | `ux.py` | 用户语言层（把技术话翻成人话） |
