@@ -336,7 +336,7 @@ def test_converted_pack_passes_h3_gate(tmp_path):
 
 def test_aspect_defaults_match_pack_spec():
     """默认画幅必须与 `pack_spec.DEFAULT_ASPECT` 同源 —— 两处各写一份必然漂。"""
-    assert md2pack.S.DEFAULT_ASPECT["character"] == "9:16"
+    assert md2pack.S.DEFAULT_ASPECT["character"] == "16:9"
     assert md2pack.S.DEFAULT_ASPECT["scene"] == "9:16"
     assert md2pack.S.DEFAULT_ASPECT["video"] == "9:16"
 

@@ -117,3 +117,28 @@ def test_style_prefix_is_prepended():
     out, _c, _f = V.rewrite_md(MD, style="当代真人短剧质感")
     body = V._VIEW_BLOCK.search(out).group(2)
     assert body.startswith("当代真人短剧质感")
+
+
+def test_uses_asset_table_identity_when_old_prompt_lacks_age():
+    old = OLD_VIEW.replace("24-year-old Latina woman, ", "")
+    md = MD.replace(OLD_VIEW, "character turnaround sheet, same woman, front / side / back")
+    out, _c, _f = V.rewrite_md(md)
+    body = V._VIEW_BLOCK.search(out).group(2)
+    assert "24 岁，庄园佣人" in body or "左眉内侧细疤" in body
+
+
+def test_alias_bold_expression_is_merged():
+    out, changes, failures = V.rewrite_md(MD.replace("**表情四态**", "**表情**"))
+    assert not failures
+    assert any(x.get("code") == "EXP" for x in changes)
+    assert "已并入" in out
+
+
+def test_merged_expression_variant_is_not_exported():
+    import md2pack
+    out, _c, _f = V.rewrite_md(MD)
+    assets, gaps = md2pack.parse_assets(out)
+    codes = [v["code"] for v in assets["character"][0]["variants"]]
+    assert "VIEW" in codes
+    assert "EXP" not in codes
+    assert assets["character"][0]["variants"][0]["aspect"] == "16:9"

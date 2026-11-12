@@ -67,8 +67,8 @@ def test_aspect_defaults_filled():
     assert rep.ok, rep.render()
     # 变体没写 aspect → 落 kind 默认
     p01 = assets["character"]["P01"]
-    # 人物/场景默认 9:16（与出片画幅一致；16:9 参考喂 9:16 输出会拉伸，见 pack_spec 注释）
-    assert p01["variants"][0]["aspect"] == "9:16"
+    # 角色设定卡固定 16:9；场景/分镜/视频各自跟随 pack.aspect。
+    assert p01["variants"][0]["aspect"] == "16:9"
     assert assets["prop"]["D01"]["variants"][0]["aspect"] == "1:1"
     assert pack["aspect"]["video"] == "9:16"
 

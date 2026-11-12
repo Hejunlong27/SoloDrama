@@ -98,12 +98,12 @@ def _identity(prompt: str) -> str:
     return seg
 
 
-def build_view_prompt(old_view: str, old_exp: str = "", style: str = "") -> str:
+def build_view_prompt(old_view: str, old_exp: str = "", style: str = "", identity: str = "") -> str:
     """旧 VIEW / EXP → 一张 16:9 身份卡的提示词。
 
     风格词（`style`）放在最前面：它与 `style_lock` 同源，换画风时只换这一段。
     """
-    ident = _identity(old_view) or _identity(old_exp)
+    ident = _identity(old_view) or _identity(old_exp) or str(identity or "").strip()
     # 旧 VIEW 里 `wearing …` 之后是这套造型的服装，属于身份卡的一部分（三视图要求同服装）
     wearable = ""
     m = re.search(r"\bwearing ([^,.]*(?:,[^,.]*){0,4})", str(old_view or ""), re.I)
@@ -163,8 +163,27 @@ def check(prompt: str) -> list:
 _VIEW_BLOCK = re.compile(
     r"(\*\*三视图\*\*\s*\n+```[a-zA-Z]*\n)(.*?)(\n```)", re.S)
 _EXP_BLOCK = re.compile(
-    r"(\*\*表情四态\*\*\s*\n+```[a-zA-Z]*\n)(.*?)(\n```)", re.S)
+    r"(\*\*表情(?:四态)?\*\*\s*\n+```[a-zA-Z]*\n)(.*?)(\n```)", re.S)
 _STYLE_RE = re.compile(r"\*\*胶片[：:]\s*(.+?)\*\*")
+
+
+def _context_identity(text: str, at: int) -> str:
+    """从资产块表格取身份/一致性锚点，补足旧提示词里没有年龄的存量卡。"""
+    head = text.rfind("\n### ", 0, at)
+    if head < 0:
+        head = text.rfind("### ", 0, at)
+    if head < 0:
+        return ""
+    context = text[head:at]
+    parts = []
+    for label in ("身份", "一致性锚点", "用途", "设定"):
+        m = re.search(r"^\|\s*%s\s*\|\s*([^|]+)\|" % re.escape(label), context, re.M)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        if value and value not in ("参考资产", "待填", "待定", "—", "-"):
+            parts.append(value)
+    return "；".join(parts)
 
 
 def rewrite_md(text: str, *, style: str = "") -> tuple:
@@ -175,7 +194,7 @@ def rewrite_md(text: str, *, style: str = "") -> tuple:
     def do_view(m):
         old = m.group(2)
         # 同一角色段内的 EXP 也要拿到；这里先只替换 VIEW 本体，EXP 在下一轮合并
-        new = build_view_prompt(old, "", style)
+        new = build_view_prompt(old, "", style, identity=_context_identity(text, m.start()))
         miss = check(new)
         if miss:
             failures.append({"code": "VIEW", "missing": miss})

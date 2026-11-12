@@ -118,6 +118,9 @@ def parse_assets(text: str) -> tuple:
         if kind == "effect":
             continue                      # 特效层不进首批出图（没有独立资产卡）
         looks = LOOK_ROW.findall(body)
+        aspect = _field(body, "画幅", "比例", "aspect")
+        if kind == "character" and not aspect:
+            aspect = "16:9"
         variants = []
 
         turnaround = _fence_after(body, "三视图", "turnaround")
@@ -125,7 +128,9 @@ def parse_assets(text: str) -> tuple:
             variants.append({"code": "VIEW", "label": "三视图",
                              "kind": "turnaround", "prompt": turnaround})
         expr = _fence_after(body, "表情四态", "表情")
-        if expr:
+        # view_sheet.py 会把表情块标记为「已并入三视图」；它只是文案备查，
+        # 不能再作为独立资产出图，否则一个角色会出现两张卡。
+        if expr and not expr.lstrip().startswith("[已并入"):
             variants.append({"code": "EXP", "label": "表情四态",
                              "kind": "expression", "prompt": expr})
         # 逐个造型的提示词：模板的写法不统一 —— 有的是「服装卡提示词」一段，
@@ -160,6 +165,8 @@ def parse_assets(text: str) -> tuple:
             else:
                 gaps.append({"id": aid, "code": "BASE", "reason": "整块没有任何提示词围栏"})
                 continue
+        for v in variants:
+            v["aspect"] = aspect
         out[kind].append({
             "id": aid, "name": _name_of(b["head"]),
             "role": _field(body, "身份", "用途", "设定"),
@@ -430,14 +437,13 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
     (pack_dir / "assets").mkdir(parents=True, exist_ok=True)
     (pack_dir / "episodes").mkdir(parents=True, exist_ok=True)
 
-    # 画幅：显式参数 > drama.json > project.json > 默认 9:16。
-    # ★ 2026-11-06 前这里写死 character/scene=16:9、board/video=9:16，与
-    #   pack_spec.DEFAULT_ASPECT（都是 9:16）互相打脸：md2pack 写进 pack.json 的显式值
-    #   会**盖掉**默认值，于是人物卡按 16:9 出图，再被当 9:16 的参考 —— 竖向拉伸 22%。
+    # 画幅：角色卡固定 16:9；场景/分镜/视频按显式参数或项目画幅。
+    # 角色卡是独立设计资产：必须保持 16:9；项目画幅只约束场景、分镜和视频。
     asp = dict(S.DEFAULT_ASPECT)
     _r = _detect_aspect(ws, meta, aspect)
     if _r:
-        for k in ("character", "scene", "board", "video"):
+        # 角色设定卡固定 16:9 横版；项目画幅只约束场景、分镜与视频。
+        for k in ("scene", "board", "video"):
             asp[k] = _r
 
     pack = {

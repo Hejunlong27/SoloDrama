@@ -46,7 +46,7 @@
   },
   "style_lock": "<全季风格串，见 §3>",
   "negative": "<全局负面词，见 §3>",
-  "aspect": { "character": "9:16", "scene": "9:16", "prop": "1:1", "board": "9:16", "video": "9:16" }
+  "aspect": { "character": "16:9", "scene": "9:16", "prop": "1:1", "board": "9:16", "video": "9:16" }
 }
 
 ## 2.2 资产 JSON（三份，schema 相同）
