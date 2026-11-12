@@ -12,7 +12,7 @@
 ----------------------------------------------------
 1. `shots.json`  非空 / `shot_id` 唯一 / 有 `board_ref`（分镜图 key）
 2. `h3_prompts.json` 覆盖全部 shot_id，且 `prompt` 非空
-3. `<Picture N>` 编号**从 1 连续、≤6、不留空号**（留空号会让后面全部错位）
+3. `<Picture N>` 编号从 1 开始；有分镜图时资产图号从 2 连续、≤6、不留空号
 4. `<d>[lang] …</d>` 存在且非空（字幕真源）
 5. 镜头时间戳 `[Shot N] At MM:SS(.mmm)` **严格递增**，且总时长 == `duration`（±0.5s）
 6. 参考图槽位一致性：`len(character_refs) + len(scene_refs) >= max(<Picture N>)`
@@ -82,9 +82,15 @@ def check_shot(sid: str, prompt: str, duration, refs: list, data_dir: pathlib.Pa
     #   这里查的是「提示词点到第几张」与「实际挂了几张」是否闭合 —— 写法不同，语义一样。
     nums = sorted({int(g1 or g2) for g1, g2 in (m.groups() for m in PIC.finditer(prompt))})
     if nums:
-        if nums != list(range(first_pic, max(nums) + 1)):
-            errs.append("%s: 图号不连续 %s（应从 %d 起连续；留空号会让后面全部错位）"
-                        % (sid, nums, first_pic))
+        # H3 的 `<Picture 1>` 是可选的分镜图锚点；有 board_ref 时资产槽从 2 起。
+        # 因此连续性检查要分两层：整体标签本身仍须从 1 开始，而资产编号从 first_pic 起。
+        if nums[0] != 1:
+            errs.append("%s: 图号不连续 %s（整体应从 1 开始；留空号会让后面全部错位）"
+                        % (sid, nums))
+        asset_nums = [n for n in nums if n >= first_pic]
+        if asset_nums and asset_nums != list(range(first_pic, max(asset_nums) + 1)):
+            errs.append("%s: 资产图号不连续 %s（应从 %d 起连续；留空号会让后面全部错位）"
+                        % (sid, asset_nums, first_pic))
         if max(nums) > PICTURE_MAX:
             errs.append("%s: <Picture N> 最大 %d 超过硬上限 %d（须删槽位改纯文字，不能只改 refs）"
                         % (sid, max(nums), PICTURE_MAX))
