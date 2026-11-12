@@ -169,3 +169,12 @@ def test_video_batch_node_uses_auto():
     src = (SCRIPTS / "nodes.py").read_text(encoding="utf-8")
     assert "video run --engine auto" in src
     assert "video run --engine local" not in src
+
+
+def test_runninghub_video_command_forwards_episode():
+    """workflow 通道必须把 --ep 传给引擎；否则它会去找根目录 shots.json。"""
+    src = (SCRIPTS / "drama.py").read_text(encoding="utf-8")
+    marker = "cmd = [sys.executable, RUN_PY, '--video-only']"
+    i = src.index(marker)
+    block = src[i:i + 500]
+    assert "cmd += ['--ep', str(args.ep)]" in block, block

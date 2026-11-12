@@ -1513,6 +1513,8 @@ def cmd_video_run(args) -> int:
     for line in _cost_lines(est['segments']):
         print(line)
     cmd = [sys.executable, RUN_PY, '--video-only']
+    if getattr(args, 'ep', ''):
+        cmd += ['--ep', str(args.ep)]
     if args.resume:
         cmd += ['--resume', args.resume]
     if args.limit:
