@@ -337,7 +337,7 @@ def test_converted_pack_passes_h3_gate(tmp_path):
 def test_aspect_defaults_match_pack_spec():
     """默认画幅必须与 `pack_spec.DEFAULT_ASPECT` 同源 —— 两处各写一份必然漂。"""
     assert md2pack.S.DEFAULT_ASPECT["character"] == "16:9"
-    assert md2pack.S.DEFAULT_ASPECT["scene"] == "9:16"
+    assert md2pack.S.DEFAULT_ASPECT["scene"] == "16:9"
     assert md2pack.S.DEFAULT_ASPECT["video"] == "9:16"
 
 
@@ -350,7 +350,7 @@ def test_aspect_written_from_drama_json(tmp_path):
     asp = json.loads((pathlib.Path(res["pack"]) / "pack.json").read_text(encoding="utf-8"))["aspect"]
     assert asp["video"] == "16:9" and asp["board"] == "16:9", asp
     assert asp["character"] == "16:9" and asp["scene"] == "16:9", asp
-    assert asp["prop"] == "1:1", "道具卡保持方图：特写易裁，构图余量更大"
+    assert asp["prop"] == "16:9", "角色、场景、道具统一为 16:9 资产卡"
 
 
 def test_aspect_explicit_argument_wins(tmp_path):

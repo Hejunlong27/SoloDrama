@@ -64,7 +64,7 @@ STYLE_RE = re.compile(r'\*\*胶片[：:]\s*(.+?)\*\*')
 KINDS = ('char', 'scene', 'prop')
 KIND_CN = {'char': '角色资产库', 'scene': '场景资产', 'prop': '道具资产'}
 # 各 kind 的默认画幅（与 stages/assets/scripts/prompt_templates.py 的 RATIO 同口径：人物/场景 16:9，道具 1:1）
-ASPECT_DEFAULT = {'char': '16:9 (Widescreen)', 'scene': '16:9 (Widescreen)', 'prop': '1:1 (Square)'}
+ASPECT_DEFAULT = {'char': '16:9 (Widescreen)', 'scene': '16:9 (Widescreen)', 'prop': '16:9 (Widescreen)'}
 
 # ── 种子 ──────────────────────────────────────────────────────────────────
 # ★ 2026-11-07：为什么必须逐条派生
@@ -336,7 +336,7 @@ def main() -> int:
     ap.add_argument('--aspect', default='', help='强制全部资产用这个画幅（覆盖各类型默认）')
     ap.add_argument('--aspect-char', default=None, help='人物画幅（默认 16:9 (Widescreen)）')
     ap.add_argument('--aspect-scene', default=None, help='场景画幅（默认 16:9 (Widescreen)）')
-    ap.add_argument('--aspect-prop', default=None, help='道具画幅（默认 1:1 (Square)）')
+    ap.add_argument('--aspect-prop', default=None, help='道具画幅（默认 16:9 (Widescreen)）')
     ap.add_argument('--seed-base', dest='seed_base', type=int, default=SEED_BASE,
                     help='种子基底（默认 %d）；每条资产的种子 = 基底 + hash(id)。'
                          '想让全剧换一套脸就换这个数' % SEED_BASE)

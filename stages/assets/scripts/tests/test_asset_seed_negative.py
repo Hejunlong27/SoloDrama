@@ -157,3 +157,14 @@ def test_client_min_cfg_flags_turbo_workflow():
     assert C._min_cfg(base) == 1
     base9 = json.loads((COMFY / "workflow_qwen21_t2i_hq_9x16.json").read_text(encoding="utf-8"))
     assert C._min_cfg(base9) >= 2, "9x16 那份是 cfg=2，负向才真的生效"
+
+
+def test_client_fit_exact_1920x1080(tmp_path):
+    from PIL import Image
+    C = _client()
+    p = tmp_path / "card.png"
+    Image.new("RGB", (1920, 1088), "white").save(p)
+    changed = C.fit_exact_size(str(p), "16:9")
+    assert changed is True
+    with Image.open(p) as im:
+        assert im.size == (1920, 1080)

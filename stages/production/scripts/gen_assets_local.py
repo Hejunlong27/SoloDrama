@@ -444,7 +444,7 @@ def main() -> int:
     ap.add_argument('--aspect', default='', help='强制全部资产用这个画幅（覆盖各类型默认）')
     ap.add_argument('--aspect-char', default=None)
     ap.add_argument('--aspect-scene', default=None)
-    ap.add_argument('--aspect-prop', default=None)
+    ap.add_argument('--aspect-prop', default=None, help='道具画幅（默认 16:9 (Widescreen)）')
     ap.add_argument('--style-lock', default='', help='统一风格串，会拼进每条提示词')
     ap.add_argument('--seed-base', dest='seed_base', type=int, default=AM.SEED_BASE,
                     help='种子基底（默认 %d）。每条资产的种子 = 基底 + hash(资产 id)，'

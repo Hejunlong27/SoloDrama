@@ -438,12 +438,12 @@ def convert(ws, *, out_dir=None, eps=None, title="", slug="", style_lock="",
     (pack_dir / "episodes").mkdir(parents=True, exist_ok=True)
 
     # 画幅：角色卡固定 16:9；场景/分镜/视频按显式参数或项目画幅。
-    # 角色卡是独立设计资产：必须保持 16:9；项目画幅只约束场景、分镜和视频。
+    # 角色/场景/道具设计资产统一 16:9；项目画幅只约束分镜和视频。
     asp = dict(S.DEFAULT_ASPECT)
     _r = _detect_aspect(ws, meta, aspect)
     if _r:
         # 角色设定卡固定 16:9 横版；项目画幅只约束场景、分镜与视频。
-        for k in ("scene", "board", "video"):
+        for k in ("board", "video"):
             asp[k] = _r
 
     pack = {

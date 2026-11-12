@@ -244,7 +244,7 @@ def _():
     a = M.to_assets(e)
     A(next(x for x in a if x["kind"] == "char")["aspect"] == "16:9 (Widescreen)", "人物应 16:9")
     A(next(x for x in a if x["kind"] == "scene")["aspect"] == "16:9 (Widescreen)", "场景应 16:9")
-    A(next(x for x in a if x["kind"] == "prop")["aspect"] == "1:1 (Square)", "道具应 1:1")
+    A(next(x for x in a if x["kind"] == "prop")["aspect"] == "16:9 (Widescreen)", "道具应 16:9")
     b = M.to_assets(e, aspects={"char": "2:3 (Portrait Photo)", "scene": "2:3", "prop": "2:3"})
     A(all(x["aspect"] == "2:3" for x in b if x["kind"] != "char"), "覆盖应生效")
     A(next(x for x in b if x["kind"] == "char")["aspect"] == "2:3 (Portrait Photo)", "人物覆盖应生效")

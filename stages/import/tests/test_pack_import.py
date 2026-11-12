@@ -69,7 +69,7 @@ def test_aspect_defaults_filled():
     p01 = assets["character"]["P01"]
     # 角色设定卡固定 16:9；场景/分镜/视频各自跟随 pack.aspect。
     assert p01["variants"][0]["aspect"] == "16:9"
-    assert assets["prop"]["D01"]["variants"][0]["aspect"] == "1:1"
+    assert assets["prop"]["D01"]["variants"][0]["aspect"] == "16:9"
     assert pack["aspect"]["video"] == "9:16"
 
 

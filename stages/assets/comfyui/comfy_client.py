@@ -395,6 +395,44 @@ def wait(pid, timeout=1200, poll=1.5):
     raise TimeoutError("timeout waiting for prompt " + pid)
 
 
+ASPECT_TARGET_SIZES = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+}
+
+
+def fit_exact_size(path: str, aspect: str) -> bool:
+    """把生成图确定性裁切/缩放到目标尺寸；返回是否改动。
+
+    工作流的 ResolutionSelector 会吸附到 latent 对齐尺寸（例如 16:9 输出
+    1920x1088）。资产契约要求严格 1920x1080，因此在落盘后做一次中心 cover：
+    先按目标比例裁掉边缘，再缩放，不拉伸画面。
+    """
+    key = str(aspect or "").split("(", 1)[0].strip()
+    target = ASPECT_TARGET_SIZES.get(key)
+    if not target:
+        return False
+    try:
+        from PIL import Image
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("需要 Pillow 才能把资产归一到 %s：%s" % (key, exc))
+    tw, th = target
+    with Image.open(path) as im:
+        if im.size == target:
+            return False
+        src = im.convert("RGB")
+        sw, sh = src.size
+        scale = max(tw / sw, th / sh)
+        nw, nh = max(tw, int(round(sw * scale))), max(th, int(round(sh * scale)))
+        src = src.resize((nw, nh), Image.Resampling.LANCZOS)
+        left, top = (nw - tw) // 2, (nh - th) // 2
+        out = src.crop((left, top, left + tw, top + th))
+        out.save(path, format="PNG")
+    print("[normalize] %s -> %dx%d" % (os.path.basename(path), tw, th), flush=True)
+    return True
+
+
 def fetch_image(meta, out_path):
     q = urllib.parse.urlencode({
         "filename": meta.get("filename", ""),
@@ -676,6 +714,8 @@ def run_one(base, item, out_dir):
                 raise RuntimeError(
                     "无法写入 %s（目标被占用）。临时文件已保留在 %s，关掉看图程序后重跑该资产即可。原始错误：%s / %s"
                     % (final, path, e1, e3))
+    fit_exact_size(final, item.get("aspect") or "")
+    n = os.path.getsize(final)
     return [(final, n)]
 
 
