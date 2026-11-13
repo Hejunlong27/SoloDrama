@@ -137,6 +137,8 @@ def main(argv=None) -> int:
                     cmd += ["--yes"]
                 if a.max_cost is not None:
                     cmd += ["--max-cost", a.max_cost]
+                if a.concurrency and a.concurrency > 1:
+                    cmd += ["--concurrency", str(a.concurrency)]
             else:
                 if a.force:
                     cmd += ["--force"]
