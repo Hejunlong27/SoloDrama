@@ -5,8 +5,8 @@
 为什么单独成文件
 ----------------
 同一个项目会跑两条通道：本机 ComfyUI（4060 / ￥0）与云端镜像（4090 / 按主机时长计费）。
-两边**该用的工作流不一样**：本机用 fl2v turbo 8step 那套（`workflow_h3_minimax_canvas`），
-云端用 pika 极速版（`workflow_h3_pika_8g`，2 参考槽 + lcm + SigmaShift）。
+2026-11-13 起按用户要求：本机和仙宫云镜像共用 `workflow_h3_minimax_audio`，
+默认 0.8MP、6 参考槽、带音频；仍可按 `--workflow` / 环境变量单独覆盖。
 
 此前「默认工作流」这四个字散在四个地方各写一遍：
 
@@ -32,11 +32,11 @@ import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# 本机 ComfyUI（4060 8G）：6 参考槽 + fl2v turbo 8step。作者原版 + map 里三条模型替换。
-LOCAL_VIDEO = "workflow_h3_minimax_canvas.json"
+# 本机与仙宫云共用：6 参考槽 + fl2v turbo 8step + 音频，默认 0.8MP。
+LOCAL_VIDEO = "workflow_h3_minimax_audio.json"
 
-# 云端镜像（4090 D 24G）：pika 极速版，2 参考槽 + lcm 采样 + SigmaShift(12/2)。
-CLOUD_VIDEO = "workflow_h3_pika_8g.json"
+# 仙宫云镜像使用同一份工作流；换机器只换模型文件与地址。
+CLOUD_VIDEO = "workflow_h3_minimax_audio.json"
 
 
 def video_name(cloud: bool = False) -> str:

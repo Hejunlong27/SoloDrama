@@ -1,0 +1,21 @@
+{
+  "prompt": "238",
+  "images": [
+    "199",
+    "188",
+    "189",
+    "190",
+    "191",
+    "192"
+  ],
+  "seconds": "227",
+  "steps": "160",
+  "seed": "129",
+  "aspect": "228",
+  "prefix": "148",
+  "_length_node": "136",
+  "_comment": "Minimax H3 API workflow map; generated from the owner-provided UI workflow",
+  "_source_ui": "workflows_src/minimax_h3_audio_raw.json",
+  "_source_note": "UI 68 nodes -> API 28 nodes; removed UI-only nodes and empty LoadAudio nodes",
+  "_megapixels": "228"
+}

@@ -65,7 +65,9 @@ def task_new(ws, *, kind: str, model: str, purpose: str, request: dict,
         "episode": ep, "shot_id": shot_id, "status": "planned",
         "dest": str(dest), "remote_task_id": "", "request": request, "request_sha": digest,
         "estimate": estimate, "max_cost": max_cost, "actual_cost": None,
-        "cost_source": "unknown", "usage": None, "progress": None,
+        "cost_source": "unknown", "usage": None, "provider_usage": None,
+        "provider_usage_cost": None, "settled_cost": None, "cost_status": "unknown",
+        "settled_at": None, "settlement_note": "", "progress": None,
         "artifacts": [], "error": "", "raw_status": "", "submissions": 0,
         "created_at": time.time(), "updated_at": time.time(),
         "history": [{"at": time.time(), "status": "planned", "note": "%s task created" % purpose}],
@@ -85,10 +87,14 @@ def task_update(ws, rec: dict, *, status: str, remote_task_id: str = "",
         rec["progress"] = progress
     if usage is not None:
         rec["usage"] = usage
-        if isinstance(usage, dict) and isinstance(usage.get("amount"), (int, float)):
-            rec["actual_cost"] = {"amount": usage["amount"],
-                                  "currency": str(usage.get("currency") or "")}
-            rec["cost_source"] = "provider"
+        rec["provider_usage"] = usage
+        if isinstance(usage, dict) and isinstance(usage.get("amount"), (int, float)) and not isinstance(usage.get("amount"), bool):
+            rec["provider_usage_cost"] = {"amount": usage["amount"],
+                                          "currency": str(usage.get("currency") or "")}
+            rec["cost_status"] = "provisional"
+        if rec.get("cost_status") != "settled":
+            rec["actual_cost"] = None
+            rec["cost_source"] = "unknown"
     if artifact:
         rec["artifacts"] = [artifact]
     if error:

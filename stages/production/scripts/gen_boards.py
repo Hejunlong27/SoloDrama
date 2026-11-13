@@ -546,6 +546,8 @@ def _task_new(ws: pathlib.Path, *, model: str, request: dict, estimate, max_cost
         "status": "planned", "remote_task_id": "", "request": request,
         "request_sha": digest, "estimate": estimate, "max_cost": max_cost,
         "actual_cost": None, "cost_source": "unknown", "usage": None,
+        "provider_usage": None, "provider_usage_cost": None, "settled_cost": None,
+        "cost_status": "unknown", "settled_at": None, "settlement_note": "",
         "progress": None, "artifacts": [], "error": "", "raw_status": "",
         "submissions": 0, "created_at": time.time(), "updated_at": time.time(),
         "history": [{"at": time.time(), "status": "planned", "note": "task record created"}],
@@ -565,10 +567,14 @@ def _task_update(ws: pathlib.Path, rec: dict, *, status: str, remote_task_id="",
         rec["progress"] = progress
     if usage is not None:
         rec["usage"] = usage
-        if isinstance(usage, dict) and isinstance(usage.get("amount"), (int, float)):
-            rec["actual_cost"] = {"amount": usage["amount"],
-                                  "currency": str(usage.get("currency") or "")}
-            rec["cost_source"] = "provider"
+        rec["provider_usage"] = usage
+        if isinstance(usage, dict) and isinstance(usage.get("amount"), (int, float)) and not isinstance(usage.get("amount"), bool):
+            rec["provider_usage_cost"] = {"amount": usage["amount"],
+                                          "currency": str(usage.get("currency") or "")}
+            rec["cost_status"] = "provisional"
+        if rec.get("cost_status") != "settled":
+            rec["actual_cost"] = None
+            rec["cost_source"] = "unknown"
     if artifact:
         rec["artifacts"] = [artifact]
     if error:

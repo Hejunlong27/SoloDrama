@@ -31,12 +31,12 @@ for p in (str(COMFY), str(STAGES / "production" / "scripts")):
 
 import workflow_defaults as WD  # noqa: E402
 
-WORKFLOWS = [WD.LOCAL_VIDEO, WD.CLOUD_VIDEO]
+WORKFLOWS = sorted({WD.LOCAL_VIDEO, WD.CLOUD_VIDEO})
 
 
-def test_local_and_cloud_are_different_files():
+def test_local_and_cloud_share_requested_default():
     """两份必须是不同的文件 —— 若哪天又合并成一份，下面「按通道」的逻辑就是假的。"""
-    assert WD.video_name(False) != WD.video_name(True)
+    assert WD.video_name(False) == WD.video_name(True) == "workflow_h3_minimax_audio.json"
 
 
 @pytest.mark.parametrize("name", WORKFLOWS)
@@ -67,7 +67,7 @@ def test_preflight_follows_single_source():
     assert GP.default_workflow("image", cloud=False) == GP.default_workflow("image", cloud=True)
 
 
-def test_cloud_default_needs_more_refs_than_slots():
+def test_cloud_default_has_six_ref_slots():
     """pika 版只有 2 个参考槽 —— 这条记下来，是因为它会让多角色的镜头少一致性。
 
     断言「槽数 = 2」不是迷信数字，而是防止有人改了工作流却以为还是 6 槽：
@@ -75,4 +75,11 @@ def test_cloud_default_needs_more_refs_than_slots():
     """
     doc = json.loads((COMFY / WD.CLOUD_VIDEO).read_text(encoding="utf-8-sig"))
     loads = [k for k, v in doc.items() if v.get("class_type") == "LoadImage"]
-    assert len(loads) == 2, "云端默认工作流的参考图槽变成了 %d 个：%s" % (len(loads), loads)
+    assert len(loads) == 6, "默认工作流的参考图槽变成了 %d 个：%s" % (len(loads), loads)
+
+
+def test_default_video_resolution_is_08mp():
+    doc = json.loads((COMFY / WD.LOCAL_VIDEO).read_text(encoding="utf-8-sig"))
+    nodes = [v for v in doc.values() if v.get("class_type") == "ResolutionSelector"]
+    assert nodes, "默认视频工作流没有 ResolutionSelector"
+    assert all(v.get("inputs", {}).get("megapixels") == 0.8 for v in nodes), nodes

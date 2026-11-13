@@ -59,7 +59,7 @@ def _video_wf(cloud: bool = False) -> Path:
         import workflow_defaults as WD                       # noqa: PLC0415
         return Path(WD.video_path(cloud))
     except Exception:                                        # noqa: BLE001
-        return d / ("workflow_h3_pika_8g.json" if cloud else "workflow_h3_minimax_canvas.json")
+        return d / "workflow_h3_minimax_audio.json"
 
 
 VIDEO_LOCAL_WF = Path(os.environ.get("COMFYUI_VIDEO_WORKFLOW") or _video_wf(False))

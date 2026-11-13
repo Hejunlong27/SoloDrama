@@ -156,7 +156,7 @@ def main(argv=None) -> int:
                 txt = log.read_text(encoding="utf-8", errors="replace")[-4000:]
                 m = re.findall(r"预估合计：¥([\d.]+)", txt)
                 if m:
-                    spent = float(m[-1])
+                    spent += float(m[-1])
             except OSError:
                 pass
             results.append((ep, st, rc))

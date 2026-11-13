@@ -334,7 +334,8 @@ class ZZAIClient:
             try:
                 with httpx.Client(timeout=httpx.Timeout(connect=15.0, read=180.0,
                                                         write=60.0, pool=30.0),
-                                  follow_redirects=True, trust_env=self.trust_env) as client:
+                                  follow_redirects=True, trust_env=self.trust_env,
+                                  transport=self.transport) as client:
                     res = client.get(url, headers={"Accept": "*/*"})
                     res.raise_for_status()
                     data = res.content

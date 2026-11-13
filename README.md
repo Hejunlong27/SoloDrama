@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/showcase/00-cover.jpg" width="720" alt="SoloDrama — 把一句话点子做成可发布竖屏短剧">
-</p>
-
 # SoloDrama
 
 **把一句话点子做成可发布竖屏短剧的流水线。**

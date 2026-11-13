@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import httpx
 import pytest
@@ -11,6 +12,12 @@ from stages.media_api.zzai import ZZAIClient, ZZAIError
 
 
 def client(handler):
+    os.environ["SOLODRAMA_TRUSTED_HOSTS"] = "cdn.example"
+    try:
+        from stages import _netguard
+        _netguard.reset_trusted()
+    except ImportError:
+        pass
     return ZZAIClient(base_url="http://127.0.0.1:9", key="sk-test-secret",
                       transport=httpx.MockTransport(handler), timeout=5)
 

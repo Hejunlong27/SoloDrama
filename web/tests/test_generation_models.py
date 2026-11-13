@@ -16,7 +16,7 @@ from core import generation_models  # noqa: E402
 def test_catalog_contains_only_requested_models():
     items = generation_models.list_profiles()
     ids = {x["id"] for x in items}
-    assert ids == {"zhenzhen-image-g-v2.6-lowprice", "zhenzhen-video-muse"}
+    assert ids == {"zhenzhen-image-g-v2.6-lowprice", "zhenzhen-video-muse", "minimax-h3-comfyui-max"}
 
 
 def test_image_defaults_and_custom_controls():
@@ -85,3 +85,16 @@ def test_model_params_endpoint_is_read_only():
     body = res.json()
     assert body["api"] == {"resolution": "720p", "duration": 5,
                            "audio": True, "aspect_ratio": "9:16"}
+
+
+def test_minimax_h3_defaults_and_limits():
+    defaults = generation_models.normalize_params("minimax-h3-comfyui-max")
+    assert defaults["values"] == {"aspect_ratio": "9:16", "resolution": "1088p", "duration": 6}
+    assert defaults["api"] == {"resolution": "1088p", "duration": 6,
+                               "audio": True, "aspect_ratio": "9:16"}
+    custom = generation_models.normalize_params(
+        "minimax-h3-comfyui-max", {"resolution": "480p", "duration": 15})
+    assert custom["api"]["resolution"] == "480p"
+    assert custom["api"]["duration"] == 15
+    with pytest.raises(generation_models.ModelProfileError, match="3\u201315"):
+        generation_models.normalize_params("minimax-h3-comfyui-max", {"duration": 16})

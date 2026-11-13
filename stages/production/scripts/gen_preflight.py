@@ -64,10 +64,10 @@ DEFAULT_WF = {
     # ★ 2026-11-06：与 `comfy_client.DEFAULT_WORKFLOW` / 预配置卡同源（turbo 融合版）。
     #   旧值是 `workflow_qwen_image21.json`，与执行器不是同一张图。
     "image": STAGES / "assets" / "comfyui" / "workflow_qwen21_t2i_hq.json",
-    "video": STAGES / "video" / "comfyui" / "workflow_h3_minimax_canvas.json",
+    "video": STAGES / "video" / "comfyui" / "workflow_h3_minimax_audio.json",
 }
 DEFAULT_WF_CLOUD = {
-    "video": STAGES / "video" / "comfyui" / "workflow_h3_pika_8g.json",
+    "video": STAGES / "video" / "comfyui" / "workflow_h3_minimax_audio.json",
 }
 
 

@@ -78,7 +78,7 @@ SUBDIR = {"char": "characters", "scene": "scenes", "prop": "props"}
 KIND_CN = {"char": "人物", "scene": "场景", "prop": "道具"}
 
 # 资产卡默认画幅：人物/场景竖版（与 pack_spec 一致），道具方图。
-DEFAULT_ASPECT = {"char": "9:16", "scene": "9:16", "prop": "1:1"}
+DEFAULT_ASPECT = {"char": "16:9", "scene": "16:9", "prop": "16:9"}
 
 
 def _load_items(ws: pathlib.Path, pack_dir: pathlib.Path) -> list:

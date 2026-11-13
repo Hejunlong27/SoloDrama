@@ -90,6 +90,7 @@
   | 49 | 备份为何必须是 `.bak` | `_scan_outputs()` 用 `iterdir()+startswith(prefix+'_')` 判产物；`pack_import._scan_asset_images()` 是 **rglob** 会递归进 `_bak/`。备份若仍叫 `.png`，stem 会被解析成 `P01`+`LOOK-B`，**和真产物抢参考图**。`.bak` 两处天然跳过 |
   | 50 | **修一个会阻断全部资产出图的边界** | `assets_from_pack()` 原来对 `rep.ok` 全量判断。而 30 集旧格式提示词会让 `SHOT019/020` 全红 → **本机任何项目都出不了资产图**，尽管资产卡完全合规。改为：只阻断资产级错误（PACK/ASSET/STYLE），分镜级（SHOT0xx）降级为打印提示。资产卡天生早于分镜提示词定稿 |
   | 51 | 新增 `GET /api/studio/image-channel` | 只读：返回这次会走哪条通道（`assets.local`/`assets.cloud`/`assets.rh_wf`）、是否计费、地址、工作流、是否假云端、能否备份。**RH 通道不支持单张重出**（它的 `--only` 是老 md 口径 `char_01`），界面上直接说清而不是静默失败 |
+  | 52 | **Minimax H3 带音频工作流统一默认** | 新增 `workflow_h3_minimax_audio.json`、同名 map 与 UI 原始稿；本机与仙宫云共用，默认 0.8MP、6 参考图槽、24fps/带音频。`shot_001` 实跑 8s，耗时约 140s，输出 6721216，验证完成 |
   | 52 | md ↔ pack 变体漂移检测 | 角色档案的**提示词**读 `00-创作/02-资产库.md`，**出图**只认 `pack/assets/characters.json`。两边不同源：改了 md 没重建 pack 时，点重出会用包里的旧提示词，或直接 `rc=2`「找不到资产 id」。`characters.roster()` 新增 `pack_exists` / `drift`，页面顶部给警告，弹窗里对「包里没有的变体」直接禁用按钮。实测抓到真实案例：`海外剧/10` 的 P12（md 有 VIEW/LOOK-A/EXP，包里只有 BASE） |
   | 53 | 修一条误导的提示条 | 「没找到资产提示词 md，出图会被引擎拒绝」在**有制作包**的项目上是错的（引擎优先读 `<ws>/pack`，有包就不看 `SOLODRAMA_ASSET_MD`）。改为仅在「既无 md 又无 pack」时出现 |
   | 54 | 重出后的缓存 | `/media` 是 `private, max-age=60` + ETag。不 bust 的话 60 秒内仍显示旧图，用户会认为「重出没生效」。只对刚重出的那一张加 `&v=<ts>`，不整页刷 |
