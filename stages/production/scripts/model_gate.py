@@ -112,6 +112,17 @@ MODEL_OPTIONS = {
             "optional": ["workflow_id", "comfy_workflow_t2i", "comfy_workflow_i2i"],
         },
         {
+            "id": "zzai_image_api",
+            "label": "真真AI 图片 API（★计费）",
+            "cost": "按张固定价（1k 实测 ¥0.044/张）",
+            "desc": "`zhenzhen-image-g-v2.6-lowprice` 出资产卡：角色/场景/道具卡走文生图，"
+                    "造型变体自动拿本资产的基础卡当身份锚。真实提交前先 estimate。",
+            "engine_arg": "zzai",
+            "executor": "gen_assets_zzai.py",
+            "requires": [],
+            "optional": [],
+        },
+        {
             "id": "closed_source",
             "label": "闭源模型（★计费）",
             "cost": "按各家订阅/点数计费（站外）",
@@ -228,6 +239,17 @@ MODEL_OPTIONS = {
             "executor": "stages/video/workflow/scripts/run.py",
             "requires": ["app_url"],
             "optional": ["app_id"],
+        },
+        {
+            "id": "zzai_video_api",
+            "label": "真真AI 视频 API（★计费）",
+            "cost": "按秒计费（1088p 实测 ¥0.0223/秒，6 秒≈¥0.134）",
+            "desc": "`minimax-h3-comfyui-max` 按集批量出片：不占本机 GPU、不需要 ComfyUI 工作流；"
+                    "参考图顺序仍是「分镜图第 1 位 + cast」，产物落 07-成片/<ep>/<shot>/final.mp4。",
+            "engine_arg": "zzai",
+            "executor": "stages/media_api/zzai_video.py",
+            "requires": [],
+            "optional": [],
         },
         {
             "id": "closed_source",

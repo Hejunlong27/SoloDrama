@@ -197,6 +197,8 @@ CHECK_BILLING = SKILL / 'scripts' / 'check_billing.py'
 #   结果是「本地出片」这条默认路径其实从未被真正执行过。两条通道各自有入口，别混。
 COMFY_VIDEO_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_local_video.py'
 COMFY_BATCH_PY = _PROJECT_ROOT / 'stages' / 'video' / 'comfyui' / 'comfy_batch_video.py'
+ZZAI_VIDEO_PY = _PROJECT_ROOT / 'stages' / 'media_api' / 'zzai_video.py'   # 真真AI 出片通道
+ZZAI_ASSETS_PY = SCRIPTS / 'gen_assets_zzai.py'                            # 真真AI 资产通道
 MODEL_GATE_PY = SCRIPTS / 'model_gate.py'      # ★ 首次生图/出片前的模型选择门禁
 LOG_DIR = OUT / 'logs'
 
@@ -1001,7 +1003,56 @@ def cmd_assets(args) -> int:
     """
     if getattr(args, 'engine', 'local') in ('wf', 'rh'):
         return cmd_assets_wf(args)
+    if getattr(args, 'engine', 'local') == 'zzai':
+        return cmd_assets_zzai(args)
     return cmd_assets_local(args)
+
+
+def cmd_assets_zzai(args) -> int:
+    """真真AI 资产卡出图（★计费）：转发 gen_assets_zzai.py。
+
+    与 local 通道共用同一份出图清单（`gen_assets_local.assets_from_pack`），
+    所以产物命名、变体顺序、seed 派生完全一致 —— 换通道不会换掉 refs.json 的键。
+    """
+    if args.submit:
+        rc = _model_gate('image', expected_engine='zzai')
+        if rc:
+            return rc
+    det = {}
+    try:
+        import json as _json
+        p = WS / 'model-plan.json'
+        if p.is_file():
+            d = _json.loads(p.read_text(encoding='utf-8-sig'))
+            det = ((d.get('models') or {}).get('image') or {}).get('detail') or {}
+    except (OSError, ValueError):
+        det = {}
+    cmd = [sys.executable, str(ZZAI_ASSETS_PY), '--workspace', str(WS)]
+    pack = _pack_dir(args)
+    if pack:
+        cmd += ['--pack', pack]
+    if getattr(args, 'kind', None) and args.kind != 'all':
+        cmd += ['--kind', args.kind]
+    if getattr(args, 'only', None):
+        cmd += ['--only', args.only]
+    if getattr(args, 'force', False):
+        cmd += ['--force']
+    if det.get('model'):
+        cmd += ['--model', str(det['model'])]
+    if det.get('resolution'):
+        cmd += ['--resolution', str(det['resolution'])]
+    if det.get('quality'):
+        cmd += ['--quality', str(det['quality'])]
+    if args.submit:
+        cmd += ['--yes']
+        if getattr(args, 'max_cost', None) is None:
+            print('[FAIL] 真真AI 资产出图必须给 --max-cost（单张 CNY 上限），否则不提交。')
+            return 2
+        cmd += ['--max-cost', str(args.max_cost)]
+    print('【资产出图 · 真真AI】%s（%s）' % ('★真实出图' if args.submit else '干跑+报价',
+                                        '★按张计费'))
+    rc, _, _ = run_cmd(cmd, 'assets_zzai', quiet_ok=False)
+    return rc
 
 
 def cmd_assets_wf(args) -> int:
@@ -1138,6 +1189,7 @@ def _video_wf_default(cloud: bool = False) -> str:
 VIDEO_ENGINE_OF_CHOICE = {
     "local_comfyui": "local",
     "cloud_comfyui": "cloud",
+    "zzai_video_api": "zzai",     # 真真AI（minimax-h3-comfyui-max），按秒计费，不占本机 GPU
     "runninghub": "workflow",
     "runninghub_ai_app": "workflow",
     "closed_source": "",          # 没有内置执行器：明确报错，不假装能跑
@@ -1475,6 +1527,68 @@ def _cloud_url_ready(url: str) -> bool:
     return True
 
 
+def _video_detail() -> dict:
+    """读确认单里 video 通道的 detail（模型/分辨率/关键参数都在这）。"""
+    try:
+        import json as _json
+        p = WS / 'model-plan.json'
+        if not p.is_file():
+            return {}
+        d = _json.loads(p.read_text(encoding='utf-8-sig'))
+        return ((d.get('models') or {}).get('video') or {}).get('detail') or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def cmd_video_zzai(args) -> int:
+    """真真AI 出片（`minimax-h3-comfyui-max`）：按秒计费，不占本机 GPU。
+
+    与 local/cloud 的差别只有一处：那边是「本机/远端 ComfyUI + 工作流文件」，
+    这边是「一次 HTTP 任务」。契约、参考图顺序、产物落点全部沿用同一份口径，
+    所以下游（字幕/母版/合规）不需要知道自己拿的是哪条通道出的片。
+    """
+    ep = getattr(args, 'ep', None) or ''
+    if not ep:
+        print('[FAIL] --engine zzai 需要 --ep（如 --ep ep01）')
+        return 2
+    det = _video_detail()
+    model = str(getattr(args, 'model', '') or det.get('model') or 'minimax-h3-comfyui-max')
+    res = str(getattr(args, 'resolution', '') or det.get('resolution') or '1088p')
+    cmd = [sys.executable, str(ZZAI_VIDEO_PY), '--workspace', str(WS),
+           '--ep', ep, '--model', model, '--resolution', res]
+    if getattr(args, 'only', None):
+        cmd += ['--only', str(args.only)]
+    if getattr(args, 'limit', None):
+        cmd += ['--limit', str(args.limit)]
+    if getattr(args, 'force', False):
+        cmd += ['--force']
+    if getattr(args, 'max_cost', None) is not None:
+        cmd += ['--max-cost', str(args.max_cost)]
+    if getattr(args, 'timeout_min', None):
+        cmd += ['--timeout-min', str(args.timeout_min)]
+    if not args.yes:
+        # 干跑交给执行器自己打报价（它读的是真实契约，比在这里估更准）
+        rc, _log, _dt = run_cmd(cmd, 'video_zzai_plan', quiet_ok=True)
+        print('\n[闸门] 这会真实提交并计费。确认后加 --yes 与 --max-cost <单镜上限> 重跑。')
+        return 0 if rc == 0 else rc
+    rc = _model_gate('video', expected_engine='zzai')
+    if rc:
+        return rc
+    if getattr(args, 'max_cost', None) is None:
+        print('[FAIL] 真真AI 出片必须给 --max-cost（单镜 CNY 上限），否则不提交。')
+        return 2
+    cmd += ['--yes']
+    from _lock import single_instance
+    try:
+        with single_instance('video_zzai', WS):
+            rc, log, dt = run_cmd(cmd, 'video_zzai_run', quiet_ok=False)
+    except SystemExit:
+        print('（已由单例锁拦下，未提交任何任务、未产生费用）')
+        raise
+    print('\n执行器退出码 %s（耗时 %.1fs）；日志：%s' % (rc, dt, log))
+    return rc
+
+
 def cmd_video_run(args) -> int:
     # ★ 2026-11-06：`--engine auto` 按模型确认单选通道（节点默认就是 auto）。
     #   显式给了 local/cloud/workflow 就照办 —— auto 只是「不替用户拍板」的写法。
@@ -1493,6 +1607,8 @@ def cmd_video_run(args) -> int:
     #   云端镜像走的是「受信远端」这条独立口子（SOLODRAMA_TRUSTED_HOSTS）。
     if (getattr(args, 'engine', None) or 'local') in ('local', 'cloud'):
         return cmd_video_local(args)
+    if (getattr(args, 'engine', None) or '') == 'zzai':
+        return cmd_video_zzai(args)
     # ★ 走到这里 = 用户显式选了平台通道。开闸放在分派之后、任何网络动作之前：
     #   本地通道在上面就 return 了，永远不会经过这行 —— 「默认不出网」是结构性的，
     #   不是靠某个默认值恰好没被改。
@@ -1879,9 +1995,11 @@ def main() -> int:
     p = sub.add_parser('assets', help='缺失资产出图（默认本地 ComfyUI ￥0，干跑）')
     _add_ws_arg(p)
     p.add_argument('--pack', default=None, help='制作包目录（默认 <工作区>/pack）')
-    p.add_argument('--engine', choices=('local', 'cloud', 'wf', 'rh'), default='local',
+    p.add_argument('--engine', choices=('local', 'cloud', 'wf', 'rh', 'zzai'), default='local',
                    help='出图通道：local=本地 ComfyUI（￥0，默认）｜wf=RunningHub 工作流（★计费）'
-                        '｜rh 是 wf 的旧别名')
+                        '｜rh 是 wf 的旧别名｜zzai=真真AI（★按张计费）')
+    p.add_argument('--max-cost', dest='max_cost', type=float, default=None,
+                   help='zzai：单张 CNY 上限（真实提交必填）')
     p.add_argument('--ratio', default=None, help='仅 wf：画幅裸值，如 9:16')
     p.add_argument('--mode', choices=('t2i', 'i2i'), default=None,
                    help='仅 wf：t2i=文生图｜i2i=图生图（必须给 --ref）')
@@ -1993,8 +2111,13 @@ def main() -> int:
     q.set_defaults(fn=cmd_video_plan)
     q = vs.add_parser('run', help='真跑出片（本地 ￥0 / 云端 ★计费；都需 --yes）')
     _add_ws_arg(q)
-    q.add_argument('--engine', choices=('local', 'cloud', 'workflow', 'auto'), default='local',
-                   help='出片通道：auto=按模型确认单（节点默认）｜local=本机（￥0）｜cloud=云端镜像（★计费/自建）｜workflow=RunningHub（★计费）')
+    q.add_argument('--engine', choices=('local', 'cloud', 'workflow', 'zzai', 'auto'), default='local',
+                   help='出片通道：auto=按模型确认单（节点默认）｜local=本机（￥0）｜cloud=云端镜像（★计费/自建）'
+                        '｜workflow=RunningHub（★计费）｜zzai=真真AI（★计费，按秒）')
+    q.add_argument('--max-cost', dest='max_cost', type=float, default=None,
+                   help='zzai：单镜 CNY 上限（真实提交必填）')
+    q.add_argument('--resolution', default=None, help='zzai：分辨率（480p / 1088p；默认读确认单）')
+    q.add_argument('--model', default=None, help='zzai：模型 ID（默认读确认单，回落 minimax-h3-comfyui-max）')
     q.add_argument('--ep', default=None, help='集号（local/cloud 通道必填；ep01 / 1）')
     q.add_argument('--force', action='store_true', help='local/cloud：已有产物也重跑')
     q.add_argument('--comfy-url', dest='comfy_url', default=None,

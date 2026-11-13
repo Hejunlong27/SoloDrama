@@ -142,6 +142,66 @@
         "不支持 seed、首尾帧、无声输出或自定义分辨率。",
         "默认时长 10 秒；本次框架允许调整为 2–10 秒，后续模型可声明不同范围。"
       ]
+    },
+    "minimax-h3-comfyui-max": {
+      "id": "minimax-h3-comfyui-max",
+      "label": "MiniMax H3 · ComfyUI Max",
+      "kind": "video",
+      "protocol": "zzai-video-async",
+      "submit_endpoint": "/v1/video/generations",
+      "poll_endpoint": "/v1/video/generations/{task_id}",
+      "estimate_endpoint": "/v1/video/generations/estimate",
+      "reference_images": {
+        "min": 0,
+        "max": 9
+      },
+      "fixed": {
+        "model": "minimax-h3-comfyui-max"
+      },
+      "parameters": {
+        "resolution": {
+          "label": "分辨率",
+          "type": "enum",
+          "values": [
+            "480p",
+            "1088p"
+          ],
+          "default": "1088p",
+          "note": "2026-11-13 实测：1088p 与 480p 可通过计价校验；540p/720p/1080p/2k 在 6 秒档被拒。价格只按时长计，1088p 与 480p 同价。"
+        },
+        "aspect_ratio": {
+          "label": "宽高比",
+          "type": "enum",
+          "values": [
+            "9:16",
+            "16:9",
+            "1:1",
+            "4:3",
+            "3:4"
+          ],
+          "default": "9:16"
+        },
+        "duration": {
+          "label": "时长",
+          "type": "integer",
+          "min": 3,
+          "max": 15,
+          "default": 6,
+          "unit": "秒",
+          "note": "2026-11-13 实测：提交接口只接受 3–15 的整数秒；estimate 对 2 秒/20 秒也给报价，不可作为校验依据。"
+        }
+      },
+      "pricing": {
+        "per_second_cny": 0.022313,
+        "basis": "estimate 实测线性（2s=0.0446 / 10s=0.2231 / 20s=0.4463）",
+        "source": "真真AI /api/pricing + /v1/video/generations/estimate 2026-11-13"
+      },
+      "notes": [
+        "参考图用 `images` 数组（与图片接口同名字段），实测该字段会改变 estimate 的 basis（rate → quote），是真实入参。",
+        "分辨率不影响价格，只影响出片清晰度；本项目交付 1080×1920，1088p 为可用档位。",
+        "时长必须是 3–15 的整数秒（提交侧校验），单镜超过 15 秒需拆镜。",
+        "结果文件在 CDN（xbuddy.si）上不支持流式读取，必须整取下载（见 zzai.ZZAIClient.download）。"
+      ]
     }
   }
 }

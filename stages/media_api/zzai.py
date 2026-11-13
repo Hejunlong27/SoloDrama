@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import time
 import re
 import mimetypes
 from pathlib import Path
@@ -49,6 +50,17 @@ class ZZAIError(RuntimeError):
 def normalize_status(raw: str) -> str:
     key = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
     return _STATUS.get(key, "unknown")
+
+
+def _key_files() -> list:
+    """密钥文件的候选路径（都不存在时返回空，由调用方报「缺少 API Key」）。"""
+    from pathlib import Path as _P
+    out = []
+    ws = os.environ.get("SOLODRAMA_WORKSPACE") or os.environ.get("DRAMA_WORKSPACE") or ""
+    if ws:
+        out.append(_P(ws) / ".secrets" / "zzai.key")
+    out.append(_P(__file__).resolve().parents[2] / "configs" / "zzai.key")
+    return out
 
 
 def _status_of(data: dict):
@@ -134,6 +146,18 @@ class ZZAIClient:
         for name in _KEY_ENVS:
             if os.environ.get(name):
                 return os.environ[name]
+        # ★ 2026-11-13：环境变量之外补一条**文件回落**。
+        #   起因：WorkBuddy / 编辑器里的子进程不会 source ~/.bashrc，注册表里的用户变量
+        #   也要重开终端才生效 —— 症状是「明明设过 Key，脚本还是报缺少 API Key」。
+        #   顺序：工作区 `.secrets/zzai.key` → 仓库 `configs/zzai.key`（`.gitignore` 已含 `*.key`）。
+        for cand in _key_files():
+            try:
+                if cand.is_file():
+                    v = cand.read_text(encoding="utf-8-sig").strip().splitlines()
+                    if v and v[0].strip():
+                        return v[0].strip()
+            except OSError:
+                continue
         return ""
 
     def _safe(self, text) -> str:
@@ -289,33 +313,47 @@ class ZZAIClient:
         }
 
     def download(self, url: str, dest, *, max_bytes=512 * 1024 * 1024):
+        """下载结果文件。
+
+        ★ 2026-11-13 实测修正：原来走 `client.stream("GET") + iter_bytes()`，
+          在真真AI 的 CDN（xbuddy.si）上**只回响应头、不回响应体** ——
+          进程挂住不动、`read` 超时也不触发，3 秒样片能卡到 90 秒以上被杀。
+          同一 URL 用普通 GET 只要 5 秒，curl 也正常 ⇒ 问题在流式读取这条路径。
+          现在改成「整取 + 大小闸门」：文件是单镜 2–20 秒的 mp4，几 MB 量级，整取无压力。
+        """
         target = Path(dest)
         if not str(url).startswith(("http://", "https://")):
             raise ZZAIError("config", "下载地址必须是 http(s)")
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(target.suffix + ".part")
-        total = 0
-        try:
-            with self._client() as client:
-                with client.stream("GET", url, headers={"Accept": "*/*"}) as res:
+        # ★ CDN 首次命中有 20–40 秒才吐字节的情况（实测同一 URL 4.4s / 19s / >30s 都出现过）。
+        #   所以下载用**独立的宽超时 + 重试**，不沿用 API 的 30 秒短超时 ——
+        #   任务是按秒计费的真金白银，不能因为 CDN 慢就把成功的结果丢掉。
+        last = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(connect=15.0, read=180.0,
+                                                        write=60.0, pool=30.0),
+                                  follow_redirects=True, trust_env=self.trust_env) as client:
+                    res = client.get(url, headers={"Accept": "*/*"})
                     res.raise_for_status()
-                    with open(tmp, "wb") as fh:
-                        for chunk in res.iter_bytes():
-                            total += len(chunk)
-                            if total > max_bytes:
-                                raise ZZAIError("protocol", "下载超过大小上限")
-                            fh.write(chunk)
-            os.replace(tmp, target)
-            return {"ok": True, "path": str(target), "bytes": total}
-        except ZZAIError:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-        except Exception as exc:  # noqa: BLE001
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise ZZAIError("network", self._safe(exc), retryable=True) from exc
+                    data = res.content
+                    if not data:
+                        raise ZZAIError("protocol", "下载到 0 字节")
+                    if len(data) > max_bytes:
+                        raise ZZAIError("protocol", "下载超过大小上限（%d 字节）" % len(data))
+                    tmp.write_bytes(data)
+                os.replace(tmp, target)
+                return {"ok": True, "path": str(target), "bytes": len(data),
+                        "attempts": attempt + 1}
+            except ZZAIError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+        raise ZZAIError("network", self._safe(last), retryable=True)

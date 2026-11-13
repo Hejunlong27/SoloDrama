@@ -54,6 +54,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -61,6 +62,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -122,6 +124,110 @@ no arrows, no annotations, no second frame of the same person.
 
 # 分镜 md 里常写 `[LIGHT]` 段；这里只做「有就透传、没有就不编」。
 _LIGHT_RE = re.compile(r"\[LIGHT\]\s*(.+)", re.I)
+
+# ---------------------------------------------------------------------------
+# 四宫格（2026-11-13）：一次请求画 4 镜，本地切回 4 张单镜图
+# ---------------------------------------------------------------------------
+# 为什么要它：分镜图是**一次性小钱**，但一集 6 镜 × 30 集 = 179 次请求。
+# 单张 ¥0.044 的模型上，拼版能把这一项从 ¥7.9 压到 ¥2.1（约 -73%）。
+#
+# 为什么不违反「绝不拼版」这条纪律：
+#   那条纪律针对的是**把拼版直接喂给视频模型** —— 模型会把整张当一帧，出现四分屏成片。
+#   本模式在提交前就把拼版切成 4 张独立 PNG，落点与单镜模式**完全相同**
+#   （`04-资产/boards/<ep>/<shot>.png`），下游看到的永远是单帧。拼版图另存 `boards/_grid/` 备查。
+#
+# 代价必须说清：格子的像素只有整图的 1/4 边长 → 面积 1/4。
+#   1k 竖版整图约 768×1365，单格约 384×682；1088p 出片会把它放大 ~2.8 倍。
+#   所以本模式适合「构图/站位/光位」定稿，人物面部细节仍由角色卡在出片时兜住。
+GRID_TMPL = """\
+【任务】一张 2×2 四宫格「分镜联络表」：四个格子各是一张**独立、完整、互不重叠**的竖版电影静帧，
+用于同一集相邻四镜的构图参考。它不是一幅连续场景，也不是一张拼贴海报。
+【版式】2 列 × 2 行等分；格与格之间留一条细白缝（约整图宽度的 1.5%），
+每条白缝都是笔直的、贯穿整图；四格之外不再加任何外框或装饰边。
+【格 1（左上）】{c1}
+【格 2（右上）】{c2}
+【格 3（左下）】{c3}
+【格 4（右下）】{c4}
+【人数】{people_line}
+【人物保持一致】{cast_line}
+【风格】{style_line}
+【画面】each cell is a vertical {ratio} cinematic still photograph, natural perspective, \
+believable depth of field, real skin texture, credible fabric wrinkles, no illustration look.
+【禁止】no text, no letters, no numbers, no watermark, no logo, no captions, no subtitles,
+no labels, no arrows, no annotations, no borders or frames,
+no character crossing from one cell into another, no panel showing two moments in time,
+no cell left empty, no duplicated framing between cells.
+"""
+
+_GRID_POS = ("左上", "右上", "左下", "右下")
+
+
+def _group_plan(plan: list, size: int) -> list:
+    """把逐镜计划按 size 分组；不足一组的尾巴单独成组（组内格数 = 实际镜数）。"""
+    size = max(1, int(size or 1))
+    return [plan[i:i + size] for i in range(0, len(plan), size)]
+
+
+def _grid_prompt(group: list, bible: dict, style_line: str, ratio: str) -> str:
+    """组内每镜的 board 描述 → 一张四宫格提示词。
+
+    人数取组内**所有镜**的并集（按代号去重）：四格同画时，任何一格的漏人都会让模型
+    在别的格里补人。宁可把并集写全，也不让模型自己猜。
+    """
+    codes_all, cells = [], []
+    for idx, (sid, txt, n, codes, spec) in enumerate(group):
+        cells.append(str(spec.get("prompt") or "").strip())
+        for c in codes:
+            if c not in codes_all:
+                codes_all.append(c)
+    total = len(codes_all)
+    people = "no people in frame" if total == 0 else NUM_EN.get(total, "exactly %d people" % total)
+    by_code = {str(c.get("code") or "").upper(): c for c in (bible.get("characters") or [])}
+    bits = []
+    for code in codes_all:
+        c = by_code.get(code)
+        if not c:
+            bits.append("%s (identity held by the character card)" % code)
+            continue
+        bits.append("%s — %s; %d-year-old %s" % (
+            code,
+            str(c.get("garment_en") or "").strip().rstrip(".") or "wardrobe per character card",
+            int(c.get("age") or 30),
+            "woman" if str(c.get("gender")) == "f" else "man"))
+    cast_line = ("; ".join(bits) + ". The same person must look identical in every cell."
+                 if bits else "the locations with nobody in them")
+    filled = list(cells) + ["(empty)"] * (4 - len(cells))
+    return GRID_TMPL.format(c1=filled[0], c2=filled[1], c3=filled[2], c4=filled[3],
+                            people_line=people if total else "no people in frame",
+                            cast_line=cast_line,
+                            style_line=style_line or "cinematic live-action photography",
+                            ratio=ratio or "9:16")
+
+
+def _slice_grid(src: pathlib.Path, sids: list, out_dir: pathlib.Path,
+                inset: float = 0.02) -> list:
+    """整图 → 逐镜 PNG。裁切按「四等分 + 内缩 inset」去掉白缝与渗色。
+
+    → [(shot_id, 输出路径, (宽, 高))]；缺 PIL 时抛 RuntimeError，由调用方决定是否降级。
+    """
+    try:
+        from PIL import Image
+    except ImportError as exc:                                        # pragma: no cover
+        raise RuntimeError("四宫格切分需要 Pillow：pip install Pillow") from exc
+    out = []
+    with Image.open(src) as im:
+        W, H = im.size
+        cw, ch = W // 2, H // 2
+        for idx, sid in enumerate(sids):
+            cx, cy = (0 if idx in (0, 2) else 1), (0 if idx in (0, 1) else 1)
+            l = int(cx * cw + cw * inset)
+            t = int(cy * ch + ch * inset)
+            r = int((cx + 1) * cw - cw * inset)
+            b = int((cy + 1) * ch - ch * inset)
+            dst = out_dir / ("%s.png" % sid)
+            im.crop((l, t, r, b)).save(dst)
+            out.append((sid, dst, (r - l, b - t)))
+    return out
 
 
 def _read_json(p: pathlib.Path, default):
@@ -342,18 +448,27 @@ def _rh_pairs(detail: dict, txt: str, ratio: str, ref_names: list) -> tuple:
     return pairs, ""
 
 
-def _ref_sources(ws: pathlib.Path, spec: dict) -> list:
+def _ref_sources(ws: pathlib.Path, spec: dict, *, only_chars: bool = False) -> list:
     """把分镜 refs 解析成本地图片路径或公网 URL。
 
     分镜图是图生图：没有参考图不是「退化成文生图」，而是配置错误。
+
+    `only_chars=True` 只保留角色卡 —— 四宫格模式用。
+    为什么：一次请求里有 4 个不同机位，若把 4 张场景卡一起塞进去，
+    模型无法判断「哪张对应哪一格」，最容易出现「A 格的场景长到 B 格里」。
+    格子里的场景本来就由每格文字描述决定了，场景卡在这里只增加歧义。
     """
     rj = _read_json(L.assets_dir(ws) / "refs.json", {}) or {}
     tables = {}
-    tables.update(rj.get("characters") or {})
-    tables.update(rj.get("scenes") or {})
-    tables.update(rj.get("props") or {})
+    chars = {str(k): v for k, v in (rj.get("characters") or {}).items()}
+    tables.update(chars)
+    if not only_chars:
+        tables.update(rj.get("scenes") or {})
+        tables.update(rj.get("props") or {})
     out = []
     for key in (spec.get("refs") or []):
+        if only_chars and str(key) not in chars:
+            continue
         raw = tables.get(str(key))
         if not raw:
             continue
@@ -420,14 +535,14 @@ def _task_write(ws: pathlib.Path, rec: dict) -> None:
 
 
 def _task_new(ws: pathlib.Path, *, model: str, request: dict, estimate, max_cost,
-              ep: str, sid: str, provider_id: str = "zzai") -> dict:
+              ep: str, sid: str, provider_id: str = "zzai", dest: str = "") -> dict:
     rid = "mt_%s_%s" % (time.strftime("%Y%m%d%H%M%S"), uuid.uuid4().hex[:8])
     digest = hashlib.sha256(json.dumps(request, ensure_ascii=False,
                                        sort_keys=True).encode("utf-8")).hexdigest()
     rec = {
         "schema_version": 1, "id": rid, "project": str(ws.resolve()),
         "kind": "image", "provider_id": provider_id, "model": model,
-        "purpose": "board.frame", "episode": ep, "shot_id": sid,
+        "purpose": "board.frame", "episode": ep, "shot_id": sid, "dest": str(dest),
         "status": "planned", "remote_task_id": "", "request": request,
         "request_sha": digest, "estimate": estimate, "max_cost": max_cost,
         "actual_cost": None, "cost_source": "unknown", "usage": None,
@@ -464,35 +579,72 @@ def _task_update(ws: pathlib.Path, rec: dict, *, status: str, remote_task_id="",
     _task_write(ws, rec)
 
 
-def _run_zzai(ws: pathlib.Path, a, plan, out_dir: pathlib.Path) -> int:
-    """ZZAI 图片 API：先上传参考图，再逐张 estimate，最后要求 --yes 与 --max-cost。"""
+def _run_zzai(ws: pathlib.Path, a, plan, out_dir: pathlib.Path, *, grid: int = 1,
+              bible: dict = None, style_line: str = "") -> int:
+    """ZZAI 图片 API：先上传参考图，再逐任务 estimate，最后要求 --yes 与 --max-cost。
+
+    `grid=4` 时把逐镜计划按 4 镜一组打包成**一次请求**，成功后在本地切成 4 张单镜 PNG。
+    落点与单镜模式完全一致，所以「哪几镜走拼版」对下游不可见。
+    """
     from stages.media_api.zzai import ZZAIClient, ZZAIError
 
-    staged = []
-    for sid, txt, n, codes, spec in plan:
-        dst = out_dir / ("%s.png" % sid)
-        if dst.is_file() and not a.force:
-            print("[skip] %s 已存在" % sid)
+    bible = bible or {}
+    use_grid = int(grid or 1) >= 4
+    if use_grid:
+        # 只有「满 4 镜」才拼版：2–3 镜的尾巴一律退回单镜。
+        # 为什么：模板明确要求「不许留空格」，两格空着必然让模型自己编内容；
+        # 而尾巴最多 3 镜，省下的 2 次请求（¥0.09）远不值得冒这个险。
+        groups = []
+        for g in _group_plan(plan, 4):
+            if len(g) == 4:
+                groups.append(g)
+            else:
+                groups.extend([[x] for x in g])
+    else:
+        groups = [[p] for p in plan]
+    grid_dir = out_dir / "_grid"
+
+    units = []
+    for gi, grp in enumerate(groups, 1):
+        sids = [g[0] for g in grp]
+        dsts = [out_dir / ("%s.png" % s) for s in sids]
+        if all(d.is_file() for d in dsts) and not a.force:
+            print("[skip] %s 已存在" % "/".join(sids))
             continue
-        refs = _ref_sources(ws, spec)
+        refs, seen = [], set()
+        multi = len(grp) > 1
+        for _sid, _txt, _n, _codes, spec in grp:
+            for r in _ref_sources(ws, spec, only_chars=multi):
+                key = str(r)
+                if key in seen:
+                    continue
+                seen.add(key)
+                refs.append(r)
         if not refs:
-            print("[FAIL] %s 没有可解析的角色/场景参考图；分镜图必须图生图" % sid)
+            print("[FAIL] %s 没有可解析的角色/场景参考图；分镜图必须图生图" % "/".join(sids))
             return 2
         if len(refs) > 16:
-            print("[FAIL] %s 参考图 %d 张，超过模型上限 16" % (sid, len(refs)))
+            print("[FAIL] %s 参考图 %d 张，超过模型上限 16" % ("/".join(sids), len(refs)))
             return 2
-        staged.append((sid, txt, spec, refs, dst))
-    if not staged:
+        ratio = str((grp[0][4] or {}).get("ratio") or "9:16")
+        if len(grp) == 1:
+            txt, dst = grp[0][1], dsts[0]
+        else:
+            txt = _grid_prompt(grp, bible, style_line, ratio)
+            dst = grid_dir / ("%s_grid%02d.png" % (a.ep, gi))
+        units.append({"sids": sids, "txt": txt, "refs": refs, "dst": dst,
+                      "ratio": ratio, "dsts": dsts, "grid": len(grp) > 1})
+    if not units:
         print("没有需要生成的镜。")
         return 0
 
     client = ZZAIClient()
     uploaded = {}
     items = []
-    for sid, txt, spec, refs, dst in staged:
+    for u in units:
         image_urls = []
         try:
-            for ref in refs:
+            for ref in u["refs"]:
                 if isinstance(ref, str) and ref.startswith(("http://", "https://")):
                     image_urls.append(ref)
                     continue
@@ -502,41 +654,45 @@ def _run_zzai(ws: pathlib.Path, a, plan, out_dir: pathlib.Path) -> int:
                     uploaded[key] = client.upload(str(p))
                 image_urls.append(uploaded[key])
         except ZZAIError as exc:
-            print("[FAIL] %s 参考图上传失败：%s" % (sid, exc))
+            print("[FAIL] %s 参考图上传失败：%s" % ("/".join(u["sids"]), exc))
             return 2
         payload = {
             "model": a.model,
-            "prompt": txt,
+            "prompt": u["txt"],
             "images": image_urls,
-            "size": str(spec.get("ratio") or "9:16"),
+            "size": u["ratio"],
             "resolution": a.resolution,
             "quality": a.quality,
             "output_format": "png",
             "n": 1,
         }
-        items.append((sid, payload, dst))
+        items.append((u, payload))
 
     quotes = []
     total = 0.0
     has_amount = False
     currencies = set()
     try:
-        for sid, payload, _ in items:
+        for u, payload in items:
             est = client.estimate("image", payload)
-            quotes.append((sid, payload, est))
+            quotes.append((u, payload, est))
             if est.get("estimate_available") and isinstance(est.get("amount"), (int, float)):
                 total += float(est["amount"])
                 has_amount = True
                 currencies.add(str(est.get("currency") or ""))
-            print("  quote %s：%s %s（%s）" % (
-                sid, est.get("amount", "未知"), est.get("currency", ""),
+            print("  quote %-14s：%s %s（%s）" % (
+                "/".join(u["sids"]), est.get("amount", "未知"), est.get("currency", ""),
                 est.get("confidence", "unknown")))
     except ZZAIError as exc:
         print("[FAIL] ZZAI estimate 失败：%s" % exc)
         return 2
 
+    shots = sum(len(u["sids"]) for u, _p in items)
+    print("\n模式：%s ｜ 请求 %d 次 ｜ 覆盖 %d 镜%s" % (
+        "四宫格（4 镜/次）" if use_grid else "单镜", len(items), shots,
+        "" if not use_grid else "（较逐镜省 %d 次请求）" % (shots - len(items))))
     if not a.yes:
-        print("\n预估合计：%s %s（未知项不估算）" % (
+        print("预估合计：%s %s（未知项不估算）" % (
             round(total, 6) if has_amount else "未知",
             "/".join(sorted(x for x in currencies if x))))
         print("[闸门] 真实分镜图生成需要 --yes；正式提交还需 --max-cost 作为单张上限。")
@@ -545,23 +701,28 @@ def _run_zzai(ws: pathlib.Path, a, plan, out_dir: pathlib.Path) -> int:
         print("[FAIL] ZZAI 真实生成必须提供 --max-cost（单张 CNY 上限）。")
         return 2
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     ok = fail = 0
-    for i, (sid, payload, dst) in enumerate(items, 1):
-        est = next((q[2] for q in quotes if q[0] == sid), {})
+    lock = threading.Lock()
+
+    def _one(idx_u):
+        nonlocal ok, fail
+        i, (u, payload) = idx_u
+        est = next((q[2] for q in quotes if q[0] is u), {})
         amount = est.get("amount")
+        label = "/".join(u["sids"])
         if isinstance(amount, (int, float)) and float(amount) > float(a.max_cost):
-            print("[FAIL] %s 预估 %.6f 超过 --max-cost %s" % (sid, amount, a.max_cost))
-            fail += 1
-            continue
+            print("[FAIL] %s 预估 %.6f 超过 --max-cost %s" % (label, amount, a.max_cost))
+            with lock:
+                fail += len(u["sids"])
+            return
         rec = _task_new(ws, model=a.model, request=payload, estimate=est,
-                        max_cost=a.max_cost, ep=a.ep, sid=sid)
-        print("[%d/%d] %s → ZZAI 提交" % (i, len(items), sid))
+                        max_cost=a.max_cost, ep=a.ep, sid=label, dest=u["dst"])
+        print("[%d/%d] %s → ZZAI 提交" % (i, len(items), label))
         try:
             sub = client.submit("image", payload, max_cost=a.max_cost, authorized=True)
             _task_update(ws, rec, status="queued", remote_task_id=sub["task_id"])
             result = None
-            for _ in range(120):
+            for _ in range(240):
                 time.sleep(max(0.2, float(a.poll_seconds)))
                 result = client.poll("image", sub["task_id"])
                 _task_update(ws, rec, status=result["status"],
@@ -572,21 +733,49 @@ def _run_zzai(ws: pathlib.Path, a, plan, out_dir: pathlib.Path) -> int:
                 if result["status"] in ("succeeded", "failed", "canceled"):
                     break
             if not result or result["status"] != "succeeded" or not result.get("result_url"):
-                fail += 1
-                print("       [FAIL] %s" % ((result or {}).get("error") or "未到成功终态"))
-                continue
-            out_dir.mkdir(parents=True, exist_ok=True)
-            client.download(result["result_url"], dst)
+                with lock:
+                    fail += len(u["sids"])
+                print("       [FAIL] %s %s" % (label, (result or {}).get("error") or "未到成功终态"))
+                return
+            u["dst"].parent.mkdir(parents=True, exist_ok=True)
+            client.download(result["result_url"], u["dst"])
+            if u["grid"]:
+                try:
+                    saved = _slice_grid(u["dst"], u["sids"], out_dir)
+                except RuntimeError as exc:
+                    with lock:
+                        fail += len(u["sids"])
+                    print("       [FAIL] %s 拼版已下载但切分失败：%s" % (label, exc))
+                    return
+                npx = saved[0][2]
+                note = "%s：%d 格已切分（单格 %d×%d）" % (label, len(saved), npx[0], npx[1])
+                if npx[0] < 360:
+                    note += "；⚠ 单格宽 <360px，出片首帧会明显偏软，可考虑 --grid 1 或 --resolution 2k"
+                good_n = len(saved)
+            else:
+                good_n = 1
+                note = pathlib.Path(u["dst"]).name
             _task_update(ws, rec, status="succeeded", remote_task_id=sub["task_id"],
                          progress=result.get("progress"), usage=result.get("usage"),
-                         artifact=str(dst))
-            ok += 1
-            print("       → %s ｜ usage=%s" % (dst.name, result.get("usage")))
+                         artifact=str(u["dst"]))
+            with lock:
+                ok += good_n
+            print("       → %s" % note)
         except ZZAIError as exc:
             _task_update(ws, rec, status="failed", error=str(exc))
-            fail += 1
-            print("       [FAIL] %s" % exc)
-    print("\n完成：成功 %d / 失败 %d（共 %d 镜）" % (ok, fail, len(items)))
+            with lock:
+                fail += len(u["sids"])
+            print("       [FAIL] %s %s" % (label, exc))
+
+    pairs = list(enumerate(items, 1))
+    if a.concurrency and a.concurrency > 1:
+        print("（并发 %d 条在飞）" % a.concurrency)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=int(a.concurrency)) as ex:
+            list(ex.map(_one, pairs))
+    else:
+        for pair in pairs:
+            _one(pair)
+    print("\n完成：成功 %d / 失败 %d（共 %d 镜）" % (ok, fail, shots))
     return 0 if fail == 0 else 3
 
 
@@ -720,9 +909,14 @@ def main() -> int:
                     help="ZZAI 单张最高允许金额；真实提交必填")
     ap.add_argument("--model", default="zhenzhen-image-g-v2.6-lowprice",
                     help="ZZAI 图片模型 ID")
+    ap.add_argument("--grid", type=int, default=None, choices=(1, 4),
+                    help="分镜图模式：1=每镜一张（默认）；4=四宫格（一次请求画 4 镜，"
+                         "本地切回 4 张单镜 PNG，省 3/4 请求量）。默认读 model-plan.json 的 board.detail.grid")
     ap.add_argument("--resolution", default="1k", choices=("1k", "2k", "4k"))
     ap.add_argument("--quality", default="high",
                     choices=("auto", "low", "medium", "high", "xhigh", "max"))
+    ap.add_argument("--concurrency", type=int, default=1,
+                    help="同时提交的请求数（默认 1；图片任务异步，实测可并行）")
     ap.add_argument("--poll-seconds", dest="poll_seconds", type=float, default=3.0)
     ap.add_argument("--workflow-id-i2i", dest="workflow_id_i2i", default=None,
                     help="RunningHub 图生图 workflowId（覆盖 model-plan）")
@@ -731,6 +925,15 @@ def main() -> int:
 
     ws = pathlib.Path(a.workspace).expanduser().resolve() if a.workspace else W.WS
     data_dir = W.data_dir(ws) / a.ep
+
+    # 分镜图模式：命令行 > 确认单 board.detail.grid > 单镜
+    if a.grid is None:
+        try:
+            a.grid = int((_board_plan(ws).get("detail") or {}).get("grid") or 1)
+        except (TypeError, ValueError):
+            a.grid = 1
+        if a.grid not in (1, 4):
+            a.grid = 1
 
     # ★ 分镜图的提示词真源是**分镜 md**，不是 `boards.json`。
     #   为什么改：`boards.json` 是 `convert_storyboard` 的产物，而那一步在
@@ -772,7 +975,11 @@ def main() -> int:
         {"local": "本地 ComfyUI", "cloud": "云端 ComfyUI", "zzai": "ZZAI 图片 API",
          "rh": "RunningHub 工作流"}.get(engine, engine),
         engine_note))
-    print("  模式    : 图生图（角色/场景参考图，固定）")
+    print("  模式    : 图生图（角色/场景参考图，固定）｜%s" % (
+        "四宫格 4 镜/次（本地切分，下游仍是单镜 PNG）" if a.grid == 4 else "单镜 1 镜/次"))
+    if a.grid == 4 and engine != "zzai":
+        print("[WARN] 四宫格目前只在 ZZAI 图片通道实现；当前通道 %s 会按单镜出图。" % engine)
+        a.grid = 1
     if not items:
         print("\n[WARN] 没有要处理的镜（--only 可能写错）")
         return 0
@@ -792,16 +999,32 @@ def main() -> int:
         plan.append((sid, txt, n, codes, spec))
 
     if not a.apply or a.dry_run:
+        groups = _group_plan(plan, 4) if a.grid == 4 else []
+        if groups:
+            print("\n" + "=" * 74)
+            print("四宫格提示词（第 1 组示例：%s）" % "、".join(g[0] for g in groups[0]))
+            print("=" * 74)
+            _g_ratio = str((groups[0][0][4] or {}).get("ratio") or "9:16")
+            print(_grid_prompt(groups[0], bible, style_line, _g_ratio))
+            print("\n共 %d 组：%s" % (len(groups), " | ".join(
+                "、".join(g[0] for g in grp) for grp in groups[:6])
+                + (" …" if len(groups) > 6 else "")))
+            return 0
         for sid, txt, n, codes, spec in plan:
             print("\n" + "-" * 74)
             print("%s ｜ %d 人 %s ｜ ratio=%s" % (sid, n, "/".join(codes) or "无", spec.get("ratio")))
             print("-" * 74)
             print(txt)
         print("\n（干跑：%d 镜，未出图。加 --apply 真出。）" % len(plan))
+        if a.grid == 4:
+            n = len(plan)
+            print("（四宫格预估请求数 %d 次：满 4 镜组 %d 个 + 尾组 %d 个；单镜模式需 %d 次）"
+                  % ((n + 3) // 4, n // 4, 1 if n % 4 else 0, n))
         return 0
 
     if engine == "zzai":
-        return _run_zzai(ws, a, plan, out_dir)
+        return _run_zzai(ws, a, plan, out_dir, grid=a.grid,
+                         bible=bible, style_line=style_line)
     if engine == "rh":
         return _run_rh(ws, a, plan, out_dir)
     if engine == "cloud" and not a.yes:
