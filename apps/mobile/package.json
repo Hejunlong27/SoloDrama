@@ -1,0 +1,20 @@
+{
+  "name": "@solodrama/mobile",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/server.ts",
+    "setup": "bun scripts/prepare.ts",
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@solodrama/file": "workspace:*",
+    "@solodrama/server": "workspace:*",
+    "@solodrama/web": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6"
+  }
+}

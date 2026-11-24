@@ -1,0 +1,11 @@
+{
+  "name": "@solodrama/multi-tenant-user-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.vue", "./types": "./types.ts", "./account": "./account.vue" },
+  "scripts": { "typecheck": "vue-tsc --noEmit" },
+  "dependencies": { "@solodrama/i18n": "workspace:*", "@solodrama/multi-tenant-billing": "workspace:*" },
+  "peerDependencies": { "element-plus": "^2.14.5", "vue": "^3.5.42" },
+  "devDependencies": { "typescript": "~6.0.3", "vue-tsc": "^3.3.11" }
+}

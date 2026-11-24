@@ -1,0 +1,30 @@
+{
+  "name": "@solodrama/multi-tenant-admin-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.vue",
+    "./routes": "./routes.ts"
+  },
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@solodrama/i18n": "workspace:*",
+    "@solodrama/multi-tenant-billing": "workspace:*",
+    "@solodrama/multi-tenant-models": "workspace:*",
+    "@solodrama/multi-tenant-source-mapping": "workspace:*",
+    "@solodrama/provider-web": "workspace:*"
+  },
+  "peerDependencies": {
+    "@tabler/icons-vue": "^3.46.0",
+    "element-plus": "^2.14.5",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vue-tsc": "^3.3.11"
+  }
+}

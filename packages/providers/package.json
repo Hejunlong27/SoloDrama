@@ -1,0 +1,24 @@
+{
+  "name": "@solodrama/providers",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@solodrama/ffmpeg": "workspace:*"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./types": "./types.d.ts",
+    "./language/deepSeek": "./src/language/deepSeek.ts",
+    "./language/opencodeGo": "./src/language/opencodeGo.ts",
+    "./language/commandCode": "./src/language/commandCode.ts",
+    "./media/apiMart": "./src/media/apiMart.ts",
+    "./media/metaso": "./src/media/metaso.ts",
+    "./media/compshare": "./src/media/compshare.ts",
+    "./media/solodramaComfy": "./src/media/solodramaComfy.ts",
+    "./media/solodramaComfyCloud": "./src/media/solodramaComfyCloud.ts",
+    "./media/solodramaRunningHub": "./src/media/solodramaRunningHub.ts",
+    "./media/solodramaRunningHubClosed": "./src/media/solodramaRunningHubClosed.ts",
+    "./media/solodramaZhenzhen": "./src/media/solodramaZhenzhen.ts"
+  }
+}

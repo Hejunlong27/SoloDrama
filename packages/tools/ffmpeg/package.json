@@ -1,0 +1,17 @@
+{
+  "name": "@solodrama/tool-ffmpeg",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@solodrama/ffmpeg": "workspace:*",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@solodrama/tools-scaffold": "workspace:*"
+  }
+}

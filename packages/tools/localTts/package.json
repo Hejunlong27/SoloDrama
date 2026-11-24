@@ -1,0 +1,9 @@
+{
+  "name": "@solodrama/tool-local-tts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "bun build.ts", "typecheck": "tsc" },
+  "dependencies": { "zod": "^4.6.2" },
+  "devDependencies": { "@solodrama/tools-scaffold": "workspace:*" }
+}
