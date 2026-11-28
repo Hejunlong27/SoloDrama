@@ -92,11 +92,36 @@
       <el-alert :title="errorMessage" type="error" :closable="false" showIcon />
       <el-button v-if="allowFeedback" :disabled="busy || feedbackDisabled" @click="sendFeedback">发送给 AI 修改</el-button>
     </div>
+    <div v-if="diagnosticSummary.lastSuccessAt || diagnosticSummary.lastError || diagnosticSummary.averageLatency !== undefined" class="diagnosticSummary">
+      <span v-if="diagnosticSummary.lastSuccessAt">最近成功：{{ new Date(diagnosticSummary.lastSuccessAt).toLocaleString() }}</span>
+      <span v-if="diagnosticSummary.averageLatency !== undefined">平均诊断耗时：{{ diagnosticSummary.averageLatency }} ms</span>
+      <span v-if="diagnosticSummary.lastError" class="lastError">最近错误：{{ diagnosticSummary.lastError }}</span>
+    </div>
+    <section v-if="diagnostic" class="diagnosticResult" aria-label="供应商诊断结果">
+      <div class="diagnosticHeader">
+        <el-tag :type="diagnostic.status === 'healthy' ? 'success' : diagnostic.status === 'degraded' ? 'warning' : diagnostic.status === 'unhealthy' ? 'danger' : 'info'">
+          {{ diagnosticStatusLabels[diagnostic.status] }}
+        </el-tag>
+        <span>{{ new Date(diagnostic.checkedAt).toLocaleString() }}</span>
+        <span v-if="diagnostic.latency !== undefined">{{ diagnostic.latency }} ms</span>
+        <el-text v-if="diagnostic.capabilities?.length" type="info">{{ diagnostic.capabilities.join(' · ') }}</el-text>
+      </div>
+      <div class="diagnosticChecks">
+        <div v-for="item in diagnostic.checks" :key="item.name" class="diagnosticCheck">
+          <el-tag size="small" :type="item.status === 'passed' ? 'success' : item.status === 'warning' ? 'warning' : item.status === 'failed' ? 'danger' : 'info'">{{ item.status }}</el-tag>
+          <strong>{{ item.name }}</strong>
+          <span>{{ item.message }}</span>
+          <small v-if="item.latency !== undefined">{{ item.latency }} ms</small>
+          <code v-if="item.errorCode">{{ item.errorCode }}</code>
+        </div>
+      </div>
+    </section>
     <div class="testFooter">
       <el-text size="small" :type="status === '成功' ? 'success' : status === '失败' ? 'danger' : 'info'" role="status" aria-live="polite">{{ statusLabel }}{{ elapsed ? ` · ${(elapsed / 1000).toFixed(1)} 秒` : '' }}</el-text>
       <div class="testActions">
         <slot name="actions" :busy="busy" />
-        <el-button v-if="busy" type="danger" :icon="IconPlayerStop" @click="stop">停止</el-button>
+        <el-button :icon="IconActivity" :loading="diagnosing" :disabled="busy || diagnosing || disabled || !source" @click="diagnose">连接诊断</el-button>
+        <el-button v-if="busy || diagnosing" type="danger" :icon="IconPlayerStop" @click="stop">停止</el-button>
         <el-button v-else type="primary" :icon="IconPlayerPlay" :disabled="disabled || !source || !activeModel" @click="run">开始测试</el-button>
       </div>
     </div>
@@ -107,8 +132,8 @@
 import { locale, translate } from "@solodrama/i18n/vue";
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import axios from "axios";
-import { IconPlus, IconX, IconMusic, IconPlayerPlay, IconPlayerStop } from "@tabler/icons-vue";
-import type { Provider } from "@solodrama/providers";
+import { IconPlus, IconX, IconMusic, IconActivity, IconPlayerPlay, IconPlayerStop } from "@tabler/icons-vue";
+import type { Provider, ProviderDiagnosticResult, ProviderDiagnosticStatus } from "@solodrama/providers";
 import videoPlayer from "@/components/videoPlayer.vue";
 import formCreate, { type Api, type Options, type Rule } from "@solodrama/provider-web/formCreate";
 import type { MediaProvider, MediaProviderModel } from "@solodrama/provider-web/types";
@@ -128,6 +153,11 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ feedback: [message: string]; busyChange: [busy: boolean] }>();
 const busy = ref(false);
+const diagnosing = ref(false);
+const diagnostic = ref<ProviderDiagnosticResult>();
+const diagnosticStatusLabels: Record<ProviderDiagnosticStatus, string> = { healthy: "健康", degraded: "部分可用", unhealthy: "不可用", unknown: "未知" };
+type DiagnosticSummary = { lastSuccessAt?: number; lastError?: string; averageLatency?: number; samples?: number };
+const diagnosticSummary = ref<DiagnosticSummary>({});
 const formRules = shallowRef<ReturnType<typeof formCreate.copyRules>>([]);
 const formApi = shallowRef<Api>();
 const configValues = ref<Record<string, unknown>>({});
@@ -156,6 +186,7 @@ const status = ref<"" | "失败" | "成功" | "运行中…" | "已停止">("");
 const statusLabel = computed(() => ({ "": "", "失败": translate("失败"), "成功": translate("成功"), "运行中…": translate("运行中…"), "已停止": translate("已停止") })[status.value]);
 const elapsed = ref(0);
 let controller: AbortController | undefined;
+let diagnosticController: AbortController | undefined;
 let refreshing: AbortController | undefined;
 let lastRequest: Record<string, unknown> = {};
 let lastProvider = { id: "", label: "" };
@@ -342,9 +373,81 @@ async function run() {
 
 function stop() {
   controller?.abort();
+  diagnosticController?.abort();
   controller = undefined;
+  diagnosticController = undefined;
   if (busy.value) status.value = "已停止";
   busy.value = false;
+  diagnosing.value = false;
+}
+
+function loadDiagnosticSummary() {
+  diagnosticSummary.value = {};
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(`solodramaProviderDiagnostic:${props.provider.id}`) ?? "{}");
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      const value = stored as Record<string, unknown>;
+      diagnosticSummary.value = {
+        ...(typeof value.lastSuccessAt === "number" ? { lastSuccessAt: value.lastSuccessAt } : {}),
+        ...(typeof value.lastError === "string" ? { lastError: value.lastError } : {}),
+        ...(typeof value.averageLatency === "number" ? { averageLatency: value.averageLatency } : {}),
+        ...(typeof value.samples === "number" ? { samples: value.samples } : {}),
+      };
+    }
+  } catch { /* ACT: 本地诊断统计损坏时忽略历史，不影响实时诊断。 */ }
+}
+
+function saveDiagnosticSummary(result?: ProviderDiagnosticResult, error?: string) {
+  const previous = diagnosticSummary.value;
+  const samples = (previous.samples ?? 0) + (result?.latency !== undefined ? 1 : 0);
+  const averageLatency = result?.latency !== undefined
+    ? Math.round(((previous.averageLatency ?? 0) * (previous.samples ?? 0) + result.latency) / Math.max(1, samples))
+    : previous.averageLatency;
+  const failed = result?.checks.find(item => item.status === "failed");
+  diagnosticSummary.value = {
+    ...(result && result.status !== "unhealthy" ? { lastSuccessAt: result.checkedAt } : previous.lastSuccessAt ? { lastSuccessAt: previous.lastSuccessAt } : {}),
+    ...(averageLatency !== undefined ? { averageLatency } : {}),
+    ...(samples ? { samples } : {}),
+    ...(failed?.message || error ? { lastError: failed?.message ?? error } : previous.lastError ? { lastError: previous.lastError } : {}),
+  };
+  try { localStorage.setItem(`solodramaProviderDiagnostic:${props.provider.id}`, JSON.stringify(diagnosticSummary.value)); }
+  catch { /* ACT: 无法写入本地统计时仍保留本次诊断结果。 */ }
+}
+
+async function diagnose() {
+  if (busy.value || diagnosing.value || props.disabled || !props.source) return;
+  if (formApi.value && !(await formApi.value.validate().then(() => true, () => false))) {
+    showError(new Error("请检查供应商配置"));
+    return;
+  }
+  const owner = new AbortController();
+  diagnosticController = owner;
+  diagnosing.value = true;
+  diagnostic.value = undefined;
+  try {
+    const config = formApi.value?.formData() ?? configValues.value;
+    const response = await fetch("/api/providers/diagnostics/run", {
+      method: "POST",
+      headers: { "x-solodrama-workspace": "1", "Accept-Language": locale.value, "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "media", providerId: props.provider.id, providerType: "media", source: props.source, config }),
+      signal: AbortSignal.any([owner.signal, AbortSignal.timeout(35000)]),
+    });
+    const payload = await response.json() as { code?: number; data?: ProviderDiagnosticResult; message?: string };
+    if (!response.ok || payload.code !== 200 || !payload.data) throw new Error(payload.message || "供应商诊断失败");
+    diagnostic.value = payload.data;
+    saveDiagnosticSummary(payload.data);
+  } catch (error) {
+    if (!owner.signal.aborted) {
+      const message = axios.isAxiosError(error) ? error.response?.data?.message || error.message : error instanceof Error ? error.message : String(error);
+      saveDiagnosticSummary(undefined, message);
+      showError(error);
+    }
+  } finally {
+    if (diagnosticController === owner) {
+      diagnosticController = undefined;
+      diagnosing.value = false;
+    }
+  }
 }
 
 function sendFeedback() {
@@ -390,6 +493,7 @@ function sendFeedback() {
 function reset() {
   stop();
   clearResults();
+  diagnostic.value = undefined;
   for (const reference of references.value) URL.revokeObjectURL(reference.url);
   references.value = [];
 }
@@ -402,6 +506,7 @@ watch(() => [props.source, props.provider.id, props.provider.rules] as const, (_
   configValues.value = Object.fromEntries(rules.filter(rule => rule.field).map(rule => [rule.field!, rule.field! in values ? values[rule.field!] : props.config?.[rule.field!] ?? rule.value]));
   if (JSON.stringify(rules) !== JSON.stringify(formRules.value)) formRules.value = formCreate.copyRules(rules);
 }, { immediate: true });
+watch(() => props.provider.id, loadDiagnosticSummary, { immediate: true });
 watch(() => props.modelId, modelId => { if (modelId) selectedModelId.value = modelId; }, { immediate: true });
 watch(mediaModels, models => {
   if (!models.some(model => model.id === selectedModelId.value)) selectedModelId.value = models[0]?.id ?? "";
@@ -493,6 +598,38 @@ defineExpose({ run, stop, reset });
     align-items: flex-start;
     gap: 8px;
     .el-alert { max-height: 120px; overflow: auto; overflow-wrap: anywhere; }
+  }
+  .diagnosticSummary {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 12px;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    .lastError { color: var(--el-color-danger); overflow-wrap: anywhere; }
+  }
+  .diagnosticResult {
+    display: flex;
+    flex-shrink: 0;
+    flex-direction: column;
+    overflow: auto;
+    max-height: 230px;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: var(--el-border-radius-base);
+    background: var(--el-fill-color-lighter);
+    .diagnosticHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+    .diagnosticChecks { display: flex; flex-direction: column; gap: 6px; }
+    .diagnosticCheck {
+      display: grid;
+      grid-template-columns: auto 110px minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      > span { color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
+      > small, > code { color: var(--el-text-color-placeholder); font-size: 11px; }
+    }
   }
   .testFooter {
     display: flex;

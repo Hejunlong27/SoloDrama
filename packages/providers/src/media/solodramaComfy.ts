@@ -187,9 +187,9 @@ const rules = [
   {
     type: "switch",
     field: "cancelRunning",
-    title: "取消时中断当前 ComfyUI 任务",
+    title: "取消时精确删除排队任务（不会全局中断）",
     value: true,
-    props: { activeText: "中断", inactiveText: "仅停止等待" },
+    props: { activeText: "精确删除", inactiveText: "仅停止等待" },
   },
 ] as const;
 
@@ -268,10 +268,11 @@ function mediaBytes(input: MediaInput, context: Context): Promise<{ data: Uint8A
 async function uploadImage(context: Context, baseUrl: string, input: MediaInput): Promise<string> {
   const media = await mediaBytes(input, context);
   const extension = media.mimeType.split("/")[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "") || "png";
-  const name = (media.name || "reference").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "reference";
+  const name = (media.name || "reference").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48) || "reference";
+  const uniqueName = "solodrama_" + crypto.randomUUID().replaceAll("-", "") + "_" + name;
   const form = new FormData();
-  form.append("image", new Blob([media.data.slice().buffer as ArrayBuffer], { type: media.mimeType }), name + "." + extension);
-  form.append("overwrite", "true");
+  form.append("image", new Blob([media.data.slice().buffer as ArrayBuffer], { type: media.mimeType }), uniqueName + "." + extension);
+  form.append("overwrite", "false");
   const response = await context.tool.fetch(baseUrl + "/upload/image", {
     method: "POST", headers: authHeaders(context), body: form, signal: context.signal, redirect: "error",
   });
@@ -347,16 +348,22 @@ async function readHistory(context: Context, baseUrl: string, promptId: string):
 }
 
 async function cancel(context: Context, baseUrl: string, promptId: string) {
-  const headers = requestHeaders(context, true);
+  if (context.config.cancelRunning === false) return;
   try {
+    // 只用实例公开的队列接口精确删除仍排队的 prompt；运行中任务宁可等待，
+    // 也不能发送无 prompt_id 的全局 /interrupt 误伤同实例其他任务。
+    const queueResponse = await context.tool.fetch(baseUrl + "/queue", {
+      headers: requestHeaders(context), redirect: "error", signal: null,
+    });
+    if (!queueResponse.ok) return;
+    const payload = await queueResponse.json() as Record<string, unknown>;
+    const pending = Array.isArray(payload.queue_pending) ? payload.queue_pending : [];
+    const queued = pending.some(item => Array.isArray(item) && item[1] === promptId);
+    if (!queued) return;
     await context.tool.fetch(baseUrl + "/queue", {
-      method: "POST", headers, body: JSON.stringify({ delete: [promptId] }), redirect: "error",
+      method: "POST", headers: requestHeaders(context, true), body: JSON.stringify({ delete: [promptId] }), redirect: "error", signal: null,
     });
-    if (context.config.cancelRunning === false) return;
-    await context.tool.fetch(baseUrl + "/interrupt", {
-      method: "POST", headers, body: "{}", redirect: "error",
-    });
-  } catch { /* 取消是尽力而为；不覆盖最初的 AbortError。 */ }
+  } catch { /* 取消是尽力而为；不会因为无法确认远端状态而覆盖最初的 AbortError。 */ }
 }
 
 async function awaitResult(context: Context, data: ComfyTaskData, baseUrl: string): Promise<MediaAsset[]> {

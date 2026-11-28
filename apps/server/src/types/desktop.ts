@@ -33,7 +33,21 @@ export type updateSnapshot = {
   };
 };
 
+export interface DesktopLauncherRuntime {
+  version: string;
+  pid: number;
+  platform: NodeJS.Platform;
+  arch: string;
+  dataDirectory: string;
+  logDirectory: string;
+  logPath: string;
+  openLogFile(): void | Promise<void>;
+  openDataFolder(): void | Promise<void>;
+  setLaunchOnStartup(enabled: boolean): Promise<boolean>;
+}
+
 export interface DesktopRuntime {
+  launcher: DesktopLauncherRuntime;
   openUrl(url: string): void;
   showNotification(options: { title: string; body?: string; silent?: boolean }): void | Promise<void>;
   showItemInFolder(path: string): void;

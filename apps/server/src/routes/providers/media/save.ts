@@ -10,6 +10,7 @@ export default Router().put("/", validateFields({
   source: z.string().min(1).max(2 * 1024 * 1024).optional(),
   revision: z.string().regex(/^[a-f0-9]{64}$/),
 }), async (req, res) => {
+  if (!u.workspace.isLocalWorkspaceRequest(req)) return res.status(403).json(error("请在桌面端或服务器本机管理媒体供应商", null, 403));
   if ((req.body.source === undefined) === (req.body.models === undefined)) {
     return res.status(400).json(error("请提供供应商代码或模型配置，不能同时提供"));
   }

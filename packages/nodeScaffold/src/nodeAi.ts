@@ -119,10 +119,11 @@ const mediaPriceCache = mediaPriceCacheHost[mediaPriceCacheKey] ??= (() => {
 })();
 
 export type NodeMediaResult = NodeImageResult | NodeVideoResult | NodeAudioResult;
-type MediaTaskResult = { code: number; data: NodeMediaResult[] | null; message: string };
+type MediaTaskResult = { code: number; data: NodeMediaResult[] | null; message: string; providerCode?: string; upstreamCode?: string; retryable?: boolean };
 export type NodeMediaTaskStatus = {
   taskId: string;
   state?: "running" | "interrupted" | "succeeded" | "failed" | "cancelled";
+  submissionState?: "submitting" | "submitted" | "accepted" | "unknown";
   resumable?: boolean;
   providerData?: unknown;
   nodeId?: string;

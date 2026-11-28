@@ -25,14 +25,15 @@
         :fileAction="performFileAction"
         :saveNode="saveDocumentNode" />
     </keep-alive>
-    <workbenchPanel
+    <productionPanel
       v-if="activePanel === 'workbench'"
       :key="workspaceStore.project?.directory"
+      ref="productionPanelRef"
       :directory="workspaceStore.project?.directory ?? ''"
       :focusNode="focusWorkbenchNode"
       :createNode="createWorkbenchNode"
       @openCanvas="switchPanel('canvas')" />
-    <workspaceMenu class="workspaceMenu" @openSettings="settingsVisible = true" />
+    <workspaceMenu class="workspaceMenu" @openSettings="settingsVisible = true" @openLauncher="router.push('/launcher')" />
     <div class="workspaceTools">
       <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" size="small" aria-label="切换面板" @change="switchPanel">
         <template #default="{ item }">
@@ -68,17 +69,9 @@
             </el-tooltip>
           </div>
         </el-card>
-        <el-tooltip v-if="!agentVisible" content="SoloDrama Agent" placement="top" :showArrow="false" :hideAfter="0">
-          <el-button
-            class="agentButton"
-            :class="{ standalone: activePanel !== 'canvas' }"
-            :aria-expanded="agentVisible"
-            aria-label="SoloDrama Agent"
-            aria-controls="agentPanel"
-            @click="agentVisible = !agentVisible"></el-button>
-        </el-tooltip>
       </div>
     </div>
+    <agentPet :active="agentVisible" @toggle="agentVisible = !agentVisible" />
     <floatingAgent v-model="agentVisible" :inert="workspaceStore.projectLoadingVisible" @resize="agentWidth = $event" />
     <settings v-model="settingsVisible" />
   </main>
@@ -87,7 +80,7 @@
 <script setup lang="ts">
 import { translate } from "@solodrama/i18n/vue";
 import { computed, defineAsyncComponent, nextTick, onMounted, onScopeDispose, provide, ref, shallowRef, watch, type ComponentPublicInstance } from "vue";
-import { onBeforeRouteLeave } from "vue-router";
+import { useRouter, onBeforeRouteLeave } from "vue-router";
 import axios from "axios";
 import { IconVector, IconFileText, IconPointer, IconHandStop, IconPlus, IconSearch, IconLayoutDashboard } from "@tabler/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -99,11 +92,14 @@ import canvasPanel from "./panels/canvas/canvasHost.vue";
 import type { DocumentNodeOptions } from "./panels/canvas/canvasFiles";
 import workspaceMenu from "./components/workspaceMenu.vue";
 import floatingAgent from "./components/floatingAgent.vue";
-import workbenchPanel from "./panels/workbench/workbenchPanel.vue";
+import agentPet from "./components/agentPet.vue";
+import productionPanel from "./panels/production/productionPanel.vue";
 
+const router = useRouter();
 const documentPanel = defineAsyncComponent(() => import("./panels/document/index.vue"));
 
 const activePanel = ref<"canvas" | "workbench" | "document">("canvas");
+const productionPanelRef = ref<InstanceType<typeof productionPanel>>();
 const selectedTool = ref<"move" | "hand">("move");
 const sideButtonEvents = ["mousedown", "mouseup", "auxclick"] as const;
 // 鼠标侧键会直接触发原生历史导航，需在 DOM 事件阶段拦截，避免生成中的工作区被误关闭。
@@ -123,7 +119,7 @@ const panelOptions = [
   { label: "工作台", value: "workbench", icon: IconLayoutDashboard },
   { label: "文档", value: "document", icon: IconFileText },
 ];
-const agentVisible = ref(true);
+const agentVisible = ref(false);
 const agentWidth = ref(0);
 const settingsVisible = ref(false);
 const canvasPanelRef = ref<InstanceType<typeof canvasPanel>>();
@@ -173,9 +169,10 @@ registerWorkspaceControl({
     };
     checkDirectory();
     if (request.name === "switchPanel") {
-      if (request.args.panel !== "canvas" && request.args.panel !== "workbench" && request.args.panel !== "document") throw new Error("未知面板");
-      if (!(await switchPanel(request.args.panel))) throw new Error("面板切换失败，请检查文档是否保存成功");
-      if (request.args.panel === "document") await waitForControlValue(() => documentPanelRef.value?.ready ? documentPanelRef.value : undefined, callSignal);
+      const requestedPanel = request.args.panel === "production" ? "workbench" : request.args.panel;
+      if (requestedPanel !== "canvas" && requestedPanel !== "workbench" && requestedPanel !== "document") throw new Error("未知面板");
+      if (!(await switchPanel(requestedPanel))) throw new Error("面板切换失败，请检查文档是否保存成功");
+      if (requestedPanel === "document") await waitForControlValue(() => documentPanelRef.value?.ready ? documentPanelRef.value : undefined, callSignal);
       checkDirectory();
       return { panel: activePanel.value };
     }
@@ -239,6 +236,7 @@ async function switchPanel(value: string | number | boolean) {
   try {
     if (activePanel.value === "document") await documentPanelRef.value?.flushSave();
     if (activePanel.value === "canvas") await canvasPanelRef.value?.flushSave();
+    if (activePanel.value === "workbench") await productionPanelRef.value?.flushSave();
     const changed = activePanel.value !== value;
     activePanel.value = value;
     await nextTick();
@@ -257,7 +255,13 @@ async function focusWorkbenchNode(canvasPath: string, nodeId: string) {
   await canvasPanelRef.value.focusDocumentNode(directory, canvasPath, nodeId);
 }
 
-async function createWorkbenchNode(type: string, label: string) {
+let workbenchNodeQueue = Promise.resolve();
+function createWorkbenchNode(type: string, label: string) {
+  const task = workbenchNodeQueue.then(() => insertWorkbenchNode(type, label));
+  workbenchNodeQueue = task.catch(() => undefined);
+  return task;
+}
+async function insertWorkbenchNode(type: string, label: string) {
   const directory = workspaceStore.project?.directory;
   if (!directory) throw new Error("请先打开项目");
   if (!await switchPanel("canvas")) throw new Error("画布面板无法打开");
@@ -265,10 +269,55 @@ async function createWorkbenchNode(type: string, label: string) {
     () => canvasPanelRef.value?.canvasReady ? canvasPanelRef.value.getCanvasContext() : undefined,
     controlLifetime.signal
   );
-  const created = await context.call({ name: "addNode", args: { type, label, position: { x: 420, y: 360 } } }, controlLifetime.signal) as { node?: { id?: string } };
+  const positions = await readCanvasNodePositions(context);
+  const created = await context.call({
+    name: "addNode",
+    args: { type, label, position: findCanvasFreePosition(positions) },
+  }, controlLifetime.signal) as { node?: { id?: string } };
   const nodeId = created?.node?.id;
   if (!nodeId || !canvasPanelRef.value?.canvasId) throw new Error("画布节点创建结果无效");
   await canvasPanelRef.value.focusDocumentNode(directory, canvasPanelRef.value.canvasId, nodeId);
+}
+async function readCanvasNodePositions(context: { call: (request: { name: string; args: Record<string, unknown> }, signal?: AbortSignal) => Promise<unknown> }) {
+  const overview = await context.call({ name: "getCanvas", args: {} }, controlLifetime.signal) as { nodeCount?: number };
+  if (!overview.nodeCount) return [];
+  const nodeIds = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await context.call({
+      name: "findCanvasNodes",
+      args: { limit: 100, ...(cursor ? { cursor } : {}) },
+    }, controlLifetime.signal) as { nodes?: { id?: string }[]; hasMore?: boolean; nextCursor?: string | null };
+    for (const node of page.nodes ?? []) if (node.id) nodeIds.add(node.id);
+    cursor = page.hasMore && page.nextCursor ? page.nextCursor : undefined;
+  } while (cursor && nodeIds.size < 2000);
+  const positions: { x: number; y: number }[] = [];
+  const ids = [...nodeIds];
+  for (let offset = 0; offset < ids.length; offset += 20) {
+    const page = await context.call({
+      name: "getCanvasNodes",
+      args: { nodeIds: ids.slice(offset, offset + 20), fields: ["position"] },
+    }, controlLifetime.signal) as { nodes?: { position?: { x?: number; y?: number } }[] };
+    for (const node of page.nodes ?? []) {
+      if (Number.isFinite(node.position?.x) && Number.isFinite(node.position?.y)) {
+        positions.push({ x: node.position!.x!, y: node.position!.y! });
+      }
+    }
+  }
+  return positions;
+}
+function findCanvasFreePosition(occupied: { x: number; y: number }[]) {
+  const columnWidth = 440;
+  const rowHeight = 320;
+  const columns = 5;
+  for (let row = 0; row < 1000; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const candidate = { x: 220 + column * columnWidth, y: 180 + row * rowHeight };
+      const overlaps = occupied.some(position => Math.abs(position.x - candidate.x) < 360 && Math.abs(position.y - candidate.y) < 250);
+      if (!overlaps) return candidate;
+    }
+  }
+  return { x: 220 + occupied.length * 40, y: 180 + occupied.length * 24 };
 }
 
 function readDocumentNode(directory: string, canvasPath: string, nodeId: string) {

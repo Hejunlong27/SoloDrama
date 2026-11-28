@@ -2,13 +2,14 @@ import { Router } from "express";
 import { z } from "zod";
 import u from "@/utils";
 import { validateFields } from "@/lib/middleware";
+import { error } from "@/lib/responseFormat";
 
 export default Router().post("/", validateFields({
   ...u.providerDebug.providerDebugSchema,
   request: z.record(z.string(), z.json()),
   models: u.mediaProvider.mediaModelsSchema.optional(),
 }), async (req, res) => {
-  u.mcpControl.assertAppRequest(req);
+  if (!u.workspace.isLocalWorkspaceRequest(req)) return res.status(403).json(error("请在桌面端或服务器本机调试供应商", null, 403));
   u.multiTenant.requireDirectModelAccess();
   res.set({ "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no" });
   res.flushHeaders();

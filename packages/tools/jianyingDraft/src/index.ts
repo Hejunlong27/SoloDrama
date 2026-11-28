@@ -1,6 +1,6 @@
 import { dirname, extname } from "node:path";
 import { z } from "zod";
-import type { ToolPlugin } from "@solodrama/tools-scaffold/runtime";
+import type { ToolContext, ToolPlugin } from "@solodrama/tools-scaffold/runtime";
 import { projectDimension, readSoloDramaProject } from "@solodrama/tools-scaffold/project";
 
 const configSchema = z.object({
@@ -54,8 +54,14 @@ const roughCutSchema = z.strictObject({
   coverSeconds: z.number().finite().min(0.01).max(5).optional(),
   overwrite: z.boolean().default(false),
 });
-type Clip = z.infer<typeof clipSchema>;
-type DraftOptions = z.infer<typeof configSchema> & {
+export type JianyingDraftClip = z.infer<typeof clipSchema>;
+export type JianyingDraftHost = {
+  cwd: string;
+  files: Pick<ToolContext["files"], "readFile" | "access" | "writeFile" | "mkdir">;
+  resolvePath(path: string, readOnly?: boolean): Promise<string>;
+  executeFfmpeg: ToolContext["executeFfmpeg"];
+};
+export type JianyingDraftOptions = z.infer<typeof configSchema> & {
   narrationPath?: string;
   includeCover?: boolean;
   includeSubtitles?: boolean;
@@ -65,7 +71,7 @@ function safeName(value: string) {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").slice(0, 80) || "draft";
 }
 
-async function probeDuration(context: Parameters<ToolPlugin["createTools"]>[0], path: string, signal?: AbortSignal) {
+async function probeDuration(context: JianyingDraftHost, path: string, signal?: AbortSignal) {
   let result: Record<string, unknown> | undefined;
   let failure: Error | undefined;
   await context.executeFfmpeg({
@@ -105,11 +111,11 @@ function parseSrt(value: string) {
   });
 }
 
-async function writeDraft(
-  context: Parameters<ToolPlugin["createTools"]>[0],
-  options: DraftOptions,
+export async function createJianyingDraft(
+  context: JianyingDraftHost,
+  options: JianyingDraftOptions,
   name: string,
-  clips: Clip[],
+  clips: JianyingDraftClip[],
   outputDirectory: string,
   overwrite: boolean,
   signal?: AbortSignal,
@@ -258,7 +264,7 @@ const plugin: ToolPlugin = {
         const request = draftSchema.parse(params);
         const project = await readSoloDramaProject(context);
         const dimensions = projectDimension(project, config.width, config.height);
-        const options: DraftOptions = {
+        const options: JianyingDraftOptions = {
           ...config,
           width: request.width ?? dimensions.width,
           height: request.height ?? dimensions.height,
@@ -272,8 +278,8 @@ const plugin: ToolPlugin = {
         };
         const outputDirectory = request.outputDirectory ?? config.outputDirectory;
         const drafts = request.mode === "season"
-          ? [await writeDraft(context, options, request.name, request.episodes.flatMap(episode => episode.clips), outputDirectory, request.overwrite, signal)]
-          : await Promise.all(request.episodes.map(episode => writeDraft(context, options, `${request.name}-${episode.name}`, episode.clips, outputDirectory, request.overwrite, signal)));
+          ? [await createJianyingDraft(context, options, request.name, request.episodes.flatMap(episode => episode.clips), outputDirectory, request.overwrite, signal)]
+          : await Promise.all(request.episodes.map(episode => createJianyingDraft(context, options, `${request.name}-${episode.name}`, episode.clips, outputDirectory, request.overwrite, signal)));
         return { content: [{ type: "text", text: JSON.stringify({ mode: request.mode, drafts }, null, 2) }], details: { mode: request.mode, drafts } };
       },
     }, {
@@ -286,7 +292,7 @@ const plugin: ToolPlugin = {
         const request = roughCutSchema.parse(params);
         const project = await readSoloDramaProject(context);
         const dimensions = projectDimension(project, config.width, config.height);
-        const options: DraftOptions = {
+        const options: JianyingDraftOptions = {
           ...config,
           width: request.width ?? dimensions.width,
           height: request.height ?? dimensions.height,
@@ -300,7 +306,7 @@ const plugin: ToolPlugin = {
         const manifestPath = await context.resolvePath(request.manifestPath, true);
         const manifest = JSON.parse((await context.files.readFile(manifestPath, true)).toString("utf8")) as Record<string, unknown>;
         if (manifest.kind !== "solodrama-voice-rough-cut" || !Array.isArray(manifest.clips)) throw new Error("不是有效的配音粗剪清单");
-        const clips: Clip[] = manifest.clips.flatMap(item => {
+        const clips: JianyingDraftClip[] = manifest.clips.flatMap(item => {
           if (!item || typeof item !== "object") return [];
           const clip = item as Record<string, unknown>;
           if (typeof clip.videoPath !== "string") return [];
@@ -309,7 +315,7 @@ const plugin: ToolPlugin = {
             ...(typeof clip.audioPath === "string" ? { audioPath: clip.audioPath } : typeof manifest.narrationPath === "string" ? { audioPath: manifest.narrationPath } : {}),
           }];
         });
-        const draft = await writeDraft(context, options, request.name, clips, request.outputDirectory ?? config.outputDirectory, request.overwrite, signal);
+        const draft = await createJianyingDraft(context, options, request.name, clips, request.outputDirectory ?? config.outputDirectory, request.overwrite, signal);
         return { content: [{ type: "text", text: JSON.stringify(draft) }], details: draft };
       },
     }];
@@ -317,3 +323,5 @@ const plugin: ToolPlugin = {
 };
 
 export default plugin;
+
+

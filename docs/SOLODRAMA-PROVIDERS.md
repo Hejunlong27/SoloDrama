@@ -36,7 +36,7 @@ Provider 使用当前 SoloDrama 的 `ProviderDefinition`、媒体节点请求和
 - `GET /history/{promptId}` 轮询
 - `GET /view` 下载图片或视频
 - 保存 `promptId` 并通过 `resumeTask` 恢复
-- 取消本地等待；可配置是否调用 `/queue` 和 `/interrupt`
+- 取消本地等待；可配置是否通过 `/queue` 精确删除仍在排队的任务。运行中任务不会发送无 `prompt_id` 的全局 `/interrupt`，避免误伤同实例其他任务
 
 Provider 字段：
 
@@ -91,6 +91,51 @@ SSH 是登录 GPU 实例的传输方式，不是 ComfyUI API 的鉴权 Header。
 ```
 
 `images` 数组顺序就是参考图上传顺序。缺失的视频槽会使用上传的空图片占位，避免 ComfyUI 缓存复用旧图。
+
+## Provider Diagnostics
+
+媒体模型编辑页的“测试”面板提供“连接诊断”，统一调用：
+
+```text
+POST /api/providers/diagnostics/run
+```
+
+请求体：
+
+```json
+{
+  "kind": "media",
+  "providerId": "solodramaComfy",
+  "providerType": "media",
+  "source": "export default { ... }",
+  "config": {}
+}
+```
+
+文本 Provider 诊断使用 `kind: "language"` 并直接把当前文本供应商配置放入 `config`。响应沿用 `{ code, data, message }`，`data` 包含：
+
+- `status`：`healthy | degraded | unhealthy | unknown`。
+- `checks`：配置、连接、鉴权、模型、能力、余额、实际生成等检查项。
+- `latency`、`checkedAt`、`capabilities`。
+
+诊断不会自动执行付费生成；实际生成仍由用户在“开始测试”中主动触发。测试面板会保存最近成功时间、最近错误和平均诊断耗时，不保存密钥或请求正文。
+
+## 云端 ComfyUI Hub
+
+“设置 → 云端算力中心”提供平台无关的 ComfyUI 实例管理：
+
+- 同一 Connector 支持任意兼容 ComfyUI 标准 API 的本地、局域网和云端实例。
+- 实例 Token 与自定义 Header 使用独立 AES-256-GCM 密钥加密。
+- 健康检查覆盖 system stats、节点、队列、features 和 WebSocket。
+- WebSocket 不可用时回退 history 轮询。
+- 工作流库支持本地、HTTP、Git HTTPS 和 S3 兼容预签名 URL。
+- 工作流与实例解耦，自动调度按必需节点、优先级和队列长度选择实例。
+- 排队任务按 prompt_id 精确删除；不发送无 prompt_id 的全局 interrupt。
+
+详细说明见：
+
+- `docs/guides/CLOUD-COMFYUI-CONNECTION-GUIDE.md`
+- `docs/guides/WORKFLOW-IMPORT-AND-SYNC-GUIDE.md`
 
 ## RunningHub
 

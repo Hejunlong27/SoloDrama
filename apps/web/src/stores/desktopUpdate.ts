@@ -96,13 +96,17 @@ export function registerDesktopAutoUpdate() {
     if (event.isTrusted && !document.hidden) lastActivityAt = Date.now();
   }
   for (const event of activityEvents) window.addEventListener(event, markActivity, { passive: true, capture: true });
-  void startDesktopUpdate().catch(() => {});
+  const launcher = settings.value.launcher && typeof settings.value.launcher === "object" && !Array.isArray(settings.value.launcher)
+    ? settings.value.launcher as Record<string, unknown> : {};
+  if (launcher.checkUpdatesOnStartup !== false) void startDesktopUpdate().catch(() => {});
   const interval = window.setInterval(() => {
     const snapshot = desktopUpdateSnapshot.value;
     // ACT: 只在最近十五分钟有真实操作时检查；空闲不取消已经开始的下载。
     if (!desktopAutoUpdate.value || document.hidden || Date.now() - lastActivityAt >= intervalMs || pendingUpdate
       || snapshot?.channel === "dev" || snapshot?.updating || snapshot?.updateReady || snapshot?.installFailure) return;
-    void startDesktopUpdate().catch(() => {});
+    const launcher = settings.value.launcher && typeof settings.value.launcher === "object" && !Array.isArray(settings.value.launcher)
+    ? settings.value.launcher as Record<string, unknown> : {};
+  if (launcher.checkUpdatesOnStartup !== false) void startDesktopUpdate().catch(() => {});
   }, intervalMs);
   return () => {
     window.clearInterval(interval);

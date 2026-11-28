@@ -316,7 +316,7 @@ async function fetchModels() {
     const { data } = await axios.post(
       "/api/providers/models",
       { apiUrl: form.apiUrl.trim(), protocol: form.protocol, apiKey: form.apiKey.trim(), headers: getProviderHeaders() },
-      { signal: controller.signal, timeout: 35000 }
+      { signal: controller.signal, timeout: 35000, headers: { "x-solodrama-workspace": "1" } }
     );
     if (controller.signal.aborted) return;
     if (data.code !== 200 || !Array.isArray(data.data)) throw new Error(data.message || "获取模型列表失败");

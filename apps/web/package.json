@@ -73,7 +73,8 @@
     "vue": "^3.5.42",
     "vue-router": "^5.3.1",
     "vue-stream-markdown": "1.1.0",
-    "x-sender": "^1.4.6"
+    "x-sender": "^1.4.6",
+    "@solodrama/production": "workspace:*"
   },
   "devDependencies": {
     "@types/lodash-es": "^4.17.12",

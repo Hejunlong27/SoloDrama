@@ -8,6 +8,9 @@
   },
   "exports": {
     ".": "./index.ts",
+    "./comfyWorkflow": "./comfyWorkflow.ts",
+    "./diagnostics": "./diagnostics.ts",
+    "./errors": "./errors.ts",
     "./types": "./types.d.ts",
     "./language/deepSeek": "./src/language/deepSeek.ts",
     "./language/opencodeGo": "./src/language/opencodeGo.ts",
@@ -17,6 +20,7 @@
     "./media/compshare": "./src/media/compshare.ts",
     "./media/solodramaComfy": "./src/media/solodramaComfy.ts",
     "./media/solodramaComfyCloud": "./src/media/solodramaComfyCloud.ts",
+    "./media/solodramaComfyHub": "./src/media/solodramaComfyHub.ts",
     "./media/solodramaRunningHub": "./src/media/solodramaRunningHub.ts",
     "./media/solodramaRunningHubClosed": "./src/media/solodramaRunningHubClosed.ts",
     "./media/solodramaZhenzhen": "./src/media/solodramaZhenzhen.ts"

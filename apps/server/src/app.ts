@@ -13,7 +13,7 @@ import initializePlugins from "@/utils/plugins/initialize";
 import { languageRequest, setLocaleFallback, translateError, translateMessage } from "@/lib/i18n";
 import { detectLocale, normalizeLocale } from "@solodrama/i18n";
 
-const autoInstallProviders = ["solodramaComfy.ts", "solodramaComfyCloud.ts", "solodramaRunningHub.ts", "solodramaRunningHubClosed.ts", "compshare.ts", "solodramaTts.ts"];
+const autoInstallProviders = ["solodramaComfy.ts", "solodramaComfyCloud.ts", "solodramaComfyHub.ts", "solodramaRunningHub.ts", "solodramaRunningHubClosed.ts", "compshare.ts", "solodramaTts.ts"];
 const removedDefaultProviders = ["solodramaZhenzhen.ts", "apiMart.ts", "metaso.ts"];
 
 async function removeLegacyBuiltinTools(directory: string) {

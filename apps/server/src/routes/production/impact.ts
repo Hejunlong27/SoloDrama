@@ -1,0 +1,13 @@
+import { Router } from "express";
+import { z } from "zod";
+import { validateFields } from "@/lib/middleware";
+import { success } from "@/lib/responseFormat";
+import u from "@/utils";
+
+export default Router().get("/", validateFields({
+  directory: z.string().min(1).max(4096), targetType: z.enum(["character", "location", "prop"]), targetId: z.uuid(),
+}, "query"), async (req, res) => {
+  u.mcpControl.assertAppRequest(req);
+  const cwd = await u.workspace.resolveWorkspace(req, req.query.directory as string);
+  res.set("Cache-Control", "no-store").json(success(await u.production.productionImpact(cwd, req.query.targetType as "character" | "location" | "prop", req.query.targetId as string)));
+});

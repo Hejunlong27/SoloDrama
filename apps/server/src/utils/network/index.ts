@@ -46,7 +46,7 @@ export async function prepareNetwork(value: unknown) {
   return { httpProxy: url.href, httpsProxy: url.href };
 }
 
-export { configureNetwork };
+export { configureNetwork, requestNetwork };
 
 export async function initializeNetwork() {
   if (!process.versions.bun) return;

@@ -1,5 +1,8 @@
 /// <reference types="bun" />
 
+type ProviderErrorCode = import("./errors").ProviderErrorCode;
+type ProviderSubmissionState = import("./errors").ProviderSubmissionState;
+
 type ModelType = "text" | "image" | "video" | "audio";
 type ProviderProtocol = "openai-completions" | "openai-responses" | "anthropic-messages";
 
@@ -115,6 +118,11 @@ interface ProviderTools {
    * @example const ffmpeg = await this.tool.ffmpeg(); const command = ffmpeg("assets/input.mp4").videoCodec("libx264");
    */
   ffmpeg(): Promise<import("@solodrama/ffmpeg/types").FfmpegFactory>;
+  /** SoloDrama Cloud ComfyUI Hub 宿主能力；普通自定义供应商不使用。 */
+  comfyHub?: {
+    generate(mediaType: "image" | "video" | "audio", request: Record<string, unknown>, signal?: AbortSignal): Promise<MediaAsset[]>;
+    resume(data: ProviderTaskData, signal?: AbortSignal): Promise<MediaAsset[]>;
+  };
 }
 
 interface ImageRequest extends MediaRequest {

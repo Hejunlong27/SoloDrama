@@ -338,7 +338,10 @@ Section "Uninstall"
   Delete "$INSTDIR\闪退请双击我兼容运行.bat"
   IfErrors uninstallFailed
   ${If} $removeUserData == ${BST_CHECKED}
+    ; ACT: 用户显式勾选删除数据时才清理数据；新安装的数据与程序分离，旧版本目录一并兼容。
     RMDir /r "$INSTDIR\data"
+    RMDir /r "$APPDATA\SoloDrama\data"
+    RMDir /r "$APPDATA\SoloDrama\logs"
     RMDir /r "$INSTDIR\WebView2"
     IfErrors uninstallFailed
   ${EndIf}

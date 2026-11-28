@@ -8,7 +8,10 @@ import * as mediaSchemas from "@/utils/media/schemas";
 import * as mediaTasks from "@/utils/media/tasks";
 import * as mediaProvider from "@/utils/media/provider";
 import * as mediaBilling from "@/utils/media/billing";
+import * as providerDiagnostics from "@/utils/media/diagnostics";
 import * as mediaPreview from "@/utils/media/preview";
+import * as comfyHub from "@/utils/comfyHub";
+import * as production from "@/utils/production";
 import * as ffmpeg from "@/utils/ffmpeg";
 import * as pluginInstall from "@/utils/plugins/install";
 import * as pluginDevelopment from "@/utils/plugins/development";
@@ -49,7 +52,10 @@ export default {
   mediaTasks,
   mediaProvider,
   mediaBilling,
+  providerDiagnostics,
   mediaPreview,
+  comfyHub,
+  production,
   ffmpeg,
   pluginInstall,
   pluginDevelopment,

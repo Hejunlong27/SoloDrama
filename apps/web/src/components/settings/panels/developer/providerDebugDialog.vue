@@ -124,7 +124,7 @@ async function install() {
   const owner = new AbortController();
   controller = owner;
   try {
-    await axios.post("/api/providers/media/add", { source: source.value }, { signal: owner.signal });
+    await axios.post("/api/providers/media/add", { source: source.value }, { signal: owner.signal, headers: { "x-solodrama-workspace": "1" } });
     owner.signal.throwIfAborted();
     invalidateNodeModels("media");
     ElMessage.success("供应商已安装，可在媒体模型设置中配置使用");

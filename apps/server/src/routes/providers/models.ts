@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { validateFields } from "@/lib/middleware";
-import { success } from "@/lib/responseFormat";
+import { error, success } from "@/lib/responseFormat";
 import u from "@/utils";
 import { providerHeadersSchema } from "@/utils/ai/provider";
 
@@ -16,6 +16,7 @@ export default router.post("/", validateFields({
   apiKey: z.string().max(8192),
   headers: providerHeadersSchema.optional(),
 }), async (req, res) => {
+  if (!u.workspace.isLocalWorkspaceRequest(req)) return res.status(403).json(error("请在桌面端或服务器本机获取模型列表", null, 403));
   const { apiUrl, protocol, apiKey, headers } = req.body as { apiUrl: string; protocol: string; apiKey: string; headers?: Record<string, string> };
   res.json(success(await u.ai.fetchProviderModels({ apiUrl, protocol, apiKey, headers })));
 });

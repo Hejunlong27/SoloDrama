@@ -1,3 +1,4 @@
+<!-- LEGACY: 独立工作台入口已下线；保留文件仅用于旧项目迁移参考，当前不参与路由或构建。 -->
 <template>
   <section class="workbenchPanel" :aria-busy="loading">
     <div class="filmGrain" aria-hidden="true" />

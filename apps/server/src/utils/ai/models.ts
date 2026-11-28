@@ -5,15 +5,15 @@ import { getProviderBaseUrl } from "@/utils/ai/provider";
 const modelSchema = z.object({
   id: z.string().optional(), name: z.string().optional(),
   display_name: z.string().optional(), displayName: z.string().optional(),
-  inputTokenLimit: z.number().int().positive().optional(),
-  outputTokenLimit: z.number().int().positive().optional(),
-  context_length: z.number().int().positive().optional(),
-  max_output_tokens: z.number().int().positive().optional(),
-  contextWindow: z.number().int().positive().optional(),
-  maxOutputTokens: z.number().int().positive().optional(),
+  inputTokenLimit: z.number().int().nonnegative().optional(),
+  outputTokenLimit: z.number().int().nonnegative().optional(),
+  context_length: z.number().int().nonnegative().optional(),
+  max_output_tokens: z.number().int().nonnegative().optional(),
+  contextWindow: z.number().int().nonnegative().optional(),
+  maxOutputTokens: z.number().int().nonnegative().optional(),
   limit: z.object({
-    context: z.number().int().positive().optional(),
-    output: z.number().int().positive().optional(),
+    context: z.number().int().nonnegative().optional(),
+    output: z.number().int().nonnegative().optional(),
   }).optional(),
   supported_endpoints: z.array(z.string().min(1)).optional(),
 });
@@ -47,11 +47,13 @@ export async function fetchProviderModels({ apiUrl, protocol, apiKey, headers: c
       const id = item.id?.trim();
       if (!id) throw new Error("获取到的模型列表包含无效的模型 ID，无法正常加载。");
       if (item.supported_endpoints?.length && !item.supported_endpoints.includes(requiredEndpoint)) continue;
+      const contextWindow = item.inputTokenLimit ?? item.context_length ?? item.contextWindow ?? item.limit?.context;
+      const maxOutputTokens = item.outputTokenLimit ?? item.max_output_tokens ?? item.maxOutputTokens ?? item.limit?.output;
       models.set(id, {
         id,
         label: item.display_name || item.displayName || item.name || id,
-        contextWindow: item.inputTokenLimit ?? item.context_length ?? item.contextWindow ?? item.limit?.context,
-        maxOutputTokens: item.outputTokenLimit ?? item.max_output_tokens ?? item.maxOutputTokens ?? item.limit?.output,
+        ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+        ...(maxOutputTokens && maxOutputTokens > 0 ? { maxOutputTokens } : {}),
       });
     }
     const cursor = protocol === "anthropic-messages" && result.has_more ? result.last_id : undefined;

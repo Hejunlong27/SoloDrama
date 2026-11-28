@@ -518,9 +518,9 @@ function friendly(code: unknown, message: string): string {
   return [message, hints[value]].filter(Boolean).join("\n");
 }
 
-async function requestJson(context: Context, path: string, body: Record<string, unknown>, json = true): Promise<Record<string, unknown>> {
+async function requestJson(context: Context, path: string, body: Record<string, unknown>, json = true, signal: AbortSignal | null = context.signal ?? null): Promise<Record<string, unknown>> {
   const response = await context.tool.fetch(baseUrlOf(context) + path, {
-    method: "POST", headers: headersOf(context, json), body: JSON.stringify(body), signal: context.signal, redirect: "error",
+    method: "POST", headers: headersOf(context, json), body: JSON.stringify(body), signal, redirect: "error",
   });
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) throw new RunningHubRequestError("RunningHub HTTP " + response.status + "：" + context.tool.errorMessage(payload), response.status);
@@ -623,7 +623,7 @@ async function awaitResult(context: Context, data: RunningHubTaskData): Promise<
 
 async function cancel(context: Context, taskId: string) {
   try {
-    await requestJson(context, "/task/openapi/cancel", { apiKey: apiKeyOf(context), taskId });
+    await requestJson(context, "/task/openapi/cancel", { apiKey: apiKeyOf(context), taskId }, true, null);
   } catch { /* 取消是尽力而为；不覆盖最初的 AbortError。 */ }
 }
 

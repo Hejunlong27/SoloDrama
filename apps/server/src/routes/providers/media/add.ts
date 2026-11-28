@@ -8,6 +8,7 @@ export default Router().post("/", validateFields({
   source: z.string().min(1).max(2 * 1024 * 1024).optional(),
   url: z.string().trim().min(1).max(16384).optional(),
 }), async (req, res) => {
+  if (!u.workspace.isLocalWorkspaceRequest(req)) return res.status(403).json(error("请在桌面端或服务器本机管理媒体供应商", null, 403));
   if ((req.body.source === undefined) === (req.body.url === undefined)) {
     return res.status(400).json(error("请提供供应商代码或文件链接，不能同时提供"));
   }

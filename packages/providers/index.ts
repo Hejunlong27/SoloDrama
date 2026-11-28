@@ -6,6 +6,7 @@ import deepSeek from "./src/language/deepSeek";
 import compshare from "./src/media/compshare";
 import solodramaComfy from "./src/media/solodramaComfy";
 import solodramaComfyCloud from "./src/media/solodramaComfyCloud";
+import solodramaComfyHub from "./src/media/solodramaComfyHub";
 import solodramaRunningHub from "./src/media/solodramaRunningHub";
 import solodramaRunningHubClosed from "./src/media/solodramaRunningHubClosed";
 import solodramaTts from "./src/media/solodramaTts";
@@ -18,7 +19,12 @@ export type ProviderBalance = Awaited<ReturnType<NonNullable<Provider["getBalanc
 export type ProviderTools = ProviderContext["tool"];
 export type ProviderTaskData = Parameters<NonNullable<ProviderContext["saveTaskData"]>>[0];
 export type AudioConvertOptions = Parameters<ProviderTools["audio"]["convert"]>[1];
+export { inferComfyMapping, parseComfyJson, parseComfyJsonWithReport } from "./comfyWorkflow";
+export type { ComfyNodeTarget, ComfyWorkflowConversion, ComfyWorkflowMapping } from "./comfyWorkflow";
+export type { ProviderDiagnosticCheck, ProviderDiagnosticCheckStatus, ProviderDiagnosticResult, ProviderDiagnosticStatus, ProviderDiagnostics } from "./diagnostics";
+export type { ProviderErrorCode, ProviderErrorDetails, ProviderSubmissionState } from "./errors";
+export { annotateProviderError, classifyProviderError, isProviderErrorCode, providerErrorMessage } from "./errors";
 export type { FfmpegFactory, FfmpegCommand } from "@solodrama/ffmpeg/types";
 
 export const languageProviders = [opencodeGo, commandCode, deepSeek] as const;
-export const mediaProviders = [solodramaComfy, solodramaComfyCloud, solodramaRunningHub, solodramaRunningHubClosed, compshare, solodramaTts] as const;
+export const mediaProviders = [solodramaComfy, solodramaComfyCloud, solodramaComfyHub, solodramaRunningHub, solodramaRunningHubClosed, compshare, solodramaTts] as const;

@@ -15,6 +15,7 @@ export type NodeGenerationTask = {
   providerId: string;
   modelId: string;
   state: "submitting" | NonNullable<NodeMediaTaskStatus["state"]>;
+  submissionState?: "submitting" | "submitted" | "accepted" | "unknown";
   resumable?: boolean;
   providerData?: unknown;
   recoveryData?: unknown;
@@ -42,7 +43,7 @@ export function useNodeGeneration(outputs: Readonly<Ref<NodeOutputs>>, cancel: (
   const generating = computed(() => status.value === "running");
   const pendingRecovery = computed(() => !generating.value && needsRecovery());
   const getStatus = () => ({ status: status.value, outputs: outputs.value, ...(error.value ? { error: error.value } : {}),
-    ...(savedData.value.mediaTask ? { task: { taskId: savedData.value.mediaTask.taskId, state: savedData.value.mediaTask.state, resumable: savedData.value.mediaTask.resumable } } : {}) });
+    ...(savedData.value.mediaTask ? { task: { taskId: savedData.value.mediaTask.taskId, state: savedData.value.mediaTask.state, submissionState: savedData.value.mediaTask.submissionState, resumable: savedData.value.mediaTask.resumable } } : {}) });
 
   nodeTools.register({
     name: "getGenerationStatus",
@@ -83,16 +84,17 @@ export function useNodeGeneration(outputs: Readonly<Ref<NodeOutputs>>, cancel: (
         checkTask(task, context);
         if (value.nodeId && value.nodeId !== id) throw new Error("生成任务不属于当前节点");
         if (value.canvasPath && value.canvasPath !== task.canvasPath) throw new Error("生成任务的原画布归属不一致");
-        const before = JSON.stringify([task.state, task.resumable, task.providerData]);
+        const before = JSON.stringify([task.state, task.submissionState, task.resumable, task.providerData]);
         if (value.state) task.state = value.state;
+        if (value.submissionState !== undefined) task.submissionState = value.submissionState;
         if (value.resumable !== undefined) task.resumable = value.resumable;
         if (value.providerData !== undefined) task.providerData = value.providerData;
-        if (before !== JSON.stringify([task.state, task.resumable, task.providerData])) {
+        if (before !== JSON.stringify([task.state, task.submissionState, task.resumable, task.providerData])) {
           const current = getPersistence?.();
           if (!current) throw new Error("画布已关闭，无法保存任务状态");
           await current.save(signal);
         }
-        if (task.state === "interrupted" && task.resumable === false) {
+        if (task.submissionState === "unknown" || (task.state === "interrupted" && task.resumable === false)) {
           throw new Error([value.result?.message, "上次生成结果未知，可能已接单或扣费。请先核对供应商任务；如需重新生成，请点击“放弃任务”。"].filter(Boolean).join("\n"));
         }
       },
@@ -106,7 +108,7 @@ export function useNodeGeneration(outputs: Readonly<Ref<NodeOutputs>>, cancel: (
     if (!context || context.directory !== input.directory) throw new Error("画布尚未就绪，无法保存生成任务");
     let task: NodeGenerationTask = {
       taskId: crypto.randomUUID(), directory: context.directory, canvasPath: context.canvasPath, nodeId: id,
-      mediaType, providerId: input.providerId, modelId: input.modelId, state: "submitting",
+      mediaType, providerId: input.providerId, modelId: input.modelId, state: "submitting", submissionState: "submitting",
       ...(recoveryData === undefined ? {} : { recoveryData: JSON.parse(JSON.stringify(recoveryData)) }),
     };
     savedData.value.mediaTask = task;

@@ -57,11 +57,13 @@
         "@solodrama/multi-tenant-gateway": "workspace:*",
         "@solodrama/multi-tenant-models": "workspace:*",
         "@solodrama/multi-tenant-source-mapping": "workspace:*",
+        "@solodrama/production": "workspace:*",
         "@solodrama/providers": "workspace:*",
         "@solodrama/teams-scaffold": "workspace:*",
         "@solodrama/tool-asset-operator": "workspace:*",
         "@solodrama/tool-browser": "workspace:*",
         "@solodrama/tool-canvas": "workspace:*",
+        "@solodrama/tool-jianying-draft": "workspace:*",
         "@solodrama/tool-sandbox": "workspace:*",
         "@solodrama/tools-scaffold": "workspace:*",
         "conf": "^15.1.0",
@@ -100,6 +102,24 @@
         "@earendil-works/pi-ai": "0.85.1",
         "@form-create/element-ui": "^3",
         "@markmend/ast": "1.1.0",
+        "@solodrama/asr": "workspace:*",
+        "@solodrama/assets": "workspace:*",
+        "@solodrama/ext-scaffold": "workspace:*",
+        "@solodrama/i18n": "workspace:*",
+        "@solodrama/model-icons": "workspace:*",
+        "@solodrama/multi-tenant-admin-web": "workspace:*",
+        "@solodrama/multi-tenant-user-web": "workspace:*",
+        "@solodrama/node-shared": "workspace:*",
+        "@solodrama/node-text": "workspace:*",
+        "@solodrama/node-video": "workspace:*",
+        "@solodrama/nodes-scaffold": "workspace:*",
+        "@solodrama/production": "workspace:*",
+        "@solodrama/provider-web": "workspace:*",
+        "@solodrama/providers": "workspace:*",
+        "@solodrama/server": "workspace:*",
+        "@solodrama/tool-browser": "workspace:*",
+        "@solodrama/tool-canvas": "workspace:*",
+        "@solodrama/tools-scaffold": "workspace:*",
         "@tabler/icons-vue": "^3.46.0",
         "@tanstack/vue-virtual": "3.13.39",
         "@tdesign-vue-next/chat": "^0.7.0",
@@ -116,23 +136,6 @@
         "@tiptap/pm": "3.31.3",
         "@tiptap/starter-kit": "3.31.3",
         "@tiptap/vue-3": "3.31.3",
-        "@solodrama/asr": "workspace:*",
-        "@solodrama/assets": "workspace:*",
-        "@solodrama/ext-scaffold": "workspace:*",
-        "@solodrama/i18n": "workspace:*",
-        "@solodrama/model-icons": "workspace:*",
-        "@solodrama/multi-tenant-admin-web": "workspace:*",
-        "@solodrama/multi-tenant-user-web": "workspace:*",
-        "@solodrama/node-shared": "workspace:*",
-        "@solodrama/node-text": "workspace:*",
-        "@solodrama/node-video": "workspace:*",
-        "@solodrama/nodes-scaffold": "workspace:*",
-        "@solodrama/provider-web": "workspace:*",
-        "@solodrama/providers": "workspace:*",
-        "@solodrama/server": "workspace:*",
-        "@solodrama/tool-browser": "workspace:*",
-        "@solodrama/tool-canvas": "workspace:*",
-        "@solodrama/tools-scaffold": "workspace:*",
         "@vue-flow/background": "^1.3.2",
         "@vue-flow/core": "^1.48.2",
         "@vue-flow/minimap": "^1.5.4",
@@ -214,9 +217,9 @@
       "name": "@solodrama/ext-md",
       "version": "0.1.0",
       "dependencies": {
-        "@tabler/icons-vue": "^3.46.0",
         "@solodrama/ext-scaffold": "workspace:*",
         "@solodrama/i18n": "workspace:*",
+        "@tabler/icons-vue": "^3.46.0",
       },
       "devDependencies": {
         "sass": "^1.104.0",
@@ -461,10 +464,10 @@
       "dependencies": {
         "@earendil-works/pi-agent-core": "0.85.1",
         "@earendil-works/pi-ai": "0.85.1",
-        "@tabler/icons-vue": "^3.46.0",
         "@solodrama/asr": "workspace:*",
         "@solodrama/ffmpeg": "workspace:*",
         "@solodrama/file": "workspace:*",
+        "@tabler/icons-vue": "^3.46.0",
         "@vitejs/plugin-vue": "^6.0.8",
         "eventsource-parser": "3.1.1",
         "vite": "^8.2.2",
@@ -487,8 +490,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@form-create/element-ui": "^3",
-        "@tabler/icons-vue": "^3.46.0",
         "@solodrama/model-icons": "workspace:*",
+        "@tabler/icons-vue": "^3.46.0",
         "vue-draggable-plus": "^0.6.1",
         "x-sender": "1.4.6",
       },
@@ -705,6 +708,13 @@
         "vue": "^3.5.42",
       },
     },
+    "packages/production": {
+      "name": "@solodrama/production",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "^4.6.2",
+      },
+    },
     "packages/providerWeb": {
       "name": "@solodrama/provider-web",
       "version": "0.0.0",
@@ -815,8 +825,8 @@
       "name": "@solodrama/tool-browser",
       "version": "1.0.0",
       "dependencies": {
-        "@tabler/icons-vue": "^3.46.0",
         "@solodrama/file": "workspace:*",
+        "@tabler/icons-vue": "^3.46.0",
         "puppeteer-core": "25.12.0",
         "zod": "^4.6.2",
       },
@@ -1464,6 +1474,126 @@
 
     "@smithy/util-utf8": ["@smithy/util-utf8@2.3.0", "https://registry.npmmirror.com/@smithy/util-utf8/-/util-utf8-2.3.0.tgz", { "dependencies": { "@smithy/util-buffer-from": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A=="],
 
+    "@solodrama/asr": ["@solodrama/asr@workspace:packages/asr"],
+
+    "@solodrama/assets": ["@solodrama/assets@workspace:packages/assets"],
+
+    "@solodrama/desktop": ["@solodrama/desktop@workspace:apps/desktop"],
+
+    "@solodrama/ext-canvas-node": ["@solodrama/ext-canvas-node@workspace:packages/ext/canvasNode"],
+
+    "@solodrama/ext-image": ["@solodrama/ext-image@workspace:packages/ext/image"],
+
+    "@solodrama/ext-md": ["@solodrama/ext-md@workspace:packages/ext/md"],
+
+    "@solodrama/ext-media": ["@solodrama/ext-media@workspace:packages/ext/media"],
+
+    "@solodrama/ext-scaffold": ["@solodrama/ext-scaffold@workspace:packages/extScaffold"],
+
+    "@solodrama/ext-txt": ["@solodrama/ext-txt@workspace:packages/ext/txt"],
+
+    "@solodrama/ffmpeg": ["@solodrama/ffmpeg@workspace:packages/ffmpeg"],
+
+    "@solodrama/file": ["@solodrama/file@workspace:packages/file"],
+
+    "@solodrama/i18n": ["@solodrama/i18n@workspace:packages/i18n"],
+
+    "@solodrama/mcp": ["@solodrama/mcp@workspace:packages/mcp"],
+
+    "@solodrama/mobile": ["@solodrama/mobile@workspace:apps/mobile"],
+
+    "@solodrama/model-icons": ["@solodrama/model-icons@workspace:packages/modelIcons"],
+
+    "@solodrama/multi-tenant-admin-web": ["@solodrama/multi-tenant-admin-web@workspace:packages/multiTenant/adminWeb"],
+
+    "@solodrama/multi-tenant-auth": ["@solodrama/multi-tenant-auth@workspace:packages/multiTenant/auth"],
+
+    "@solodrama/multi-tenant-billing": ["@solodrama/multi-tenant-billing@workspace:packages/multiTenant/billing"],
+
+    "@solodrama/multi-tenant-db": ["@solodrama/multi-tenant-db@workspace:packages/multiTenant/db"],
+
+    "@solodrama/multi-tenant-gateway": ["@solodrama/multi-tenant-gateway@workspace:packages/multiTenant/gateway"],
+
+    "@solodrama/multi-tenant-models": ["@solodrama/multi-tenant-models@workspace:packages/multiTenant/models"],
+
+    "@solodrama/multi-tenant-source-mapping": ["@solodrama/multi-tenant-source-mapping@workspace:packages/multiTenant/sourceMapping"],
+
+    "@solodrama/multi-tenant-user-web": ["@solodrama/multi-tenant-user-web@workspace:packages/multiTenant/userWeb"],
+
+    "@solodrama/node-audio": ["@solodrama/node-audio@workspace:packages/nodes/audioNode"],
+
+    "@solodrama/node-audio-generation": ["@solodrama/node-audio-generation@workspace:packages/nodes/audioGenerationNode"],
+
+    "@solodrama/node-director3d": ["@solodrama/node-director3d@workspace:packages/nodes/director3dNode"],
+
+    "@solodrama/node-frame-analysis": ["@solodrama/node-frame-analysis@workspace:packages/nodes/frameAnalysisNode"],
+
+    "@solodrama/node-image": ["@solodrama/node-image@workspace:packages/nodes/imageNode"],
+
+    "@solodrama/node-image-generation": ["@solodrama/node-image-generation@workspace:packages/nodes/imageGenerationNode"],
+
+    "@solodrama/node-shared": ["@solodrama/node-shared@workspace:packages/nodeShared"],
+
+    "@solodrama/node-text": ["@solodrama/node-text@workspace:packages/nodes/textNode"],
+
+    "@solodrama/node-video": ["@solodrama/node-video@workspace:packages/nodes/videoNode"],
+
+    "@solodrama/node-video-generation": ["@solodrama/node-video-generation@workspace:packages/nodes/videoGenerationNode"],
+
+    "@solodrama/nodes-scaffold": ["@solodrama/nodes-scaffold@workspace:packages/nodeScaffold"],
+
+    "@solodrama/production": ["@solodrama/production@workspace:packages/production"],
+
+    "@solodrama/provider-web": ["@solodrama/provider-web@workspace:packages/providerWeb"],
+
+    "@solodrama/providers": ["@solodrama/providers@workspace:packages/providers"],
+
+    "@solodrama/server": ["@solodrama/server@workspace:apps/server"],
+
+    "@solodrama/startup": ["@solodrama/startup@workspace:packages/startup"],
+
+    "@solodrama/team-storyboard": ["@solodrama/team-storyboard@workspace:packages/teams/storyboardTeam"],
+
+    "@solodrama/teams-scaffold": ["@solodrama/teams-scaffold@workspace:packages/teamScaffold"],
+
+    "@solodrama/tool-ask-user": ["@solodrama/tool-ask-user@workspace:packages/tools/askUser"],
+
+    "@solodrama/tool-asset-operator": ["@solodrama/tool-asset-operator@workspace:packages/tools/assetOperator"],
+
+    "@solodrama/tool-browser": ["@solodrama/tool-browser@workspace:packages/tools/browser"],
+
+    "@solodrama/tool-canvas": ["@solodrama/tool-canvas@workspace:packages/tools/canvas"],
+
+    "@solodrama/tool-cover-design": ["@solodrama/tool-cover-design@workspace:packages/tools/coverDesign"],
+
+    "@solodrama/tool-ffmpeg": ["@solodrama/tool-ffmpeg@workspace:packages/tools/ffmpeg"],
+
+    "@solodrama/tool-jianying-draft": ["@solodrama/tool-jianying-draft@workspace:packages/tools/jianyingDraft"],
+
+    "@solodrama/tool-local-tts": ["@solodrama/tool-local-tts@workspace:packages/tools/localTts"],
+
+    "@solodrama/tool-plugin-developer": ["@solodrama/tool-plugin-developer@workspace:packages/tools/pluginDeveloper"],
+
+    "@solodrama/tool-production-pipeline": ["@solodrama/tool-production-pipeline@workspace:packages/tools/productionPipeline"],
+
+    "@solodrama/tool-project-budget": ["@solodrama/tool-project-budget@workspace:packages/tools/projectBudget"],
+
+    "@solodrama/tool-sandbox": ["@solodrama/tool-sandbox@workspace:packages/tools/sandbox"],
+
+    "@solodrama/tool-skill-operator": ["@solodrama/tool-skill-operator@workspace:packages/tools/skillOperator"],
+
+    "@solodrama/tool-web-fetch": ["@solodrama/tool-web-fetch@workspace:packages/tools/webFetch"],
+
+    "@solodrama/tool-web-search": ["@solodrama/tool-web-search@workspace:packages/tools/webSearch"],
+
+    "@solodrama/tool-workspace": ["@solodrama/tool-workspace@workspace:packages/tools/workspace"],
+
+    "@solodrama/tools-scaffold": ["@solodrama/tools-scaffold@workspace:packages/toolScaffold"],
+
+    "@solodrama/updateServer": ["@solodrama/updateServer@workspace:apps/updateServer"],
+
+    "@solodrama/web": ["@solodrama/web@workspace:apps/web"],
+
     "@stablelib/base64": ["@stablelib/base64@1.0.1", "https://registry.npmmirror.com/@stablelib/base64/-/base64-1.0.1.tgz", {}, "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "https://registry.npmmirror.com/@standard-schema/spec/-/spec-1.1.0.tgz", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
@@ -1567,124 +1697,6 @@
     "@tokenizer/inflate": ["@tokenizer/inflate@0.4.1", "https://registry.npmmirror.com/@tokenizer/inflate/-/inflate-0.4.1.tgz", { "dependencies": { "debug": "^4.4.3", "token-types": "^6.1.1" } }, "sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA=="],
 
     "@tokenizer/token": ["@tokenizer/token@0.3.0", "https://registry.npmmirror.com/@tokenizer/token/-/token-0.3.0.tgz", {}, "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A=="],
-
-    "@solodrama/asr": ["@solodrama/asr@workspace:packages/asr"],
-
-    "@solodrama/assets": ["@solodrama/assets@workspace:packages/assets"],
-
-    "@solodrama/desktop": ["@solodrama/desktop@workspace:apps/desktop"],
-
-    "@solodrama/ext-canvas-node": ["@solodrama/ext-canvas-node@workspace:packages/ext/canvasNode"],
-
-    "@solodrama/ext-image": ["@solodrama/ext-image@workspace:packages/ext/image"],
-
-    "@solodrama/ext-md": ["@solodrama/ext-md@workspace:packages/ext/md"],
-
-    "@solodrama/ext-media": ["@solodrama/ext-media@workspace:packages/ext/media"],
-
-    "@solodrama/ext-scaffold": ["@solodrama/ext-scaffold@workspace:packages/extScaffold"],
-
-    "@solodrama/ext-txt": ["@solodrama/ext-txt@workspace:packages/ext/txt"],
-
-    "@solodrama/ffmpeg": ["@solodrama/ffmpeg@workspace:packages/ffmpeg"],
-
-    "@solodrama/file": ["@solodrama/file@workspace:packages/file"],
-
-    "@solodrama/i18n": ["@solodrama/i18n@workspace:packages/i18n"],
-
-    "@solodrama/mcp": ["@solodrama/mcp@workspace:packages/mcp"],
-
-    "@solodrama/mobile": ["@solodrama/mobile@workspace:apps/mobile"],
-
-    "@solodrama/model-icons": ["@solodrama/model-icons@workspace:packages/modelIcons"],
-
-    "@solodrama/multi-tenant-admin-web": ["@solodrama/multi-tenant-admin-web@workspace:packages/multiTenant/adminWeb"],
-
-    "@solodrama/multi-tenant-auth": ["@solodrama/multi-tenant-auth@workspace:packages/multiTenant/auth"],
-
-    "@solodrama/multi-tenant-billing": ["@solodrama/multi-tenant-billing@workspace:packages/multiTenant/billing"],
-
-    "@solodrama/multi-tenant-db": ["@solodrama/multi-tenant-db@workspace:packages/multiTenant/db"],
-
-    "@solodrama/multi-tenant-gateway": ["@solodrama/multi-tenant-gateway@workspace:packages/multiTenant/gateway"],
-
-    "@solodrama/multi-tenant-models": ["@solodrama/multi-tenant-models@workspace:packages/multiTenant/models"],
-
-    "@solodrama/multi-tenant-source-mapping": ["@solodrama/multi-tenant-source-mapping@workspace:packages/multiTenant/sourceMapping"],
-
-    "@solodrama/multi-tenant-user-web": ["@solodrama/multi-tenant-user-web@workspace:packages/multiTenant/userWeb"],
-
-    "@solodrama/node-audio": ["@solodrama/node-audio@workspace:packages/nodes/audioNode"],
-
-    "@solodrama/node-audio-generation": ["@solodrama/node-audio-generation@workspace:packages/nodes/audioGenerationNode"],
-
-    "@solodrama/node-director3d": ["@solodrama/node-director3d@workspace:packages/nodes/director3dNode"],
-
-    "@solodrama/node-frame-analysis": ["@solodrama/node-frame-analysis@workspace:packages/nodes/frameAnalysisNode"],
-
-    "@solodrama/node-image": ["@solodrama/node-image@workspace:packages/nodes/imageNode"],
-
-    "@solodrama/node-image-generation": ["@solodrama/node-image-generation@workspace:packages/nodes/imageGenerationNode"],
-
-    "@solodrama/node-shared": ["@solodrama/node-shared@workspace:packages/nodeShared"],
-
-    "@solodrama/node-text": ["@solodrama/node-text@workspace:packages/nodes/textNode"],
-
-    "@solodrama/node-video": ["@solodrama/node-video@workspace:packages/nodes/videoNode"],
-
-    "@solodrama/node-video-generation": ["@solodrama/node-video-generation@workspace:packages/nodes/videoGenerationNode"],
-
-    "@solodrama/nodes-scaffold": ["@solodrama/nodes-scaffold@workspace:packages/nodeScaffold"],
-
-    "@solodrama/provider-web": ["@solodrama/provider-web@workspace:packages/providerWeb"],
-
-    "@solodrama/providers": ["@solodrama/providers@workspace:packages/providers"],
-
-    "@solodrama/server": ["@solodrama/server@workspace:apps/server"],
-
-    "@solodrama/startup": ["@solodrama/startup@workspace:packages/startup"],
-
-    "@solodrama/team-storyboard": ["@solodrama/team-storyboard@workspace:packages/teams/storyboardTeam"],
-
-    "@solodrama/teams-scaffold": ["@solodrama/teams-scaffold@workspace:packages/teamScaffold"],
-
-    "@solodrama/tool-ask-user": ["@solodrama/tool-ask-user@workspace:packages/tools/askUser"],
-
-    "@solodrama/tool-asset-operator": ["@solodrama/tool-asset-operator@workspace:packages/tools/assetOperator"],
-
-    "@solodrama/tool-browser": ["@solodrama/tool-browser@workspace:packages/tools/browser"],
-
-    "@solodrama/tool-canvas": ["@solodrama/tool-canvas@workspace:packages/tools/canvas"],
-
-    "@solodrama/tool-cover-design": ["@solodrama/tool-cover-design@workspace:packages/tools/coverDesign"],
-
-    "@solodrama/tool-ffmpeg": ["@solodrama/tool-ffmpeg@workspace:packages/tools/ffmpeg"],
-
-    "@solodrama/tool-jianying-draft": ["@solodrama/tool-jianying-draft@workspace:packages/tools/jianyingDraft"],
-
-    "@solodrama/tool-local-tts": ["@solodrama/tool-local-tts@workspace:packages/tools/localTts"],
-
-    "@solodrama/tool-plugin-developer": ["@solodrama/tool-plugin-developer@workspace:packages/tools/pluginDeveloper"],
-
-    "@solodrama/tool-production-pipeline": ["@solodrama/tool-production-pipeline@workspace:packages/tools/productionPipeline"],
-
-    "@solodrama/tool-project-budget": ["@solodrama/tool-project-budget@workspace:packages/tools/projectBudget"],
-
-    "@solodrama/tool-sandbox": ["@solodrama/tool-sandbox@workspace:packages/tools/sandbox"],
-
-    "@solodrama/tool-skill-operator": ["@solodrama/tool-skill-operator@workspace:packages/tools/skillOperator"],
-
-    "@solodrama/tool-web-fetch": ["@solodrama/tool-web-fetch@workspace:packages/tools/webFetch"],
-
-    "@solodrama/tool-web-search": ["@solodrama/tool-web-search@workspace:packages/tools/webSearch"],
-
-    "@solodrama/tool-workspace": ["@solodrama/tool-workspace@workspace:packages/tools/workspace"],
-
-    "@solodrama/tools-scaffold": ["@solodrama/tools-scaffold@workspace:packages/toolScaffold"],
-
-    "@solodrama/updateServer": ["@solodrama/updateServer@workspace:apps/updateServer"],
-
-    "@solodrama/web": ["@solodrama/web@workspace:apps/web"],
 
     "@tootallnate/once": ["@tootallnate/once@2.0.1", "https://registry.npmmirror.com/@tootallnate/once/-/once-2.0.1.tgz", {}, "sha512-HqmEUIGRJ5fSXchkVgR5F7qn48bDBzv0kWj/Kfu5e6uci4UlEeng4331LnBkWffb++Ei3FOVLxo8JJWMFBDMeQ=="],
 
@@ -3130,14 +3142,6 @@
 
     "@puppeteer/browsers/modern-tar": ["modern-tar@0.8.5", "https://registry.npmmirror.com/modern-tar/-/modern-tar-0.8.5.tgz", {}, "sha512-snEhs+6G5Tjd4I7tLCDOaoln2RgE0bD19RzEKgvgK2hZ5VKy3MpLhLTZ2fWpXSTg4K2cyPwp+VHATFJhxfnOeA=="],
 
-    "@tdesign-vue-next/chat/highlight.js": ["highlight.js@11.12.0", "https://registry.npmmirror.com/highlight.js/-/highlight.js-11.12.0.tgz", {}, "sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg=="],
-
-    "@tdesign-vue-next/chat/marked": ["marked@12.0.2", "https://registry.npmmirror.com/marked/-/marked-12.0.2.tgz", { "bin": { "marked": "bin/marked.js" } }, "sha512-qXUm7e/YKFoqFPYPa3Ukg9xlI5cyAtGmyEIzMfW//m6kXwCy2Ps9DYf5ioijFKQ8qyuscrHoY04iJGctu2Kg0Q=="],
-
-    "@tdesign/web-components/@popperjs/core": ["@popperjs/core@2.11.8", "https://registry.npmmirror.com/@popperjs/core/-/core-2.11.8.tgz", {}, "sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A=="],
-
-    "@tiptap/markdown/marked": ["marked@17.0.6", "https://registry.npmmirror.com/marked/-/marked-17.0.6.tgz", { "bin": { "marked": "bin/marked.js" } }, "sha512-gB0gkNafnonOw0obSTEGZTT86IuhILt2Wfx0mWH/1Au83kybTayroZ/V6nS25mN7u8ASy+5fMhgB3XPNrOZdmA=="],
-
     "@solodrama/ext-canvas-node/typescript": ["typescript@6.0.3", "https://registry.npmmirror.com/typescript/-/typescript-6.0.3.tgz", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "@solodrama/ext-image/typescript": ["typescript@6.0.3", "https://registry.npmmirror.com/typescript/-/typescript-6.0.3.tgz", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
@@ -3189,6 +3193,14 @@
     "@solodrama/tool-plugin-developer/typescript": ["typescript@6.0.3", "https://registry.npmmirror.com/typescript/-/typescript-6.0.3.tgz", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "@solodrama/web/typescript": ["typescript@6.0.3", "https://registry.npmmirror.com/typescript/-/typescript-6.0.3.tgz", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+
+    "@tdesign-vue-next/chat/highlight.js": ["highlight.js@11.12.0", "https://registry.npmmirror.com/highlight.js/-/highlight.js-11.12.0.tgz", {}, "sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg=="],
+
+    "@tdesign-vue-next/chat/marked": ["marked@12.0.2", "https://registry.npmmirror.com/marked/-/marked-12.0.2.tgz", { "bin": { "marked": "bin/marked.js" } }, "sha512-qXUm7e/YKFoqFPYPa3Ukg9xlI5cyAtGmyEIzMfW//m6kXwCy2Ps9DYf5ioijFKQ8qyuscrHoY04iJGctu2Kg0Q=="],
+
+    "@tdesign/web-components/@popperjs/core": ["@popperjs/core@2.11.8", "https://registry.npmmirror.com/@popperjs/core/-/core-2.11.8.tgz", {}, "sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A=="],
+
+    "@tiptap/markdown/marked": ["marked@17.0.6", "https://registry.npmmirror.com/marked/-/marked-17.0.6.tgz", { "bin": { "marked": "bin/marked.js" } }, "sha512-gB0gkNafnonOw0obSTEGZTT86IuhILt2Wfx0mWH/1Au83kybTayroZ/V6nS25mN7u8ASy+5fMhgB3XPNrOZdmA=="],
 
     "@types/three/@tweenjs/tween.js": ["@tweenjs/tween.js@23.1.3", "https://registry.npmmirror.com/@tweenjs/tween.js/-/tween.js-23.1.3.tgz", {}, "sha512-vJmvvwFxYuGnF2axRtPYocag6Clbb5YS7kLL+SO/TeVFzHqDIWrNKYtcsPMibjDx9O+bu+psAy9NKfWklassUA=="],
 

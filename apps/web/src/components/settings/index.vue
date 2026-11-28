@@ -27,7 +27,7 @@
                 v-else
                 :is="activePanel.component"
                 v-bind="
-                  ['skills', 'pluginMarket', 'languageModel', 'mediaModel', 'personalization'].includes(activePanel.id) ? { visible } : {}
+                  ['skills', 'pluginMarket', 'languageModel', 'mediaModel', 'cloudCompute', 'personalization'].includes(activePanel.id) ? { visible } : {}
                 " />
             </keep-alive>
           </transition>
@@ -58,6 +58,7 @@ import {
   IconNetwork,
   IconUserCircle,
   IconBook,
+  IconCloud,
 } from "@tabler/icons-vue";
 
 type SettingsPanel = { id: string; label: string; icon: Component; component: Component; groupLabel?: string };
@@ -71,6 +72,13 @@ const allSettingsPanels: SettingsPanel[] = [
     component: defineAsyncComponent(() => import("./panels/languageModel/index.vue")),
   },
   { id: "mediaModel", label: "媒体模型", icon: IconPhotoVideo, component: defineAsyncComponent(() => import("./panels/mediaModel/index.vue")) },
+  {
+    id: "cloudCompute",
+    label: "云端算力中心",
+    icon: IconCloud,
+    groupLabel: "算力与工作流",
+    component: defineAsyncComponent(() => import("./panels/cloudCompute/index.vue")),
+  },
   {
     id: "skills",
     label: "Skills",

@@ -5,6 +5,9 @@
         <el-button class="toolButton" text aria-label="退出项目" title="退出项目" @click="exitVisible = true">
           <icon-logout :size="18" aria-hidden="true" />
         </el-button>
+        <el-button v-if="actualPlatform.isLocalDesktop" class="toolButton" text aria-label="启动控制中心" title="启动控制中心" @click="emit('openLauncher')">
+          <icon-rocket :size="18" aria-hidden="true" />
+        </el-button>
         <el-button class="toolButton" text :aria-label="hasDesktopUpdate ? '设置，有新版本可用' : '设置'" title="设置" @click="emit('openSettings')">
           <el-badge isDot :hidden="!hasDesktopUpdate">
             <icon-settings :size="18" aria-hidden="true" />
@@ -25,10 +28,11 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { IconLogout, IconSettings } from "@tabler/icons-vue";
+import { IconLogout, IconRocket, IconSettings } from "@tabler/icons-vue";
 import { hasDesktopUpdate } from "@/stores/desktopUpdate";
+import { actualPlatform } from "@/lib/platform";
 
-const emit = defineEmits<{ openSettings: [] }>();
+const emit = defineEmits<{ openSettings: []; openLauncher: [] }>();
 const router = useRouter();
 const exitVisible = ref(false);
 const leaving = ref(false);

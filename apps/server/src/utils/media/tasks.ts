@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
-import { lstat, mkdir, readFile, realpath, writeAtomic } from "@solodrama/file";
+import { lstat, mkdir, readFile, readdir, realpath, writeAtomic } from "@solodrama/file";
 import type { ProviderTaskData } from "@solodrama/providers";
 import type { GeneratedMedia, MediaGenerationRequest } from "@solodrama/tools-scaffold/runtime";
 import type { AuthIdentity } from "@solodrama/multi-tenant-auth";
@@ -22,6 +22,7 @@ const relativePathSchema = z.string().min(1).max(4096).refine(value => !/^[\\/]|
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const mediaSchema = z.strictObject({ path: relativePathSchema, mimeType: z.string().min(1).max(256), mediaType: mediaTypeSchema });
 const checkpointSchema = z.strictObject({
+  submissionState: z.enum(["submitting", "submitted", "accepted", "unknown"]).optional(),
   providerData: z.record(z.string(), z.json()).optional(),
   assets: z.array(z.strictObject({
     type: z.literal("url"), mediaType: mediaTypeSchema, url: z.string().regex(/^https?:\/\//i),
@@ -47,7 +48,10 @@ const recordSchema = z.strictObject({
   createdAt: z.number().finite().nonnegative(), updatedAt: z.number().finite().nonnegative(),
   checkpoint: checkpointSchema,
   blobs: z.array(blobSchema).optional(),
-  result: z.strictObject({ code: z.number().int(), data: z.array(mediaSchema).nullable(), message: z.string() }).optional(),
+  result: z.strictObject({
+    code: z.number().int(), data: z.array(mediaSchema).nullable(), message: z.string(),
+    providerCode: z.string().optional(), upstreamCode: z.string().optional(), retryable: z.boolean().optional(),
+  }).optional(),
 }).superRefine((record, context) => {
   const issue = (message: string) => context.addIssue({ code: "custom", message });
   if (!record.request || !record.mediaType) {
@@ -262,7 +266,7 @@ function publicData(task: MediaTask) {
 
 async function snapshot(task: MediaTask, owner?: AuthIdentity | null) {
   const { taskId, state, nodeId, canvasPath, result } = task.record;
-  return { taskId, state, resumable: await resumable(task), nodeId, canvasPath,
+  return { taskId, state, submissionState: task.record.checkpoint.submissionState, resumable: await resumable(task), nodeId, canvasPath,
     ...(owner?.role === "user" ? {} : { providerData: publicData(task) }), ...(result ? { result } : {}) };
 }
 
@@ -378,6 +382,7 @@ async function execute(task: MediaTask, resume: boolean) {
     await locked(task.key, async () => {
       if (record.state !== "running") return;
       await settleCharge(task, files);
+      record.checkpoint.submissionState = "accepted";
       record.state = "succeeded";
       record.result = success(files);
       await persist(task);
@@ -387,9 +392,22 @@ async function execute(task: MediaTask, resume: boolean) {
       await locked(task.key, async () => {
         if (record.state !== "running") return;
         const notSubmitted = isMediaNotSubmitted(cause);
-        record.state = notSubmitted || (cause as { code?: string } | null)?.code === "MEDIA_TASK_FAILED" ? "failed" : "interrupted";
+        const taskFailed = (cause as { code?: string } | null)?.code === "MEDIA_TASK_FAILED";
+        record.state = notSubmitted || taskFailed ? "failed" : "interrupted";
         const result = errorFromCause(cause);
-        record.result = { ...result, code: result.code === 200 ? 500 : result.code, data: null };
+        const accepted = !!record.checkpoint.providerData || record.checkpoint.assetCount !== undefined
+          || !!record.checkpoint.files?.length || record.checkpoint.submissionState === "accepted";
+        if (!notSubmitted && !taskFailed && !accepted) {
+          record.checkpoint.submissionState = "unknown";
+          result.message = "供应商提交结果未知，任务可能已接单或扣费。请先核对供应商任务；不要直接重复提交。";
+        }
+        const details = result.data && typeof result.data === "object" ? result.data as Record<string, unknown> : {};
+        record.result = {
+          ...result, code: result.code === 200 ? 500 : result.code, data: null,
+          ...(typeof details.providerCode === "string" ? { providerCode: details.providerCode } : {}),
+          ...(typeof details.upstreamCode === "string" ? { upstreamCode: details.upstreamCode } : {}),
+          ...(typeof details.retryable === "boolean" ? { retryable: details.retryable } : {}),
+        };
         await persist(task);
         if (record.state === "failed") await releaseCharge(task, notSubmitted);
       });
@@ -484,7 +502,7 @@ export async function start(cwd: string, taskId: string, mediaType: "image" | "v
     const task: MediaTask = { key, blobs: [], active: false, record: {
       version: 1, taskId, cwd, mediaType, request: parsed, ...attachment,
       ownerUserId: owner?.role === "user" ? owner.id : undefined, modelRouteCipher,
-      state: "running", createdAt: now, updatedAt: now, checkpoint: {},
+      state: "running", createdAt: now, updatedAt: now, checkpoint: { submissionState: "submitting" },
     } };
     try {
       // SQL 预占与文件提交不能原子完成；先保留提交意图，chargeId 成功落盘后才允许调用上游。
@@ -518,6 +536,13 @@ export async function status(cwd: string, taskIds: string[], resume = false, own
       if (task.persistenceError) await persist(task);
       await reconcileCharge(task);
       if (!task.active && task.record.state === "running" && await prepareCharge(task, true)) await launch(task, false);
+      if (!task.active && task.record.state === "running" && task.record.checkpoint.submissionState === "submitting"
+        && !task.record.checkpoint.providerData && task.record.checkpoint.assetCount === undefined && !task.record.checkpoint.files?.length) {
+        task.record.state = "failed";
+        task.record.result = error("任务尚未提交，可直接重新生成", null, 409);
+        await persist(task);
+        await releaseCharge(task, true);
+      }
       if (!task.active && (task.record.state === "running" || (resume && task.record.state === "interrupted"))) {
         if (await resumable(task)) await launch(task, true);
         else {
@@ -559,6 +584,38 @@ export async function cancel(cwd: string, taskIds: string[], owner?: AuthIdentit
       await releaseCharge(task);
     });
   }));
+}
+
+
+export async function listComfyHubTasks(limit = 200) {
+  const root = join(dirname(conf.path), "mediaTasks");
+  const directories = await readdir(root, { withFileTypes: true }).catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === "ENOENT") return [];
+    throw cause;
+  });
+  const tasks: Record<string, unknown>[] = [];
+  for (const directory of directories) {
+    if (!directory.isDirectory()) continue;
+    const files = await readdir(join(root, directory.name), { withFileTypes: true }).catch(() => []);
+    for (const file of files) {
+      if (!file.isFile() || !/^task[a-f0-9]{32}\.json$/i.test(file.name)) continue;
+      try {
+        const bytes = await readFile(join(root, directory.name, file.name), { encoding: "utf8" });
+        if (bytes.length > maxRecordSize) continue;
+        const record = recordSchema.parse(JSON.parse(bytes));
+        if (record.request?.providerId !== "solodramaComfyHub") continue;
+        const providerData = record.checkpoint.providerData;
+        tasks.push({
+          taskId: record.taskId, state: record.state, submissionState: record.checkpoint.submissionState,
+          createdAt: record.createdAt, updatedAt: record.updatedAt, mediaType: record.mediaType,
+          workflowId: record.request.modelId, instanceId: typeof providerData?.instanceId === "string" ? providerData.instanceId : undefined,
+          promptId: typeof providerData?.promptId === "string" ? providerData.promptId : undefined,
+          result: record.result,
+        });
+      } catch { /* ACT: 单条损坏任务不阻断任务中心读取。 */ }
+    }
+  }
+  return tasks.sort((left, right) => Number(right.updatedAt) - Number(left.updatedAt)).slice(0, Math.max(1, Math.min(500, limit)));
 }
 
 export async function wait(cwd: string, taskId: string, owner?: AuthIdentity | null, signal?: AbortSignal): Promise<GeneratedMedia[]> {

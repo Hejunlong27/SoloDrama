@@ -12,7 +12,7 @@
     <div v-if="mode === 'builtin'" class="providerPicker">
       <aside class="providerSidebar" aria-label="选择厂商">
         <button
-          v-for="item in mediaProviders"
+          v-for="item in selectableProviders"
           :key="item.id"
           class="providerItem"
           type="button"
@@ -141,8 +141,9 @@ const { mode = "custom", provider } = defineProps<{ mode?: "builtin" | "custom";
 const visible = defineModel<boolean>({ default: false });
 const emit = defineEmits<{ added: [provider: MediaProvider]; saved: [provider: MediaProvider] }>();
 const providerSources: Record<string, string> = { solodramaComfy: solodramaComfySource, solodramaComfyCloud: solodramaComfyCloudSource, solodramaRunningHub: solodramaRunningHubSource, solodramaRunningHubClosed: solodramaRunningHubClosedSource, compshare: compshareSource };
-const selectedProvider = ref<string>(mediaProviders[0]?.id ?? "");
-const activeProvider = computed(() => mediaProviders.find(provider => provider.id === selectedProvider.value));
+const selectableProviders = mediaProviders.filter(provider => provider.id !== "solodramaComfyHub").map(provider => ({ ...provider, icon: "icon" in provider ? provider.icon : undefined }));
+const selectedProvider = ref<string>(selectableProviders[0]?.id ?? "");
+const activeProvider = computed(() => selectableProviders.find(provider => provider.id === selectedProvider.value));
 const activeProviderVersion = computed(() => activeProvider.value && "version" in activeProvider.value ? activeProvider.value.version : "");
 const models = shallowRef<MediaProviderModel[]>([]);
 const providerReadme = computed(() => {
@@ -222,7 +223,7 @@ watch(visible, value => {
   agentOpening = undefined;
   openingAgent.value = false;
   if (!value) { agentVisible.value = false; return; }
-  selectedProvider.value = mediaProviders[0]?.id ?? "";
+  selectedProvider.value = selectableProviders[0]?.id ?? "";
   activeTab.value = provider ? "code" : "file";
   promptExpanded.value = false;
   formApi.value = undefined;
@@ -328,7 +329,7 @@ async function addProvider() {
     }
     if (!addedProvider.value) {
       const payload = isUrlImport.value ? { url: sourceUrl.value.trim() } : { source: source.value };
-      const { data } = await axios.post<{ data: MediaProvider }>("/api/providers/media/add", payload);
+      const { data } = await axios.post<{ data: MediaProvider }>("/api/providers/media/add", payload, { headers: { "x-solodrama-workspace": "1" } });
       addedProvider.value = data.data;
       emit("added", data.data);
       invalidateNodeModels("media");

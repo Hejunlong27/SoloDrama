@@ -1,6 +1,8 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import { useHelloStore } from "@/stores/hello";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { settings } from "@/stores/settings";
+import { actualPlatform } from "@/lib/platform";
 import { publicWeb } from "@/stores/multiTenant";
 import { adminRoute } from "@/pages/multiTenant/router";
 const router = createRouter({
@@ -8,7 +10,26 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: () => publicWeb.value ? "/home" : "/hello",
+      redirect: () => {
+        if (publicWeb.value) return "/home";
+        if (actualPlatform.isLocalDesktop) {
+          const launcher = settings.value.launcher && typeof settings.value.launcher === "object" && !Array.isArray(settings.value.launcher)
+            ? settings.value.launcher as Record<string, unknown> : {};
+          if (launcher.launcherOnboarded !== true && settings.value.helloCompleted !== true) return "/launcher";
+          if (launcher.autoOpenWorkspace === false) return "/launcher";
+        }
+        return "/hello";
+      },
+    },
+    {
+      path: "/launcher",
+      beforeEnter: () => actualPlatform.isLocalDesktop || { path: "/home", replace: true },
+      component: () => import("@/pages/launcher/index.vue"),
+    },
+    {
+      path: "/cloudCompute",
+      beforeEnter: () => actualPlatform.isDesktop || { path: "/home", replace: true },
+      component: () => import("@/components/settings/panels/cloudCompute/index.vue"),
     },
     {
       path: "/hello",

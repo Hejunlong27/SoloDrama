@@ -111,7 +111,7 @@ async function fetchModels(provider: MediaProvider) {
   try {
     const { data } = await axios.post<{ code: number; data: MediaProvider; message: string }>("/api/providers/media/models", {
       fileName: provider.fileName, revision: provider.revision,
-    }, { timeout: 35000 });
+    }, { timeout: 35000, headers: { "x-solodrama-workspace": "1" } });
     if (data.code !== 200 || !data.data) throw new Error(data.message || "获取模型失败");
     saveProviderItem(data.data);
     invalidateNodeModels("media");
@@ -126,7 +126,7 @@ async function deleteProvider(provider: MediaProvider) {
   deletingFile.value = provider.fileName;
   let deleted = false;
   try {
-    await axios.delete("/api/providers/media/delete", { data: { fileName: provider.fileName, revision: provider.revision } });
+    await axios.delete("/api/providers/media/delete", { data: { fileName: provider.fileName, revision: provider.revision }, headers: { "x-solodrama-workspace": "1" } });
     deleted = true;
     loadRequest++;
     invalidateNodeModels("media");

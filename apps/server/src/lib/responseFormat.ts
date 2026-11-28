@@ -29,7 +29,7 @@ export function errorFromCause(cause: unknown): ApiResponse {
   if (cause instanceof z.ZodError) {
     return error("参数错误", cause.issues.map(issue => ({ ...issue, message: translateMessage(issue.message) })), 400);
   }
-  const failure = cause as { status?: number; code?: string } | null;
+  const failure = cause as { status?: number; code?: string; providerCode?: string; retryable?: boolean; upstreamCode?: string } | null;
   const code = failure?.code;
   const status = failure?.status || ({ ENOENT: 404, ENOTDIR: 404, EEXIST: 409, ENOTEMPTY: 409, EACCES: 403, EPERM: 403 }[code ?? ""] ?? 500);
   const message =
@@ -42,5 +42,11 @@ export function errorFromCause(cause: unknown): ApiResponse {
       EPERM: "系统不允许这次操作。文件可能正在被其他程序使用，请关闭后重试。",
       EISDIR: "你选中的是文件夹，但这里需要的是文件。请重新选择具体文件。",
     }[code ?? ""] ?? translateError(cause);
-  return error(message, code ? { code } : null, status);
+  const details = {
+    ...(code ? { code } : {}),
+    ...(failure?.providerCode ? { providerCode: failure.providerCode } : {}),
+    ...(failure?.upstreamCode ? { upstreamCode: failure.upstreamCode } : {}),
+    ...(typeof failure?.retryable === "boolean" ? { retryable: failure.retryable } : {}),
+  };
+  return error(message, Object.keys(details).length ? details : null, status);
 }

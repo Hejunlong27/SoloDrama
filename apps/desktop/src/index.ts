@@ -4,9 +4,9 @@ import { detectLocale, normalizeLocale } from "@solodrama/i18n";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, writeAtomicSync } from "@solodrama/file";
+import { existsSync, mkdirSync, writeAtomicSync } from "@solodrama/file";
 import { file } from "@solodrama/file/bun";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { dlopen, ptr } from "bun:ffi";
 import type { DesktopRuntime, PluginInstallRequest } from "@solodrama/server/desktop";
@@ -100,8 +100,15 @@ async function start() {
   try {
     // Linux 安装目录由包管理器管理，数据使用 XDG 用户目录；Windows/macOS 保留原位置。
     const installDirectory = resolve(PATHS.RESOURCES_FOLDER, process.platform === "darwin" ? "../../.." : "../..");
-    const dataDirectory = process.env.SOLODRAMA_DATA_DIR ?? (process.platform === "linux"
-      ? resolve(Utils.paths.appData, "solodrama/data") : resolve(installDirectory, "data"));
+    const appDataRoot = resolve(Utils.paths.appData, process.platform === "linux" ? "solodrama" : "SoloDrama");
+    const separatedDataDirectory = resolve(appDataRoot, "data");
+    const legacyDataDirectory = resolve(installDirectory, "data");
+    const legacyDataExists = existsSync(join(legacyDataDirectory, "settings.json")) || existsSync(join(legacyDataDirectory, "workspaces"));
+    const dataDirectory = process.env.SOLODRAMA_DATA_DIR ?? (legacyDataExists ? legacyDataDirectory : separatedDataDirectory);
+    const logDirectory = resolve(process.env.SOLODRAMA_DESKTOP_LOG_DIR || resolve(appDataRoot, "logs"));
+    const logPath = join(logDirectory, "app.log");
+    mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
+    mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
     // ACT: 先显示原生动画，再加载服务，避免初始化期间没有反馈。
     const startupSettings = await file(resolve(dataDirectory, "settings.json")).json().catch((error) => {
       if (error.code !== "ENOENT") console.error("读取启动设置失败，使用默认启动动画：", error);
@@ -412,6 +419,33 @@ async function start() {
     const updater = process.platform === "win32" ? createWindowsUpdater(PATHS.RESOURCES_FOLDER, Utils as unknown as Parameters<typeof createWindowsUpdater>[1]) : Updater;
     const systemManaged = process.platform === "linux" && process.env.SOLODRAMA_INSTALL_METHOD === "deb";
     app.locals.desktop = {
+      launcher: {
+        version: typeof version === "string" ? version : "",
+        pid: process.pid,
+        platform: process.platform,
+        arch: process.arch,
+        dataDirectory,
+        logDirectory,
+        logPath,
+        openLogFile() {
+          if (existsSync(logPath)) Utils.showItemInFolder(logPath);
+          else Utils.showItemInFolder(logDirectory);
+        },
+        openDataFolder() {
+          Utils.showItemInFolder(dataDirectory);
+        },
+        async setLaunchOnStartup(enabled: boolean) {
+          if (process.platform !== "win32") throw new Error(t`当前系统暂不支持从启动器设置开机自启动`);
+          if (channel === "dev") throw new Error(t`开发模式不能注册开机自启动`);
+          const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+          if (!enabled) {
+            await execFileAsync("reg.exe", ["delete", key, "/v", "SoloDrama", "/f"], { windowsHide: true }).catch((error: { code?: number }) => { if (error.code !== 1) throw error; });
+            return false;
+          }
+          await execFileAsync("reg.exe", ["add", key, "/v", "SoloDrama", "/t", "REG_SZ", "/d", `"${process.execPath}"`, "/f"], { windowsHide: true });
+          return true;
+        },
+      },
       openUrl,
       async showNotification(options) {
         if (process.platform === "win32") {
@@ -547,6 +581,15 @@ async function start() {
     await desktopConnection?.close().catch(error => console.error("设备连接关闭失败：", error));
     splash?.close();
     console.error("桌面启动失败：", error);
+    try {
+      await Utils.showMessageBox({
+        type: "error",
+        title: t`SoloDrama 启动失败`,
+        message: `${error instanceof Error ? translateMessage(error.message) : t`未知启动错误`}
+
+${t`日志文件：app.log`}`,
+      });
+    } catch (dialogError) { console.error("启动失败提示窗口显示失败：", dialogError); }
     if (process.platform === "win32") {
       try { confirmWindowsUpdateStartup(PATHS.RESOURCES_FOLDER, true); }
       catch (resultError) { console.error("更新启动结果写入失败：", resultError); }

@@ -166,9 +166,9 @@ function stringValue(value: unknown) { return typeof value === "string" ? value.
 function numberValue(value: unknown) { const number = Number(value); return Number.isFinite(number) ? number : undefined; }
 function recordValue(value: unknown) { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
-async function requestJson(context: Context, path: string, body: Record<string, unknown>) {
+async function requestJson(context: Context, path: string, body: Record<string, unknown>, signal: AbortSignal | null = context.signal ?? null) {
   const response = await context.tool.fetch(baseUrlOf(context) + path, {
-    method: "POST", headers: headersOf(context, true), body: JSON.stringify(body), signal: context.signal, redirect: "error",
+    method: "POST", headers: headersOf(context, true), body: JSON.stringify(body), signal, redirect: "error",
   });
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) throw new RunningHubClosedError(`RunningHub 请求失败（HTTP ${response.status}）：${context.tool.errorMessage(payload) || "请求失败"}`, response.status);
@@ -371,7 +371,7 @@ async function awaitResult(context: Context, data: TaskData): Promise<MediaAsset
 }
 
 async function cancel(context: Context, taskId: string) {
-  try { await requestJson(context, "/task/openapi/cancel", { apiKey: apiKeyOf(context), taskId }); } catch { /* 取消是尽力而为；不覆盖最初的 AbortError。 */ }
+  try { await requestJson(context, "/task/openapi/cancel", { apiKey: apiKeyOf(context), taskId }, null); } catch { /* 取消是尽力而为；不覆盖最初的 AbortError。 */ }
 }
 
 async function runTask(context: Context, mediaType: "image" | "video", model: string, endpoint: string, body: Record<string, unknown>) {

@@ -5,6 +5,8 @@ import { lstat, mkdir, readFile, readdir, unlink, writeAtomicSync } from "@solod
 import { dirname, join } from "node:path";
 import { createContext, SourceTextModule } from "node:vm";
 import type { AudioConvertOptions, Provider, ProviderTaskData, ProviderTools } from "@solodrama/providers";
+import { annotateProviderError } from "@solodrama/providers/errors";
+import { assertProviderUrl } from "@/utils/media/providerUrl";
 import { parse, parseExpression } from "@babel/parser";
 import { z } from "zod";
 import conf from "@/utils/conf";
@@ -488,6 +490,7 @@ export async function refreshMediaProviderModels(fileName: string, revision: str
   if (!provider.modelsUrl) invalid("供应商未配置 modelsUrl");
   const apiKey = getMediaProviderApiKey(provider.id);
   const modelsUrl = new URL(provider.modelsUrl);
+  assertProviderUrl(modelsUrl);
   const response = await fetch(modelsUrl, {
     headers: { Accept: "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
     signal: AbortSignal.timeout(30000), redirect: "error",
@@ -536,7 +539,7 @@ export async function deleteMediaProvider(fileName: string, revision: string) {
 }
 
 export async function loadMediaProviderSource(source: string, config: Record<string, unknown> = {}, signal?: AbortSignal, fetchRequest = fetch, cwd?: string,
-  saveTaskData?: (data: ProviderTaskData) => Promise<void>, platformAccount = false) {
+  saveTaskData?: (data: ProviderTaskData) => Promise<void>, platformAccount = false, extraTools: Partial<ProviderTools> = {}) {
   signal?.throwIfAborted();
   const { id, value } = parseProvider(source);
   if (platformAccount && id !== "solodrama") invalid("账号媒体供应商 ID 必须为 solodrama", 403);
@@ -558,10 +561,14 @@ export async function loadMediaProviderSource(source: string, config: Record<str
     // 导出的媒体 token 用于配置和脱敏；请求实现也可直接使用源码中内嵌的凭据。
     if (typeof token === "string") config = { ...config, token };
   }
+  const guardedFetchRequest = Object.assign((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    assertProviderUrl(input instanceof Request ? input.url : String(input));
+    return fetchRequest(input, init);
+  }, { preconnect: fetchRequest.preconnect }) as typeof fetch;
   // ACT: VM 只隔离可信供应商的全局上下文；不可信代码需要独立进程等更强隔离。
   const context = createContext({
-    Buffer, atob, btoa, URL, URLSearchParams, TextEncoder, TextDecoder, Blob,
-    AbortController, AbortSignal, setTimeout, clearTimeout,
+    Buffer, atob, btoa, URL, URLSearchParams, TextEncoder, TextDecoder, Blob, File, FormData, Headers, Request, Response,
+    crypto, structuredClone, performance, AbortController, AbortSignal, setTimeout, clearTimeout,
   }, { codeGeneration: { strings: false, wasm: false } });
   const rejectImport = () => { throw new Error("供应商不能导入模块，请使用 this.tool 中的宿主工具"); };
   const module = new SourceTextModule(providerTranspiler.transformSync(source), {
@@ -578,22 +585,25 @@ export async function loadMediaProviderSource(source: string, config: Record<str
   const provider = {
     ...definition,
     // 查询上下文使用原始注入 fetch，避免继承某次生成请求的取消信号。
-    queryFetch: fetchRequest,
+    queryFetch: guardedFetchRequest,
     sourceRevision: createHash("sha256").update(source).digest("hex"),
     config: providerConfig,
     signal,
     saveTaskData: typeof definition.resumeTask === "function" && saveTaskData
       ? async (data: ProviderTaskData) => { await saveTaskData(parseTaskData(data, providerConfig)); } : undefined,
     tool: {
+      ...extraTools,
       fetch: signal ? Object.assign((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        // signal: null 是供应商显式退出本次任务取消信号的唯一入口，供已确认安全的取消查询使用。
+        if (init?.signal === null) return guardedFetchRequest(input, init);
         signal.throwIfAborted();
-        const requestSignal = init?.signal === null ? undefined : init?.signal ?? (input instanceof Request ? input.signal : undefined);
-        return fetchRequest(input, { ...init, signal: requestSignal ? AbortSignal.any([signal, requestSignal]) : signal });
-      }, { preconnect: fetchRequest.preconnect }) as typeof fetch : fetchRequest,
+        const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        return guardedFetchRequest(input, { ...init, signal: requestSignal ? AbortSignal.any([signal, requestSignal]) : signal });
+      }, { preconnect: fetchRequest.preconnect }) as typeof fetch : guardedFetchRequest,
       hash: Bun.hash,
       errorMessage: (value: unknown) => mediaErrorMessage(value, providerConfig),
       image: Bun.Image,
-      media: createMediaTools(fetchRequest),
+      media: createMediaTools(guardedFetchRequest),
       audio: { convert: (input: Uint8Array, options: AudioConvertOptions) => convertAudio(input, options, signal) },
       ffmpeg: async () => {
         if (!cwd) throw new Error("当前操作没有工作目录，无法使用 FFmpeg");
@@ -654,7 +664,7 @@ export async function loadMediaProviderSource(source: string, config: Record<str
         // ACT: 兼容旧 SoloDrama 供应商的普通错误；仅明确任务终态补标，查询异常仍保留复查。
         const taskFailed = id === "solodrama" && !overlappingRequests && failure?.taskFailed === true && info?.code === undefined;
         let message = mediaErrorMessage(error, provider.config) || (taskFailed ? "媒体生成失败" : "");
-        if (!message) throw error;
+        if (!message) throw annotateProviderError(error);
         // ACT: 只补充串行请求中匹配的错误；并发时无法精确关联响应，由适配器使用 errorMessage 提取。
         const matchesFailure = failure?.status !== undefined
           ? new RegExp(`\\b(?:HTTP|status(?: code)?)\\s*[:：]?\\s*${failure.status}[)）.。\\s]*$`, "i").test(message)
@@ -662,11 +672,13 @@ export async function loadMediaProviderSource(source: string, config: Record<str
         if (!overlappingRequests && failure?.message && matchesFailure) {
           message = [...new Set([...message.split("\n"), ...failure.message.split("\n")])].join("\n").slice(0, 4000);
         }
-        if (message === (typeof error === "string" ? error : info?.message) && !taskFailed) throw error;
-        throw Object.assign(new Error(message), typeof error === "object" ? error : undefined, {
+        if (message === (typeof error === "string" ? error : info?.message) && !taskFailed) throw annotateProviderError(error, message);
+        const normalized = annotateProviderError(error, message);
+        const status = typeof info?.status === "number" ? info.status : failure?.status;
+        throw Object.assign(normalized, {
           message, cause: error,
           ...(taskFailed ? { code: "MEDIA_TASK_FAILED" } : typeof info?.code === "string" ? { code: info.code } : {}),
-          ...(typeof info?.status === "number" ? { status: info.status } : {}),
+          ...(typeof status === "number" ? { status } : {}),
         });
       }
     } });

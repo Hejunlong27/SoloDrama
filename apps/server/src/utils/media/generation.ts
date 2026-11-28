@@ -2,7 +2,7 @@ import { t, translateMessage } from "@/lib/i18n";
 import { mkdir, readFile, realpath, stat, unlink } from "@solodrama/file";
 import { join, relative } from "node:path";
 import { createHash } from "node:crypto";
-import { mediaProviders, type Provider, type ProviderTaskData } from "@solodrama/providers";
+import { mediaProviders, type Provider, type ProviderSubmissionState, type ProviderTaskData } from "@solodrama/providers";
 import type { GeneratedMedia, MediaGenerationRequest, MediaModel, MediaReference } from "@solodrama/tools-scaffold/runtime";
 import conf from "@/utils/conf";
 import { getMediaProvider, listMediaProviders, loadMediaProviderSource } from "@/utils/media/provider";
@@ -10,9 +10,13 @@ import { lockWorkspaceFiles, resolveWorkspacePath, writeWorkspaceFile } from "@/
 import { beginGeneration, getProviderPrice } from "@/utils/media/billing";
 import { detectMimeType, readPriceReference } from "@/utils/media/priceReference";
 import { modelGateway } from "@/utils/multiTenant/gateway";
+import { assertProviderUrl } from "@/utils/media/providerUrl";
+import { createComfyHubProviderTools } from "@/utils/comfyHub/runtime";
+import { comfyHubStore } from "@/utils/comfyHub/store";
 
 const maxMediaSize = 100 * 1024 * 1024;
 export type MediaGenerationCheckpoint = {
+  submissionState?: ProviderSubmissionState;
   providerData?: ProviderTaskData;
   assets?: Extract<MediaAsset, { type: "url" }>[];
   assetCount?: number;
@@ -61,9 +65,10 @@ function imageOptions(value: unknown, pattern: RegExp) {
 
 export async function listMediaModels(): Promise<MediaModel[]> {
   if (modelGateway.enabled()) return modelGateway.catalog(["image", "video", "audio"]);
+  const hubModels = await comfyHubStore.models();
   const installedProviders = await listMediaProviders();
   installedProviders.sort((left, right) => Number(right.id === "solodrama") - Number(left.id === "solodrama"));
-  return installedProviders.filter(provider => provider.id !== "solodrama").flatMap(provider => provider.models.flatMap(model => {
+  const providerModels = installedProviders.filter(provider => provider.id !== "solodrama" && provider.id !== "solodramaComfyHub").flatMap(provider => provider.models.flatMap(model => {
     if (model.type !== "image" && model.type !== "video" && model.type !== "audio") return [];
     const builtIn = (mediaProviders as readonly Provider[]).find(item => item.id === provider.id)?.models.find(item => item.id === model.id);
     return [{
@@ -78,6 +83,7 @@ export async function listMediaModels(): Promise<MediaModel[]> {
       } : {}),
     } as MediaModel];
   }));
+  return [...hubModels, ...providerModels];
 }
 
 export async function readReference(cwd: string, reference: MediaReference, mediaType: string, signal?: AbortSignal): Promise<Extract<MediaInput, { type: "base64" }>> {
@@ -94,6 +100,7 @@ export async function readReference(cwd: string, reference: MediaReference, medi
 
 async function downloadAsset(url: string, signal?: AbortSignal) {
   if (!/^https?:\/\//i.test(url)) invalid("生成结果必须使用 HTTP 或 HTTPS 地址");
+  assertProviderUrl(url);
   const response = await fetch(url, { signal });
   if (!response.ok) {
     await response.body?.cancel();
@@ -199,6 +206,15 @@ async function prepareRequest<T>(directory: string | undefined, mediaType: "imag
 
 async function configuredProvider(request: MediaGenerationRequest, mediaType: "image" | "video" | "audio", signal?: AbortSignal, directory?: string,
   saveTaskData?: (data: ProviderTaskData) => Promise<void>, resume = false, modelRouteCipher?: string) {
+  if (request.providerId === "solodramaComfyHub") {
+    const info = await getMediaProvider("solodramaComfyHub");
+    if (!resume) {
+      const models = await comfyHubStore.models();
+      if (!models.some(model => model.modelId === request.modelId && model.type === mediaType)) invalid("所选云端 ComfyUI 工作流不存在或类型不匹配，请刷新后重试");
+    }
+    const provider = await loadMediaProviderSource(info.source, {}, signal, undefined, directory, saveTaskData, false, { comfyHub: createComfyHubProviderTools(saveTaskData) });
+    return { provider, request };
+  }
   if (modelGateway.enabled() || modelRouteCipher) {
     const { upstream } = await modelGateway.resolve(mediaType, request.providerId, request.modelId, modelRouteCipher, request);
     const provider = await loadMediaProviderSource(upstream.source, upstream.config, signal, undefined, directory, saveTaskData, upstream.cloud);
@@ -248,12 +264,16 @@ export async function generateMedia(
 ): Promise<GeneratedMedia[]> {
   requireGenerationMode(task);
   const checkpoint = task?.checkpoint;
-  let submitted = task?.resume === true || !!checkpoint?.providerData || checkpoint?.assetCount !== undefined || !!checkpoint?.files?.length;
+  let submitted = task?.resume === true || !!checkpoint?.providerData || checkpoint?.assetCount !== undefined || !!checkpoint?.files?.length
+    || ["submitted", "accepted", "unknown"].includes(checkpoint?.submissionState ?? "");
   try {
-    return await executeMedia(cwd, mediaType, request, signal, task, () => { submitted = true; });
+    return await executeMedia(cwd, mediaType, request, signal, task, async () => {
+      if (task) await task.save({ submissionState: "submitted" });
+      submitted = true;
+    });
   } catch (cause) {
-    // ACT: 仅宿主确认尚未调用供应商的异常证明未提交；供应商错误码不能伪造此证据。
-    if (!task?.modelRouteCipher || submitted) throw cause;
+    // ACT: 只有宿主在调用供应商前标记的失败才能证明未提交；供应商错误码不能伪造此证据。
+    if (!task || submitted) throw cause;
     const failure = cause instanceof Error ? cause : new Error(String(cause));
     notSubmittedFailures.add(failure);
     throw failure;
@@ -266,7 +286,7 @@ async function executeMedia(
   request: MediaGenerationRequest,
   signal: AbortSignal | undefined,
   task: MediaGenerationTask | undefined,
-  markSubmitted: () => void,
+  markSubmitted: () => Promise<void>,
 ): Promise<GeneratedMedia[]> {
   signal?.throwIfAborted();
   if (!request.prompt.trim()) invalid("请输入生成提示词");
@@ -293,7 +313,7 @@ async function executeMedia(
   }
   let finish = () => {};
   const resumeAssets = async () => {
-    const { provider } = await configuredProvider(request, mediaType, signal, directory, data => task!.save({ providerData: data }), true, modelRouteCipher);
+    const { provider } = await configuredProvider(request, mediaType, signal, directory, data => task!.save({ providerData: data, submissionState: "accepted" }), true, modelRouteCipher);
     if (!checkpoint?.providerData || !provider.resumeTask) invalid("该任务没有可恢复的供应商凭据，不能重新提交生成");
     requireGenerationMode(task);
     finish();
@@ -310,7 +330,7 @@ async function executeMedia(
       assets = checkpoint?.assets ?? await resumeAssets();
     } else {
       const { provider, request: upstreamRequest } = await configuredProvider(request, mediaType, signal, directory,
-        task ? data => task.save({ providerData: data }) : undefined, false, modelRouteCipher);
+        task ? data => task.save({ providerData: data, submissionState: "accepted" }) : undefined, false, modelRouteCipher);
       const generate = mediaType === "image" ? provider.generateImage : mediaType === "video" ? provider.generateVideo : provider.generateAudio;
       if (typeof generate !== "function") invalid(t`此供应商不支持${translateMessage({ image: "图片", video: "视频", audio: "音频" }[mediaType])}生成`);
       const rules = Array.isArray(provider.rules) ? provider.rules : [];
@@ -320,14 +340,14 @@ async function executeMedia(
       signal?.throwIfAborted();
       requireGenerationMode(task);
       if (!modelRouteCipher) finish = beginGeneration(provider);
-      markSubmitted();
+      await markSubmitted();
       assets = type === "audio" ? await provider.generateAudio!(parameters as AudioRequest)
         : type === "image" ? await provider.generateImage!(parameters as ImageRequest) : await provider.generateVideo!(parameters as VideoRequest);
     }
     if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
     if (checkpoint?.assetCount !== undefined && checkpoint.assetCount !== assets.length) invalid("恢复任务的结果数量发生变化");
     // ACT: 只持久化下载地址；二进制直接落盘，避免把大媒体复制进任务 JSON。未落盘部分由 resumeTask 重新取回。
-    await task?.save({ assetCount: assets.length, assets: resumableAssets(assets, mediaType) });
+    await task?.save({ assetCount: assets.length, assets: resumableAssets(assets, mediaType), submissionState: "accepted" });
     let refreshed = false;
     for (let index = 0; index < assets.length; index++) {
       signal?.throwIfAborted();
