@@ -43,36 +43,37 @@ SoloDrama 是一套面向竖屏短剧、漫剧和连续内容生产的 AI 创作
 
 ![SoloDrama 项目首页](./docs/images/solodrama/home.png)
 
-### 统一工作台
-
-工作台按剧本解析、提取资产、设计分镜和旁白成片组织项目，并读取画布和文档中的现有来源。
-
-![SoloDrama 统一工作台](./docs/images/solodrama/workbench.png)
-
 ### 无限画布
 
-文本、图片素材、图片生成、视频素材、视频生成、音频生成和 3D 导演台可以在同一张画布中组合连线。
+文本、图片、视频、音频、生成节点和 3D 导演台可以在同一张画布中组合。
 
 ![SoloDrama 无限画布](./docs/images/solodrama/canvas.png)
 
-### 媒体模型
+### 剧本编制与解析
 
-本地 ComfyUI、云端 ComfyUI、RunningHub、优云智算和 TTS 在媒体模型页统一管理。
+支持直接输入、上传长文、章节识别、切段和结构化解析。
 
-![SoloDrama 媒体模型](./docs/images/solodrama/mediaModels.png)
+![SoloDrama 剧本编制与解析](./docs/images/solodrama/scriptStudio.png)
 
-### 文本模型
+### 角色、场景与智能音色
 
-支持 OpenCode Go、Command Code、DeepSeek、自定义 OpenAI 兼容服务和本地模型。
+角色、场景和道具使用左侧资产列表 + 右侧设计器，音色设计与真实 TTS 任务直接绑定到角色。
 
-![SoloDrama 文本模型](./docs/images/solodrama/languageModels.png)
+![SoloDrama 角色与场景](./docs/images/solodrama/assetStudio.png)
 
-### 创作插件
+![SoloDrama 智能音色设计](./docs/images/solodrama/voiceDesigner.png)
 
-内置项目预算、剪映草稿、封面设计、流水线出片、工作区文件和联网搜索等插件。
+### 分镜、提示词与 Take
 
-![SoloDrama 创作插件](./docs/images/solodrama/plugins.png)
+分镜工作区统一组织参考素材、画面描述、视频提示词、辅助图、任务和 Take 版本。
 
+![SoloDrama 分镜与 Take](./docs/images/solodrama/shotStudio.png)
+
+### 旁白、时间轴与成片
+
+时间轴支持正式 Take、旁白、字幕、Remotion/预渲染片段、成片导出和剪映草稿。
+
+![SoloDrama 时间轴与成片](./docs/images/solodrama/timelineStudio.png)
 ## 核心能力
 
 ### 剧本与结构化理解

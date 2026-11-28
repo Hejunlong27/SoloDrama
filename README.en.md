@@ -43,36 +43,37 @@ Start with a single sentence, open an existing workspace, or import a legacy Sol
 
 ![SoloDrama project home](./docs/images/solodrama/home.png)
 
-### Unified Workbench
-
-The workbench organizes script analysis, asset extraction, storyboard design, and post-production while reading existing canvas and document sources.
-
-![SoloDrama unified workbench](./docs/images/solodrama/workbench.png)
-
 ### Infinite Canvas
 
-Text, image assets, image generation, video assets, video generation, audio generation, and the 3D director stage can be combined and connected on one canvas.
+Text, images, video, audio, generation nodes, and the 3D director stage can be combined on one canvas.
 
 ![SoloDrama infinite canvas](./docs/images/solodrama/canvas.png)
 
-### Media Models
+### Script Authoring and Analysis
 
-Local ComfyUI, cloud ComfyUI, RunningHub, CompShare, and TTS providers are managed together in the media model settings.
+Enter text directly, upload a long document, detect chapters, segment the source, and analyze the structured result.
 
-![SoloDrama media models](./docs/images/solodrama/mediaModels.png)
+![SoloDrama script authoring and analysis](./docs/images/solodrama/scriptStudio.png)
 
-### Language Models
+### Characters, Locations, and Intelligent Voice Design
 
-Supports OpenCode Go, Command Code, DeepSeek, custom OpenAI-compatible services, and local models.
+Assets use a list-and-designer layout. Voice design runs through the existing media task system and is bound directly to a character.
 
-![SoloDrama language models](./docs/images/solodrama/languageModels.png)
+![SoloDrama character and location designer](./docs/images/solodrama/assetStudio.png)
 
-### Creative Plugins
+![SoloDrama intelligent voice design](./docs/images/solodrama/voiceDesigner.png)
 
-Built-in plugins include project budgets, Jianying drafts, cover design, pipeline rendering, workspace files, and web search.
+### Storyboard, Prompts, and Takes
 
-![SoloDrama creative plugins](./docs/images/solodrama/plugins.png)
+The storyboard workspace organizes references, visual descriptions, video prompts, helper images, tasks, and Take versions.
 
+![SoloDrama storyboard and Takes](./docs/images/solodrama/shotStudio.png)
+
+### Narration, Timeline, and Final Video
+
+The timeline supports official Takes, narration, subtitles, Remotion or pre-rendered clips, final rendering, and Jianying draft export.
+
+![SoloDrama timeline and final video](./docs/images/solodrama/timelineStudio.png)
 ## Core Capabilities
 
 ### Script and Structured Understanding
